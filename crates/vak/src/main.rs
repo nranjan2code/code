@@ -94,7 +94,12 @@ fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
             0
         }
         SkillsReviewAction::Promote { id } => {
-            match vak_core::learning::promote(&core.scope(), core.cwd(), &id) {
+            match vak_core::learning::promote(
+                &core.scope(),
+                core.cwd(),
+                &id,
+                &core.shared_skills_dir(),
+            ) {
                 Ok(name) => {
                     println!("promoted skill '{name}'");
                     0

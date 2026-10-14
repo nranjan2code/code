@@ -217,24 +217,36 @@ async fn remember_propose_recall_promote_loop() {
 
     // ---- Promotion closes the loop ---------------------------------------
     let id = pending[0].id.clone();
-    let promoted =
-        vak_core::learning::promote(&vak_config::scope::AgentScope::new(&home), &cwd, &id).unwrap();
+    let skills = core.shared_skills_dir();
+    let promoted = vak_core::learning::promote(
+        &vak_config::scope::AgentScope::new(&home),
+        &cwd,
+        &id,
+        &skills,
+    )
+    .unwrap();
     assert_eq!(promoted, "deploy-safely");
-    assert!(home.join("skills/deploy-safely/SKILL.md").exists());
+    assert!(skills.join("deploy-safely/SKILL.md").exists());
     assert!(
         vak_core::learning::list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd)
             .is_empty()
     );
-    let discovered = vak_core::skills::discover(&cwd, &home);
+    let discovered = core.skills();
     assert!(
         discovered
             .iter()
             .any(|s| s.name == "deploy-safely" && s.description.contains("rollback")),
-        "promoted skill enters discovery: {discovered:?}"
+        "the Core that runs turns sees the promoted skill: {discovered:?}"
     );
 
     // Promoting twice or promoting after rejection fails cleanly.
     assert!(
-        vak_core::learning::promote(&vak_config::scope::AgentScope::new(&home), &cwd, &id).is_err()
+        vak_core::learning::promote(
+            &vak_config::scope::AgentScope::new(&home),
+            &cwd,
+            &id,
+            &skills
+        )
+        .is_err()
     );
 }

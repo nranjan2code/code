@@ -121,7 +121,16 @@ async fn memory_and_proposal_endpoints() {
         .unwrap();
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["proposals"].as_array().unwrap().len(), 0);
-    assert!(home.join("skills/test-skill/SKILL.md").exists());
+    // A promoted skill is one a turn discovers: the Shared layer's.
+    let res = client.get(format!("{base}/skills")).send().await.unwrap();
+    let body: serde_json::Value = res.json().await.unwrap();
+    let skill = body["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "test-skill")
+        .expect("the promoted skill is discovered");
+    assert_eq!(skill["scope"], "user");
 
     // Unknown id answers 404-shaped error, not a panic.
     let res = client

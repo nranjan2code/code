@@ -159,10 +159,6 @@ impl AgentScope {
         self.root.join("canvas").join(format!("{session_id}.json"))
     }
 
-    pub fn skill(&self, name: &str) -> PathBuf {
-        self.skills().join(name)
-    }
-
     /// `agents/`, which holds the homes of the Agents beneath this one.
     pub fn agents_dir(&self) -> PathBuf {
         self.root.join("agents")
@@ -559,7 +555,6 @@ mod tests {
             s.skill_proposals(cwd),
             home.join("skill-proposals").join(&key)
         );
-        assert_eq!(s.skill("x"), home.join("skills/x"));
         assert_eq!(s.agents_dir(), home.join("agents"));
         assert_eq!(s.security_events(), home.join("security-events"));
         assert_eq!(s.cost_log(), home.join("cost-log"));

@@ -2992,10 +2992,16 @@ async fn promote_proposal(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, q.agent.as_deref());
-    let res = vak_core::learning::promote(&core.scope(), core.cwd(), &id);
+    let skills = core.shared_skills_dir();
+    let res = vak_core::learning::promote(&core.scope(), core.cwd(), &id, &skills);
     let res = match res {
         Err(_) if state.core.shared_scope().into_root() != core.scope().into_root() => {
-            vak_core::learning::promote(&state.core.shared_scope().as_agent(), core.cwd(), &id)
+            vak_core::learning::promote(
+                &state.core.shared_scope().as_agent(),
+                core.cwd(),
+                &id,
+                &skills,
+            )
         }
         other => other,
     };

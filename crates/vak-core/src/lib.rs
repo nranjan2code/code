@@ -2224,7 +2224,13 @@ impl Core {
     }
 
     fn shared_capability_root(&self) -> std::path::PathBuf {
-        vak_config::scope::WorkspaceScope::new(vak_config::paths::default_workspace()).project_dir()
+        learning::shared_capability_root()
+    }
+
+    /// Where a promoted skill is installed: the Shared layer's skills, which
+    /// every workspace discovers (docs/design/26-learning.md).
+    pub fn shared_skills_dir(&self) -> std::path::PathBuf {
+        self.shared_capability_root().join("skills")
     }
 
     /// Plugin package roots contributing skills and commands, tagged with the

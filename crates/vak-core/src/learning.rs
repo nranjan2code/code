@@ -315,10 +315,7 @@ impl vak_tools::Tool for ProposeSkillTool {
         let dup_line = match duplicate_of(
             &name,
             prose(instructions),
-            &accepted_skill_bodies(
-                &vak_config::scope::AgentScope::new(&self.sessions_home),
-                &self.cwd,
-            ),
+            &accepted_skill_bodies(&self.cwd),
         ) {
             Some(dup) => format!("{DUPLICATE_KEY}: \"{dup}\"\n"),
             None => String::new(),
@@ -368,11 +365,7 @@ pub fn sanitize_name(raw: &str) -> Option<String> {
 
 // ---- Review queue API -------------------------------------------------------
 
-fn list_proposals_in_dir(
-    dir: &Path,
-    scope: &vak_config::scope::AgentScope,
-    cwd: &Path,
-) -> Vec<SkillProposal> {
+fn list_proposals_in_dir(dir: &Path, cwd: &Path) -> Vec<SkillProposal> {
     let mut found = Vec::new();
     for path in vak_session::documents::under(dir) {
         let Some(id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
@@ -388,7 +381,7 @@ fn list_proposals_in_dir(
     }
     let mut out = Vec::with_capacity(found.len());
     if !found.is_empty() {
-        let accepted = accepted_skill_bodies(scope, cwd);
+        let accepted = accepted_skill_bodies(cwd);
         for (id, path, skill) in found {
             let tag = screen_proposal(&path, &skill.name, &accepted);
             out.push(SkillProposal {
@@ -412,7 +405,7 @@ fn list_proposals_in_dir(
 /// description) and the flag persists as a `duplicate-of:` frontmatter line
 /// so hand edits and later listings agree.
 pub fn list_proposals(scope: &vak_config::scope::AgentScope, cwd: &Path) -> Vec<SkillProposal> {
-    let mut proposals = list_proposals_in_dir(&proposals_dir(scope, cwd), scope, cwd);
+    let mut proposals = list_proposals_in_dir(&proposals_dir(scope, cwd), cwd);
     if proposals.is_empty() {
         let agents_dir = scope.agents_dir();
         if let Ok(entries) = std::fs::read_dir(&agents_dir) {
@@ -421,7 +414,6 @@ pub fn list_proposals(scope: &vak_config::scope::AgentScope, cwd: &Path) -> Vec<
                 if p.is_dir() {
                     let agent_props = list_proposals_in_dir(
                         &proposals_dir(&vak_config::scope::AgentScope::new(&p), cwd),
-                        scope,
                         cwd,
                     );
                     proposals.extend(agent_props);
@@ -433,19 +425,27 @@ pub fn list_proposals(scope: &vak_config::scope::AgentScope, cwd: &Path) -> Vec<
     proposals
 }
 
-/// Install a proposal into user-level discovery. Refuses to silently
-/// overwrite an existing skill of the same name.
+/// The Shared layer's capability root, `~/vak-home/.vak`: where every
+/// workspace discovers Shared skills, and so where a promoted one goes.
+pub(crate) fn shared_capability_root() -> PathBuf {
+    vak_config::scope::WorkspaceScope::new(vak_config::paths::default_workspace()).project_dir()
+}
+
+/// Install a proposal into `skills`, the directory discovery reads
+/// (`Core::shared_skills_dir`). Refuses to silently overwrite an existing
+/// skill of the same name.
 pub fn promote(
     scope: &vak_config::scope::AgentScope,
     cwd: &Path,
     id: &str,
+    skills: &Path,
 ) -> Result<String, String> {
     let proposals = list_proposals(scope, cwd);
     let p = proposals
         .iter()
         .find(|p| p.id == id)
         .ok_or_else(|| format!("no proposal '{id}'"))?;
-    let target_dir = scope.skill(&p.name);
+    let target_dir = skills.join(&p.name);
     let target = target_dir.join("SKILL.md");
     if target.exists() {
         return Err(format!(
@@ -578,18 +578,17 @@ fn with_duplicate_note(description: &str, dup: Option<&str>) -> String {
     }
 }
 
-/// (name, instructions) pairs for every discovered project/user skill — the
-/// same roots skills::discover walks, read-only from this side.
-fn accepted_skill_bodies(
-    scope: &vak_config::scope::AgentScope,
-    cwd: &Path,
-) -> Vec<(String, String)> {
+/// (name, instructions) pairs for every skill a turn in `cwd` discovers: the
+/// same roots `Core::skills` walks (the workspace and the Shared layer, with
+/// the Agents' folders under it), read-only from this side.
+fn accepted_skill_bodies(cwd: &Path) -> Vec<(String, String)> {
+    let shared = shared_capability_root();
     let mut roots = vec![
         vak_config::scope::WorkspaceScope::new(cwd).skills(),
-        scope.skills(),
+        shared.join("skills"),
     ];
-    let agents_dir = scope.agents_dir();
-    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+    if let Ok(entries) = std::fs::read_dir(vak_config::scope::AgentScope::new(&shared).agents_dir())
+    {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
@@ -723,8 +722,12 @@ mod tests {
 
     // ---- submission/review integration ----
 
-    fn seed_accepted_skill(home: &Path, name: &str, desc: &str, body: &str) {
-        let dir = vak_config::scope::AgentScope::new(home).skill(name);
+    /// An accepted skill in the test's own workspace, one of the roots a
+    /// turn discovers.
+    fn seed_accepted_skill(cwd: &Path, name: &str, desc: &str, body: &str) {
+        let dir = vak_config::scope::WorkspaceScope::new(cwd)
+            .skills()
+            .join(name);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("SKILL.md"),
@@ -757,7 +760,7 @@ mod tests {
         vak_config::paths::isolate_home_for_tests();
         let (_dir, home, cwd) = temp_home_cwd();
         seed_accepted_skill(
-            &home,
+            &cwd,
             "rotate-release-tags",
             "pause deploys during rollback windows",
             "pause before rollback so the deploy script can finish",
@@ -806,7 +809,13 @@ mod tests {
         // A flagged proposal is still promotable by explicit human decision.
         let id = listed[0].id.clone();
         assert_eq!(
-            promote(&vak_config::scope::AgentScope::new(&home), &cwd, &id).unwrap(),
+            promote(
+                &vak_config::scope::AgentScope::new(&home),
+                &cwd,
+                &id,
+                &home.join("skills")
+            )
+            .unwrap(),
             "rotate-release-tags-v2"
         );
         let installed = home.join("skills/rotate-release-tags-v2/SKILL.md");
@@ -821,7 +830,7 @@ mod tests {
         vak_config::paths::isolate_home_for_tests();
         let (_dir, home, cwd) = temp_home_cwd();
         seed_accepted_skill(
-            &home,
+            &cwd,
             "frobulate-widget-frames",
             "wedge alignment for panel mounts",
             "wedge alignment for panel mounts",
@@ -859,7 +868,7 @@ mod tests {
         vak_config::paths::isolate_home_for_tests();
         let (_dir, home, cwd) = temp_home_cwd();
         seed_accepted_skill(
-            &home,
+            &cwd,
             "rotate-release-tags",
             "pause deploys during rollback windows",
             "pause before rollback so the deploy script can finish",

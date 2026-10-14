@@ -48,10 +48,11 @@ run completes ── model decides something is worth keeping
    │      recalled by session_search, ranked above raw transcripts
    │
    └─ propose_skill(name, description, instructions)
-          → review queue (<home>/skill-proposals/)
-                 │  human promotes (HTTP/CLI/desktop later)
+          → review queue (the Agent's skill-proposal Documents)
+                 │  a person promotes (HTTP, CLI, the apps)
                  ▼
-          <home>/skills/<name>/SKILL.md   ← discovered for EVERY future run
+          ~/vak-home/.vak/skills/<name>/SKILL.md   ← the Shared layer,
+                                                     discovered by every run
 ```
 
 ## Principles
@@ -60,9 +61,9 @@ run completes ── model decides something is worth keeping
    redirect arbitrary future runs — it crosses the trust boundary and must
    pass an explicit gate (invariant: unattended surfaces fail closed;
    promotion is never automatic, never time-based).
-2. **Notes are cheap, visible, revocable.** MEMORY.md is plain markdown the
-   user can edit or prune; every block carries provenance (timestamp, kind,
-   tag, originating session id).
+2. **Notes are cheap, visible, revocable.** Each note is a Document the
+   person can read, amend or forget in the app or through `/memory`; every
+   note carries provenance (timestamp, kind, tag, originating session id).
 3. **Model-visible ⇒ logged.** Both tools are ordinary tools: the call args
    and confirmations land on the ledger as tool_use/tool_result entries.
    Promoted skills enter discovery, whose names+descriptions are captured in
@@ -75,13 +76,16 @@ run completes ── model decides something is worth keeping
 ## Storage
 
 ```
-<agent home>/memory/<hash_cwd>/MEMORY.md        # workspace notes, plain md
-<agent home>/memory/user/USER.md               # profile tier
-<agent home>/skill-proposals/<hash_cwd>/<id>.md # pending drafts
-<agent home>/skills/<name>/SKILL.md             # promoted discovery
+agents/<agent>/memory/<space id>/MEMORY.md/<note>   # workspace notes (Documents)
+agents/<agent>/memory/user/USER.md/<note>           # profile tier (Documents)
+agents/<agent>/skill-proposals/<space id>/<id>.md   # pending drafts (Documents)
+~/vak-home/.vak/skills/<name>/SKILL.md              # promoted: Shared discovery
 ```
 
-MEMORY.md block grammar (tolerant to manual edits):
+The first three are Document names under the data home, stored in the
+tenant store (`vak_session::documents`), never files beside the data.
+
+Note grammar:
 
 ```
 ## <RFC3339> [<kind>] tag=<tag> session=<session-id>
@@ -100,27 +104,27 @@ text of the preceding block — hand-edits never lose data.
 | `forget_memory` | `note_id` (required; exact `memory/<id>` or `profile/<id>` from `session_search`) | remove exactly one curated memory block; the source conversation remains in history | Allowed in WorkspaceWrite+; denied in ReadOnly |
 | `propose_skill` | `name`, `description`, `instructions` | queue file | Same |
 
-The permission engine classifies both explicitly so they do not fall into
-the generic unknown-tool Ask path — otherwise every phone-side `remember`
-would stall on a forwarded gate.
+Each tool declares its reach (`Tool::permission`), so the engine decides
+them without knowing their names, and a phone-side `remember` does not
+stall on a forwarded gate.
 
 ## Recall
 
-`vak_session::search_extended(..., extras: &[ExternalDoc])` scores memory
-blocks with the same scorer plus a bonus that places them above equally
-relevant transcript lines; hits surface as `role: "memory"` with a stable
-`memory/<id>` or `profile/<id>` source id and the block's tag/kind in the
-snippet prefix. This gives `forget_memory` an exact target after the agent
+Memory and profile notes are rows in the data catalog beside conversation
+text (`Catalog::search`, docs/design/23-memory.md); hits surface as
+`role: "memory"` with a stable `memory/<id>` or `profile/<id>` source id and
+the note's tag/kind in the snippet prefix. This gives `forget_memory` an exact target after the agent
 searches for the note the user asked it to forget. `session_search` and
 `GET /search` both feed parsed MEMORY.md entries in.
 
 ## Promotion
 
 - `GET /skills/proposals` — queue listing (id, name, description, age).
-- `POST /skills/proposals/{id}/promote` — installs to
-  `<home>/skills/<name>/SKILL.md`; refuses silent overwrite of an existing
-  skill name.
-- `POST /skills/proposals/{id}/reject` — deletes the pending file.
+- `POST /skills/proposals/{id}/promote` — installs to the Shared layer,
+  `~/vak-home/.vak/skills/<name>/SKILL.md` (`Core::shared_skills_dir`), the
+  root every turn discovers; refuses silent overwrite of an existing skill
+  name.
+- `POST /skills/proposals/{id}/reject` — forgets the pending Document.
 - CLI mirrors: `vak skills-review list|promote|reject`, `vak memory`.
 
 Provenance footer (HTML comment) survives inside SKILL.md harmlessly:
