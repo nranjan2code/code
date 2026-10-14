@@ -48,9 +48,14 @@ across them. Nothing here is started unless it says so.
   A sweep on 2026-10-14 for code names these docs cite that no longer
   exist found and corrected stale claims in 03, 13, 22, 23, 28, 30, 33,
   34, 41, 42, 47, 64, 65 and 66 and in AGENTS.md invariant 32; past
-  sections of 23, 29, 34, 47 and 48 are marked historical. Still to do: a
-  reading of each implemented doc for behaviour that changed under names
-  that still exist, which a name sweep cannot find.
+  sections of 23, 29, 34, 47 and 48 are marked historical. A second pass the
+  same day checked routes, CLI commands and flags, config keys, file
+  names and present-tense claims against the code, and read 02, 04, 05,
+  09, 10, 13, 14, 22, 25, 26, 31, 35, 38, 39, 42, 44, 50, 53 and 55 in
+  full; it found and fixed two bugs (`vak term`'s discarded command edit,
+  promoted skills never discovered). Not read in full yet: 01, 03, 07,
+  08, 15, 28, 29, 30-*, 32, 33, 40, 41, 45, 47, 48, 51, 52, 64, 65, 66,
+  69, 70, 77 (each passed the scripted checks).
 
 ## Needs the maintainer
 
