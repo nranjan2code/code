@@ -12,10 +12,13 @@ across them. Nothing here is started unless it says so.
 
 - [x] CHANGELOG: the `## 8.0.0` section.
 - [x] Version: 8.0.0; `scripts/bump-version.sh`.
-- [ ] `scripts/release.sh`, tag `v8.0.0`.
-- [ ] This Mac: `vak self uninstall --purge`, install from `dist/8.0.0`
-  (`vak self install`, `vak self services-sync`); the maintainer runs setup
-  with the provider key.
+- [x] `scripts/release.sh`: every gate passed, tagged `v8.0.0`.
+- [x] This Mac: `vak self uninstall --purge --yes`, then `dist/8.0.0/vak
+  self install`, the CLI linked again at `~/.local/bin/vak` (the purge
+  removes the link), `vak self services-sync`; `self verify` clean, both
+  services running.
+- [ ] The maintainer runs `vak setup` with the provider key; then `doctor`
+  in `~/vak-home`. AWS is still on 7.1.0.
 - [ ] The data baseline is still 7.0 (`vak_core::baseline`, invariant 29):
   bump it to 8.0, so a data home or saved presentation library from before
   the card forms is refused with the one message instead of half-read.

@@ -1,4 +1,4 @@
-# Handover — 2026-10-14 evening: the night list is done
+# Handover — 2026-10-14 evening: card forms done, 8.0.0 released
 
 The one handover. Earlier handovers were removed on 2026-10-14 (git
 history keeps them); every note of theirs that is still true is under
@@ -7,81 +7,60 @@ history keeps them); every note of theirs that is still true is under
 ## Prompt for a fresh session
 
 "Continue in /Users/nisheethranjan/Projects/Vak/code on main. Read
-AGENTS.md first (especially 'Tool arguments are written, then read', 'No
-word lists, no tuned limits', 'Investigating a failure', 'Verification
-before every commit', 'Parallel agents' and invariant 43), then
-docs/plans/handover-2026-10-14-evening.md whole.
+AGENTS.md first (especially 'No word lists, no tuned limits',
+'Investigating a failure', 'Verification before every commit' and the
+card-forms paragraph under Output presentation), then
+docs/plans/handover-2026-10-14-evening.md whole and
+docs/plans/open-items.md ('Before the next release').
 
-First run `git status` and `git log --oneline -8`. Another session may work
-in this same checkout: stage only your own paths, never `git add -A`. Keep
-only `main`: no branches, no worktrees, commit and push each verified step.
-
-The night list is finished. Start the next round from 'Next' below: ask the
-maintainer which backlog item to take first if it is not clear, then finish
-each whole (code, tests, docs, AGENTS.md where a rule changes, screens),
-verify it live or in the browser, run the full gate, commit only your paths,
-push.
-
-Live runs: never on ~/vak-home. Use /tmp/vak-live/ws13 in workspace-write
-mode, launch entry `vak-tmp-live` (port 8902) or `vak-tmp-live-8903`; token
-in /tmp/vak-live/test-gateway-token; sign in at /app/?token=<token>. The
-route is ollama, qwen3.5:4b-mlx; check `GET /config` before a turn. Work
-autonomously with short progress lines; ask only on a genuine product
-decision. No provider, model or tool is first-class. Never blame the model.
-Do not edit sources while a `cargo test` is running. Keep target/ under
-45 GB. UI work by hand, checked at 1440 × 900 and 390 × 844, light and
-dark. Token budget is tight: lean reads, commit each verified step."
+Run `git status` and `git log --oneline -8`. Stage only your own paths;
+keep only `main`. 8.0.0 is released and installed fresh on this Mac;
+the maintainer runs `vak setup`. Next: bump the data baseline to 8.0
+(open items), then ask the maintainer which item to take. Fix causes as
+designs, never spot fixes, keyword rules or tuned numbers. Live runs use
+launch entry `vak-forms-live` (port 8904, /tmp/vak-live/forms, token in
+/tmp/vak-live/test-gateway-token; route gpt-6-luna, check GET /config);
+after the purge the dev data home may need its route set again. Short
+progress lines, lean token use, update this handover at the end."
 
 ## Where things stand
 
-**Card forms (docs/design/92-card-forms.md), 2026-10-14 late.** Pushed as
-`3abc37045` with the full gate green: cards are eighteen forms, one list in
-four places (card tools, delivery validators, host primitives, client
-`crates/vak-client-ui/src/components/cards/`), drawn by
-`StructuredOutput.block`; the old registry, seeds, planner/word signals,
-adapters and JSON sniffing are gone. Stages F1–F5 done; F6 (live) is
-partly done, below.
+**8.0.0 released 2026-10-14** (`db1dc61db`, tag `v8.0.0`), installed
+fresh on this Mac after a purge; services running, `self verify` clean.
+The maintainer still runs `vak setup` with the provider key. The data
+baseline is still 7.0: bumping it to 8.0 is the first open item.
 
-**Uncommitted in the checkout (targeted tests pass, full gate NOT run):**
-stats figures kept as written and grouped on display; only the first
-summary leads an answer (a later one stays in place); comparison points
-hang-indent; chart series 2 is green; the "Latest" pill sits bottom-right;
-the prompt seed asks for ready cards in one step (doc 07 note). Run
-`scripts/gate.sh`, rebuild both client bundles first, then commit.
+**Card forms (doc 92) are done, F1 to F6.** This session, each step with
+the full gate green and checked live:
 
-**Live runs (dev route gpt-6-luna on port 8904, workspace /tmp/vak-live/forms,
-launch entry `vak-forms-live`; session ids in the maintainer's chat):**
-trip, calendar, coding, loan and research all drew the right forms with no
-errors (calendar+list; summary+diff+test report; summary+table+chart+
-details+file preview; summary+table+sources). Open findings, each to be
-fixed in Vak's contract, never by a word list:
-1. Every card costs one model step (a five-card answer = five round trips,
-   ~5 s each); the one-step prompt sentence did not change it in one
-   rerun. Next: find what in the card tools or loop makes the model call
-   one at a time (tool results? plan check?), and add an agent test that
-   several card calls in one step are recorded and projected in order
-   (none exists; `parallel_tools_preserve_source_order` is for other tools).
-2. Duplicated cards: in the loan rerun a file-preview card named a
-   `deliverable` not in the plan, was refused with `[card-plan]`, and the
-   model then re-sent summary, details and chart. Read the `[card-plan]`
-   wording (vak_control::render) and the plan check: the refusal lists the
-   plan's cards, which may invite re-sending them.
-3. Format-free requests are not yet measured: run live requests that name
-   no format (a simple question must stay prose; hidden numbers; a hidden
-   plan; two asks in one message) and judge by receipts. The maintainer
-   wants no hard-coding: no classifier, no keyword rules; strands stay for
-   authority, the model plans its own deliverables.
-4. The "Today" mail-calendar pill overlaps a card's top-right button in a
-   narrow pane (open items).
+- `dcd281816` figures kept as written; first summary leads; comparison
+  points hang-indent; chart series 2 green; Latest pill bottom-right.
+- `b8ad78e20` a plan sent in the same step as cards is recorded before
+  they are checked (they went unchecked); a `[card-plan]` refusal lists
+  the cards still to show apart from those shown (a model had re-sent
+  shown ones); the plan's result asks for ready cards in one step. New
+  agent test: several cards in one step are recorded in call order.
+- `19f68d3fe` card prose renders as the conversation's markdown and long
+  words wrap (a raw `[title](url)` pushed a callout off a phone); Today
+  moved from a floating pill into the top bar.
+- `04b0c8a52` the model places and revises its own cards (maintainer's
+  decision): optional typed `replaces` (a presentation id from the ack;
+  unknown ids refused with the answer's ids) and `beside_previous`
+  (`AnswerOutline.beside`, paired two to a row where wide). These replace
+  the client's `SMALL_BLOCKS` list and the projection's supersede-by-type
+  after a repair nudge (doc 87, "Placement and revision").
 
-**Release:** the maintainer chose 8.0.0 with a purge: after F6 and the
-fixes above, cut 8.0.0 (docs/design/32-release-engineering.md,
-`scripts/release.sh`), purge this Mac's data home (`vak self uninstall
---purge`), install from `dist/8.0.0` (`vak self install`, `self
-services-sync`), and the maintainer runs setup (provider key). Record in
-open items that the data baseline needs bumping to 8.0.
+Live findings (dev route): one card per step came from the model's own
+choice; nothing in the request disabled parallel calls. With the wording
+in the prompt seed and the plan result, cards batched in four of six
+card-bearing turns (wording only, recorded in open items). Format-free
+requests (a fact, hidden numbers, two small asks, a bill split) stayed
+prose; a hidden plan drew summary, steps, callout and sources; the model
+set `beside_previous` itself on a summary and its callout.
 
-Pushed this session, each with the full gate green and checked live:
+Earlier the same day:
+
+Pushed earlier, each with the full gate green and checked live:
 
 - `b5c0ab862` Compare with your folder lists what an Office or PDF version
   changes (the night list's item 3).
@@ -170,8 +149,9 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 Everything open is in `docs/plans/open-items.md`, the one tracker: the
 release checklist, what was seen only in tests, what has not been run,
 what needs the maintainer, known limits and decisions not to build. Ask
-the maintainer which item to take first: the release checklist for 7.2.0,
-or one of the contract gaps the audit listed.
+the maintainer which item to take first after the 8.0 data baseline: an
+open card-forms item (a tuned length in `isFleetingNarration`, the unread
+`tool_domains` field), or one of the contract gaps the audit listed.
 
 ## Working notes
 
