@@ -302,7 +302,7 @@ impl Tool for StepsBlock {
 }
 
 /// A card that names a deliverable the plan does not have is refused with
-/// the plan's names; one that names nothing is refused with the planned
+/// the plan's cards still to show and those already shown; one that names nothing is refused with the planned
 /// cards not shown yet, so the model links them while it works rather than
 /// at the plan check; the card that names its deliverable is shown, and
 /// once every planned card is shown an unnamed one is too
@@ -329,6 +329,11 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
                 "a3",
                 "steps_block",
                 serde_json::json!({"deliverable": "Watering", "steps": ["Water Monday"]}),
+            ),
+            call(
+                "a5",
+                "steps_block",
+                serde_json::json!({"deliverable": "morning routine", "steps": ["Wake"]}),
             ),
             call(
                 "a4",
@@ -358,7 +363,7 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
             _ => None,
         })
         .collect();
-    assert_eq!(results.len(), 4, "{results:?}");
+    assert_eq!(results.len(), 5, "{results:?}");
     assert!(
         results[0].1 && results[0].2.contains("not shown yet are \"watering\""),
         "an unnamed card waits for the plan's: {results:?}"
@@ -370,11 +375,85 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
                 .contains("\"morning routine\", which is not a card in your plan"),
         "{results:?}"
     );
-    assert!(!results[2].1, "{results:?}");
     assert!(
-        !results[3].1,
+        results[1].2.contains("not shown yet are \"watering\"")
+            && !results[1].2.contains("shown already"),
+        "{results:?}"
+    );
+    assert!(!results[2].1, "{results:?}");
+    // Once the planned card is shown, a refusal says it stays shown rather
+    // than listing it as a card to send.
+    assert!(
+        results[3].1
+            && results[3]
+                .2
+                .contains("Every card in your plan is shown already")
+            && results[3]
+                .2
+                .contains("\"watering\" are shown already and stay shown"),
+        "{results:?}"
+    );
+    assert!(
+        !results[4].1,
         "an unnamed card after the plan's: {results:?}"
     );
+}
+
+/// A card sent in the same step as the plan is checked against that plan,
+/// and the plan's result asks for the cards together in one step.
+#[tokio::test]
+async fn a_card_beside_its_plan_is_checked_against_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut step = plan("card");
+    step.content.push(ContentBlock::ToolUse {
+        id: "a1".into(),
+        name: "steps_block".into(),
+        input: serde_json::json!({"deliverable": "morning routine", "steps": ["Wake"]}),
+    });
+    step.content.push(ContentBlock::ToolUse {
+        id: "a2".into(),
+        name: "steps_block".into(),
+        input: serde_json::json!({"deliverable": "watering", "steps": ["Water Monday"]}),
+    });
+    let (mut agent, _) = agent(&dir, "plan-beside", vec![step, text("Water on Monday.")]);
+    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    // The ledger's results, as the open turn showed them (a closed turn
+    // projects a result as its digest).
+    let results: Vec<(String, bool, String)> = session
+        .chain_to_root()
+        .iter()
+        .filter_map(|entry| match &entry.payload {
+            vak_session::types::EntryPayload::Message(record) => {
+                Some(record.message.content.clone())
+            }
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => Some((tool_use_id, is_error, content)),
+            _ => None,
+        })
+        .collect();
+    let of = |id: &str| results.iter().find(|result| result.0 == id).unwrap();
+    assert!(
+        !of("p1").1 && of("p1").2.contains("together in one step"),
+        "{results:?}"
+    );
+    assert!(
+        of("a1").1 && of("a1").2.contains("not a card in your plan"),
+        "{results:?}"
+    );
+    assert!(!of("a2").1, "{results:?}");
 }
 
 struct CalloutBlock;

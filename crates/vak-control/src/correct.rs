@@ -232,18 +232,38 @@ pub fn card_command_not_run(command: &str, ran: &[String]) -> String {
 }
 
 /// What a card is told when its `deliverable` names a deliverable the plan
-/// does not list: the card is not shown, and the plan's cards are given.
-pub fn card_unplanned(answers: &str, planned: &[String]) -> String {
-    let names = planned
-        .iter()
-        .map(|name| format!("\"{name}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
+/// does not list: the card is not shown. The plan's cards are given in two
+/// lists, those still to show and those already shown, which stay shown.
+/// Found live 2026-10-14: given every planned card under "the cards it
+/// lists", a model sent the ones already shown again.
+pub fn card_unplanned(answers: &str, open: &[String], shown: &[String]) -> String {
+    let quoted = |names: &[String]| {
+        names
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let open = if open.is_empty() {
+        "Every card in your plan is shown already.".to_string()
+    } else {
+        format!(
+            "Your plan's cards not shown yet are {}: if this card is one of them, call it \
+             again with `deliverable` set to that name.",
+            quoted(open)
+        )
+    };
+    let shown = if shown.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " {} are shown already and stay shown: do not send them again.",
+            quoted(shown)
+        )
+    };
     format!(
         "[card-plan]: not shown — `deliverable` is \"{answers}\", which is not a card in your \
-         plan. The cards it lists are {names}. Call it again with `deliverable` set to the one \
-         this card delivers, with the content that deliverable asks for, or leave `deliverable` \
-         out for a card the plan does not list."
+         plan. {open}{shown} A card your plan does not list is called with `deliverable` left out."
     )
 }
 

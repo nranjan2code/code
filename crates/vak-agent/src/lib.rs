@@ -5546,15 +5546,6 @@ impl Agent {
             .partition(|call| self.tool_presents_cards(&call.name));
         let mut results =
             Vec::with_capacity(recall_calls.len() + plan_calls.len() + card_calls.len());
-        for call in card_calls {
-            let (output, verdict) = self.show_card(&call).await;
-            self.record_decisions(vec![
-                vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(verdict))
-                    .with(vak_control::Evidence::Call(call.id.clone())),
-            ])
-            .await;
-            results.push((call.id, output));
-        }
         for call in plan_calls {
             let output = match vak_tools::parse_plan_args(&call.input) {
                 Ok(plan) => {
@@ -5565,11 +5556,23 @@ impl Agent {
                         })
                         .collect::<Vec<_>>()
                         .join("; ");
+                    // Found live 2026-10-14: told only in the prompt, an
+                    // answer's cards still came one per model step. The plan's
+                    // result is read right before the cards are written.
+                    let together = if plan
+                        .iter()
+                        .any(|deliverable| deliverable.form == vak_intent::DeliverableForm::Card)
+                    {
+                        " Send the cards you have the content for together in one step, in \
+                         the plan's order."
+                    } else {
+                        ""
+                    };
                     *self
                         .declared_plan
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(plan);
-                    ToolRunOutput::Ok(format!("Plan recorded: {listed}."))
+                    ToolRunOutput::Ok(format!("Plan recorded: {listed}.{together}"))
                 }
                 Err(message) => ToolRunOutput::Err(
                     Fault::Shape,
@@ -5577,6 +5580,17 @@ impl Agent {
                         .to_string(),
                 ),
             };
+            results.push((call.id, output));
+        }
+        // After the plan: a card in the same step as its plan is checked
+        // against that plan.
+        for call in card_calls {
+            let (output, verdict) = self.show_card(&call).await;
+            self.record_decisions(vec![
+                vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(verdict))
+                    .with(vak_control::Evidence::Call(call.id.clone())),
+            ])
+            .await;
             results.push((call.id, output));
         }
         let mut history_misses = HashSet::new();
@@ -6114,6 +6128,15 @@ impl Agent {
             .filter(|deliverable| deliverable.form == vak_intent::DeliverableForm::Card)
             .map(|deliverable| deliverable.name.trim().to_string())
             .collect();
+        let named = self
+            .named_cards
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let (shown, open): (Vec<String>, Vec<String>) = planned
+            .iter()
+            .cloned()
+            .partition(|planned| named.iter().any(|name| name.eq_ignore_ascii_case(planned)));
         if let Some(name) = answers.as_deref()
             && !planned.is_empty()
             && !planned
@@ -6121,27 +6144,18 @@ impl Agent {
                 .any(|planned| planned.eq_ignore_ascii_case(name))
         {
             return (
-                ToolRunOutput::Err(Fault::Shape, vak_control::card_unplanned(name, &planned)),
+                ToolRunOutput::Err(
+                    Fault::Shape,
+                    vak_control::card_unplanned(name, &open, &shown),
+                ),
                 CallVerdict::Refused(Refusal::Tool),
             );
         }
-        if answers.is_none() {
-            let named = self
-                .named_cards
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            let open: Vec<String> = planned
-                .iter()
-                .filter(|planned| !named.iter().any(|name| name.eq_ignore_ascii_case(planned)))
-                .cloned()
-                .collect();
-            if !open.is_empty() {
-                return (
-                    ToolRunOutput::Err(Fault::Shape, vak_control::card_unnamed(&open)),
-                    CallVerdict::Refused(Refusal::Tool),
-                );
-            }
+        if answers.is_none() && !open.is_empty() {
+            return (
+                ToolRunOutput::Err(Fault::Shape, vak_control::card_unnamed(&open)),
+                CallVerdict::Refused(Refusal::Tool),
+            );
         }
         // A card that previews a file this run delivered for review is not
         // shown: the draft is in front of the person with its change list,

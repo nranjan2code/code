@@ -295,6 +295,65 @@ async fn fence_presentation_deduped_against_tool_emitted_card() {
     ));
 }
 
+/// Found live 2026-10-14: an answer's cards came one per model step until
+/// the prompt asked for ready cards together. Several card calls in one
+/// step are each recorded, in the order the step made them, which is the
+/// order the projection reads them in.
+#[tokio::test]
+async fn several_cards_in_one_step_are_recorded_in_call_order() {
+    let dir = tempdir().unwrap();
+    let card = |id: &str, title: &str| ContentBlock::ToolUse {
+        id: id.into(),
+        name: "emit_chart_card".into(),
+        input: serde_json::json!({"semantic_type": "chart", "title": title, "points": [{"series": "s", "x": "1", "y": 1}]}),
+    };
+    let mut step = tool_call_msg("unused", "emit_chart_card", serde_json::json!({}));
+    step.content = vec![
+        card("c1", "Payment"),
+        card("c2", "Schedule"),
+        card("c3", "Balance"),
+    ];
+    let mut agent = build_agent(
+        &dir,
+        "cards-one-step",
+        vec![step, text_msg("Above.")],
+        vec![Arc::new(FakeEmitChartCard)],
+        true,
+    );
+    let outcome = agent
+        .run(
+            "the loan in three cards",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+
+    let session = agent.session.lock().await;
+    let recorded: Vec<(String, String)> = session
+        .presentations()
+        .iter()
+        .map(|(_, record)| match &record.source {
+            PresentationSource::ToolCall { tool_use_id } => {
+                (tool_use_id.clone(), record.title.clone())
+            }
+            other => panic!("not a card call: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        recorded,
+        [
+            ("c1".to_string(), "Payment".to_string()),
+            ("c2".to_string(), "Schedule".to_string()),
+            ("c3".to_string(), "Balance".to_string()),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn recall_by_id_returns_the_full_evidence_content() {
     let dir = tempdir().unwrap();
