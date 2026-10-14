@@ -8,6 +8,22 @@ across them. Nothing here is started unless it says so.
 
 ## Before the next release
 
+8.1.0 (2026-10-15), additive within 8.x, with a purge on this Mac
+(maintainer's choice: the 8.0.0 home predates the home-version stamp):
+
+- [x] CHANGELOG: the `## 8.1.0` section.
+- [x] Version: 8.1.0 (`scripts/bump-version.sh` set Cargo.toml, then
+  stopped at its `cargo clean`, which refused a target with no
+  `CACHEDIR.TAG`; the badge and lockfile steps were finished by hand).
+- [ ] `scripts/release.sh`: every gate passed, tagged `v8.1.0`.
+- [ ] This Mac: keep a copy of `~/Library/Application Support/Vakyartha`
+  (private deployments), `vak self uninstall --purge --yes`, then
+  `dist/8.1.0/vak self install`, link the CLI again at
+  `~/.local/bin/vak`, `vak self services-sync`; `self verify` clean; put
+  the private deployments back.
+- [ ] The maintainer runs `vak setup` with the provider key; then `doctor`
+  in `~/vak-home`. AWS stays on 8.0.0 until the maintainer asks.
+
 8.0.0 (2026-10-14), a major version with a purge (maintainer's choice):
 
 - [x] CHANGELOG: the `## 8.0.0` section.

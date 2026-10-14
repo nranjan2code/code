@@ -1,4 +1,9 @@
-## Unreleased
+## 8.1.0 — 2026-10-15
+
+Skills can carry programs (docs/design/93-self-evolving-capabilities.md,
+stage E1), and the data baseline is 8.0: a data home now names the version
+that created it. Homes set up with 8.0.0 predate that record, so purge
+and set up again after installing.
 
 - A skill can carry a program: a Python, shell or Node script with a
   `capability.json` naming its entry and arguments. Vakyartha offers it as
