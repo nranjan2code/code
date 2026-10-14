@@ -1064,6 +1064,16 @@ pub enum CallEffect {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bytes: Option<u64>,
     },
+    /// A process the call started ran, and how it ended: its exit code, or
+    /// none when it was stopped (at its limit, or cancelled), and how long
+    /// it ran. Recorded whether the call succeeded or failed, so a call
+    /// that failed before anything ran is told apart from a command that
+    /// ran and failed.
+    Ran {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        duration_ms: u64,
+    },
     /// A web page the call fetched, by the address it asked for: what a
     /// version made later in the turn names as read first
     /// (docs/design/90-file-state.md §5.1).

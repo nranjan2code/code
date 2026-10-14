@@ -906,6 +906,18 @@ function renderDiff(node: AdaptiveRenderNode, surface: RenderSurface) {
  * static transcript view (no xterm.js — `@xterm/xterm` is only used by the
  * live TerminalPane), so there is no emulator to delegate to here.
  */
+/**
+ * How a command ended, in plain words: its exit code, or "Stopped" when the
+ * runtime recorded a run with no exit (stopped at its limit or cancelled),
+ * and how long it ran. Nothing when the card says neither.
+ */
+function terminalStatus(exitCode: number | undefined, durationMs: number | undefined): string {
+  const ended = exitCode !== undefined ? `Exit ${exitCode}` : durationMs !== undefined ? "Stopped" : "";
+  if (durationMs === undefined) return ended;
+  const took = durationMs < 1000 ? `${durationMs} ms` : `${(durationMs / 1000).toFixed(1)} s`;
+  return ended ? `${ended} · ${took}` : took;
+}
+
 function renderTerminal(node: AdaptiveRenderNode, surface: RenderSurface) {
   const compact = surface === "compact";
   const [copied, setCopied] = createSignal(false);
@@ -926,18 +938,12 @@ function renderTerminal(node: AdaptiveRenderNode, surface: RenderSurface) {
     }
   };
 
-  const isSuccess = () => exitCode() === 0;
 
   return (
     <div class="canvas-card terminal-wrap" classList={{ "terminal-wrap-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-subtitle">
-            {exitCode() === undefined ? "Exit status unavailable" : `Exit ${exitCode()}`}
-            <Show when={durationMs() !== undefined}>
-              {" "}· {durationMs()}ms
-            </Show>
-          </span>
+          <span class="card-subtitle">{terminalStatus(exitCode(), durationMs())}</span>
         </div>
         <div class="card-actions">
           <button type="button" class="pill-action-btn" onClick={handleCopy}>

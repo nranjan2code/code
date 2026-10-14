@@ -1259,8 +1259,10 @@ in progress, and the rest of V4 follows it.
     the conversation retrieved, a file a preview names that is neither
     in the workspace nor among the Agent's drafts, or a command no call
     ran: a card that shows what a command printed
-    (`Tool::output_of_command`) takes it from that call's recorded
-    result, never from words the model wrote. Every correction goes through the one ladder
+    (`Tool::output_of_command`) takes it, its exit code and its duration
+    from the call that ran it, never from words the model wrote, and a
+    call refused before anything ran is not one: a tool says a process ran
+    (`ToolOutput::ran`), recorded as `CallEffect::Ran`, failed or not. Every correction goes through the one ladder
     (`vak_control::Ladder`: told once with the evidence, then the frame
     changes or the answer stands);
     a thinking-only step is one `[empty-step]` redo unless a card

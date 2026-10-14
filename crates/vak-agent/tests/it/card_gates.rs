@@ -112,10 +112,16 @@ impl Tool for FakeShell {
             vak_permission::Subject::Command("command"),
         )
     }
-    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
-        ToolOutput::ok(
+    async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        // One refused before anything ran, as a missing folder is.
+        if args["command"] == "ls missing" {
+            return ToolOutput::error(Fault::Target, "working directory does not exist");
+        }
+        ToolOutput::error(
+            Fault::Limit,
             "starting\n[command stopped at its time limit of 1000ms]\n[limit]: a note for the model",
         )
+        .ran(None, 1000)
     }
 }
 
@@ -140,10 +146,17 @@ impl Tool for FakeTerminalCard {
         Some(vak_tools::CommandOutput {
             command: "command",
             output: "output",
+            exit_code: "exit_code",
+            duration_ms: "duration_ms",
         })
     }
     async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
-        ToolOutput::ok(format!("shown: {}", args["output"].as_str().unwrap_or("")))
+        ToolOutput::ok(format!(
+            "shown: {} exit={} ms={}",
+            args["output"].as_str().unwrap_or(""),
+            args["exit_code"],
+            args["duration_ms"]
+        ))
     }
 }
 
@@ -395,6 +408,12 @@ async fn a_terminal_card_shows_what_its_command_really_printed() {
                 "emit_terminal_card",
                 serde_json::json!({"command": "npm run dev"}),
             ),
+            tool_call_msg("s2", "shell", serde_json::json!({"command": "ls missing"})),
+            tool_call_msg(
+                "t3",
+                "emit_terminal_card",
+                serde_json::json!({"command": "ls missing"}),
+            ),
             text_msg("The server stopped at its limit."),
         ],
     )
@@ -428,10 +447,60 @@ async fn a_terminal_card_shows_what_its_command_really_printed() {
         !shown.contains("[limit]"),
         "the runtime's note is not output: {shown}"
     );
+    assert!(
+        shown.contains("exit=null ms=1000"),
+        "stopped, not exited: {shown}"
+    );
     let (refused, failed) = result("t2");
     assert!(failed, "{refused}");
     assert!(
         refused.contains("no call in this conversation ran `npm run dev`"),
         "{refused}"
     );
+    // A call refused before anything ran printed nothing.
+    let (refused, failed) = result("t3");
+    assert!(failed, "{refused}");
+    assert!(refused.contains("ran `ls missing`"), "{refused}");
+}
+
+/// A call by a name Vak retired reaches no other tool: it is told what
+/// replaced it and which tools exist, and the turn goes on.
+#[tokio::test]
+async fn a_retired_name_is_told_what_replaced_it() {
+    let dir = tempdir().unwrap();
+    let (mut agent, _) = build_agent(
+        &dir,
+        "pc-retired",
+        vec![
+            tool_call_msg(
+                "p1",
+                "python_eval",
+                serde_json::json!({"code": "print(42)"}),
+            ),
+            text_msg("Done."),
+        ],
+    )
+    .await;
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let told = session
+        .message_chain()
+        .iter()
+        .flat_map(|(_, message)| message.content.iter())
+        .find_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error: true,
+            } if tool_use_id == "p1" => Some(content.clone()),
+            _ => None,
+        })
+        .expect("the call is answered");
+    assert!(told.contains(r#""name":"python_eval""#), "{told}");
+    assert!(told.contains(r#""use_instead":"bash"#), "{told}");
+    assert!(told.contains(r#""available_tools""#), "{told}");
 }

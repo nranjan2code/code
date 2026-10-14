@@ -181,6 +181,9 @@ struct WorkerResponse {
     /// (plan M5b). A sandboxed worker has no log of its own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     telemetry: Vec<String>,
+    /// That a process the call started ran (`ToolOutput::ran`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ran: Option<(Option<i32>, u64)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -638,9 +641,13 @@ async fn execute(
     for line in &response.telemetry {
         vak_telemetry::forward(line);
     }
-    match response.fault {
+    let output = match response.fault {
         Some(fault) => ToolOutput::error(fault, response.content),
         None => ToolOutput::ok(response.content),
+    };
+    match response.ran {
+        Some((exit_code, duration_ms)) => output.ran(exit_code, duration_ms),
+        None => output,
     }
 }
 
@@ -700,6 +707,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -714,6 +722,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -728,6 +737,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -747,6 +757,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -761,6 +772,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -779,6 +791,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -796,6 +809,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -810,6 +824,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -824,6 +839,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -839,6 +855,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -854,6 +871,7 @@ pub async fn worker_main() -> i32 {
                 fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -866,6 +884,7 @@ pub async fn worker_main() -> i32 {
                 fault: None,
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: None,
             })
             .await;
         }
@@ -949,6 +968,7 @@ pub async fn worker_main() -> i32 {
         fault: output.fault,
         events,
         telemetry,
+        ran: output.ran,
     })
     .await
 }
@@ -967,6 +987,7 @@ async fn write_response(response: WorkerResponse) -> i32 {
                 fault: Some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
+                ran: response.ran,
             };
             match serde_json::to_vec(&refusal) {
                 Ok(payload) => payload,

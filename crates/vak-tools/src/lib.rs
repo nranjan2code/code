@@ -89,6 +89,10 @@ pub struct ToolOutput {
     /// (`Tool::provenance`): a delegated worker's result holds what the
     /// worker held. The calling loop joins the two.
     pub provenance: vak_control::Provenance,
+    /// A process this call started ran: its exit code (none when it was
+    /// stopped) and how long it ran, in milliseconds. The calling loop
+    /// records it as `CallEffect::Ran`, failed or not.
+    pub ran: Option<(Option<i32>, u64)>,
 }
 
 pub use vak_session::types::McpSource;
@@ -133,10 +137,17 @@ impl ToolOutput {
             mcp_source: None,
             account: None,
             provenance: vak_control::Provenance::NONE,
+            ran: None,
         }
     }
 
     /// The same output, naming the connected account it came from.
+    /// Says a process this call started ran and how it ended.
+    pub fn ran(mut self, exit_code: Option<i32>, duration_ms: u64) -> Self {
+        self.ran = Some((exit_code, duration_ms));
+        self
+    }
+
     pub fn from_account(mut self, account: &str) -> Self {
         self.account = Some(account.to_string());
         self
@@ -150,6 +161,7 @@ impl ToolOutput {
             mcp_source: None,
             account: None,
             provenance: vak_control::Provenance::NONE,
+            ran: None,
         }
     }
 
@@ -223,6 +235,17 @@ pub struct CommandOutput {
     pub command: &'static str,
     /// The argument the loop fills with that call's result.
     pub output: &'static str,
+    /// The arguments the loop fills with how the process ended: its exit
+    /// code (left out when it was stopped) and how long it ran.
+    pub exit_code: &'static str,
+    pub duration_ms: &'static str,
+}
+
+impl CommandOutput {
+    /// Every argument the loop fills.
+    pub fn filled(&self) -> [&'static str; 3] {
+        [self.output, self.exit_code, self.duration_ms]
+    }
 }
 
 #[async_trait]

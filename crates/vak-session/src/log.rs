@@ -203,6 +203,16 @@ pub enum TurnStep<'a> {
     },
 }
 
+/// What a command a call ran printed and how it ended
+/// ([`SessionLog::command_result`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandRun {
+    pub output: String,
+    /// None when the process was stopped before it exited.
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+}
+
 impl SessionLog {
     /// Whether this session already admitted the client request
     /// `request_id`: one ref lookup (`req/<session>/<request>`, plan M6.3),
@@ -1318,47 +1328,34 @@ impl SessionLog {
 
     /// What the latest call in this conversation that ran `command` returned:
     /// a call whose tool names its command argument (`command_argument`,
-    /// from the tool's own declaration, by the tool's name) and holds
-    /// exactly `command` there. The whole body when the result was
-    /// windowed. `None` when no call ran it.
+    /// from the tool's own declaration, by the tool's name), holds exactly
+    /// `command` there, and started a process that ran (`CallEffect::Ran`).
+    /// A call refused before anything ran is never one. The whole body when
+    /// the result was windowed. `None` when no call ran it.
     pub fn command_result(
         &self,
         command_argument: impl Fn(&str) -> Option<&'static str>,
         command: &str,
-    ) -> Option<String> {
+    ) -> Option<CommandRun> {
         let command = command.trim();
         if command.is_empty() {
             return None;
         }
-        let mut ran: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut found: Option<(String, String)> = None;
+        let chain = self.chain_to_root();
+        let mut ran: HashMap<String, (Option<i32>, u64)> = HashMap::new();
         let mut bodies: HashMap<String, String> = HashMap::new();
-        for entry in self.chain_to_root() {
+        for entry in &chain {
             match &entry.payload {
-                EntryPayload::Message(record) => {
-                    for block in &record.message.content {
-                        match block {
-                            vak_llm::ContentBlock::ToolUse { id, name, input } => {
-                                let same = command_argument(name)
-                                    .and_then(|argument| input.get(argument))
-                                    .and_then(serde_json::Value::as_str)
-                                    .is_some_and(|ran| ran.trim() == command);
-                                if same {
-                                    ran.insert(id.clone());
-                                }
-                            }
-                            vak_llm::ContentBlock::ToolResult {
-                                tool_use_id,
-                                content,
-                                ..
-                            } if ran.contains(tool_use_id) => {
-                                found = Some((tool_use_id.clone(), content.clone()));
-                            }
-                            _ => {}
-                        }
+                EntryPayload::CallEffect(record) => {
+                    if let crate::types::CallEffect::Ran {
+                        exit_code,
+                        duration_ms,
+                    } = &record.effect
+                    {
+                        ran.insert(record.tool_use_id.clone(), (*exit_code, *duration_ms));
                     }
                 }
-                EntryPayload::EvidenceBody(record) if ran.contains(&record.tool_use_id) => {
+                EntryPayload::EvidenceBody(record) => {
                     if let Some(text) = self.object_text(&record.body) {
                         bodies.insert(record.tool_use_id.clone(), text);
                     }
@@ -1366,7 +1363,44 @@ impl SessionLog {
                 _ => {}
             }
         }
-        found.map(|(id, content)| bodies.remove(&id).unwrap_or(content))
+        let mut named: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut found: Option<CommandRun> = None;
+        for entry in &chain {
+            let EntryPayload::Message(record) = &entry.payload else {
+                continue;
+            };
+            for block in &record.message.content {
+                match block {
+                    vak_llm::ContentBlock::ToolUse { id, name, input } => {
+                        let same = command_argument(name)
+                            .and_then(|argument| input.get(argument))
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|ran| ran.trim() == command);
+                        if same {
+                            named.insert(id.clone());
+                        }
+                    }
+                    vak_llm::ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        ..
+                    } if named.contains(tool_use_id) => {
+                        if let Some((exit_code, duration_ms)) = ran.get(tool_use_id) {
+                            found = Some(CommandRun {
+                                output: bodies
+                                    .get(tool_use_id)
+                                    .cloned()
+                                    .unwrap_or_else(|| content.clone()),
+                                exit_code: *exit_code,
+                                duration_ms: *duration_ms,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        found
     }
 
     /// Everything this conversation holds that a card may cite: the

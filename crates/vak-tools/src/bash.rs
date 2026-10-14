@@ -273,7 +273,8 @@ impl Tool for BashTool {
                         paths.join(", ")
                     ));
                 }
-                return ToolOutput::error(Fault::Limit, interrupted_output(&out, &err, &reason));
+                return ToolOutput::error(Fault::Limit, interrupted_output(&out, &err, &reason))
+                    .ran(None, duration_ms);
             }
             _ = cancelled => {
                 telemetry_cancel.cancel();
@@ -295,7 +296,8 @@ impl Tool for BashTool {
                     }
                     sink.emit_finished(-1, duration_ms, paths);
                 }
-                return ToolOutput::error(Fault::Cancelled, interrupted_output(&out, &err, "command cancelled"));
+                return ToolOutput::error(Fault::Cancelled, interrupted_output(&out, &err, "command cancelled"))
+                    .ran(None, duration_ms);
             }
             status = child.wait() => {
                 telemetry_cancel.cancel();
@@ -352,12 +354,12 @@ impl Tool for BashTool {
                 }
                 if !status.success() {
                     text.push_str(&format!("\n[exit code: {}]", status.code().unwrap_or(-1)));
-                    return ToolOutput::error(Fault::Target, text);
+                    return ToolOutput::error(Fault::Target, text).ran(status.code(), duration_ms);
                 }
                 if text.is_empty() {
                     text.push_str("(no output)");
                 }
-                ToolOutput::ok(text)
+                ToolOutput::ok(text).ran(status.code(), duration_ms)
             }
         }
     }
@@ -1102,6 +1104,29 @@ mod tests {
             .await;
         assert!(!out.is_error(), "{}", out.content);
         assert!(out.content.contains("workspace-marker"));
+    }
+
+    /// A command that ran says how it ended, failed or not; a call refused
+    /// before anything ran says nothing ran.
+    #[tokio::test]
+    async fn a_command_that_ran_says_so_and_one_refused_before_running_does_not() {
+        vak_config::paths::isolate_home_for_tests();
+        use crate::{Tool, ToolContext};
+        let workspace = tempfile::tempdir().unwrap();
+        let ctx = ToolContext::new(workspace.path().to_path_buf());
+        let failed = super::BashTool
+            .execute(&serde_json::json!({ "command": "exit 3" }), &ctx)
+            .await;
+        assert!(failed.is_error());
+        assert_eq!(failed.ran.map(|(code, _)| code), Some(Some(3)));
+        let refused = super::BashTool
+            .execute(
+                &serde_json::json!({ "command": "ls", "cwd": "missing" }),
+                &ctx,
+            )
+            .await;
+        assert!(refused.is_error());
+        assert_eq!(refused.ran, None, "{}", refused.content);
     }
 
     #[tokio::test]

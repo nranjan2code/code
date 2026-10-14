@@ -394,6 +394,7 @@ impl TurnLink {
             crate::types::CallEffect::FileWrite { path, .. } => (path, LinkKind::WroteFile),
             crate::types::CallEffect::Mcp(_)
             | crate::types::CallEffect::Fetched { .. }
+            | crate::types::CallEffect::Ran { .. }
             | crate::types::CallEffect::Account { .. }
             | crate::types::CallEffect::Failed { .. }
             | crate::types::CallEffect::Provenance(_) => {

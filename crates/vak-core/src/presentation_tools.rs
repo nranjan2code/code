@@ -324,7 +324,10 @@ fn build_terminal(args: &Map<String, Value>) -> Result<Value, String> {
     if !args.get("output").is_some_and(Value::is_string) {
         return Err("no call in this conversation ran this command".into());
     }
-    Ok(Value::Object(copy(args, &["command", "output"])))
+    Ok(Value::Object(copy(
+        args,
+        &["command", "output", "exit_code", "duration_ms"],
+    )))
 }
 
 fn table_fields() -> Value {
@@ -1718,6 +1721,8 @@ const SHAPES: &[CardShape] = &[
         output_of_command: Some(vak_tools::CommandOutput {
             command: "command",
             output: "output",
+            exit_code: "exit_code",
+            duration_ms: "duration_ms",
         }),
         eyebrow: Eyebrow::Label,
     },
@@ -2053,10 +2058,13 @@ fn validate_call(
         .cloned()
         .unwrap_or_default();
     // What the loop filled from a call is the shape's own field.
-    let filled = shape.output_of_command.map(|spec| spec.output);
+    let filled = shape
+        .output_of_command
+        .map(|spec| spec.filled())
+        .unwrap_or_default();
     let unknown: Vec<String> = own
         .keys()
-        .filter(|key| !known.contains_key(key.as_str()) && Some(key.as_str()) != filled)
+        .filter(|key| !known.contains_key(key.as_str()) && !filled.contains(&key.as_str()))
         .map(|key| format!("`{key}`"))
         .collect();
     if !unknown.is_empty() {

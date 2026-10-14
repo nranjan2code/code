@@ -6027,12 +6027,19 @@ impl Agent {
             },
             &command,
         );
-        let output = ran.ok_or_else(|| vak_control::card_command_not_run(&command))?;
-        // What the call printed, without the notes the runtime added for
-        // the model.
-        let output = vak_intent::control::clean_scaffolding(&output);
+        let ran = ran.ok_or_else(|| vak_control::card_command_not_run(&command))?;
         if let Some(fields) = input.as_object_mut() {
-            fields.insert(spec.output.to_string(), Value::String(output));
+            // What the call printed, without the notes the runtime added
+            // for the model, and how the process ended.
+            fields.insert(
+                spec.output.to_string(),
+                Value::String(vak_intent::control::clean_scaffolding(&ran.output)),
+            );
+            match ran.exit_code {
+                Some(code) => fields.insert(spec.exit_code.to_string(), Value::from(code)),
+                None => fields.remove(spec.exit_code),
+            };
+            fields.insert(spec.duration_ms.to_string(), Value::from(ran.duration_ms));
         }
         Ok(input)
     }
@@ -7608,6 +7615,14 @@ async fn execute_one(
                             effects.push(vak_session::types::CallEffect::Fetched { url });
                         }
                     }
+                    // A process that ran is recorded failed or not: a call
+                    // refused before anything ran records none.
+                    if let Some((exit_code, duration_ms)) = out.ran {
+                        effects.push(vak_session::types::CallEffect::Ran {
+                            exit_code,
+                            duration_ms,
+                        });
+                    }
                     // What the result holds, failed or not: an error can
                     // carry a server's words as well as a success can
                     // (docs/design/08-permissions.md "Provenance").
@@ -7856,10 +7871,15 @@ fn unknown_tool_message(name: &str, tools: &[Arc<dyn Tool>], skill_names: &[Stri
         return vak_control::skill_not_tool(name, skill);
     }
     let offered: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
+    let retired = vak_tools::retired::RETIRED_TOOLS
+        .iter()
+        .find(|tool| tool.name == name)
+        .map(|tool| tool.replacement);
     vak_control::unknown_tool(
         name,
         &offered,
         tools.iter().any(|tool| tool.name() == "mcp"),
+        retired,
     )
 }
 
@@ -9828,6 +9848,7 @@ mod file_effect_tests {
             }
             CallEffect::Mcp(_)
             | CallEffect::Fetched { .. }
+            | CallEffect::Ran { .. }
             | CallEffect::Account { .. }
             | CallEffect::Failed { .. }
             | CallEffect::Provenance(_) => None,

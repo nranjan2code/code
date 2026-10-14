@@ -68,13 +68,27 @@ Pushed this session, each with the full gate green and checked live:
 
 `recall` with a query beside a `turn_id` was already fixed (`2e8c916d8`).
 
+Then, after the critical review the maintainer asked for: a terminal card
+fills only from a call that ran a process (`CallEffect::Ran`, set through
+`ToolOutput::ran`, carried by the worker protocol), with its exit code and
+duration, so a call refused before running ("working directory does not
+exist") is never shown as output; the card reads "Stopped · 5.0 s" or
+"Exit 0 · 120 ms". A retired name is told what replaced it.
+
 ## Next (the next round's backlog; nothing here is started)
 
-1. Watch for fallout from `9004b269f`: a model that calls `read_file`,
-   `shell` or a retired name now gets `unknown_capability` and must call a
-   listed tool. If a live run shows a model stuck there, investigate the
-   unknown-capability answer's contract (what it lists, how it reads),
-   never restore an alias.
+1. A command's limit does not stop it in time: live, `sleep 5; echo
+   ready` with `timeout_ms` 1000 printed `ready`, ran 5018 ms
+   (`CallEffect::Ran`), and was reported "stopped at its time limit of
+   1000ms" (session `01a1389f-8855-7531-abe3-0716196de78e`). Find where
+   the bash tool's deadline is applied (crates/vak-tools/src/bash.rs) and
+   why the process group outlived it.
+1a. Since `9004b269f` a model that calls `read_file`, `shell` or a retired
+   name gets `unknown_capability` with the listed tools, and a retired name
+   is also told `use_instead` from `RETIRED_TOOLS`. The local model never
+   called an unknown name live (it went straight to `read`/`bash`), so this
+   path is covered by tests only; if a live run shows a model stuck there,
+   look at that answer's contract, never restore an alias.
 2. A card or prose can claim what no call did (seen again live: a
    test-report card saying "1 passed" and prose saying a command finished
    in time, beside a terminal card showing it stopped at its limit; session

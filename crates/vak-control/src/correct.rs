@@ -137,10 +137,15 @@ pub const RECOVERY_NOTE: &str = "\n[recovery] Treat this as a failed attempt. In
 /// The result of a call to a name this turn does not offer: what may be
 /// called instead, and how an MCP capability is reached when the `mcp`
 /// broker is offered.
-pub fn unknown_tool(name: &str, offered: &[&str], via_mcp: bool) -> String {
+/// A name Vak itself retired is told what replaced it (`retired`), never
+/// rewritten into another tool.
+pub fn unknown_tool(name: &str, offered: &[&str], via_mcp: bool, retired: Option<&str>) -> String {
     let quoted = serde_json::to_string(name).unwrap_or_else(|_| "\"invalid\"".into());
     let available = serde_json::to_string(offered).unwrap_or_else(|_| "[]".into());
-    let advice = if via_mcp {
+    let advice = if let Some(replacement) = retired {
+        let replacement = serde_json::to_string(replacement).unwrap_or_else(|_| "\"\"".into());
+        format!(r#","retired":true,"use_instead":{replacement}"#)
+    } else if via_mcp {
         format!(
             r#","recovery_advice":"Tool '{name}' is an external MCP capability. Invoke it via the 'mcp' tool: mcp(action: \"call\", server: \"<server_name>\", tool: \"{name}\", arguments: {{ ... }})""#
         )
@@ -441,6 +446,27 @@ pub fn render(finding: &Finding, marker: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_retired_name_is_told_what_replaced_it_and_lists_what_exists() {
+        let told = unknown_tool(
+            "python_eval",
+            &["bash", "read"],
+            false,
+            Some("bash — run Python"),
+        );
+        assert!(told.contains(r#""retired":true"#), "{told}");
+        assert!(
+            told.contains(r#""use_instead":"bash — run Python""#),
+            "{told}"
+        );
+        assert!(
+            told.contains(r#""available_tools":["bash","read"]"#),
+            "{told}"
+        );
+        let unknown = unknown_tool("read_file", &["read"], false, None);
+        assert!(!unknown.contains("retired"), "{unknown}");
+    }
 
     #[test]
     fn a_limit_below_the_maximum_may_ask_for_more_and_one_at_it_may_not() {

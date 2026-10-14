@@ -95,7 +95,8 @@ detected. `vak doctor --repair` runs the cleanup pass automatically.
 A call is matched to a tool by its exact name. A call naming a retired
 tool, or any name no admitted tool has, is answered with
 `unknown_capability` and the tools that are available, and the model
-calls one of those. No name stands for another tool: the alias table
+calls one of those. A name in `RETIRED_TOOLS` is also told what replaced
+it (`"retired": true`, `"use_instead"`), from that registry. No name stands for another tool: the alias table
 that rewrote `python_eval`, `read_file`, `shell` and the like to a
 built-in tool (`canonical_tool_name`) was removed on 2026-10-14, because
 it rewrote a call to an admitted tool of that very name (a tool named
