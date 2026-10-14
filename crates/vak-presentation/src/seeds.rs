@@ -425,6 +425,7 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         // collide with the new digest at the same (id, revision) key.
         revision: if id == "travel-options" { 7 } else { 6 },
         accepts,
+        block: None,
         root,
         fallback: FallbackSpec::default(),
         accessibility: AccessibilitySpec {

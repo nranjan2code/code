@@ -131,6 +131,7 @@ fn fake_rebuild() -> vak_agent::PresentationRebuild {
             .unwrap_or("chart")
             .to_string();
         Some(PresentationCard {
+            block: None,
             semantic_type,
             skill_id: "test".into(),
             skill_version: "1".into(),

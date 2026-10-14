@@ -65,6 +65,7 @@ fn chart_call(summary: &str) -> serde_json::Value {
 fn record_for(turn_id: &str, tool_use_id: &str, summary: &str) -> PresentationRecord {
     let payload = canonicalize_json(&chart_payload(summary));
     PresentationRecord {
+        block: None,
         turn_id: turn_id.into(),
         source: PresentationSource::ToolCall {
             tool_use_id: tool_use_id.into(),

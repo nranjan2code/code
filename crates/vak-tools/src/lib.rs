@@ -62,6 +62,9 @@ pub struct PresentationCard {
     pub payload: Value,
     pub title: String,
     pub identity_digest: String,
+    /// The card block that built it, when its kind is a pack's
+    /// (docs/design/91-presentation-capabilities.md §2).
+    pub block: Option<String>,
 }
 
 /// What a tool returns. `content` is the whole result: a tool never shortens

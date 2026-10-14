@@ -152,6 +152,7 @@ fn fake_rebuild() -> vak_agent::PresentationRebuild {
         card.remove("semantic_type");
         let payload = vak_session::types::canonicalize_json(&serde_json::Value::Object(card));
         Some(PresentationCard {
+            block: None,
             semantic_type: "chart".into(),
             skill_id: "test".into(),
             skill_version: "1".into(),

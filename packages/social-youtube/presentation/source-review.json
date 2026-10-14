@@ -5,6 +5,7 @@
   "accepts": [
     "social.youtube.source_review"
   ],
+  "block": "research",
   "root": {
     "primitive": "stack",
     "props": {},

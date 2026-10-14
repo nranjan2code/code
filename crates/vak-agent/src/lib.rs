@@ -3335,6 +3335,7 @@ impl Agent {
                     derived_from: derived_from.clone(),
                     title: card.title,
                     identity_digest: card.identity_digest,
+                    block: card.block,
                 };
                 if let Ok(entry) = session.append_presentation(record) {
                     listed.push(format!("- pres:{} {label}", entry.id));
@@ -3417,6 +3418,7 @@ impl Agent {
                 derived_from,
                 title: info.title,
                 identity_digest: info.identity_digest,
+                block: info.block,
             };
             let _ = session.append_presentation(record);
         }
@@ -6268,6 +6270,7 @@ impl Agent {
             derived_from,
             title: info.title,
             identity_digest: info.identity_digest,
+            block: info.block,
         };
         match session.append_presentation(record) {
             Ok(entry) => {

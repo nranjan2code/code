@@ -1,5 +1,15 @@
 ## Unreleased
 
+- An installed presentation pack can add its own kinds of card: while it is
+  active, the card tool it names offers them, and the pack draws them. The
+  social add-ons' cards now come from their own packs rather than being
+  built into Vakyartha. A card whose pack is later turned off is drawn by
+  the card it was built from.
+- Presentation packs appear in the capability inventory beside tools,
+  skills, MCP servers, hooks and commands.
+- A pack that lays things out in rows, stacks or titled sections is drawn
+  that way; before, every part stood in one column.
+
 ## 7.2.0 — 2026-10-14
 
 - Security: when a turn holds both your own data and words from someone

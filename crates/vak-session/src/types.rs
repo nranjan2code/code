@@ -15,6 +15,9 @@ pub enum CapabilityKind {
     McpServer,
     Hook,
     Command,
+    /// A presentation pack: how cards of the kinds it accepts are drawn
+    /// (docs/design/91-presentation-capabilities.md).
+    Presentation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -863,6 +866,11 @@ pub struct PresentationRecord {
     /// distinguishable from another of the same `semantic_type`, used in
     /// `TurnCard` index lines. Never a character truncation.
     pub identity_digest: String,
+    /// The card block that built it (`research`, `steps`…) when its kind is
+    /// a pack's, so the block's own renderer draws it once that pack is
+    /// gone (docs/design/91-presentation-capabilities.md §2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<String>,
 }
 
 /// Recursively sorts object keys so two payloads that differ only in field

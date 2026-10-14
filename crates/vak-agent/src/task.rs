@@ -832,7 +832,9 @@ impl TaskTool {
             .iter()
             .filter(|capability| match capability.kind {
                 CapabilityKind::Tool => child_tool_names.contains(&capability.name.as_str()),
-                CapabilityKind::Skill | CapabilityKind::McpServer => true,
+                CapabilityKind::Skill
+                | CapabilityKind::McpServer
+                | CapabilityKind::Presentation => true,
                 CapabilityKind::Hook | CapabilityKind::Command => false,
             })
             .cloned()
@@ -1267,6 +1269,7 @@ impl DriveChild {
                 payload: record.payload.clone(),
                 title: record.title.clone(),
                 identity_digest: record.identity_digest.clone(),
+                block: record.block.clone(),
             })
             .collect();
         let mut output = worker_output(&session_id, outcome, contracted);

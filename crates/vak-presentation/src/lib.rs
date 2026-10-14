@@ -35,6 +35,11 @@ pub struct PresentationSpec {
     pub revision: u64,
     #[serde(default)]
     pub accepts: Vec<String>,
+    /// The card block whose payload this pack reads (`steps`, `research`…):
+    /// while the pack is active its `accepts` are kinds of that block
+    /// (docs/design/91-presentation-capabilities.md §2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<String>,
     pub root: SpecNode,
     #[serde(default)]
     pub fallback: FallbackSpec,
@@ -1111,6 +1116,7 @@ mod tests {
             id: "test.timeline".into(),
             revision: 1,
             accepts: vec!["trip".into()],
+            block: None,
             root: SpecNode {
                 primitive: Primitive::Timeline,
                 props: BTreeMap::from([(

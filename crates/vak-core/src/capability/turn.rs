@@ -107,6 +107,9 @@ fn visible_on_channel(id: &CapabilityId, policy: &ChannelPolicy) -> bool {
         CapabilityKind::Skill => {
             crate::Core::allowed_by(&policy.skills_allow, &policy.skills_deny, &id.name)
         }
+        // A pack only changes how a card is drawn; channel allow and deny
+        // for presentations is docs/design/91 stage 5.
+        CapabilityKind::Presentation => true,
         CapabilityKind::Hook => {
             crate::Core::allowed_by(&policy.hooks_allow, &policy.hooks_deny, &id.name)
         }

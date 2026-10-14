@@ -66,7 +66,7 @@ impl FrozenSkill {
         let actual = format!("{:x}", Sha256::digest(&bytes));
         if actual != self.digest {
             return Err(format!(
-                r#"{{"type":"capability_stale","kind":"skill","name":{},"message":"skill changed after session admission; start a new session"}}"#,
+                r#"{{"type":"capability_stale","kind":"skill","name":{},"message":"skill changed during this turn; its new text is offered from the next turn"}}"#,
                 json_string(&self.name)
             ));
         }

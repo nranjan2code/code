@@ -5,6 +5,7 @@
   "accepts": [
     "social.x.takeaway_board"
   ],
+  "block": "research",
   "root": {
     "primitive": "group",
     "props": {},

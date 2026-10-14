@@ -285,6 +285,28 @@ impl Core {
             });
         }
 
+        // --- presentations -----------------------------------------------
+        // An active pack that adds kinds to a card block
+        // (docs/design/91-presentation-capabilities.md). It changes what a
+        // card looks like, never what is authorized.
+        for pack in self.pack_kinds().packs() {
+            out.push(Declaration {
+                id: CapabilityId::new(CapabilityKind::Presentation, &pack.id),
+                origin: match &pack.plugin {
+                    Some(plugin) => Origin::Plugin {
+                        plugin: plugin.clone(),
+                        scope: "workspace".into(),
+                    },
+                    None => Origin::Workspace,
+                },
+                summary: format!("Draws {} cards", pack.kinds.join(", ")),
+                serves: Serves::Undeclared,
+                digest: Some(pack.digest.clone()),
+                source: None,
+                configuration: serde_json::json!({ "block": pack.block, "kinds": pack.kinds }),
+            });
+        }
+
         // --- commands ----------------------------------------------------
         for command in self.custom_commands() {
             out.push(Declaration {

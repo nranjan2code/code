@@ -3868,7 +3868,9 @@ impl Core {
                 .iter()
                 .filter(|capability| match capability.kind {
                     CapabilityKind::Tool => tools.contains(&capability.name.as_str()),
-                    CapabilityKind::Skill | CapabilityKind::McpServer => true,
+                    CapabilityKind::Skill
+                    | CapabilityKind::McpServer
+                    | CapabilityKind::Presentation => true,
                     CapabilityKind::Hook | CapabilityKind::Command => false,
                 })
                 .cloned()
@@ -3927,6 +3929,23 @@ impl Core {
                 (name, prompt)
             })
             .collect()
+    }
+
+    /// The kinds the active presentation packs add to card blocks, read
+    /// afresh for each turn's tools so a pack enabled or disabled anywhere
+    /// applies from the next turn (docs/design/91-presentation-capabilities.md).
+    pub fn pack_kinds(&self) -> presentation_tools::PackKinds {
+        let store = presentation_store::PresentationStore::new(self.scope().presentations());
+        match store.load() {
+            Ok(library) => presentation_tools::PackKinds::from_library(
+                &library,
+                &self.inner.cwd.to_string_lossy(),
+            ),
+            Err(error) => {
+                tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the presentation library could not be read");
+                presentation_tools::PackKinds::default()
+            }
+        }
     }
 
     pub fn skills(&self) -> Vec<skills::Skill> {
@@ -4101,7 +4120,7 @@ impl Core {
             cwd: self.inner.cwd.clone(),
         }));
         tools.push(Arc::new(data_engine::DataQueryTool));
-        for emit_tool in presentation_tools::EmitCardTool::all() {
+        for emit_tool in presentation_tools::EmitCardTool::with_packs(&self.pack_kinds()) {
             tools.push(Arc::new(emit_tool));
         }
         if self.effective_web_fetch() {
@@ -6830,9 +6849,10 @@ impl Core {
             // access either), so `Core` supplies the rebuild as a closure,
             // as it does every other host-owned check.
             let skills = vak_delivery::built_in_skill_registry();
+            let packs = self.pack_kinds();
             cfg.presentation_rebuild = Some(Arc::new(move |name, input| {
-                presentation_tools::presentation_info(name, input, &skills).map(|info| {
-                    vak_tools::PresentationCard {
+                presentation_tools::presentation_info_with(name, input, &skills, &packs).map(
+                    |info| vak_tools::PresentationCard {
                         semantic_type: info.semantic_type,
                         skill_id: info.skill_id,
                         skill_version: info.skill_version,
@@ -6840,8 +6860,9 @@ impl Core {
                         payload: info.payload,
                         title: info.title,
                         identity_digest: info.identity_digest,
-                    }
-                })
+                        block: info.block,
+                    },
+                )
             }));
         }
         cfg.revocation_check = Some(Arc::new(move |name, input| {

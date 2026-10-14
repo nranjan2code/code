@@ -694,8 +694,14 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .adaptive-presentation { display: grid; gap: var(--space-2); color: var(--text-soft); }
 .adaptive-node { min-width: 0; }
 .adaptive-title { color: var(--text); font-size: var(--fs-reading); font-weight: 600; }
-.adaptive-section { margin-top: .25rem; color: var(--text); font-weight: 600; }
-.adaptive-row, .adaptive-stack, .adaptive-group { display: grid; gap: .35rem; }
+/* Composition (docs/design/91-presentation-capabilities.md): a row puts its
+   parts side by side while each has room and stacks them when it has not;
+   a stack and a group put them one under another; a section is a titled part. */
+.adaptive-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--space-3); align-items: start; }
+.adaptive-stack, .adaptive-group { display: grid; gap: var(--space-2); min-width: 0; }
+.adaptive-section { display: grid; gap: var(--space-1); min-width: 0; color: var(--text-soft); }
+.adaptive-section > h4 { margin: 0; color: var(--text); font-size: var(--fs-reading); font-weight: 600; }
+.adaptive-section > p { margin: 0; }
 .adaptive-divider { height: 1px; margin: .2rem 0; background: var(--border-soft); }
 .adaptive-list { margin: .15rem 0; padding-left: 1.25rem; }
 .adaptive-list li { margin: .25rem 0; }

@@ -1703,6 +1703,7 @@ mod tests {
         log.append_message(assistant_text("Here is what I found."))
             .unwrap();
         log.append_presentation(PresentationRecord {
+            block: None,
             turn_id: t2.clone(),
             source: PresentationSource::ToolCall {
                 tool_use_id: "card-1".into(),
@@ -1907,6 +1908,7 @@ mod tests {
     fn full_record_drops_a_fence_that_duplicates_an_emitted_card() {
         let payload = serde_json::json!({"label": "Temperature", "value": 29.1, "unit": "C"});
         let record = PresentationRecord {
+            block: None,
             turn_id: "t".into(),
             source: PresentationSource::ToolCall {
                 tool_use_id: "card-9".into(),

@@ -1470,9 +1470,36 @@ fn snapshot_inner(
                                     String,
                                     &vak_session::types::PresentationRecord,
                                 )| {
+                                    // A pack's kind no active pack draws any more
+                                    // is drawn by the block that built it
+                                    // (docs/design/91-presentation-capabilities.md §2).
+                                    let pack_owner = session
+                                        .header()
+                                        .map(|header| {
+                                            header.contract_cwd().to_string_lossy().into_owned()
+                                        })
+                                        .unwrap_or_else(|| "workspace".into());
+                                    let semantic_type = match record.block.as_deref() {
+                                        Some(block)
+                                            if !adaptive_library.is_some_and(|library| {
+                                                library
+                                                    .select_preferred(
+                                                        &record.semantic_type,
+                                                        "user",
+                                                        &pack_owner,
+                                                    )
+                                                    .is_some()
+                                            }) =>
+                                        {
+                                            vak_core::presentation_tools::block_kind(block)
+                                                .map(str::to_string)
+                                                .unwrap_or_else(|| record.semantic_type.clone())
+                                        }
+                                        _ => record.semantic_type.clone(),
+                                    };
                                     (
                                         vak_delivery::StructuredOutput {
-                                            semantic_type: record.semantic_type.clone(),
+                                            semantic_type,
                                             schema_version: u16::try_from(record.schema_version)
                                                 .unwrap_or(u16::MAX),
                                             skill_id: record.skill_id.clone(),
@@ -2850,6 +2877,7 @@ mod tests {
         let turn_id = log.latest_directive_entry_id().unwrap_or_default();
         let payload_digest = vak_session::types::payload_digest(&info.payload);
         log.append_presentation(vak_session::types::PresentationRecord {
+            block: None,
             turn_id,
             source,
             semantic_type: info.semantic_type,
@@ -3020,6 +3048,7 @@ mod tests {
             .expect("fixture card validates");
             let entry = log
                 .append_presentation(vak_session::types::PresentationRecord {
+                    block: None,
                     turn_id: turn_id.clone(),
                     source: vak_session::types::PresentationSource::Delegated {
                         tool_use_id: "task-1".into(),

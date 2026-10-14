@@ -5,6 +5,7 @@
   "accepts": [
     "social.reddit.research_brief"
   ],
+  "block": "research",
   "root": {
     "primitive": "research",
     "props": {

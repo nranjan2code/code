@@ -224,6 +224,7 @@ mod tests {
             id: "live.pack.card".into(),
             revision: 1,
             accepts: vec!["live-pack-value".into()],
+            block: None,
             root: vak_presentation::SpecNode {
                 primitive: vak_presentation::Primitive::Title,
                 props: std::collections::BTreeMap::new(),

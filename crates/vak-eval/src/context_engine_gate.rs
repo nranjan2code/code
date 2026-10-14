@@ -166,6 +166,7 @@ fn build_closed_turn(log: &mut SessionLog, i: usize, kind: TurnKind) -> Result<S
             log.append_message(assistant_text(text.clone()))
                 .map_err(|e| e.to_string())?;
             log.append_presentation(PresentationRecord {
+                block: None,
                 turn_id: turn_id.clone(),
                 source: PresentationSource::ToolCall {
                     tool_use_id: card_id,

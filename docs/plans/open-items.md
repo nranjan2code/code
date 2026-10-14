@@ -46,6 +46,13 @@ across them. Nothing here is started unless it says so.
   parts their own Status lines name. A later change keeps them true by the
   rule in `docs/README.md` ("Keeping it current").
 
+## Presentations as capabilities (docs/design/91)
+
+- Stages 1 to 3 are built; stage 4 (presentation packages judged by real
+  turns) and stage 5 (workspace before user in pack selection, channel
+  allow and deny for presentations, the capability screens listing them,
+  and a plugin's enable and disable reaching its packs) are open.
+
 ## Needs the maintainer
 
 - V4.3: drag, double-click and full screen in the running desktop app

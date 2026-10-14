@@ -407,6 +407,11 @@ presentation update does not restore stale-context behavior.
   preview a button, and not to write a file, wrote one and picked the file
   preview. A snippet or a preview is not a file. The seed is 1588 words.
 
+- 2026-10-14, the presentation block no longer names the social add-ons'
+  card types. Those types are kinds an add-on's pack contributes while it is
+  active (docs/design/91-presentation-capabilities.md), and the add-on's own
+  skill says how to use them; the core seed names no domain.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

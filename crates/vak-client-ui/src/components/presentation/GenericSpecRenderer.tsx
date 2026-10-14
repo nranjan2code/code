@@ -147,6 +147,12 @@ function renderNode(node: AdaptiveRenderNode | null | undefined, surface: Render
       return renderMedia(safeNode, surface);
     case "universal_card":
       return renderUniversalCard(safeNode, surface);
+    case "row":
+    case "stack":
+    case "group":
+      return renderLayout(safeNode, surface);
+    case "section":
+      return renderSection(safeNode, surface);
     case "map":
     case "calendar":
     case "board":
@@ -1564,6 +1570,26 @@ function renderUniversalCard(node: AdaptiveRenderNode, _surface: RenderSurface) 
           <For each={node.children}>{(child) => renderNode(child, _surface)}</For>
         </div>
       </Show>
+    </section>
+  );
+}
+
+/** A row, stack or group: only arrangement, its parts draw themselves. */
+function renderLayout(node: AdaptiveRenderNode, surface: RenderSurface) {
+  return <div class={`adaptive-${node.primitive.toLowerCase()}`}>{node.children.map((child) => renderNode(child, surface))}</div>;
+}
+
+/** A titled part: its heading, its text and facts, then its parts. */
+function renderSection(node: AdaptiveRenderNode, surface: RenderSurface) {
+  const title = str(node.props, "title") ?? str(node.props, "label");
+  const text = str(node.props, "text") ?? str(node.props, "summary");
+  const facts = Object.entries(node.props).filter(([key]) => !["title", "label", "text", "summary", "semantic_type"].includes(key));
+  return (
+    <section class="adaptive-section" aria-label={title}>
+      <Show when={title}><h4>{title}</h4></Show>
+      <Show when={text}><p>{text}</p></Show>
+      <Show when={facts.length > 0}><dl class="universal-card-nested"><For each={facts}>{([key, value]) => <div><dt>{universalFieldLabel(key)}</dt><dd><UniversalValue value={value} /></dd></div>}</For></dl></Show>
+      {node.children.map((child) => renderNode(child, surface))}
     </section>
   );
 }

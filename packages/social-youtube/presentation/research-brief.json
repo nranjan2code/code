@@ -5,6 +5,7 @@
   "accepts": [
     "social.youtube.research_brief"
   ],
+  "block": "research",
   "root": {
     "primitive": "research",
     "props": {

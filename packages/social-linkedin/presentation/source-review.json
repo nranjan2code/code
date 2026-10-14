@@ -5,6 +5,7 @@
   "accepts": [
     "social.linkedin.source_review"
   ],
+  "block": "research",
   "root": {
     "primitive": "stack",
     "props": {},

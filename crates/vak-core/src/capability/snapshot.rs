@@ -93,6 +93,7 @@ impl std::fmt::Display for CapabilityId {
             CapabilityKind::McpServer => "mcp",
             CapabilityKind::Hook => "hook",
             CapabilityKind::Command => "command",
+            CapabilityKind::Presentation => "presentation",
         };
         write!(f, "{kind}:{}", self.name)
     }
@@ -130,7 +131,7 @@ impl Capability {
         let invocation = match self.id.kind {
             CapabilityKind::Tool | CapabilityKind::McpServer => CapabilityInvocation::ModelTool,
             CapabilityKind::Skill => CapabilityInvocation::SkillLoader,
-            CapabilityKind::Hook => CapabilityInvocation::Automatic,
+            CapabilityKind::Hook | CapabilityKind::Presentation => CapabilityInvocation::Automatic,
             CapabilityKind::Command => CapabilityInvocation::UserCommand,
         };
         CapabilityDescriptor {

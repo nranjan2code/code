@@ -1642,23 +1642,7 @@ const SHAPES: &[CardShape] = &[
     CardShape {
         name: "emit_research_card",
         description: "Findings drawn from sources you retrieved, each tied to the exact title and URL it came from.",
-        semantic_types: &[
-            "research.synthesis",
-            "research_brief",
-            "news",
-            "social.reddit.research_brief",
-            "social.reddit.source_review",
-            "social.reddit.takeaway_board",
-            "social.youtube.research_brief",
-            "social.youtube.source_review",
-            "social.youtube.takeaway_board",
-            "social.x.research_brief",
-            "social.x.source_review",
-            "social.x.takeaway_board",
-            "social.linkedin.research_brief",
-            "social.linkedin.source_review",
-            "social.linkedin.takeaway_board",
-        ],
+        semantic_types: &["research.synthesis", "research_brief", "news"],
         default_type: Some("research.synthesis"),
         fields: research_fields,
         build: build_research,
@@ -1926,15 +1910,144 @@ pub fn conformance_cases() -> Vec<(&'static str, &'static str, Value)> {
     out
 }
 
+/// The kinds active presentation packs add to card blocks, by block name
+/// (docs/design/91-presentation-capabilities.md §2). A pack names the block
+/// whose payload it reads in its spec's `block`; while it is the selected
+/// pack for a kind, that kind is a kind of the block.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PackKinds {
+    kinds: std::collections::BTreeMap<String, Vec<String>>,
+    packs: Vec<ActivePack>,
+}
+
+/// A pack that adds kinds to a block, as the capability registry lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivePack {
+    pub id: String,
+    pub block: String,
+    pub kinds: Vec<String>,
+    pub plugin: Option<String>,
+    pub digest: String,
+}
+
+impl PackKinds {
+    pub fn from_library(
+        library: &vak_presentation::PresentationLibrary,
+        workspace_owner: &str,
+    ) -> Self {
+        let mut kinds: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        let mut packs: Vec<ActivePack> = Vec::new();
+        for stored in library.definitions() {
+            let Some(block) = stored.spec.block.as_deref() else {
+                continue;
+            };
+            if shape_of_block(block).is_none_or(|shape| shape.default_type.is_none()) {
+                continue;
+            }
+            for kind in &stored.spec.accepts {
+                if emit_tool_for(kind).is_some() {
+                    continue;
+                }
+                let selected = library
+                    .select_preferred(kind, "user", workspace_owner)
+                    .is_some_and(|chosen| {
+                        chosen.spec.id == stored.spec.id
+                            && chosen.spec.revision == stored.spec.revision
+                    });
+                let listed = kinds.entry(block.to_string()).or_default();
+                if selected && !listed.contains(kind) {
+                    listed.push(kind.clone());
+                    match packs
+                        .iter_mut()
+                        .find(|pack: &&mut ActivePack| pack.id == stored.spec.id)
+                    {
+                        Some(pack) => pack.kinds.push(kind.clone()),
+                        None => packs.push(ActivePack {
+                            id: stored.spec.id.clone(),
+                            block: block.to_string(),
+                            kinds: vec![kind.clone()],
+                            plugin: stored.origin.plugin_id.clone(),
+                            digest: stored.digest.clone(),
+                        }),
+                    }
+                }
+            }
+        }
+        kinds.retain(|_, listed| !listed.is_empty());
+        Self { kinds, packs }
+    }
+
+    /// The packs that add kinds, for the capability registry.
+    pub fn packs(&self) -> &[ActivePack] {
+        &self.packs
+    }
+
+    fn of(&self, shape: &CardShape) -> &[String] {
+        self.kinds
+            .get(block_name(shape))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// The block a pack kind belongs to.
+    pub fn block_of(&self, kind: &str) -> Option<&str> {
+        self.kinds
+            .iter()
+            .find(|(_, listed)| listed.iter().any(|listed| listed == kind))
+            .map(|(block, _)| block.as_str())
+    }
+}
+
+/// A block's name: its card tool's name without `emit_` and `_card`.
+fn block_name(shape: &CardShape) -> &'static str {
+    shape
+        .name
+        .trim_start_matches("emit_")
+        .trim_end_matches("_card")
+}
+
+fn shape_of_block(block: &str) -> Option<&'static CardShape> {
+    SHAPES.iter().find(|shape| block_name(shape) == block)
+}
+
+/// The kind a block's own renderer draws a card of `block` as, for a card
+/// whose pack kind no active pack draws any more.
+pub fn block_kind(block: &str) -> Option<&'static str> {
+    shape_of_block(block).and_then(|shape| shape.default_type)
+}
+
 pub struct EmitCardTool {
     shape: &'static CardShape,
+    /// Kinds active packs add to this block.
+    extra: Vec<String>,
 }
 
 impl EmitCardTool {
-    /// One `EmitCardTool` per registered shape category — call this once
-    /// per entry in `SHAPES` when assembling the tool list for a turn.
+    /// One `EmitCardTool` per registered shape category, with only the
+    /// block's own kinds.
     pub fn all() -> Vec<Self> {
-        SHAPES.iter().map(|shape| EmitCardTool { shape }).collect()
+        Self::with_packs(&PackKinds::default())
+    }
+
+    /// The card tools for a turn: each block's own kinds and the kinds the
+    /// active packs add to it.
+    pub fn with_packs(packs: &PackKinds) -> Vec<Self> {
+        SHAPES
+            .iter()
+            .map(|shape| EmitCardTool {
+                shape,
+                extra: packs.of(shape).to_vec(),
+            })
+            .collect()
+    }
+
+    fn kinds(&self) -> Vec<&str> {
+        self.shape
+            .semantic_types
+            .iter()
+            .copied()
+            .chain(self.extra.iter().map(String::as_str))
+            .collect()
     }
 }
 
@@ -1972,12 +2085,12 @@ impl Tool for EmitCardTool {
             Some(default) => format!("The card category (use {default} for a regular card). This is not the card's visual style."),
             None => "The card category, not its visual style.".to_string(),
         };
-        if self.shape.semantic_types.len() > 1 {
+        if self.kinds().len() > 1 {
             properties.insert(
                 "semantic_type".into(),
                 serde_json::json!({
                     "type": "string",
-                    "enum": self.shape.semantic_types,
+                    "enum": self.kinds(),
                     "description": description
                 }),
             );
@@ -2007,11 +2120,7 @@ impl Tool for EmitCardTool {
     }
 
     fn card_kinds(&self) -> Vec<String> {
-        self.shape
-            .semantic_types
-            .iter()
-            .map(|kind| (*kind).to_string())
-            .collect()
+        self.kinds().into_iter().map(str::to_string).collect()
     }
 
     fn fill_defaults(&self, args: &mut Value) {
@@ -2020,7 +2129,7 @@ impl Tool for EmitCardTool {
             // is dropped, so a refusal never reports it as the mistake (found
             // live 2026-10-13), unless it names a kind another block owns:
             // then the refusal names that block.
-            if let [_] = self.shape.semantic_types {
+            if self.kinds().len() == 1 {
                 let elsewhere = fields
                     .get("semantic_type")
                     .and_then(Value::as_str)
@@ -2042,7 +2151,12 @@ impl Tool for EmitCardTool {
     }
 
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
-        match validate_call(self.shape, args, &vak_delivery::built_in_skill_registry()) {
+        match validate_call(
+            self.shape,
+            &self.extra,
+            args,
+            &vak_delivery::built_in_skill_registry(),
+        ) {
             Ok(output) => ToolOutput::ok(format!("Shown to the user ({}).", output.semantic_type)),
             Err(reason) => ToolOutput::error(
                 Fault::Shape,
@@ -2054,6 +2168,7 @@ impl Tool for EmitCardTool {
 
 fn validate_call(
     shape: &CardShape,
+    extra: &[String],
     args: &Value,
     skills: &vak_delivery::SkillRegistry,
 ) -> Result<vak_delivery::StructuredOutput, String> {
@@ -2061,7 +2176,7 @@ fn validate_call(
         return Err("the arguments must be an object".into());
     };
     let requested_semantic_type = match args.get("semantic_type") {
-        _ if shape.semantic_types.len() == 1 => shape.semantic_types[0],
+        _ if shape.semantic_types.len() == 1 && extra.is_empty() => shape.semantic_types[0],
         Some(Value::String(semantic_type)) => semantic_type.as_str(),
         Some(_) => return Err("`semantic_type` must be a string".into()),
         None => shape.default_type.ok_or_else(|| {
@@ -2071,11 +2186,25 @@ fn validate_call(
             )
         })?,
     };
-    let semantic_type = requested_semantic_type;
-    if !shape.semantic_types.contains(&semantic_type) {
+    let pack_kind = extra
+        .iter()
+        .any(|kind| kind == requested_semantic_type)
+        .then(|| requested_semantic_type.to_string());
+    // A pack's kind is built by the block exactly as the block's own kind
+    // is, then carries the pack's name (docs/design/91 §2).
+    let semantic_type = match (&pack_kind, shape.default_type) {
+        (Some(_), Some(own)) => own,
+        _ => requested_semantic_type,
+    };
+    if pack_kind.is_none() && !shape.semantic_types.contains(&semantic_type) {
+        let kinds: Vec<&str> = shape
+            .semantic_types
+            .iter()
+            .copied()
+            .chain(extra.iter().map(String::as_str))
+            .collect();
         return Err(format!(
-            "`{semantic_type}` is not a kind of this block; its kinds are {:?}",
-            shape.semantic_types
+            "`{semantic_type}` is not a kind of this block; its kinds are {kinds:?}"
         ));
     }
     let mut own = args.clone();
@@ -2139,7 +2268,12 @@ fn validate_call(
         "semantic_type": semantic_type,
         "payload": normalize_payload(semantic_type, payload),
     });
-    vak_delivery::parse_fragment_with(&envelope.to_string(), skills).map_err(|e| e.to_string())
+    let mut output = vak_delivery::parse_fragment_with(&envelope.to_string(), skills)
+        .map_err(|e| e.to_string())?;
+    if let Some(kind) = pack_kind {
+        output.semantic_type = kind;
+    }
+    Ok(output)
 }
 
 /// The stored media card from the tool's arguments. The tool asks for the
@@ -2240,9 +2374,10 @@ fn rebuild_call(
     name: &str,
     input: &Value,
     skills: &vak_delivery::SkillRegistry,
+    packs: &PackKinds,
 ) -> Option<vak_delivery::StructuredOutput> {
     let shape = SHAPES.iter().find(|shape| shape.name == name)?;
-    validate_call(shape, input, skills).ok()
+    validate_call(shape, packs.of(shape), input, skills).ok()
 }
 
 /// Everything needed to write a `PresentationRecord` for a call that just
@@ -2261,6 +2396,8 @@ pub struct PresentationInfo {
     pub payload: Value,
     pub title: String,
     pub identity_digest: String,
+    /// The block that built it, when its kind is a pack's.
+    pub block: Option<String>,
 }
 
 /// Validates an `emit_*_card` call and returns everything needed to write
@@ -2276,7 +2413,27 @@ pub fn presentation_info(
     input: &Value,
     skills: &vak_delivery::SkillRegistry,
 ) -> Option<PresentationInfo> {
-    let output = rebuild_call(emit_tool_for(name).unwrap_or(name), input, skills)?;
+    presentation_info_with(name, input, skills, &PackKinds::default())
+}
+
+/// [`presentation_info`] for a turn whose card tools carry the kinds the
+/// active packs add.
+pub fn presentation_info_with(
+    name: &str,
+    input: &Value,
+    skills: &vak_delivery::SkillRegistry,
+    packs: &PackKinds,
+) -> Option<PresentationInfo> {
+    let tool = emit_tool_for(name)
+        .or_else(|| {
+            packs
+                .block_of(name)
+                .and_then(shape_of_block)
+                .map(|shape| shape.name)
+        })
+        .unwrap_or(name);
+    let output = rebuild_call(tool, input, skills, packs)?;
+    let block = packs.block_of(&output.semantic_type).map(str::to_string);
     let payload = vak_session::types::canonicalize_json(&output.payload);
     let title = title_for(&output.semantic_type, &payload);
     let identity_digest = identity_digest(&output.semantic_type, &payload);
@@ -2288,6 +2445,7 @@ pub fn presentation_info(
         payload,
         title,
         identity_digest,
+        block,
     })
 }
 
@@ -2487,6 +2645,74 @@ pub fn identity_digest(semantic_type: &str, payload: &Value) -> String {
 mod tests {
     use super::*;
 
+    fn library_with_pack(enabled: bool) -> vak_presentation::PresentationLibrary {
+        let spec: vak_presentation::PresentationSpec = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "id": "garden.brief",
+            "revision": 1,
+            "accepts": ["garden.brief"],
+            "block": "research",
+            "root": {"primitive": "research", "props": {"*": {"kind": "binding", "path": "$"}}}
+        }))
+        .unwrap();
+        let digest = vak_presentation::digest(&spec).unwrap();
+        let mut library = vak_presentation::PresentationLibrary::default();
+        library
+            .register(vak_presentation::StoredPresentation {
+                spec,
+                digest,
+                origin: vak_presentation::PresentationOrigin {
+                    scope: vak_presentation::LibraryScope::Workspace,
+                    owner: "/w".into(),
+                    plugin_id: Some("garden".into()),
+                    generation: None,
+                },
+                enabled,
+            })
+            .unwrap();
+        if enabled {
+            library
+                .activate(
+                    "garden.brief",
+                    1,
+                    vak_presentation::LibraryScope::Workspace,
+                    "/w",
+                )
+                .unwrap();
+        }
+        library
+    }
+
+    /// A kind an active pack names for a block is a kind of that block's
+    /// card tool, built by the block and recorded with it; a disabled pack
+    /// adds nothing (docs/design/91-presentation-capabilities.md §2).
+    #[test]
+    fn an_active_pack_adds_its_kinds_to_its_block() {
+        let packs = PackKinds::from_library(&library_with_pack(true), "/w");
+        let research = EmitCardTool::with_packs(&packs)
+            .into_iter()
+            .find(|tool| tool.name() == "emit_research_card")
+            .unwrap();
+        assert!(research.card_kinds().contains(&"garden.brief".to_string()));
+        assert!(
+            research.schema()["properties"]["semantic_type"]["enum"]
+                .as_array()
+                .unwrap()
+                .contains(&Value::String("garden.brief".into()))
+        );
+        let mut args = fixture_for("emit_research_card");
+        args["semantic_type"] = Value::String("garden.brief".into());
+        let skills = vak_delivery::built_in_skill_registry();
+        let info = presentation_info_with("emit_research_card", &args, &skills, &packs).unwrap();
+        assert_eq!(info.semantic_type, "garden.brief");
+        assert_eq!(info.block.as_deref(), Some("research"));
+        assert!(presentation_info("emit_research_card", &args, &skills).is_none());
+
+        let none = PackKinds::from_library(&library_with_pack(false), "/w");
+        assert_eq!(none, PackKinds::default());
+        assert_eq!(block_kind("research"), Some("research.synthesis"));
+    }
+
     /// A test report's outcome is the run's: a run that exited non-zero or
     /// was stopped cannot report every test passed, and one no call ran is
     /// refused.
@@ -2530,8 +2756,13 @@ mod tests {
     }
 
     fn built(name: &str, args: serde_json::Value) -> Result<Value, String> {
-        validate_call(shape(name), &args, &vak_delivery::built_in_skill_registry())
-            .map(|output| output.payload)
+        validate_call(
+            shape(name),
+            &[],
+            &args,
+            &vak_delivery::built_in_skill_registry(),
+        )
+        .map(|output| output.payload)
     }
 
     #[test]
@@ -2569,6 +2800,7 @@ mod tests {
     fn a_record_text_sent_as_a_list_is_read_as_its_items() {
         let tool = EmitCardTool {
             shape: shape("emit_comparison_card"),
+            extra: Vec::new(),
         };
         let mut args = serde_json::json!({"options": [
             {"name": "Train", "strengths": ["No parking", "Can read"], "weaknesses": []},
@@ -2607,7 +2839,10 @@ mod tests {
         ];
         let registry = vak_delivery::built_in_skill_registry();
         for shape in SHAPES {
-            let tool = EmitCardTool { shape };
+            let tool = EmitCardTool {
+                shape,
+                extra: Vec::new(),
+            };
             let fixture = fixture_for(shape.name);
             let keys: Vec<String> = fixture
                 .as_object()
@@ -2632,7 +2867,7 @@ mod tests {
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     sent(&tool, &mut call);
                     if vak_tools::validate_input(&tool.schema(), &call).is_ok() {
-                        let _ = validate_call(shape, &call, &registry);
+                        let _ = validate_call(shape, &[], &call, &registry);
                     }
                 }));
                 assert!(outcome.is_ok(), "{} crashed on {given}", shape.name);
@@ -2850,7 +3085,11 @@ mod tests {
         }
         let mut problems = Vec::new();
         for shape in SHAPES {
-            let schema = EmitCardTool { shape }.schema();
+            let schema = EmitCardTool {
+                shape,
+                extra: Vec::new(),
+            }
+            .schema();
             assert!(!shape.description.trim().is_empty());
             check(
                 shape.name,
@@ -2870,6 +3109,7 @@ mod tests {
     fn an_array_field_sent_as_one_string_is_read_as_its_items() {
         let tool = EmitCardTool {
             shape: shape("emit_table_card"),
+            extra: Vec::new(),
         };
         let mut markdown = serde_json::json!({
             "semantic_type": "comparison_table",
@@ -2892,6 +3132,7 @@ mod tests {
 
         let checklist = EmitCardTool {
             shape: shape("emit_details_card"),
+            extra: Vec::new(),
         };
         let mut listed = serde_json::json!({
             "semantic_type": "faq",
@@ -2912,6 +3153,7 @@ mod tests {
     fn a_step_sent_as_text_is_its_label() {
         let tool = EmitCardTool {
             shape: shape("emit_steps_card"),
+            extra: Vec::new(),
         };
         let mut args = serde_json::json!({"steps": [
             "Day 1 (Sunday): Check soil; water only if dry",
@@ -2936,6 +3178,7 @@ mod tests {
     fn nested_table_rows_become_the_same_stored_grid() {
         let tool = EmitCardTool {
             shape: shape("emit_table_card"),
+            extra: Vec::new(),
         };
         let mut arguments = serde_json::json!({
             "semantic_type": "comparison_table",
@@ -3308,6 +3551,7 @@ mod tests {
     fn labelled_details_and_readings_never_travel_as_keys() {
         let tool = EmitCardTool {
             shape: shape("emit_details_card"),
+            extra: Vec::new(),
         };
         let mut args = serde_json::json!({
             "title": "Eiffel Tower",
@@ -3439,6 +3683,7 @@ mod tests {
             "emit_chart_card",
             &args,
             &vak_delivery::built_in_skill_registry(),
+            &PackKinds::default(),
         )
         .expect("the call's own arguments must rebuild into a card");
         assert_eq!(card.semantic_type, "chart");
@@ -3476,6 +3721,7 @@ mod tests {
             "emit_research_card",
             &args,
             &vak_delivery::built_in_skill_registry(),
+            &PackKinds::default(),
         )
         .expect("size must not matter: the card comes from the call arguments");
         assert_eq!(card.semantic_type, "research.synthesis");
@@ -3539,7 +3785,7 @@ mod tests {
                     ));
                     continue;
                 }
-                let card = rebuild_call(name, &args, &skills);
+                let card = rebuild_call(name, &args, &skills, &PackKinds::default());
                 if card.as_ref().map(|c| c.semantic_type.as_str()) != Some(semantic_type) {
                     failures.push(format!(
                         "{semantic_type} ({name}): did not rebuild into a card"
