@@ -59,6 +59,12 @@ impl Tool for FindToolsTool {
         "find_tools"
     }
 
+    /// Searches the turn's own tool catalogue: it reads what Vak already
+    /// holds and changes nothing, so it never asks.
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::reach(vak_permission::Reach::ReadStore)
+    }
+
     fn always_loaded(&self) -> bool {
         true
     }
@@ -300,6 +306,17 @@ mod tests {
 
     fn ctx() -> ToolContext {
         ToolContext::new(PathBuf::from("."))
+    }
+
+    /// A search of the turn's own catalogue never asks the person: found
+    /// live on 2026-10-14, when it declared nothing and a plan turn waited
+    /// on an approval for it.
+    #[test]
+    fn searching_the_catalogue_reads_only_what_vak_holds() {
+        assert_eq!(
+            FindToolsTool::new(Vec::new()).permission().reach,
+            vak_permission::Reach::ReadStore
+        );
     }
 
     #[tokio::test]
