@@ -185,6 +185,10 @@ impl Seatbelt {
                 self.append_read_allowances(&mut p);
                 p.push_str("(allow process-exec)\n");
                 p.push_str("(allow process-fork)\n");
+                // A process may stop what it started, never anything outside
+                // its sandbox: a command stopped at its limit is killed by
+                // the sandboxed worker that ran it.
+                p.push_str("(allow signal (target same-sandbox))\n");
                 p.push_str("(allow sysctl-read)\n");
                 p.push_str("(allow mach-lookup)\n");
                 p.push_str("(allow iokit-get-properties)\n");
@@ -194,6 +198,10 @@ impl Seatbelt {
                 self.append_read_allowances(&mut p);
                 p.push_str("(allow process-exec)\n");
                 p.push_str("(allow process-fork)\n");
+                // A process may stop what it started, never anything outside
+                // its sandbox: a command stopped at its limit is killed by
+                // the sandboxed worker that ran it.
+                p.push_str("(allow signal (target same-sandbox))\n");
                 p.push_str("(allow sysctl-read)\n");
                 p.push_str("(allow mach-lookup)\n");
                 p.push_str("(allow iokit-get-properties)\n");

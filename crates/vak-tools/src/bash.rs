@@ -1106,6 +1106,27 @@ mod tests {
         assert!(out.content.contains("workspace-marker"));
     }
 
+    /// A command stopped at its limit is stopped then: what it would have
+    /// done after the limit never happens, and the call returns at the limit.
+    #[tokio::test]
+    async fn a_command_stopped_at_its_limit_stops_there() {
+        vak_config::paths::isolate_home_for_tests();
+        use crate::{Tool, ToolContext};
+        let workspace = tempfile::tempdir().unwrap();
+        let ctx = ToolContext::new(workspace.path().to_path_buf());
+        let started = std::time::Instant::now();
+        let out = super::BashTool
+            .execute(
+                &serde_json::json!({ "command": "sleep 5; echo ready", "timeout_ms": 1000 }),
+                &ctx,
+            )
+            .await;
+        let took = started.elapsed();
+        assert_eq!(out.fault, Some(crate::Fault::Limit), "{}", out.content);
+        assert!(!out.content.contains("ready"), "{}", out.content);
+        assert!(took < std::time::Duration::from_secs(4), "took {took:?}");
+    }
+
     /// A command that ran says how it ended, failed or not; a call refused
     /// before anything ran says nothing ran.
     #[tokio::test]

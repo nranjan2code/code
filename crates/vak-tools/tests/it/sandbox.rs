@@ -101,6 +101,51 @@ async fn seatbelt_read_only_blocks_file_writes_but_allows_reads() {
     );
 }
 
+/// A sandboxed process can stop what it started: the broker worker runs
+/// under the sandbox, and a command stopped at its limit is stopped by a
+/// signal from it to the command's process group.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_sandboxed_process_can_stop_its_own_children() {
+    for mode in [SandboxMode::ReadOnly, SandboxMode::WorkspaceWrite] {
+        let dir = tempdir().unwrap();
+        let ctx = ctx_with(dir.path(), mode);
+        let started = std::time::Instant::now();
+        let out = run(&ctx, "sleep 5 & kill -9 $! && wait; echo stopped").await;
+        assert!(out.content.contains("stopped"), "{mode:?}: {}", out.content);
+        assert!(
+            !out.content.contains("not permitted"),
+            "{mode:?}: {}",
+            out.content
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(4),
+            "{mode:?}: the child outlived its kill"
+        );
+    }
+}
+
+/// The signal allowance reaches only the sandbox's own processes: a
+/// process outside it cannot be stopped from inside.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_sandboxed_process_cannot_signal_one_outside() {
+    let mut outside = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let dir = tempdir().unwrap();
+    let ctx = ctx_with(dir.path(), SandboxMode::WorkspaceWrite);
+    let out = run(&ctx, &format!("kill -9 {}", outside.id())).await;
+    assert!(out.content.contains("not permitted"), "{}", out.content);
+    assert!(
+        outside.try_wait().unwrap().is_none(),
+        "the outside process is still running"
+    );
+    let _ = outside.kill();
+    let _ = outside.wait();
+}
+
 #[cfg(target_os = "macos")]
 #[tokio::test]
 async fn seatbelt_workspace_write_allows_inside_cwd() {

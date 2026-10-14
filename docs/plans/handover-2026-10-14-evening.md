@@ -77,12 +77,12 @@ exist") is never shown as output; the card reads "Stopped · 5.0 s" or
 
 ## Next (the next round's backlog; nothing here is started)
 
-1. A command's limit does not stop it in time: live, `sleep 5; echo
-   ready` with `timeout_ms` 1000 printed `ready`, ran 5018 ms
-   (`CallEffect::Ran`), and was reported "stopped at its time limit of
-   1000ms" (session `01a1389f-8855-7531-abe3-0716196de78e`). Find where
-   the bash tool's deadline is applied (crates/vak-tools/src/bash.rs) and
-   why the process group outlived it.
+1. Done: a command's limit did not stop it under Seatbelt, because the
+   sandboxed broker worker's SIGKILL to the command's process group was
+   refused by `(deny default)`. The restricted profiles now
+   `(allow signal (target same-sandbox))`; a process outside the sandbox
+   still cannot be signalled. Linux Landlock does not restrict signals, so
+   nothing changes there.
 1a. Since `9004b269f` a model that calls `read_file`, `shell` or a retired
    name gets `unknown_capability` with the listed tools, and a retired name
    is also told `use_instead` from `RETIRED_TOOLS`. The local model never

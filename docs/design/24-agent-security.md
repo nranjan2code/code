@@ -85,7 +85,13 @@ plugin trust, and deep policy-drift audits.
 - Server permission changes cancel main and side runs and deny pending
   approvals, preventing stale full-access execution.
 - Seatbelt/Landlock deny network in restricted modes and scope writes to the
-  workspace and explicit temp paths. One exception, measured 2026-09-24: a
+  workspace and explicit temp paths. A sandboxed process may signal only
+  processes in its own sandbox (`(allow signal (target same-sandbox))`,
+  2026-10-14): the broker worker runs sandboxed and stops a command at its
+  limit by killing the command's process group, which `(deny default)` had
+  refused, so a command ran past its limit. A process outside the sandbox
+  still cannot be signalled from inside
+  (`a_sandboxed_process_cannot_signal_one_outside`). One exception, measured 2026-09-24: a
   dev-server preview the user configured runs under
   `Sandbox::listening_variant`, which on Seatbelt adds
   `(allow network-bind (local ip "localhost:*"))` and
