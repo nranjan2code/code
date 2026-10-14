@@ -163,8 +163,12 @@ cards. The items carried below are not built.
   reading; `Horizon::opens_commitment` is removed.
 - C6 (done): the time constants in §5a (probe, channel wait, command,
   script, hook and person waits) are `[control.limits]`, edited in Settings
-  and the admin console beside their shipped defaults; §5a lists the three
-  things still open there.
+  and the admin console beside their shipped defaults. The three things
+  §5a left open (the flow executor's fixed 600 s, a named limit above the
+  operator's longest, a limit-ended call recorded as the tool's fault) were
+  closed on 2026-10-12; an audit on 2026-10-14 found no wait still ended by
+  a constant (what remains are test fixtures, defaults beneath an
+  operator's setting, and intervals that schedule work and end nothing).
 - C6 (done): the outcome requirements guessed from the request's words are
   removed: the write-verb, file-extension and Office-term lists behind
   `saved_file_target`, `expects_artifact` and `permits_authored_text_file`,
