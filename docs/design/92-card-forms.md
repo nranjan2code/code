@@ -1,0 +1,120 @@
+# 92 — Card forms
+
+Status: in progress: direction from the maintainer on 2026-10-14 ("rebuild
+correctly to be maintainable but yet effective for anything … completely
+remove what's not wanted"; no users, so nothing is kept for compatibility).
+Builds on docs/design/87-composed-answers.md (cards in answers),
+docs/design/89-constrained-tool-arguments.md (one precise flat schema per
+tool) and docs/design/91-presentation-capabilities.md (packs add kinds to a
+block). Replaces the type registry of docs/design/30-render-architecture.md
+§30.1 and the starter catalogue of docs/design/57-adaptive-presentation-runtime.md.
+
+## 1. What is wrong
+
+Read from the code and from live answers on 2026-10-14:
+
+1. **A hundred names for eight drawings.** The client's
+   `STRUCTURED_RENDERERS` maps 100 `semantic_type`s onto a handful of
+   builders: 31 to the numbered timeline, 24 to a field list
+   (`universal_card`), 17 to the table. A map, a calendar, a board, a form
+   and an FAQ are each drawn as nested label/value lists. A shopping list,
+   a reading list and notes are drawn as numbered steps joined by a line.
+2. **The host defines what the client never draws.** `vak_presentation::Primitive`
+   has 57 members; the client draws about twenty and sends `map`,
+   `calendar`, `board`, `graph`, `form`, `entity`, `evidence`, `alert`,
+   `conversation` and `transaction` to the same field list.
+3. **The client draws by kind, not by block.** The record knows the block
+   that built a card (`PresentationRecord.block`), but the wire does not
+   carry it, so the client needs a table of every kind.
+4. **A second decision layer reads words.** On every assistant message the
+   projection extracts signals from the text (`signals_from_context`), runs
+   a recipe planner over them, merges outcome requirements and chooses a
+   pack. That is a reading of words deciding what a person sees.
+5. **85 starter packs restate the aliases** (`seeds.rs`), and the renderer
+   itself decides by words and counts: titles dropped when they read
+   "overview", "plan", "timeline", "table"; a table becomes options when
+   its first column is named "option"; "quiet" at five rows.
+6. **Drawing defects** seen live: the chart uses a point scale (the first
+   bar covers the axis labels), labels only its first and last category,
+   scales its text with its width, and carries a range slider; tables
+   scroll inside the conversation (280px cap); prose runs ~140 characters
+   a line; card body text is three different sizes.
+
+## 2. The model
+
+**A card is a form.** A form is a shape of information, not a topic. The
+built-in forms, each one card tool (`emit_<form>_card`) whose own kind is
+its name:
+
+| Form | Shape | Replaces |
+|---|---|---|
+| `summary` | the answer: a headline, one to three sentences, key points | `lead` |
+| `steps` | items in order: a how-to, a routine, an itinerary, an agenda | timeline, itinerary, agenda, milestones, schedule, release, incident |
+| `list` | items in no order, each with optional detail, facts, link; `checkable` when they are to be ticked | checklist, shopping/reading/media lists, notes, search results |
+| `details` | labelled facts about one subject, or questions with answers | entity, place, contact, transaction, FAQ |
+| `table` | records under shared columns | data grid, budget, inventory, invoice |
+| `comparison` | two to four options side by side, with a recommendation | pros/cons, decision matrix, travel options |
+| `stats` | a few headline figures | metric, scorecard |
+| `chart` | numbers across a dimension | trend, timeseries, metric chart |
+| `callout` | one thing not to miss | alert, tip, warning |
+| `sources` | findings tied to the sources they came from | research, news, evidence |
+| `calendar` | events placed on dates and times | calendar, availability |
+| `link` | a link with its title | link preview |
+| `media` | an image, video or audio | media.* |
+| `file_preview` | a workspace HTML/UI file | ui.preview |
+| `markup_preview` | inline HTML | ui.markup |
+| `diff` | code changes made | coding.diff |
+| `test_report` | a test run a call executed | test.report |
+| `terminal` | a command a call ran, with its real output | terminal.view |
+
+Prose is not a card. A recipe, a lesson or a care plan is not a form: it
+is a composition (`details` for its facts, `list` for what it needs,
+`steps` for how), which doc 87 already lays out as one answer.
+
+Rules:
+
+- **One kind per block.** A block's built-in kind is its own name. Packs
+  add kinds to a block (doc 91); nothing else does.
+- **The wire carries the block.** `StructuredOutput.block` is set by the
+  host for every card. The client draws by block; a kind only selects a
+  pack on the host.
+- **The primitives are the forms**, plus layout (`stack`, `row`, `group`,
+  `section`) and `text`. A pack composes these; the host enum and the
+  client's dispatcher are the same set, checked by a test.
+- **Nothing decides by words or counts.** No signal extraction from text,
+  no recipe planner, no title word lists, no row thresholds. A variant a
+  card needs is a typed field of its schema.
+- **One container.** Every card is drawn in the same shell: border,
+  padding, optional heading, no hover unless it acts. Card body text is the
+  conversation's reading size; prose is held to ~70ch.
+
+Not built: a map, a board, a graph and a form to fill in. Places go in a
+`list` or `details` with a link; a decision the person makes goes through
+the existing approval and option flows. Each is added only when real
+turns show a shape the forms above cannot carry (`docs/plans/open-items.md`).
+
+## 3. What is removed
+
+- The 82 alias kinds, the client's `STRUCTURED_RENDERERS`, the
+  `universal_card` field list and every alias builder.
+- `emit_recipe_card`, `emit_checklist_card` (now `list`), the media
+  shape's four kinds (now `link` and `media`).
+- `PresentationRecipe`, `built_in_recipes`, `signals_from_text`,
+  `signals_from_context` and the projection's planner over them.
+- The 85 alias starter packs; seeds are rebuilt for the forms, and the
+  dev data home is set up again (re-seeded) after the change.
+- Primitives no form or layout uses.
+- The compatibility branches for older saved pack trees in the client.
+
+## 4. Stages
+
+| Stage | Done when |
+|---|---|
+| F1 Host forms | `SHAPES` is the table above, one kind each; `StructuredOutput.block` on the wire; skills, digests, fixtures, fence path agree; card tests pass |
+| F2 Remove the word layer | no `signals_*`, no recipes, no planner in the projection; pack selection by kind and activation alone |
+| F3 Primitives and seeds | `Primitive` is the forms plus layout; seeds rebuilt; social add-on packs name their block |
+| F4 Client | one renderer per form under `components/cards/`, drawn by block; one card shell; chart, table and measure fixes; old registry and renderers deleted; both bundles rebuilt |
+| F5 Prompt and docs | prompt seed and tool descriptions name the forms (diff note in doc 07); docs 30, 57, 67, 87 point here |
+| F6 Live | real turns on the dev route draw every form; checked at 1440×900 and 390×844, light and dark; data home re-seeded |
+
+Progress is recorded here as each stage lands.
