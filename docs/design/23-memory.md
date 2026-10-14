@@ -4,18 +4,17 @@ plan M6 (2026-10-06)
 
 The memory home passed to `vak-core::memory` is the owning Agent's private
 home (doc 64). Workspace notes live at
-`<agent home>/memory/<hash_cwd>/MEMORY.md`; profile notes live at
+`<agent home>/memory/<space id>/MEMORY.md` (`AgentScope::memory_notes`); profile notes live at
 `<agent home>/memory/user/USER.md`. Session search reads the data catalog
 (`crates/vak-catalog`), which holds conversations, memory notes and
 entities in one ranking. This document
 describes the shipped recall and note store; doc 26 describes learning and
 skill review.
 
-Pillar 2 of the platform plan (see `22-gateway.md` intro): Hermes' crown
-differentiator is not the loop — it is that **nothing learned is ever
-stranded**. Past sessions become retrievable context via a model-visible
-search tool plus FTS-style indexing. We get the same capability with zero
-new dependencies because our session store is already structured JSONL.
+Pillar 2 of the platform plan (see `22-gateway.md` intro): what matters is
+not the loop but that **nothing learned is ever stranded**. Past sessions
+become retrievable context through a model-visible search tool over the
+data catalog's full-text index.
 
 ## Model
 
@@ -47,35 +46,24 @@ and Documents remain authoritative.
 
 ```mermaid
 flowchart LR
-    A[Query] --> B[Tokenize and normalize]
-    B --> C[Workspace or all-project ledger scan]
-    B --> D[Curated memory and profile blocks]
-    C --> E[Score and rank]
-    D --> E
-    E --> F[Exclude current and trashed sessions]
-    F --> G[Bounded snippets and top hits]
-    G --> H[Tool result in session ledger]
+    A[Query] --> B[Catalog caught up with ledgers and Documents]
+    B --> C[Filter by Agent, audience, space, trash and holds]
+    C --> D[FTS5 rank over messages, digests, notes, entities, intake]
+    D --> E[Bounded snippets and top hits]
+    E --> F[Tool result in session ledger]
 ```
 
 ### Scoring
 
-Deterministic, dependency-free:
-
-- Query tokens lowercased, alphanumeric, length ≥ 2.
-- `score_normalized` uses BM25-style saturated term frequency with
-  `k1 = 1.2`, `b = 0.75`, and an approximate average length of 100 chars.
-  The current term weight is the constant `ln(2)`; it does not calculate a
-  corpus-specific IDF. A full phrase adds `3`; indexed entity matches can
-  multiply a term contribution by `4`.
-- Curated `ExternalDoc` memory hits add `2.5` to their base text score.
-  `finalize` adds a small recency tie-break (`0.01`) and returns the requested
-  top hits. `DEFAULT_LIMIT = 8`, caller limits clamp to 1–50, and snippets
-  are bounded to 240 characters.
-
-The per-ledger mtime-keyed cache is shipped in `vak-session::index`; a changed
-ledger is visible on the next query. `vak-session::search` defines the
-ranking and exclusion behavior, so the CLI, server and agent tool do not
-maintain competing scorers.
+Session search ranks in the catalog with FTS5's `bm25` over the text
+projections (`Catalog::search`, `crates/vak-catalog`), after the audience
+filter, with snippets from FTS5's `snippet`. `session_search` returns
+`DEFAULT_LIMIT = 8` hits unless the call asks for up to 50
+(`vak-core/src/session_search.rs`). Recall inside one conversation ranks
+with `vak_session::text::score_normalized`: lowercased alphanumeric tokens
+of two or more characters, BM25-style saturated term frequency
+(`k1 = 1.2`, `b = 0.75`), a bonus for the whole phrase and for indexed
+entity matches. There is one scorer for each and no surface keeps its own.
 
 ## Surfaces
 
@@ -126,6 +114,9 @@ place. There is no automatic “dream”/overnight consolidation pass; reflectio
 is bounded to at most two deduplicated proposals after a clean completion.
 
 ## Phases
+
+> **Historical record**: how memory was built, phase by phase. Paths and
+> names here are as they were then; the sections above are current.
 
 | Phase | Delivers | Exit criterion |
 |---|---|---|

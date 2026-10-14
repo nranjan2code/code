@@ -43,10 +43,9 @@
 //!   exactly as it always was; an engagement can only add an approval
 //!   requirement on top. Nothing here can authorize anything.
 //! * **Uncertainty resolves to the orienting engagement.** A reading below the
-//!   confidence floor loads the orientation floor (files and memory) and
-//!   leaves every other admitted tool one `find_tools` call away; what a human
-//!   delegated still applies. Being unsure never removes a capability — it
-//!   only sends less up front. [`Engagement::general`], which restricts
+//!   confidence floor gets the general posture, as careful as any risk its
+//!   words stated; what a human delegated still applies. No reading decides
+//!   which tools are loaded (docs/design/88-control-plane.md §12.1). [`Engagement::general`], which restricts
 //!   nothing at all, is what a *disabled* kernel produces.
 //!
 //! # Reproducibility

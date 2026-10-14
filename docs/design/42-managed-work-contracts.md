@@ -389,6 +389,10 @@ back to direct mode only after recording the reason as an audit event.
 
 ## Ambiguity and user confirmation
 
+Not built: there is no `NeedsInput` outcome yet; a worker that needs the
+person asks through `ask_parent` (docs/design/84-worker-questions-and-control.md).
+The design:
+
 Introduce a typed `NeedsInput` outcome or equivalent durable status. Ask the
 user only when an unresolved assumption materially changes:
 

@@ -1,5 +1,5 @@
 //! Durable memory notes (docs/design/26-learning.md): one plain-markdown
-//! file per workspace under `<home>/memory/<hash>/MEMORY.md`, plus a global
+//! file per workspace under `<home>/memory/<space id>/MEMORY.md`, plus a global
 //! user-profile tier at `<home>/memory/user/USER.md`
 //! (docs/design/29-personal-os.md P1). The model appends through the
 //! `remember` tool; humans edit or prune the file directly — the parser

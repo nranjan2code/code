@@ -25,6 +25,9 @@ self-curating skills.
 
 ## Phases
 
+> **Historical record**: the phases as they shipped; paths and names are as
+> they were then.
+
 | Phase | Delivers | Exit criterion |
 |---|---|---|
 | **P1 ✅** | Memory that compounds: global `USER.md` profile tier (`<home>/memory/user/USER.md`), `MemoryStore::forget`/`amend` with rewrite-not-tombstone semantics (memory files are hand-editable by design; sessions stay append-only), reflection hook available on every surface behind `[memory] reflection`, M1 mtime-keyed search index, TUI `/search`, `search_all` across projects | warm 10k-line store searched < 50ms; forget removes exactly one block; USER.md notes outrank equal transcript hits; fmt/clippy/tests green |

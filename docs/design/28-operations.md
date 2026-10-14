@@ -92,8 +92,8 @@ loop the user cannot see is worse than one that stays down until the next
 `services-sync` or launch.
 
 **The working directory is the account home**, not a workspace: the
-desktop app picks its project in its own UI (`ProjectGate` /
-`recent_projects` in `desktop.json`), so recording a workspace would
+desktop app picks its workspace in its own UI (`WorkspaceGate`, with
+`recent_workspaces` and `last_project` in the shell's preferences), so recording a workspace would
 record one it never honours.
 
 **It is skipped when `vak-desktop` was not built.** A unit exec'ing a

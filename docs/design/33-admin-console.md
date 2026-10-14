@@ -410,7 +410,7 @@ Rules the split enforces:
    there. The surface prefix is still validated against the known bridges.
 2. **Onboarding reads as a sequence, not a pile.** Connect's three steps —
    set the credential, message the bot, review and approve — report their own
-   state from the backend (`GET /config`'s `chat_surfaces` for token
+   state from the backend (`GET /config`'s `surfaces` for token
    presence, the allowlist for pending chats) rather than asking the operator
    to track where they are. The current step carries the accent border;
    finished steps dim.

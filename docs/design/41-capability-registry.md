@@ -149,9 +149,10 @@ The registry publishes immutable, versioned `CapabilitySet` snapshots. The
 **turn** — not the session — binds one, and holds it start to finish, so a
 plan formed in step one cannot have its tools change by step four.
 
-Between turns a session re-binds to the current epoch and appends a
-`CapabilityEpochChanged` entry naming the delta; the model is told, once, in
-its standing section. This is what makes rotation unnecessary rather than
+Between turns a session re-binds to the current epoch; each turn records the
+interface it bound in a `TurnCapabilitiesBound` entry, and the model sees
+what is configured but not usable in its standing section
+(`capability::standing_section`). This is what makes rotation unnecessary rather than
 merely forbidden.
 
 The epoch moves only when the world actually differs. The set digest covers

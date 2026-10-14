@@ -58,10 +58,10 @@ The state is cleanly decoupled into discrete atoms:
 `createEffect` in `ArtifactCanvas` tracks `canvasSubject()` strictly, ensuring that toggling between split/focused modes or switching between 100%/768px/375px viewports never reloads the underlying iframe.
 
 ### B. Asynchronous Generation Guarding
-Rapid navigation between artifacts or dev-server startup introduces potential race conditions. Every asynchronous loading pipeline increments a local `request` counter (`const generation = ++request`). State assignments (`setActiveServerPort`, `startedServerName`, `setHtml`, `setRawText`) and DOM mutations are guarded by `if (generation !== request) return;`.
+Rapid navigation between artifacts or dev-server startup introduces potential race conditions. Every viewer loads through one loader (`components/canvas/createLoader.ts`): a load overtaken by a newer one, or by the viewer closing, is discarded and its result disposed, so a slow read never replaces a newer subject's content and nothing it allocated (a blob URL, a preview, a dev server's lease) outlives it. A reload keeps what is shown until the fresh content is ready.
 
 ### C. Graceful Exit Animation & Reopening Safety
-Closing uses a 220ms CSS slide-out animation via `isClosing()`. If an operator closes one artifact and rapidly selects another within 200ms, the pending dismissal timeout is cleared immediately, resetting `isClosing(false)` and rendering the new artifact without interruption.
+Closing the last tab slides the Canvas away (`canvasSlideOut`, `EXIT_MS = 220` in `ArtifactCanvas.tsx`); closing one of several brings the next forward at once. If another tab comes forward or the conversation changes during the slide, the close finishes at once (`finishClose`) and the new subject renders without interruption.
 
 ---
 

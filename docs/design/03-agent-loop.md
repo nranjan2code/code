@@ -111,10 +111,11 @@ Five bounded, system-authored checks run inside the loop, each with its own
   the user asking again. It is sent once and the answer redone; an answer
   that drifts again straight after it stands as the model's own, with a
   `model-drift` diagnostic. No count of events ends a turn.
-- **Identical-card repeat breaker**: an `emit_*_card` call identical to one
-  already shown this run is acknowledged as a no-op (not an error). A step
-  that only repeats shown cards again, straight after that acknowledgement,
-  closes the turn on that card as its answer (`card_repeat_outcome()`).
+- **Identical-card repeat**: a card call identical to one already shown this
+  turn is acknowledged as already shown and not recorded twice (`show_card`).
+  A call that returns what it returned before is refused from then on, until
+  something changes the workspace (`Refusal::Repeated`, `note_result`): an
+  observed state, never a count.
 - **Removed at control-plane C5** (docs/design/88-control-plane.md §5):
   `[freshness-check]`, `[grounding-check]` and `[topic-mismatch]`, which read
   the request's or the answer's words, and the runtime endings that replaced

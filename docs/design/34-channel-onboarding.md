@@ -62,6 +62,9 @@ phases below replaced that behavior with visible state, approval, and governance
 
 ## Current state (as built, `docs/design/22-gateway.md`)
 
+> **Historical record**: the gateway as it was before Phase 1, kept as the
+> reason for the phases below.
+
 - `gateway.chat_allowlist` / `chat_allowlist_open` live in `.vak/config.toml`
   (privileged, project-config only), loaded once at process start.
   Changing it requires a hand-edit + process restart — `self
@@ -191,7 +194,7 @@ plainly, not assumed silently), not a value nothing ever surfaces.
 
 ## UI additions
 
-**Admin UI** (`crates/vak-admin-ui`, extends the existing `GatewayView`):
+**Admin UI** (`crates/vak-admin-ui`, now `GatewaySection` in `App.tsx`):
 a "Pending channels" panel above the binding list when any entry is
 `status: pending` (badge count in the nav, matching the existing pattern
 for approvals/inbox), each with Approve (workspace + route pickers) /
@@ -547,7 +550,7 @@ as `vak telegram`); `DiscordAdapter` and `SlackAdapter` are registered in
 `delivery.rs` when their bot tokens are set. Phase 1's UI was confirmed
 surface-agnostic — nothing keyed on "telegram" — so the panels needed only
 a `SurfaceBadge`, not generalizing. Desktop Settings renders one
-Telegram-shaped token field per surface from `chat_surfaces` in
+Telegram-shaped token field per surface from `surfaces` in
 `GET /config`, via `PUT/DELETE /config/bot-token/{surface}`; only Telegram
 has a managed service unit today, so the others say plainly that the
 bridge is started by hand rather than promising a restart that will not
@@ -688,7 +691,7 @@ every bot in `bots.json` with a token set, not just one arbitrary pick per
 surface. `resolve` reads the bot id off a three-part target and returns that
 bot's own adapter; a target naming a bot with no token configured fails with
 a specific error rather than silently answering under a different bot's
-identity. `deliver_record` normalizes the target back to `surface:address`
+identity. Sending an effect (`delivery.rs`) normalizes the target back to `surface:address`
 before calling an adapter's `send`, so none of the four existing
 per-adapter `target.split_once(':')` call sites needed to learn about the
 bot id segment.

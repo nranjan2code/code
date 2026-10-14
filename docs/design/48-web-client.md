@@ -872,6 +872,9 @@ them:
 
 ## 11. Phase 0 audit — the desktop defects to fix first
 
+> **Historical record**: the audit Phase 0 worked from, as found at 2.0.1;
+> the phases above fixed it, and names below are as they were then.
+
 Found by review of `crates/vak-desktop` and its UI at 2.0.1. Ordered by
 consequence.
 

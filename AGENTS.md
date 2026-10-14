@@ -781,9 +781,8 @@ commit (invariant 30).
     to reach for by accident. Intent never gates the permission engine —
     permission is evaluated exactly as before and intent may only add a
     requirement on top, so a resolution bug cannot authorize anything.
-    `DomainSet::All` means everything and only a *disabled* kernel produces
-    it; an uncertain reading resolves to the explicit *orienting* engagement
-    (general posture, orientation-floor domains). A reading never removes a
+    An uncertain reading resolves to the explicit *orienting* engagement
+    (the general posture). A reading never removes a
     capability at all: admission is policy only, and which admitted tools
     are *loaded* follows each tool's own declaration, never the reading
     (docs/design/88-control-plane.md §12.1). A request resolves

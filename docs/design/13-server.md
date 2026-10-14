@@ -165,5 +165,5 @@ plus `trusted_hosts`, cross-origin mutations and WebSocket upgrades refused,
 - The bridge forwards into the **broadcast** channel — an earlier draft fed
   the mpsc back into itself, producing an infinite echo loop. The e2e test's
   event-kind assertions now pin this class of bug.
-- SDK seams added to Core for embedding/tests: `set_provider_instance`,
-  `set_sessions_home`.
+- SDK seam on Core for embedding and tests: `set_provider_instance`. A
+  test's homes are isolated by `vak_config::paths::isolate_home_for_tests`.

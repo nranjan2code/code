@@ -118,6 +118,10 @@ ConversationKey {
 }
 ```
 
+In code the key is the session header's Agent and space with its
+`ConversationContext` (`vak_session::types`: conversation, audience and
+origin); `ConversationKey` names that combination, not a type.
+
 Desired routing configuration has one canonical owner. Pending endpoints can
 exist before workspace/Agent/audience assignment; approval validates and writes
 those assignments atomically. Runtime session pointers and admission locks are
@@ -144,24 +148,24 @@ lower budget/turn/dispatch limits, constrain a route ladder to a prefix, or
 raise approval requirements. It cannot add a tool, credential, model,
 workspace, budget, or permission.
 
-Memory is explicitly scoped:
+Memory is scoped by where it is stored and who may see it. The five named
+scopes first designed here (conversation-private, Agent-private,
+workspace-shared, user-global, delegation packet) are not built as tiers;
+what holds is:
 
-1. `conversation_private` — that conversation only.
-2. `agent_private` — the same Agent AND authorized owner/audience, plus an
-   explicitly authorized child; not every person using that Agent.
-3. `workspace_shared` — deliberately published knowledge with authorized
-   recipient audiences, not automatic access for every external caller.
-4. `user_global` — user-owned preferences with explicit audience/surface grants;
-   account linking alone does not expose them.
-5. `delegation_packet` — a bounded, logged handoff to a child.
+1. A workspace note lives in the owning Agent's home, per space
+   (`AgentScope::memory_notes`), and a note derived from a conversation
+   keeps that conversation's audience.
+2. Profile notes (`memory/user/USER.md`) are the owner's, in the local
+   audience.
+3. A delegated worker starts from what its parent hands it in the `task`
+   call, logged in both ledgers.
+4. Search filters by Agent and audience before ranking (`Catalog::search`,
+   invariant 37), so another Agent's notes and another audience's
+   conversations are never reached. There is no shared tier to publish to.
 
-Private records carry owner/audience and workspace labels as well as their
-Agent/conversation scope. Search defaults to the first two scopes within the
-caller's authorized audience. A result from another Agent is
-unavailable unless it was explicitly promoted to `workspace_shared` or placed
-in a delegation packet. Publishing private data requires authority to disclose
-it; relabeling cannot bypass access checks. Cross-Agent and cross-principal
-sharing are separate permissions.
+Cross-Agent and cross-principal sharing of conversations and artifacts goes
+through grants (`vak_core::grants`), never through memory.
 
 One source access predicate covers transcript APIs, indexes/search, memory
 writes, reflection, compaction/retrieval, delegation, artifacts, exports,

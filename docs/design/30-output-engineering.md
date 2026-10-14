@@ -510,16 +510,8 @@ Typed and enforced (a wrong answer here is a bug, not a judgement call):
 
 Still judgement, on purpose:
 
-- **Whether prose "reads as" a card** for the keyword signals (weather,
-  research, benchmarks) through `signals_from_text`. The presentation check
-  nudges once and the model may decline; it does not decide.
 - **Which card the model picks** (metric vs research vs table), steered only by
   the tool descriptions.
-- **Whether an answer used its retrieval** (the grounding check's second
-  half): the answer repeats a host or figure from the result, or admits it
-  found nothing by one shared English phrase list (`admits_no_data`). Both are
-  heuristics, bounded to one redo the model may satisfy by answering
-  honestly; neither decides what the answer says.
 - **Inline hints inside tool results** (`[recovery]`, `[post-tool-use hook]`)
   and echoed narration lines (`Surface:`) are matched in text, from the shared
   vocabulary. They are read by the *model* in-band and shown only in operator
@@ -529,3 +521,9 @@ Still judgement, on purpose:
   gain, so this was decided against rather than overlooked.
 - **Sessions written before typing** keep untagged nudges; there is no
   backward-compatibility path by design.
+
+Removed, because they read words: the presentation check (whether prose
+"reads as" a card, through `signals_from_text`) and the grounding check
+(whether an answer used its retrieval, including the `admits_no_data` phrase
+list), at control-plane C5 (docs/design/88-control-plane.md §5).
+`signals_from_text` is now called only by the delivery audit tests.

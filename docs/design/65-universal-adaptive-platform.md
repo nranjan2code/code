@@ -54,7 +54,7 @@ A user may ask a question, request a complex data extraction, initiate a multi-s
    - `general_multi_agent_collaboration` eval case tests end-to-end multi-disciplinary delegation combining quantitative metrics, citations, and executive synthesis.
 
 ### D. Scheduled work
-Scheduled work is a task (`vak_core::tasks::TaskDef`: a prompt or a script on an interval, a cron expression or a one-shot time, with the owning Agent in `agent_id`), fired by the server's scheduler (`fire_task`). An earlier `AgentSchedule` field on the Agent definition and its `agents_runs.jsonl` ledger were stored but never run, and were removed in the data architecture plan's M0 (`docs/plans/data-architecture-plan.md`). A run record for every trigger arrives with that plan's M4.
+Scheduled work is an automation (`vak_core::triggers::Trigger`: a prompt or a script on a schedule or an event, owned by the Agent it names), started only through `triggers::claim_due` and run by the server (`crates/vak-server/src/automations.rs`), with a run record for every start. An earlier `AgentSchedule` field on the Agent definition and its `agents_runs.jsonl` ledger were stored but never run, and were removed in the data architecture plan's M0 (`docs/plans/data-architecture-plan.md`).
 
 ## 3. Invariants & Guarantees
 

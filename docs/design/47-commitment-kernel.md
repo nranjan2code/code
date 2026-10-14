@@ -9,22 +9,21 @@ there.
 
 | Phase | Delivers | Governs the turn through |
 |---|---|---|
-| I0 | kernel (`vak-intent`): seven axes, cascade, authority, narrowing lattice, **strands** | `Core::resolve_turn_intent_with_escalation` |
+| I0 | kernel (`vak-intent`): seven axes, cascade, authority, narrowing lattice, **strands** | `Core::resolve_turn_intent` |
 | I1 | commitment ledger (`vak-commit`): lifecycle, satisfaction lattice, projection, portfolio scheduler | `commitments::plan_episodes` then `begin_episodes` — one commitment per thread |
 | I2 | admission, intent ledger entry, `[intent]`/`[commitment]` config, `vak intent explain` | `IntentRecord` (reading, strands, engagement, note) |
 | I3 | route demand, per-commitment budget, prompt projection, **context profile** | `plan_route_ladder(demand)`, `CoreSpendGate::narrow_run_cap`; `ContextProfile` reaches the working-set planner through `ReadingKey.context` (`minimal`: no relevance retrieval, only an explicitly referenced preceding turn at `Full`), the tail (`working`/`full`: the workspace delta since the session began, logged as a `workspace_delta` activity first) and the note (`full`: `commitments::prompt_projection`); `full` is set only for a strand working on an open commitment (`apply_commitments`), never by a reading |
-| I4 | capability slicing (progressive disclosure) | stage-4 exclusion for a confident reading; the tool surface (core vs. deferred) for every reading |
+| I4 | capability slicing (progressive disclosure) | removed 2026-10-11: which admitted tools are loaded follows each tool's own declaration, never the reading (docs/design/88-control-plane.md §12.1) |
 | I5 | envelopes: `vak grant` / `vak revoke`; a live grant narrows the strands that serve its commitment and pre-authorizes, one gate at a time, the actions it covers; revocation honoured on read | `vak_intent::apply_envelopes` → `intent::permission_mode` → `cfg.mode` and `spend_ceiling_usd` → the run cap; `intent::envelope_check` → `AgentConfig::envelope_check` |
 | I6 | episodes bracketing durable turns; upkeep tick — schedule wakes, predicate wakes, escalation policies, explicit expiry; **`Defer`** | `intent::DeferringApprover` parks an unanswerable gate in the inbox and suspends the commitment |
 | I7 | server endpoints, admin portfolio, composer strip, the `commitments` capability, per-channel autonomy ceiling | delivery cadence/urgency were read here until 2026-10-09, when both were removed |
 | I8 | misread evidence | removed 2026-10-11: no reading decides which tools are loaded, so there is nothing for it to measure (docs/design/88-control-plane.md §12.1) |
-| **I9** | **tiers 2/3**: a `Classify` dispatch on a weak reading — spend-gated, watchdogged, fail-open | `[intent] escalate = local \| cloud`, `classify_model` |
+| I9 | tiers 2/3: a model classifying a weak reading | removed 2026-10-11: the reader is the fixed one alone (docs/design/88-control-plane.md §12.1) |
 | **I10** | **control plane**: authority from the channel, explicit commands, no text heuristics | `ControlSource`, `parse_command`, `evaluate_intervention` |
 
 Every part is switchable off with `[intent] enabled = false` and
 `[commitment] enabled = false`, which together reproduce the runtime's
-pre-kernel behaviour exactly. `DomainSet::All` means *everything*; disabling
-capability slicing also produces it.
+pre-kernel behaviour exactly.
 
 ## Runtime map
 
@@ -271,16 +270,18 @@ Cheapest first, stopping once confidence clears the bar.
 |---|---|---|
 | 0 — **declared**: CLI flags, flow intent, pinned channel policy, inherited worker engagement | free | yes |
 | 1 — **signals**: lexical, structural, deictic, workspace, session, surface, attachment | free | yes |
-| 2 — **local model**: strict JSON via Ollama | ~free | no |
-| 3 — **cloud model**: only below the tier-1 threshold | metered | no |
 
-Tiers 0–1 are pure functions of recorded inputs, so a decision that narrowed a
-turn can be reconstructed months later. Tiers 2–3 record the model id and
-prompt digest and are marked `reproducible: false` — the same honesty the
-routing ledger applies to `Settlement::Unknown`. Never claim replay fidelity
-you do not have.
+Both tiers are pure functions of recorded inputs, so a decision that
+narrowed a turn can be reconstructed months later.
 
-The kernel decides **whether** a paid tier is warranted; `vak-core` performs
+#### Tiers 2 and 3, as they were
+
+> **Historical record**: removed 2026-10-11
+> (docs/design/88-control-plane.md §12.1). Kept as the record of what was
+> built and measured; nothing below runs.
+
+Tiers 2–3 recorded the model id and prompt digest and were marked
+`reproducible: false`. The kernel decided **whether** a paid tier is warranted; `vak-core` performs
 it (`Core::resolve_turn_intent_with_escalation`), because a dispatch is a
 dispatch: `WorkPurpose::Classify`, a work receipt on the session, spend-gate
 admission under `max_classify_usd`, a watchdog under the run's cancellation
@@ -328,21 +329,19 @@ classifier can change what a turn *reaches for* but never what it is
 *allowed to do*. A classifier that states no confidence is provisional: it
 may raise a floor, it may not remove a tool.
 
-What a weak reading gets, with the kernel on, is the **orienting
-engagement**: the general posture and the orientation floor
-(`filesystem`, `memory`) as its domain requirement — an explicit decision,
-never a collapsed top element — made at least as careful as any risk the
-text stated. Stakes above the ordinary and an evidence standard are only
+#### What a weak reading gets
+
+With the kernel on, a weak reading gets the **orienting engagement**: the
+general posture, an explicit decision, made at least as careful as any risk
+the text stated. Stakes above the ordinary and an evidence standard are only
 ever read from words the request contains, so a weak part keeps them: a
 reading too weak to narrow capability is never too weak to raise caution,
 and "force push to the production branch" asks first whether or not its
-verb was understood. `DomainSet::All` keeps its one meaning,
-everything (design 68 Principle 6:
-when a decision cannot be made confidently, send less and give the model a
-way to ask for more). No reading, confident or not, removes a capability:
-admission is policy only (docs/design/41-capability-registry.md), and the
-reading decides which admitted tools are loaded versus deferred behind
-`find_tools`.
+verb was understood. No reading, confident or not, removes a capability:
+admission is policy only (docs/design/41-capability-registry.md), and which
+admitted tools are loaded versus deferred behind `find_tools` follows each
+tool's own declaration, never the reading
+(docs/design/88-control-plane.md §12.1).
 
 #### Resolver algorithm as implemented
 
@@ -685,7 +684,7 @@ When the parentage is unknown, the answer is no.
 
 ### Did we read it right?
 
-Superseded 2026-10-11: the misread ledger is removed, because no reading
+> **Historical record**. Superseded 2026-10-11: the misread ledger is removed, because no reading
 decides which tools are loaded any more (docs/design/88-control-plane.md
 §12.1). The section is kept for history.
 
@@ -711,16 +710,16 @@ least five observations, with the capabilities the model asked for.
 
 1. **Intent narrows, never widens.** An engagement's `Limits` may lower a
    budget, lower a permission ceiling, or *raise* an approval floor. Never
-   grant, extend, raise a cap, or lower a floor. A reading decides which
-   admitted tools are loaded, never what is possible: it does not shorten the
+   grant, extend, raise a cap, or lower a floor. A reading never decides
+   which tools are loaded or what is possible: it does not shorten the
    route ladder, cap the turn budget, or limit delegation — those caps only
    ever removed capacity from requests the reader got wrong. `Limits`
    is a meet semilattice whose top element reproduces pre-kernel behaviour;
    `meet` is the only composition operator offered and there is deliberately no
-   `join`. `Limits.required_domains` is typed as a bounded semilattice `DomainSet`
-   ($\bot = \text{Empty} \le \text{Only}(names) \le \top = \text{All}$); disjoint domain
-   intersections collapse strictly to $\bot$ (`Empty`) rather than widening to unconstrained $\top$,
-   guaranteeing $\text{meet}(a, b) \sqsubseteq a$ across all inputs.
+   `join`. Its fields are modalities, a spend ceiling, an approval and a
+   permission ceiling and the weakest evidence that may close the work
+   (`vak_intent::Limits`); the domain requirement it once carried was
+   removed with capability slicing (2026-10-11).
 2. **Intent never gates the permission engine.** Permission is evaluated
    exactly as before; intent may only add an approval requirement. Nothing in
    the kernel can authorize anything.
@@ -817,6 +816,9 @@ default_ttl_days = 30
   the claim).
 
 ## What the review changed
+
+> **Historical record**: what the review of resolver version 1 found,
+> as it was; later sections and the control plane supersede parts of it.
 
 A deep review of the kernel (resolver version 1) found, and this version
 fixes:

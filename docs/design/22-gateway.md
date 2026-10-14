@@ -188,9 +188,9 @@ The desktop's routines daemon graduates into the platform scheduler:
   outbound path used for chat replies. What the run did and delivered is a
   query over its run and effect records, never written back onto the
   automation.
-- Since G1, `last_summary` holds the run's **real final assistant text**
-  (extracted from the restored ledger), not a status word — desktop task
-  rows and deliveries both show the actual answer.
+- The delivered `<text>` is the run's **real final assistant text**
+  (extracted from the restored ledger), not a status word, and the task
+  list shows the same answer from the run's record.
 - Transports:
   - `log:<chat>` — append-only journal, the `gateway/deliveries` record chain.
     No network, works headless, doubles as the test double.
@@ -391,7 +391,7 @@ Covered in `crates/vak-server/tests/`:
 4. Busy → logged steering, run completes after consuming it
    (`busy_message_is_steered_not_dropped`).
 5. Disabled by default → 409 (`gateway_disabled_by_default_returns_conflict`).
-6. Cron → log journal (`cron_task_delivers_summary_to_log_surface`).
+6. Cron → log journal (`automation_delivers_summary_to_log_surface`).
 7. Cron → webhook receiver, no token configured
    (`webhook_delivery.rs::webhook_delivery_posts_run_output`).
 8. Cron → webhook, credential missing → nothing posted, answer still
