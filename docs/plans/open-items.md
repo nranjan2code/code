@@ -15,12 +15,13 @@ across them. Nothing here is started unless it says so.
 - [x] Version: 8.1.0 (`scripts/bump-version.sh` set Cargo.toml, then
   stopped at its `cargo clean`, which refused a target with no
   `CACHEDIR.TAG`; the badge and lockfile steps were finished by hand).
-- [ ] `scripts/release.sh`: every gate passed, tagged `v8.1.0`.
-- [ ] This Mac: keep a copy of `~/Library/Application Support/Vakyartha`
-  (private deployments), `vak self uninstall --purge --yes`, then
-  `dist/8.1.0/vak self install`, link the CLI again at
-  `~/.local/bin/vak`, `vak self services-sync`; `self verify` clean; put
-  the private deployments back.
+- [x] `scripts/release.sh`: every gate passed, tagged `v8.1.0`.
+- [x] This Mac: a copy of the private deployments kept in
+  `~/Documents/Vakyartha-private-deployments-2026-10-15` (this purge did
+  not touch `Application Support/Vakyartha`), `vak self uninstall --purge
+  --yes`, `dist/8.1.0/vak self install`, the CLI linked again at
+  `~/.local/bin/vak`, `vak self services-sync`; `self verify` clean, both
+  services running, the home names `8.1.0`, the plugins seeded.
 - [ ] The maintainer runs `vak setup` with the provider key; then `doctor`
   in `~/vak-home`. AWS stays on 8.0.0 until the maintainer asks.
 

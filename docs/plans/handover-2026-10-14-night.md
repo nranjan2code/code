@@ -22,13 +22,13 @@ stand' before the session's limit. Next: build stage E2 (doc 93 §11:
 tests/ run by the runtime as a VerifyCapability worker task with a run
 record, per-case results on the version; E1 is built; decisions D1 to D8
 and R1 to R7 are settled) as a design, never spot fixes or tuned numbers;
-UI that gets in the way is rewritten, not patched (no users yet). Live
-runs use launch entry `vak-e1-live` (port 8905, a throwaway
+UI that gets in the way is rewritten, not patched (no users yet). After the maintainer's setup, live runs may use the installed home (its
+OpenAI key, luna) for bigger tests; otherwise live runs use launch entry
+`vak-e1-live` (port 8905, a throwaway
 VAK_HOME=/tmp/vak-live/e1-home, workspace /tmp/vak-live/forms; set the
 route once with PATCH /config to ollama qwen3.5:4b-mlx; the Shared layer
-is then /tmp/vak-live/e1-home/vak-home/.vak). The installed data home
-cannot be used by a dev build until it is purged (it predates the
-home-version stamp). Short progress lines."
+is then /tmp/vak-live/e1-home/vak-home/.vak). The installed data home was purged
+and set up fresh on 8.1.0 on 2026-10-15. Short progress lines."
 
 ## Where things stand
 
@@ -115,7 +115,16 @@ What the study found in the code (the starting points for E1 to E3):
   `NeedsYou.tsx`; admin `Inbox.tsx` already shows `proposal_opened`,
   admin routes include `#/measurements` and `#/integrations`.
 
-Unchanged from earlier today: **8.0.0 released** (`db1dc61db`, tag
+**8.1.0 released 2026-10-15** (`61d65be2c`, tag `v8.1.0`): E1 and the
+8.0 data baseline. This Mac was purged and 8.1.0 installed; its home
+names 8.1.0, services run, `self verify` clean. The maintainer runs `vak
+setup` (OpenAI key, gpt-6-luna) next; after that a dev build can use the
+installed home and its key for bigger skill tests, sparingly. AWS is
+still on 8.0.0 (its home predates the stamp too: purge with its next
+install). `scripts/bump-version.sh` stopped at its `cargo clean` (no
+`CACHEDIR.TAG` in target/); the badge and lockfile were finished by hand.
+
+Earlier: **8.0.0 released** (`db1dc61db`, tag
 `v8.0.0`) and installed fresh on this Mac; AWS on `fe131988f` (8.0.0
 plus the web sign-in fix), fresh and set up. The data baseline is 8.0
 (`a1a29c8f6`, unreleased): the 8.0.0 homes on the Mac and AWS predate
