@@ -73,6 +73,10 @@ pub struct BackupManifest {
     pub workspace_files_skipped: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_skipped: Vec<String>,
+    /// The version that made the backup. A backup with none was made
+    /// before the field existed, so before the baseline (invariant 29).
+    #[serde(default)]
+    pub app_version: String,
 }
 
 /// How many skipped workspace files a manifest names.
@@ -94,6 +98,7 @@ impl Default for BackupManifest {
             erasures: Vec::new(),
             workspace_files_skipped: 0,
             workspace_skipped: Vec::new(),
+            app_version: crate::APP_VERSION.to_string(),
         }
     }
 }
@@ -112,6 +117,9 @@ pub enum BackupError {
         path: PathBuf,
         source: serde_json::Error,
     },
+    /// The backup was made by a version before the supported baseline.
+    #[error("{0}")]
+    PreBaseline(String),
 }
 
 fn io_err(path: &Path, source: std::io::Error) -> BackupError {
@@ -268,7 +276,15 @@ pub fn read_manifest(src_dir: &Path) -> Result<BackupManifest, BackupError> {
         path: src_dir.to_path_buf(),
         reason: "it has no manifest, so it is not a backup".into(),
     })?;
-    serde_json::from_str(&text).map_err(|source| BackupError::Manifest { path, source })
+    let manifest: BackupManifest =
+        serde_json::from_str(&text).map_err(|source| BackupError::Manifest { path, source })?;
+    if crate::baseline::is_pre_baseline(&manifest.app_version) {
+        return Err(BackupError::PreBaseline(crate::baseline::refusal(
+            "The backup",
+            &manifest.app_version,
+        )));
+    }
+    Ok(manifest)
 }
 
 fn write_manifest(dest_dir: &Path, manifest: &BackupManifest) -> Result<(), BackupError> {

@@ -6,7 +6,7 @@
 //! its own wording — one message means an operator learns the remedy once.
 
 /// The oldest version whose on-disk state this build will accept.
-pub const BASELINE: &str = "7.0.0";
+pub const BASELINE: &str = "8.0.0";
 
 /// True when `version` predates [`BASELINE`]. An unparseable version is
 /// treated as pre-baseline: every build from the baseline onward stamps a
@@ -23,23 +23,78 @@ pub fn is_pre_baseline(version: &str) -> bool {
     (found.major, found.minor, found.patch) < (baseline.major, baseline.minor, baseline.patch)
 }
 
-/// Refuses a data home written before the baseline: one that holds session
-/// or Agent state but no tenant tree, which every 7.0 home has from its first
-/// use (docs/design/73 §6). An absent or fresh home passes.
+/// Refuses a data home written before the baseline. A home names the
+/// version that created it in its [`HOME_VERSION_FILE`]; one that holds
+/// records (a tenant's object store, or the session and Agent trees older
+/// homes kept at the top) but no such file was made before the file
+/// existed, so it is older than any baseline that reads it. A home holding
+/// no records passes, whatever bound its folders, and nothing is written:
+/// [`stamp_data_home`] is the one writer.
+///
+/// [`HOME_VERSION_FILE`]: vak_config::paths::HOME_VERSION_FILE
 pub fn check_data_home(data: &std::path::Path) -> Result<(), String> {
-    if data.join(vak_config::paths::TENANTS_DIR).is_dir() {
-        return Ok(());
+    let what = format!("The data home {}", data.display());
+    match std::fs::read_to_string(data.join(vak_config::paths::HOME_VERSION_FILE)) {
+        Ok(version) if is_pre_baseline(&version) => Err(refusal(&what, &version)),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if holds_records(data) {
+                Err(refusal(&what, "7.x or earlier"))
+            } else {
+                Ok(())
+            }
+        }
+        Err(error) => Err(format!("{what} cannot be read: {}", error.kind())),
     }
-    let has_state = ["sessions", "agents"]
+}
+
+/// Whether `data` holds records: a tenant's object store, or the session
+/// and Agent trees a home before the tenant layout kept at its top.
+fn holds_records(data: &std::path::Path) -> bool {
+    let top = ["sessions", "agents"]
         .iter()
         .any(|dir| data.join(dir).exists());
-    if has_state {
-        return Err(refusal(
-            &format!("The data home {}", data.display()),
-            "6.x or earlier",
-        ));
+    let stores = std::fs::read_dir(data.join(vak_config::paths::TENANTS_DIR))
+        .map(|tenants| {
+            tenants.flatten().any(|tenant| {
+                tenant
+                    .path()
+                    .join(vak_config::paths::TENANT_STORE_DIR)
+                    .exists()
+            })
+        })
+        .unwrap_or(false);
+    top || stores
+}
+
+/// Names this build as the creator of a data home that has no
+/// [`HOME_VERSION_FILE`] yet. Call it only after [`check_data_home`]
+/// passed, which means the home is empty; an existing file is never
+/// rewritten.
+///
+/// [`HOME_VERSION_FILE`]: vak_config::paths::HOME_VERSION_FILE
+pub fn stamp_data_home(data: &std::path::Path) -> std::io::Result<()> {
+    let path = data.join(vak_config::paths::HOME_VERSION_FILE);
+    if path.exists() {
+        return Ok(());
     }
-    Ok(())
+    vak_session::fence::check().map_err(std::io::Error::other)?;
+    std::fs::create_dir_all(data)?;
+    // Staged under a name of its own and linked into place, so two
+    // processes opening an empty home at once never share a staging file
+    // and the first to link is the one that named it.
+    let staged = data.join(format!(
+        ".{}.{}",
+        vak_config::paths::HOME_VERSION_FILE,
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::write(&staged, crate::APP_VERSION)?;
+    let linked = std::fs::hard_link(&staged, &path);
+    let _ = std::fs::remove_file(&staged);
+    match linked {
+        Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => Err(error),
+        _ => Ok(()),
+    }
 }
 
 /// The refusal an operator reads. `what` names the artifact ("this data",
@@ -73,15 +128,16 @@ mod tests {
         assert!(is_pre_baseline("0.11.51"));
         assert!(is_pre_baseline("v1.9.9"));
         assert!(is_pre_baseline("6.0.0"));
-        assert!(is_pre_baseline("6.9.9"));
+        assert!(is_pre_baseline("7.0.0"));
+        assert!(is_pre_baseline("7.3.0"));
     }
 
     #[test]
     fn the_baseline_and_anything_above_it_is_accepted() {
         assert!(!is_pre_baseline(BASELINE));
-        assert!(!is_pre_baseline("7.0.0-dev"));
-        assert!(!is_pre_baseline("7.0.1"));
-        assert!(!is_pre_baseline("8.0.0"));
+        assert!(!is_pre_baseline("8.0.0-dev"));
+        assert!(!is_pre_baseline("8.0.1"));
+        assert!(!is_pre_baseline("9.0.0"));
     }
 
     #[test]
@@ -104,17 +160,51 @@ mod tests {
     }
 
     #[test]
-    fn pre_baseline_home_refused_with_one_message() {
+    fn a_home_without_its_version_is_refused_with_one_message() {
         let dir = tempfile::tempdir().unwrap();
         assert!(check_data_home(dir.path()).is_ok(), "a fresh home is fine");
-        std::fs::create_dir_all(dir.path().join("sessions")).unwrap();
+        let store = format!(
+            "{}/local/{}",
+            vak_config::paths::TENANTS_DIR,
+            vak_config::paths::TENANT_STORE_DIR
+        );
+        for state in ["sessions", "agents", store.as_str()] {
+            let home = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(home.path().join(state)).unwrap();
+            let refused = check_data_home(home.path()).unwrap_err();
+            assert!(refused.contains("predates the 8.0.0 baseline"), "{refused}");
+            assert!(refused.contains("vak self uninstall --purge"), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_home_names_the_version_that_made_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(vak_config::paths::HOME_VERSION_FILE);
+        std::fs::write(&file, "7.3.0").unwrap();
         let refused = check_data_home(dir.path()).unwrap_err();
-        assert!(refused.contains("predates the 7.0.0 baseline"), "{refused}");
-        assert!(refused.contains("vak self uninstall --purge"), "{refused}");
-        std::fs::create_dir_all(dir.path().join(vak_config::paths::TENANTS_DIR)).unwrap();
+        assert!(refused.contains("7.3.0"), "{refused}");
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir_all(
+            dir.path()
+                .join(vak_config::paths::TENANTS_DIR)
+                .join("local"),
+        )
+        .unwrap();
         assert!(
             check_data_home(dir.path()).is_ok(),
-            "a home with a tenant tree is 7.0"
+            "a bound folder is not a record"
+        );
+        stamp_data_home(dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), crate::APP_VERSION);
+        std::fs::create_dir_all(dir.path().join(vak_config::paths::TENANTS_DIR)).unwrap();
+        assert!(check_data_home(dir.path()).is_ok());
+        std::fs::write(&file, "9.1.0").unwrap();
+        stamp_data_home(dir.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "9.1.0",
+            "never rewritten"
         );
     }
 

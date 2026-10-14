@@ -144,8 +144,12 @@ impl TenantObjects {
         let authority: Arc<dyn vak_storage::keys::KeyAuthority> = Arc::new(authority);
         let scopes = vak_storage::scopes::ScopeKeys::open(&keys.join("scopes"), authority.clone())
             .map_err(objects_error)?;
-        let store = LocalStore::open(&tenant_home.join("store"), id_key, authority)
-            .map_err(objects_error)?;
+        let store = LocalStore::open(
+            &tenant_home.join(vak_config::paths::TENANT_STORE_DIR),
+            id_key,
+            authority,
+        )
+        .map_err(objects_error)?;
         let writer_epoch = crate::fence::WriterEpoch(store.epoch().map_err(objects_error)?);
         Ok(Self {
             store: Arc::new(store),

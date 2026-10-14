@@ -15,8 +15,8 @@ docs/plans/open-items.md ('Before the next release').
 
 Run `git status` and `git log --oneline -8`. Stage only your own paths;
 keep only `main`. 8.0.0 is released and installed fresh on this Mac;
-the maintainer runs `vak setup`. Next: bump the data baseline to 8.0
-(open items), then ask the maintainer which item to take. Fix causes as
+the data baseline is 8.0 (unreleased). Next: ask the maintainer
+whether to release, then which open item to take. Fix causes as
 designs, never spot fixes, keyword rules or tuned numbers. Live runs use
 launch entry `vak-forms-live` (port 8904, /tmp/vak-live/forms, token in
 /tmp/vak-live/test-gateway-token; route gpt-6-luna, check GET /config);
@@ -27,8 +27,12 @@ progress lines, lean token use, update this handover at the end."
 
 **8.0.0 released 2026-10-14** (`db1dc61db`, tag `v8.0.0`), installed
 fresh on this Mac after a purge; services running, `self verify` clean.
-The maintainer still runs `vak setup` with the provider key. The data
-baseline is still 7.0: bumping it to 8.0 is the first open item.
+The data baseline is 8.0 (unreleased): a data home names the version
+that created it (`home-version`), sync indexes and backup manifests name
+theirs, and anything older or unnamed is refused with the one message;
+`TurnCapabilitiesBound.tool_domains` is retired. The 8.0.0 homes on this
+Mac and on AWS predate the stamp, so the next release needs both purged
+and set up again.
 
 **AWS on 8.0.0, fresh** (`fe131988f`: 8.0.0 plus the web sign-in fix):
 the 7.1.0 install was purged, setup run (openai-responses, gpt-6-luna,

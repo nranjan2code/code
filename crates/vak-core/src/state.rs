@@ -284,6 +284,16 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     // ---- ledgers: append-only, never rewritten by an update ----
+    StateEntry {
+        path: "home-version",
+        root: Root::Data,
+        owner: "vak-core",
+        schema: None,
+        // The version that created this data home, written once on first
+        // use and never rewritten (`baseline::stamp_data_home`).
+        class: Class::Record,
+        on_purge: OnPurge::Remove,
+    },
     // ---- the tenant tree (docs/design/73 §6) ----
     StateEntry {
         path: "tenants/{tenant}/store",

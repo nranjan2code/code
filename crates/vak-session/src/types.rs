@@ -120,9 +120,6 @@ pub struct TurnBinding {
     /// The rendered `tool_index` text sent this turn: one line per deferred
     /// tool, no schemas.
     pub tool_index: String,
-    /// Declared domains (`vak_core::capability::domain::Domain::as_str`)
-    /// per bound tool name.
-    pub tool_domains: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// One turn's bound capability interface as the ledger records it. This is
@@ -135,11 +132,6 @@ pub struct TurnCapabilitiesBound {
     pub excluded_ids: Vec<String>,
     pub core_tool_names: Vec<String>,
     pub deferred_tool_names: Vec<String>,
-    /// Declared domains per bound tool name, so a later projection can
-    /// recover "what did this tool declare it serves" without re-touching
-    /// the live capability registry (docs/design/68 §9's
-    /// `SignalContext.domains`).
-    pub tool_domains: std::collections::BTreeMap<String, Vec<String>>,
     /// `{system_prompt, tool_schemas, tool_index}` as one conversation-scoped
     /// object; equal interfaces are one object.
     pub interface: crate::objects::ObjectRef,

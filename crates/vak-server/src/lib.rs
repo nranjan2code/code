@@ -10605,6 +10605,7 @@ fn sync_refused(error: &vak_core::sync::SyncError) -> axum::response::Response {
         SyncError::HeldElsewhere => (StatusCode::CONFLICT, "held_elsewhere"),
         SyncError::Busy => (StatusCode::CONFLICT, "in_use"),
         SyncError::KeysChanged => (StatusCode::CONFLICT, "keys_changed"),
+        SyncError::PreBaseline(_) => (StatusCode::CONFLICT, "pre_baseline"),
         SyncError::Failed(_) => (StatusCode::INTERNAL_SERVER_ERROR, "failed"),
     };
     let said = match error {

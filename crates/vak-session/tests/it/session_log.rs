@@ -820,7 +820,6 @@ fn turn_capability_binding_roundtrips_without_entering_context() {
         core_tool_names: vec!["read".into()],
         deferred_tool_names: Vec::new(),
         tool_index: String::new(),
-        tool_domains: Default::default(),
     })
     .unwrap();
     assert!(log.derive_messages().is_empty());
@@ -855,7 +854,6 @@ fn unchanged_capabilities_not_rewritten() {
         core_tool_names: vec!["read".into()],
         deferred_tool_names: Vec::new(),
         tool_index: String::new(),
-        tool_domains: Default::default(),
     };
     let size = || {
         SessionLog::segment_files(&path)

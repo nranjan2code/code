@@ -66,6 +66,9 @@ pub enum SyncError {
         "the keys were changed on the other machine; export a new key file there and import it here"
     )]
     KeysChanged,
+    /// The remote was pushed by a version before the supported baseline.
+    #[error("{0}")]
+    PreBaseline(String),
     #[error("{0}")]
     Failed(String),
 }
@@ -97,6 +100,10 @@ pub struct Index {
     /// key file is older cannot read what was wrapped since.
     #[serde(default)]
     pub key_version: u32,
+    /// The version that pushed it. A remote with none was pushed before
+    /// the field existed, so before the baseline (invariant 29).
+    #[serde(default)]
+    pub app_version: String,
     pub files: BTreeMap<String, Entry>,
 }
 
@@ -372,7 +379,16 @@ impl Core {
             return Err(SyncError::Unreachable);
         }
         match std::fs::read(remote.join(INDEX)) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(failed),
+            Ok(bytes) => {
+                let index: Index = serde_json::from_slice(&bytes).map_err(failed)?;
+                if crate::baseline::is_pre_baseline(&index.app_version) {
+                    return Err(SyncError::PreBaseline(crate::baseline::refusal(
+                        "The sync remote",
+                        &index.app_version,
+                    )));
+                }
+                Ok(Some(index))
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(_) => Err(SyncError::Unreachable),
         }
@@ -712,6 +728,7 @@ impl Core {
             machine: local.machine.clone(),
             at: Utc::now(),
             key_version: tenant.key_versions().map_err(failed)?.0,
+            app_version: crate::APP_VERSION.to_string(),
             files: held,
         };
         let encoded = serde_json::to_vec_pretty(&index).map_err(failed)?;

@@ -211,7 +211,7 @@ Cargo metadata, rather than a workspace compilation, to refresh `Cargo.lock`.
 
 `vak_config::paths` is the single source of truth for data, cache, and log
 homes. Project-local `.vak/` and the CLI workspace-trust marker are
-separate scoped contracts. Nothing before the 7.0 baseline is read or
+separate scoped contracts. Nothing before the 8.0 baseline is read or
 migrated (invariant 29).
 
 ### macOS (default)

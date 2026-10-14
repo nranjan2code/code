@@ -46,10 +46,16 @@ pub fn runtime_dir() -> PathBuf {
     resolve(get_var("VAK_HOME").as_deref()).runtime
 }
 
-/// The directory of tenant trees under a data home (docs/design/73 §6). Its
-/// presence is what marks a data home as written at or after the 7.0 data
-/// baseline (AGENTS.md invariant 29).
+/// The directory of tenant trees under a data home (docs/design/73 §6).
 pub const TENANTS_DIR: &str = "tenants";
+
+/// A tenant's object store inside its tree (`vak_session::objects`).
+pub const TENANT_STORE_DIR: &str = "store";
+
+/// The file at the top of a data home naming the version that created it,
+/// written once on first use. It is what tells a data home on the supported
+/// baseline from an older one (AGENTS.md invariant 29).
+pub const HOME_VERSION_FILE: &str = "home-version";
 
 /// One tenant's tree under the data home `data`.
 pub fn tenant_home_at(data: &std::path::Path, tenant: &str) -> PathBuf {

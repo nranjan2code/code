@@ -1690,7 +1690,6 @@ impl SessionLog {
             excluded_ids: binding.excluded_ids,
             core_tool_names: binding.core_tool_names,
             deferred_tool_names: binding.deferred_tool_names,
-            tool_domains: binding.tool_domains,
             interface: self.put_object(&interface)?,
         };
         let digest = bound.digest();

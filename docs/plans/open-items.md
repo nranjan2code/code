@@ -19,10 +19,12 @@ across them. Nothing here is started unless it says so.
   services running.
 - [ ] The maintainer runs `vak setup` with the provider key; then `doctor`
   in `~/vak-home`. AWS is still on 7.1.0.
-- [ ] The data baseline is still 7.0 (`vak_core::baseline`, invariant 29):
-  bump it to 8.0, so a data home or saved presentation library from before
-  the card forms is refused with the one message instead of half-read.
-  Retire `TurnCapabilitiesBound.tool_domains` (above) in the same change.
+- [x] The data baseline is 8.0 (`vak_core::baseline`, invariant 29): a
+  data home names the version that created it (`home-version`), and sync
+  indexes and backup manifests name theirs; anything older, or unnamed, is
+  refused with the one message. `TurnCapabilitiesBound.tool_domains` is
+  retired. The 8.0.0 homes on the Mac and AWS predate the record: purge
+  and set them up again with the next release.
 
 7.3.0 (2026-10-14):
 
@@ -76,9 +78,6 @@ Carried over from 7.2.0:
 - A map, a board, a graph and a form to fill in are not built; places go in
   a list or details with a link. Build one only when real turns show a
   shape the forms cannot carry.
-- The ledger still records each turn's tool domains
-  (`TurnCapabilitiesBound.tool_domains`); nothing reads them since the
-  word signals were removed. Drop the field at the next data baseline.
 - `isFleetingNarration` (vak-client-ui `structured.ts`) folds a short
   message by a length of 180 characters, a tuned number; replace it with a
   typed marker from the host.

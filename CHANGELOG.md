@@ -1,5 +1,11 @@
 ## Unreleased
 
+- The supported data baseline is 8.0. A data home now records the version
+  that created it, and one made before 8.0 (or with no record of its
+  version) is refused with the usual message: purge, install and run setup
+  again. Sync remotes and backups name the version that wrote them, and one
+  from before 8.0 is refused the same way. This includes data homes set up
+  with 8.0.0 itself, which predate the record.
 - The web app on a server you are not signed in to shows the sign-in screen
   again, instead of waiting forever with "Vakyartha has not answered yet".
 

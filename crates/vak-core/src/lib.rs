@@ -386,6 +386,8 @@ pub enum CoreError {
     /// The data home predates the 7.0 baseline (invariant 29).
     #[error("{0}")]
     PreBaseline(String),
+    #[error("the data home cannot record the version that created it: {0}")]
+    HomeVersion(std::io::ErrorKind),
     #[error("config error: {0}")]
     Config(#[from] vak_config::ConfigError),
     #[error("session error: {0}")]
@@ -1432,10 +1434,11 @@ impl Core {
         // Canonical layout (doc 32): one resolver, which never falls back to
         // the workspace (invariant 18).
         let sessions_home = vak_config::paths::data_home();
-        // Invariant 29: a data home written before the 7.0 baseline is
-        // refused with the one message; a 7.0 home carries its tenant tree
-        // from its first use (docs/design/73 §6).
+        // Invariant 29: a data home written before the baseline is refused
+        // with the one message; an empty one is named as this build's.
         crate::baseline::check_data_home(&sessions_home).map_err(CoreError::PreBaseline)?;
+        crate::baseline::stamp_data_home(&sessions_home)
+            .map_err(|error| CoreError::HomeVersion(error.kind()))?;
         let _ = std::fs::create_dir_all(vak_config::paths::tenant_home_at(
             &sessions_home,
             vak_config::paths::LOCAL_TENANT,
@@ -7565,34 +7568,6 @@ impl Core {
                     .collect()
             })
             .unwrap_or_default();
-        // Per-tool declared domains, so a later projection can derive
-        // delivery signals from what the capability declared it serves
-        // rather than from its name (docs/design/68 §9's
-        // `SignalContext.domains` note). Covers MCP servers and their
-        // discovered tools too, not just built-ins.
-        let mut tool_domains: std::collections::BTreeMap<String, Vec<String>> =
-            std::collections::BTreeMap::new();
-        for capability in cap_set.all() {
-            let labels = capability.serves.labels();
-            if labels.is_empty() {
-                continue;
-            }
-            tool_domains.insert(capability.id.name.clone(), labels.clone());
-            if capability.id.kind == CapabilityKind::McpServer
-                && let Some(inventory) = capability
-                    .configuration
-                    .get("tools")
-                    .and_then(|t| t.as_array())
-            {
-                for tool in inventory {
-                    if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
-                        tool_domains
-                            .entry(name.to_string())
-                            .or_insert_with(|| labels.clone());
-                    }
-                }
-            }
-        }
         if let Err(error) = session.append_turn_capabilities(vak_session::types::TurnBinding {
             epoch: cap_set.epoch,
             capability_ids: selected_ids.iter().cloned().collect(),
@@ -7602,7 +7577,6 @@ impl Core {
             core_tool_names,
             deferred_tool_names,
             tool_index: tool_catalogue,
-            tool_domains,
         }) {
             return Err(CoreError::Session(error));
         }
