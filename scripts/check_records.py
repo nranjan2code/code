@@ -140,6 +140,16 @@ def changelog_problems():
             "CHANGELOG.md: the first section must be `## Unreleased`, "
             f"or `## {version} — <date>` in the commit that releases it"
         ]
+    if first != "Unreleased":
+        released = subprocess.run(
+            ["git", "rev-parse", "-q", "--verify", f"refs/tags/v{version}^{{commit}}"],
+            cwd=ROOT, capture_output=True, text=True,
+        ).stdout.strip()
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True
+        ).stdout.strip()
+        if released and released != head:
+            return [f"CHANGELOG.md: {version} is released; start a `## Unreleased` section"]
     body = text.split(f"## {first}", 1)[1].split("\n## ", 1)[0]
     entries = [line for line in body.splitlines() if line.startswith("- ")]
     try:
