@@ -49,7 +49,8 @@ across them. Nothing here is started unless it says so.
 
 - V4.3: drag, double-click and full screen in the running desktop app
   (built; no mouse input to native windows here).
-- V4.6: who draws the character glyphs.
+- V4.6: who draws the character glyphs. V4.5 (close out the visual
+  refresh: doc 75 to shipped with evidence) follows V4.3 and V4.6.
 - Brand media: listen and choose a sound family, hero image and theme
   take, and fill the "Chosen" table in `docs/brand/media/README.md`
   (Pip's and Tavi's tuned sounds first). The generation subscription

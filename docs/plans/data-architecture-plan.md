@@ -1,9 +1,12 @@
 # Plan — data architecture, lifecycle, tracing and cloud
 
-Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
-5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-i (2026-10-08: integrity, the soak, the acceptance run, and retention on by default), so M7a is done; M7a-h (2026-10-08: a restore applies every recorded erasure again and moves the writer epoch), M7a-g (2026-10-08: an Agent can be revoked, which cuts its bots, accounts and secrets at once), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). M7a is done (2026-10-08) and M7b is done (2026-10-09, trimmed to one owner; acceptance in `docs/audits/acceptance-m7b-governance-2026-10-09.md`); and M9 is done (2026-10-09, a folder remote with two machines taking turns; acceptance in `docs/audits/acceptance-m9-remote-2026-10-09.md`), which completes the plan as cut for one owner. Each step waits for the maintainer (see AGENTS.md,
-"Pending").**
+Status: **complete as cut for one owner (2026-10-09), plan revision 4.**
+Every milestone, M0 to M9, is done, each with its exit tests and, from M7a
+on, an acceptance run in `docs/audits/acceptance-m*`. M0 to M6.5 and M8
+shipped in 7.0.0 (2026-10-10), the 7.0 data baseline; M7a, M7b and M9 shipped
+with them. The milestone sections below are the record of each design and
+its steps. Open items, product limits and checks not yet run live are in
+`docs/plans/open-items.md`.
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
   and `docs/design/74-lifecycle-and-data-administration.md` (lifecycles,

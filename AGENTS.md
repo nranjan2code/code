@@ -212,11 +212,11 @@ Read before changing behaviour in these areas:
   waits; what is open is in `docs/plans/open-items.md`),
   `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
-  `74-lifecycle-and-data-administration.md` (the pending data architecture
-  refactor; see "Pending" below),
-  `75-visual-refresh.md` (the pending visual refresh: readable type, plain
+  `74-lifecycle-and-data-administration.md` (the data architecture, done; see
+  "Data architecture" below),
+  `75-visual-refresh.md` (the visual refresh: readable type, plain
   words, technical detail on request and the Ink and Saffron brand; see
-  "Pending: the visual refresh" below),
+  "Visual refresh" below),
   `79-private-headless-fleet.md` (the proposed dedicated 24/7 customer VM
   fleet, operator-blind boundary, provisioning and disaster recovery; it
   extends 73/74 without starting a data milestone),
@@ -262,235 +262,32 @@ Parked, and not to be assumed shipped: release supply-chain hardening
 (SBOM/signing) and the capacity-exhaustion Ask type. The personal-use
 completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 
-### Pending: the data architecture refactor (M0 done 2026-09-25; plan revision 4)
+### Data architecture (done: M0 to M9, 2026-09-25 to 2026-10-09)
 
-The maintainer started it on 2026-09-25 with M0, which is done and shipped
-in 5.0.0. On 2026-10-01 the maintainer locked plan revision 3 (decisions
-L6–L12), and the two 5.x guards landed the same day. Plan revision 4
-(2026-10-03) ships 6.0.0 independently and defers the data baseline to 7.0.0.
-M1 is done (2026-10-02:
-the trace key is minted at admission, invariant 40, and every ledger row type
-names its actor); M2 is done (2026-10-06: the credential-store key
-authority, a segment set's single-writer flock (`SegmentSet::lock`,
-which every writer, seal and recovery requires), a byte-level torn-write
-test, a committed fuzz corpus with a stable mutation gate, streaming
-blobs (`vak_storage::blobs`), and exact workspace pins for `async-nats`
-and `webauthn-rs`).
-M3a is done (2026-10-03): `Core` exposes its homes only as typed scopes.
-M3b is in progress: slice 1 is done (2026-10-03; 7.0.0-dev, the 7.0
-baseline, tenant tree and runtime root, wholesale purge, the registry by
-data class), and so is slice 2 (2026-10-03; session ledgers are segment
-directories with group commit, and large payloads are tenant objects).
-Slice 3 is done (2026-10-04): side ledgers are record chains, D25 is
-fixed, `auth/` and feeds are in the tenant tree, and Agent-authored state
-(memory, entities, skill proposals, Office rooms, presentations) is
-Documents in the tenant store. Slice 4 is done (2026-10-04): execution
-state, drafts, Agent workspaces and run environments live outside the
-project tree. Slice 5 is done (2026-10-04): every space-keyed store keys
-by a `spc_` id from the tenant space registry (`vak_config::spaces`),
-never a path hash. Slice 6 is done (2026-10-05), so M3b is done; it
-shipped in 7.0.0 (2026-10-10), with every milestone to M9. M4's design was
-agreed on 2026-10-05 (plan §M4, "M4 design": shapes and steps M4.1–M4.8).
-M4.1 is done (2026-10-05): a process reads the tenant store's writer
-epoch when it opens it, and once a restore moves the epoch past it the
-process is fenced (`vak_session::fence`): it opens no ledger for writing,
-begins no turn, appends no record and moves no ref, its scheduler,
-heartbeat, commitment upkeep and delivery replay stop, and `/health` says
-`fenced`. Each process has a `prc_` id and renews a `proc/<prc>` liveness
-ref every scheduler tick. M4.2 is done (2026-10-05): every unit of work
-has a run record (`vak_session::runs`, the `runs/` chain in the shared
-scope), opened before any side effect by whoever mints the run and
-settled with how it ended: `Core::run` for a turn with no admitted run,
-the gateway for a channel request, the task tool for a delegated child,
-the scheduler for a script routine and a refused slot, and the request
-middleware for an action a person asks of the server. An open run whose
-holder stopped renewing its liveness is recorded abandoned by the sweep
-on each scheduler tick. `/runs`, `vak runs` and the admin Runs screen
-(`#/runs`, `#/runs/<id>`) read them. A flow execution is a run with
-`work = flow <name>` (a plan is `work = plan`, each attempt a run it
-caused), and its checkpoint is `flow-runs/<run id>.json`. M4.3 is done
-(2026-10-05): `vak_core::triggers::Trigger` replaces `TaskDef` and
-`tasks.json` as a Document `triggers/<trg>`; every run of one names it,
-so its last run, delivery and last check are queries over the run
-records. `/triggers` replaces `/tasks`, `vak triggers` replaces `vak
-tasks`, the model's `automations` tool replaces `tasks`, and the admin
-Automations screen (`#/automations`) and the client's Automations sheet
-with its Runs panel read them. M4.4 is done (2026-10-05): a slot starts
-only through its trigger's claim, a ref `trg/<id>/claim` moved by CAS
-under the writer epoch before the run opens (`triggers::claim_due` over
-the pure `triggers::due`), which serves the tick, startup catch-up and
-Run now alike. Missed slots are one coalesced (or, with catch-up off,
-skipped) record; a slot due while the previous run holds the trigger is
-a skipped record; a refused run is a failed record, and each spends its
-slot. A run whose holder stopped is abandoned, and `on_crash = retry_once`
-runs its slot once more as attempt 2. The mail routine's OS lease and the
-server's in-flight script set are gone. M4.5 is done (2026-10-05): every
-action Vak takes outside itself is an effect in the `effects/` chain
-(`vak_session::effects`, invariant 41), prepared with its payload as a
-tenant object before anything is sent and dispatched only by the process
-that moves its `eff/<key>` ref. Delivery is the first kind; the outbox,
-`/ops/outbox` and `/triggers/{id}/retry-delivery` are gone, replaced by
-`/effects`, `/effects/{id}/resend` and `/effects/{id}/reconcile`, `vak
-effects`, the admin Run detail's actions and the client's Send again.
-Discord messages carry the effect key as their nonce with
-`enforce_nonce`, so an unknown Discord send goes again as the same
-effect. A scheduled prompt's turn now runs under its trigger's claimed
-run rather than opening a second run. M4.6 is done (2026-10-05): a mail
-send and a calendar create, update, cancel or RSVP is one effect per
-reviewed candidate (`vak_mail_calendar::effect::commit_candidate`,
-`Effects::prepare_once`), which names the candidate and its digest and
-carries no content. Its dispatch claim is the single-use claim; the vault's
-encrypted action receipts and `begin_action` are gone, and Review reads a
-candidate's state from its effect. These kinds are never sent again by
-themselves or by Send again, and one left unsent when its five-minute
-approval lapses is failed. M4.7a is done (2026-10-05): a channel
-bridge holds its bot's cursors (`vak_session::cursors`, refs
-`cur/bot/<surface>/<bot>/…`), moves a position by CAS before it routes
-a message, and records every range it resyncs past as a gap row in the
-`cursors/` chain, listed in the Operations Center; a second poller of a
-bot stands by while the holder is alive, and Telegram's per-token lock
-file is gone. M4.7b (the mail vault's cursors and backlog onto cursor
-refs) is done too (2026-10-05): the vault's routine cursors and backlog
-are the cursor `cur/agent/<agent>/mail-calendar/routines`, its backlog
-an encrypted tenant object moved by CAS with the provider positions, in
-place of a credential-store blob behind a lock file; a reader holds a
-decompressed object in a buffer its own size, and identical bytes put
-by two scopes at once stay readable by both. A routine's run history
-is its run records (2026-10-09); the vault keeps none. M4.8 is done
-(2026-10-06), and with it M4: a scheduled run on a folder that is not a
-git repository works in a copy environment
-(`vak_sandbox::copy::CopyEnvironment`, the run's
-`environments/<run>/`, copied within fixed ignore rules and size caps),
-and what it changed, added and deleted comes back as a candidate on the
-run's session for the one Review path; the refusal is gone. M2 is done
-too (2026-10-06; see its paragraph above). M5a is done (2026-10-06):
-library code reports through `tracing`, never `eprintln!` (a root
-`clippy.toml` bans it, a source test checks it, and messages are
-literals); each process installs `vak_telemetry::init(<service>)`, which
-writes content-free JSON lines (allowlisted field names only, the run's
-`trace_id` lifted to the top, span closes with durations) to
-`<logs>/vak-<service>.jsonl`, rotated by size. M5b is done
-(2026-10-06), and with it M5: a run's work runs in its span tree, run ›
-turn › step › (dispatch | tool_call › execution) › delivery, all under
-the run's `trace_id`; the sandboxed tool worker captures its
-`execution` lines and returns them for the caller to forward
-(`vak_telemetry::forward`); `/telemetry/logs`, `/telemetry/services`
-and `/runs/{id}/spans` read the logs for the admin System › Traces &
-logs screen (`#/diagnostics`) and Run detail's timeline; `vak-ops`
-reads each service's structured logs; the bus carries references only
-and its work streams have a `max_age`. M6's design was agreed on
-2026-10-06 (plan §M6 "M6 design": a tailer-fed catalog, doc 73's text
-projections only, and refs and Documents for the turn path's decisions).
-M6.1 is done (2026-10-06): `crates/vak-catalog` builds nodes, lineage
-edges and full-text rows from session ledgers, runs, effects, triggers,
-memory, entities and commitments, and rebuilds them identically. M6.2 is
-done (2026-10-06): every search (`/search`, the admin console,
-`session_search`) and the turn recall read the catalog, and "where is
-session X" is one catalog lookup; `vak-store`, `vak_session::search`, its
-ledger cache and the directory walks are gone. M6.3 is done
-(2026-10-06): request admission is a `req/` ref, and routing evidence and
-commitment state read through rollup Documents (`vak_session::rollup`),
-so no turn-path decision replays a chain. M6.4 is done (2026-10-06), and
-with it M6: conversation detail's Lineage tab traces anything a
-conversation holds to its run and cause, and the catalog's status sits
-beside Rebuild search. M6.5's design was agreed on 2026-10-06 (plan §M6.5 "M6.5 design": `session_search` widened to intake items, every connector in Rust, steps M6.5a–c). M6.5a is done (2026-10-06): a source is a Document `sources/<src>` polled by its own `source_poll` trigger (`vak_core::intake`, `/intake`), its connectors are Rust (`crates/vak-intake`), parsed in the network-denied worker, and every item it takes is a tenant object plus an `intake/` row with the poll run's trace key and a disposition, which the catalog traces to its run, trigger and source. M6.5b is done (2026-10-06): `session_search` finds items, a held item reaches no Agent read until a person releases it (`Audience::held`), alerts (`vak_core::intake_alerts`) notify the Inbox once per item, and a file saved to the inbox is an item of the Agent's push source. M6.5c is done (2026-10-06), and with it M6.5: the admin console's Sources and the client's Sources panel read `/intake`, and the Python feed pipeline, `feeds.rs` and the `[feeds]` config are deleted. M8's design was agreed on 2026-10-06 (plan §M8 "M8 design": only declared deliverables, an optional `title`, versions as an `artifacts/` chain read through a rollup, grants as one `grants/` chain, steps M8.1–M8.4). M8.1 is done (2026-10-06): a declared deliverable (`Tool::artifact`, an `ArtifactClaim` with `declared`) is an artifact in the `artifacts/` chain (`vak_core::artifacts`), each file one artifact, each version naming its parent, read through a rollup and `/library`. M8.2 is done (2026-10-06): grants are one `grants/` chain (`vak_core::grants`) of principal, object, role and inheritance breaks, coworking invitations included, and the catalog filters by them before ranking. M8.3a is done (2026-10-06): the client's Library page and artifact page, and the admin Library. M8.3b is done (2026-10-06): Continue working and Make another attach an artifact as a server-written block (`AttachedArtifact`), a write to an existing artifact is a new version, Make another protects its source, and `recall` reaches back only into conversations an attached artifact names. M8.4a is done (2026-10-07): an artifact is shared by a link in a role (`/library/{id}/shares`); a guest reaches only `/shared/artifact` and the versions the owner chose to show, and comments through it. M8.4b is done (2026-10-07): a person's edit or Put back is a version made from what they edited or downloaded (a sibling when the artifact moved on), and a chat card can be saved to the Library. M8.4c's design was agreed on 2026-10-08 (plan §M8 "M8.4c design": a full move of Review, Canvas and Workbench onto artifact versions, one comment thread, a shared conversation whose files inherit its grant, steps M8.4c-a to M8.4c-f); M8.4c-a is done (2026-10-08): a version records the Review candidate that proposes it, and Review reads, narrows, accepts and undoes a candidate by artifact id and version under `/library/{id}/versions/{version}`. M8.4c-b is done (2026-10-08): a version has one comment thread (`/library/{id}/versions/{version}/comments`), revising is an action on a comment, every file put up for Review is an artifact, and the candidate comment routes are gone. M8.4c-c is done (2026-10-08): the client reads, narrows, accepts and undoes a draft only by artifact version, a deleted file is a version of its own, and the session's candidate file routes are gone. M8.4c-d is done (2026-10-08): a conversation guest reaches an artifact through the grants (their conversation grant, while the artifact inherits), and the audience check after authentication admits a guest to a Library path. M8.4c-e is done (2026-10-08): the admin console's Work group is Conversations, Runs, Library, Automations and Commitments, and the client's sidebar has Library, Inbox and Automations. M8.4c-f is done (2026-10-08): the acceptance run passed (`docs/audits/acceptance-m8-library-2026-10-08.md`), and with it M8, except erase, which is M7a's. M7a's design was agreed on 2026-10-08 (plan §M7a "M7a design": ledger frames always encrypted under their conversation key, shared-ledger content as conversation-granted objects, erasure of a conversation, a guest's contributions and a provider account, conversation holds, Ed25519-signed receipts, steps M7a-a to M7a-i). M7a-a is done (2026-10-08): every frame of a session ledger is sealed under its conversation's scope key (`vak_session::keys`, the tenant's `keys/scopes`), a ledger with no key is refused and one whose key was destroyed is erased with its bytes unchanged. M7a-b is done (2026-10-08; content in a shared chain is an object of the scope that owns it, `vak_session::content`: a conversation's for inbox entries, commitment events, effect payloads and sandbox records, an artifact's for its rows, a source's for intake rows; a chain that is one conversation's own is sealed whole, `RecordChain::of_conversation`), and so is the third (what a person other than the owner writes, a message or a comment, is an object of their contributor scope, and a removed message decodes as a typed placeholder through `SessionLog::decode`), and the fourth (what a connected mail or calendar account returned is an object of that account's scope, `ToolOutput::from_account`, and reads as a fixed line once the account's key is destroyed; what the Agent wrote from it stays with the conversation). M7a-c is done (2026-10-08): `crates/vak-lifecycle` holds the default retention label and the pure plan, `vak_core::lifecycle` observes environments, rotated logs and draft versions and measures the registry's paths, and `/data/status`, `/data/usage`, `/data/lifecycle/plan`, `vak data` and the admin console's Operate › Data show the plan; M7a-d is done (2026-10-08; `[lifecycle] mode`, `observe` by default, lets `Core::lifecycle_tick` remove an execution's directory, a session's checkpoints past its first and newest 20, a settled run's environment and a rotated log, each transition a row of the `lifecycle/` chain; the checkpoint cap in `checkpoints::store` is gone); a chain's expired rows leave a sealed segment at a time, `SegmentSet::drop_sealed`, for inbox, activity and incident chains; a Document's versions past 90 days are unlinked, `Documents::prune`, never its current one; a committing pass ends by releasing what no live Document names and deleting objects no scope holds, `vak_session::documents::collect`; `[lifecycle] quota_gb` refuses a new turn once what the install must keep reaches it, `Core::refuse_over_quota`, and removes no record to make room). M7a-e is done (2026-10-08): the trash and the archive are one state ref per conversation (`vak_session::conversation_state`) with the time it entered the trash; `Core::erase_conversation` destroys a trashed conversation's keys, removes its derived plaintext and writes a signed receipt to the `erasures/` chain, and `Core::hold_conversation` blocks it; a draft nobody accepted, saved, starred or shared goes to the trash after 60 days (`ArtifactStep::Trashed`) and `Core::erase_draft` erases it when its time there ends; the catalog reads the `lifecycle/` and `erasures/` chains and leaves an `erased` tombstone traced to the receipt; the client has a Trash with Delete for good (the conversation's title typed), Archive and Move to trash in the conversation's menu and a notice for a link to an erased conversation, and the admin console's Conversations has a Trash panel, receipts and a Lifecycle tab; `/workspaces/forget` is gone (plan §M7a, "M7a-e"). M7a-f is done (2026-10-08): the owner erases what one guest wrote in a conversation (`Core::erase_guest`) or what a disconnected mail or calendar account returned (`Core::erase_account`); the conversations stay, search is rebuilt without it (`Catalog::rebuild_after_erasure`), and each leaves a signed receipt. M7a-g is done (2026-10-08): `AgentLifecycle::Revoked`, set only by `POST /agents/{agent}/revoke` with the Agent's name typed, which stops its runs and removes its bots' tokens, its connected accounts and its private secrets before it answers; it does not resume. M7a-h is done (2026-10-08): `Core::backup_create` writes a manifest with the store's epoch and the erasure watermark, and `Core::backup_restore` overwrites nothing, destroys again every key the backup brought back for a destroyed scope, rebuilds search, and moves the writer epoch, so every process on that store must be started again; a `vak serve` that a restore, a pull or a key file fenced starts itself again under the same process id (`crates/vak-server/src/restart.rs`), while the desktop shell asks the person to. M7a-i is done (2026-10-08), and with it M7a: `Core::data_integrity` verifies every ledger and chain without a key (`vak data verify`, the admin Integrity screen), the thirty-day soak passes, the acceptance run is `docs/audits/acceptance-m7a-lifecycle-2026-10-08.md`, and retention commits by default (invariant 42). M7b's design was agreed on 2026-10-09 (plan §M7b "M7b design": trimmed to one owner, one set of retention rules, erasure of an Agent's data, a project's data, a person across chats and the whole install, steps M7b-a to M7b-h). M7b-a is done (2026-10-09): the reconciler runs under `lifecycle::retention_label()`, the defaults with the keep times the owner changed (`Core::set_retention`, which needs a confirmed preview to shorten one; `/data/rules`, `vak data rules`, the admin Retention editor). M7b-b is done (2026-10-09): `Core::hold_artifact` beside `Core::hold_conversation`, and `Core::holds` lists everything on hold (`/data/holds`). M7b-c is done (2026-10-09): `Core::erase_agent` erases everything an archived or revoked Agent holds (its conversations, Documents, unkept drafts, automations and its workspace in the data home) and leaves what a person kept. M7b-d is done (2026-10-09): `Core::erase_project` erases what Vakyartha stored for one project (every Agent's conversations and Documents for it, its Library copies, automations and workspaces in the data home) and never the project's folder. M7b-e is done (2026-10-09): `Core::erase_person` erases the conversations that are one channel sender's alone, across chats and Agents, leaves a conversation they share with others, and the gateway refuses them from then on by a fingerprint (`gateway/erased-people.json`), checked before the allowlist, until the owner lets them write again (`/data/erasure/people/allow`). M7b-f is done (2026-10-09): `Core::erase_install` destroys every key, removes every stored secret and empties the data, cache, log and runtime directories, leaving one signed receipt under the data home's `erased/`; the server stops once it has answered, and a person's own folders are never touched. M7b-g is done (2026-10-09): `Core::rotate_keys` starts a new tenant key and wraps every scope key and object grant again under it, recorded in the `key-rotations/` chain, and `Core::retire_keys` destroys the earlier ones once nothing is under them; `Core::key_status`, `/data/keys`, `vak data keys`, the admin console's Data › Keys and the client's Settings › Your data show it, and no key material is ever returned. M7b-h is done (2026-10-09), and with it M7b: the acceptance run is `docs/audits/acceptance-m7b-governance-2026-10-09.md`. It found that a conversation the server holds open is readable in memory, so every erasure route ends by dropping the handles it made stale (`AppState::forget_hidden_sessions`, `reopen_idle_sessions`), and that a process must be fenced and swept after erasing everything (`fence::retire`, `Core::sweep_erased_install`). M9's design was agreed on 2026-10-09 (plan §M9 "M9 design": the remote is a folder, two machines take turns under a lease, the remote carries what a backup without secrets carries, a second machine reads it with a key file exported under a passphrase, and the holder pushes automatically; steps M9-a to M9-f). M9-a and M9-b are done (2026-10-09): `vak_core::sync` pushes what a backup without secrets carries to a folder under an index and pulls it back verified, ending as a restore does; the refs travel as a portable file, never the open database; a second machine reads the remote with a key file sealed under a passphrase (`Core::export_key_file`); `vak sync`. M9-c to M9-f are done (2026-10-09), and with them M9 and the plan as cut for one owner: the remote's lease names the one machine that may write, a machine that stands by begins no turn (`Core::refuse_standing_by`), work moves by `Core::sync_handover` and `sync_takeover`, erasures travel with every push and pull, the holder pushes between turns (`Core::sync_auto`), and the acceptance run is `docs/audits/acceptance-m9-remote-2026-10-09.md` (`scripts/sync-lab`: two machines in Docker). No session starts a later step
-unasked.
-
-**What it is.** One architecture for everything Vak writes:
+The data-architecture plan is complete as cut for one owner; 7.0.0 is its
+data baseline (invariant 29). What it built, for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
 - a content-addressed, encrypted storage substrate with fencing epochs and
   a pluggable key authority;
-- a tenant/space layout, cut as a new data baseline (the version is in plan
-  §1, L3; no other document writes it);
-- one trigger model, a Run record for every trigger, and effect records for
-  every action outside Vak;
+- a tenant/space layout, the 7.0 data baseline;
+- one trigger model, a run record for every unit of work, and effect
+  records for every action outside Vak;
 - structured telemetry that carries no content;
 - one data catalog for search and lineage;
-- a lifecycle reconciler with retention labels, legal hold and
-  crypto-shred erasure;
-- versioned artifacts with inherited sharing;
+- a lifecycle reconciler with retention labels, holds and crypto-shred
+  erasure, committing by default;
+- versioned artifacts with inherited sharing (the Library);
 - admin and user screens for all of it;
-- a cloud remote.
+- a folder remote that two machines take turns writing (sync).
 
-**Read, in this order:**
-1. `docs/plans/data-architecture-plan.md`: the locked decisions L1–L12,
-   the milestones, exit tests, and the AGENTS.md changes each milestone
-   makes.
-2. `docs/design/73-data-architecture-and-lifecycle.md`: the model, and the
-   audit of today (defects D1–D27).
-3. `docs/design/74-lifecycle-and-data-administration.md`: lifecycles,
-   policies, erasure, screens, API.
-4. `docs/plans/data-architecture-review.md` and
-   `docs/plans/data-architecture-review-2.md`: why revisions 2 and 3 differ
-   from what came before.
-5. `docs/plans/data-architecture-blast-radius.md`: what each milestone
-   touches.
+The record of how it was built is `docs/plans/data-architecture-plan.md`
+(decisions L1 to L12, each milestone's design, steps and exit tests) with
+its acceptance runs in `docs/audits/acceptance-m*`; the model is
+`docs/design/73-data-architecture-and-lifecycle.md` and
+`docs/design/74-lifecycle-and-data-administration.md`. What it leaves open
+is in `docs/plans/open-items.md`. No later step starts unasked.
 
-**How to pick it up:**
-1. Confirm the maintainer has said to start, and with which step.
-2. Re-run the blast-radius scans (§0 of that doc, with its patterns). Its
-   counts and file locations were taken at `438cfcd5` and will have drifted.
-3. Follow the order: the two 5.x guards (done); M1 and M2 in parallel;
-   M3a after M1; M3b, the
-   data baseline, in six slices; M4 (runs, triggers, effects, fencing); M6;
-   then M6.5, M8, and M7a → M7b in parallel; M9 last. M5 runs in parallel
-   after M1.
-   - M3b never starts before the M3a refactor (no behaviour change) has
-     merged.
-   - Erasure (M7a) never starts before the catalog (M6), because it needs
-     lineage.
-   - From M3b's first slice, main is the baseline's line and cuts no 6.x
-     release. There is no 6.x maintenance line: with no users,
-     `release/6` was deleted on 2026-10-04 (L6).
-4. Each milestone ships whole: code, tests, docs, its AGENTS.md changes and
-   its screens. The replaced path goes in the same change (invariant 30).
-   There is no compatibility code, because there are no users.
-5. A milestone is done when its named exit tests pass and its blast-radius
-   section names nothing left unchanged. Then update this section and the
-   plan's status line.
-
-**M0, done.** Landed, each with its exit test:
-- Bus secrets live in the secret store and apply live
-  (`bus_credentials_never_written_to_a_file`).
-- `vak self uninstall --purge` removes the logs root (`purge_includes_logs`).
-- Feed scripts write only where the server says, under `VAK_HOME`
-  (`feeds_write_under_overridden_home`).
-- `AgentSchedule` and `agents_runs.jsonl` are deleted; `TaskDef` was the
-  one schedule model (it became `Trigger` at M4.3).
-- A routine that cannot run leaves a `routine_failed` inbox entry, run ids
-  are full UUIDv7, a cron slot is spent only by a run that started, a run's
-  handle is its ledger id, and a child run's home is not nested
-  (`fire_task_records_refusal`, `non_git_space_routine_is_refused_loudly`
-  (a non-git space now runs in a copy environment, M4.8),
-  `two_tasks_due_same_tick_both_fire`, `cron_slot_not_lost_on_failure`,
-  `scheduled_run_resolves_after_restart`, `child_core_home_is_not_nested`).
-- An unchanged capability binding is written by reference
-  (`unchanged_capabilities_not_rewritten`).
-- The trash is honoured everywhere: a trashed session is gone from every
-  list and search (the model's `session_search` included), its transcript,
-  export and digest, and nothing reopens it; it can be restored.
-  `vak_core::trash` is the one source (`trashed_session_absent_from_every_search`).
-- Doc 64's topology section and "What is authoritative" describe the real
-  4.x tree.
-
-**The two 5.x guards, done 2026-10-01:**
-- The home-path ratchet held raw `sessions_home()`, `shared_data_home()`,
-  `.vak` literal and `hash_cwd(` uses at falling ceilings until M3a brought
-  every count to zero outside `vak-config`; it was then deleted (plan §4).
-- The registry declares each Agent-home subpath as its own
-  `agents/{agent}/…` entry; backup, purge and the upgrade gate expand the
-  segment (`agent_home_subpaths_are_declared`).
-
-**Known gaps M0 leaves for later milestones:**
-- (Closed at M7a: the trash now ends in erasure, invariant 42.)
-- Server-side sandbox records, execution streams, Office rooms and coworking
-  grants are written under the server Core's Agent home, whichever Agent
-  owns the session (D25). They resolve through the `AgentScope` D25
-  accessors with the Agent named by `session_agent(state)` (M3a); M3b
-  resolves the session's Agent in that one place. Until then filter them by
-  the session header's Agent.
-
-**Until the next milestone lands, don't deepen the debt:**
+**The data rules. Every change follows them:**
 - Build no second schedule or trigger model: scheduled work is a
   `vak_core::triggers::Trigger` (plan M4.3), a Document; docs 76, 80 and 81
   use that model. Start a trigger's work only through
@@ -654,49 +451,33 @@ unasked.
   `vak_session::fence::is_fenced()`. Never move a ref with the store's
   current epoch: that is the epoch a fenced process must not have.
 
-### Pending: the visual refresh (V1, V2, V3 and V4.4 done; V4 in progress)
+### Visual refresh (V1 to V3, V4.1, V4.2 and V4.4 done; V4.3 and V4.6 wait on the maintainer, then V4.5)
 
-The maintainer approved the direction and locked all five of its decisions
-on 2026-09-25, then asked for the logo and platform-icon correction (V4.1)
-and for implementation to continue stage by stage. V1 and V2 are done; V3 is
-in progress, and the rest of V4 follows it.
-
-**What it is.** One visual system for the shared client
-(`crates/vak-client-ui`), so for both the desktop and the web app:
+One visual system for the shared client (`crates/vak-client-ui`), so for
+both the desktop and the web app:
 - readable type: 16px conversation text and 14px controls at 100%, nothing
   under 12px, with the bundled Inter as the default and the system sans and
   Newsreader as options;
 - plain words in place of engineering terms in every everyday string;
-- one Show technical details setting, off for new installs, which replaces
-  Transcript detail and hides detail, never capability or safety state;
-- the **Ink and Saffron** brand: indigo actions, the Songbird mark's saffron as the one
-  accent for live states, neutral light surfaces, a charcoal dark theme, and
-  six theme choices (Frosted light and Frosted dark joined the four on
-  2026-10-11);
-- fixes for fifteen visible defects found in the 4.0.2 review.
+- one Show technical details setting, off for new installs, which hides
+  detail, never capability or safety state;
+- the **Ink and Saffron** brand: indigo actions, the Songbird mark's saffron
+  as the one accent for live states, neutral light surfaces, a charcoal dark
+  theme, and six theme choices.
 
-**Read, in this order:**
-1. `docs/plans/visual-refresh-plan.md`: the decisions, stages V0 to V4, and
-   the checklist with each item's "done when". It is the tracker: tick items
-   there and add a progress-log line as they land.
-2. `docs/design/75-visual-refresh.md`: the findings, the system, the glossary
-   and the disclosure table.
-3. `docs/assets/visual-refresh-2026/visual-refresh.html`: before-and-after
-   mockups and the review screenshots.
+The tracker is `docs/plans/visual-refresh-plan.md` (decisions, stages V0 to
+V4, each item's "done when", the progress log); the design is
+`docs/design/75-visual-refresh.md`; the mockups are
+`docs/assets/visual-refresh-2026/visual-refresh.html`. Open: V4.3 (drag,
+double-click and full screen in the running desktop app), V4.6 (who draws
+the character glyphs), then V4.5 (close out); see `docs/plans/open-items.md`.
 
-**How to pick it up:**
-1. Confirm the maintainer has said to start, and with which stage or item.
-2. Re-find each defect in the current tree first. The review was taken at
-   `acca0c88`, and its line numbers will drift.
-3. Follow V1, then V2, then V3, then V4. V1 items are independent and may
-   ship one at a time; no V3 screen starts before the V2 tokens have merged.
-4. Each change replaces what it supersedes in the same commit (invariant
-   30): old tokens, CSS overrides, strings and components go with it.
-5. An item is done when its "done when" holds in the running app in a
-   browser at 1440 × 900 and 390 × 844, light and dark, with screenshots
-   saved as the plan says. A build or typecheck alone is not done.
+A visual item is done when its "done when" holds in the running app in a
+browser at 1440 × 900 and 390 × 844, light and dark; a build or typecheck
+alone is not done. Each change replaces what it supersedes in the same
+commit (invariant 30).
 
-**Until it starts, don't deepen the debt:**
+**The visual rules. Every change follows them:**
 - `DESIGN.md` describes the target system (V2.1); the stylesheet moves onto
   it in V2.2 to V2.4. Build new work to `DESIGN.md`, not to the old values
   still in `styles.css`.

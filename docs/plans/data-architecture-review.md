@@ -1,6 +1,6 @@
 # Review — data architecture design and plan
 
-Status: **review, 2026-09-25.** Covers
+Status: **historical review, 2026-09-25; the plan it reviewed is complete (2026-10-09).** Covers
 `docs/design/73-data-architecture-and-lifecycle.md` and
 `docs/plans/data-architecture-plan.md` as first written. Every finding below
 was checked against the source on `main` at `767db1d0`. Nothing was run

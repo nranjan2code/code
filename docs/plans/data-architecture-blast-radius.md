@@ -1,6 +1,6 @@
 # Blast radius — data architecture plan
 
-Status: **inventory, revision 3 (2026-10-01)**, re-scanned on `main` at
+Status: **historical inventory, revision 3 (2026-10-01); every milestone it scoped is done (2026-10-09)**, re-scanned on `main` at
 `438cfcd5` (first taken 2026-09-25 at `767db1d0`). It lists everything each
 milestone of `docs/plans/data-architecture-plan.md` (revision 3) changes:
 code, HTTP API, UI, CLI, configuration, services, docs, scripts, the site,

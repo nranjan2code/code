@@ -1,6 +1,6 @@
 # Review 2 — the data architecture after a week of new work
 
-Status: **review, 2026-10-01; applied the same day.** The maintainer
+Status: **historical review, 2026-10-01; applied the same day; the plan is complete (2026-10-09).** The maintainer
 accepted every finding and all eight decisions in §4, and §5 says where
 each fix landed (plan revision 3, docs 73 and 74, the blast-radius
 inventory, AGENTS.md and the dependent proposals). It reads plan
