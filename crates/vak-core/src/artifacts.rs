@@ -426,7 +426,7 @@ pub fn comment_scope(artifact: &ArtifactId, author: &str) -> String {
     vak_session::objects::contributor_scope(&artifact.to_string(), author)
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 struct State {
     artifacts: BTreeMap<String, Artifact>,
 }
@@ -456,7 +456,12 @@ fn fold(state: &mut State, bytes: &[u8]) {
     let Ok(event) = serde_json::from_value::<ArtifactEvent>(row) else {
         return;
     };
+    apply(state, event);
+}
 
+/// What one event does to the state, read from the chain or pushed by a
+/// [`Tx`] that has not committed yet.
+fn apply(state: &mut State, event: ArtifactEvent) {
     let key = event.artifact.to_string();
     let turn = event
         .trace
@@ -657,85 +662,26 @@ fn fold(state: &mut State, bytes: &[u8]) {
     }
 }
 
-/// The artifacts of a data home.
-#[derive(Debug, Clone)]
-pub struct Artifacts {
-    chain: RecordChain,
-    rollup: vak_session::rollup::Rollup,
-    tenant_home: PathBuf,
+/// One decision over the artifacts: what it read, and the rows it will
+/// append if the chain has not moved (see [`Artifacts::transaction`]).
+pub struct Tx<'a> {
+    artifacts: &'a Artifacts,
+    state: State,
+    rows: Vec<serde_json::Value>,
 }
 
-/// What a new version is.
-/// Held while deciding whether bytes are already a version and recording
-/// one: a call's version and an observation of the folder never interleave
-/// within this process (docs/design/90-file-state.md).
-pub fn recording() -> std::sync::MutexGuard<'static, ()> {
-    static RECORDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    RECORDING
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-/// What a call said about a version, and what its turn read first.
-#[derive(Debug, Clone, Default)]
-pub struct About {
-    pub title: Option<String>,
-    pub derived_from: Vec<vak_tools::ReadInput>,
-}
-
-pub struct NewVersion<'a> {
-    /// The version it was made from; `None` makes it from the current head.
-    pub parent: Option<VersionId>,
-    pub bytes: &'a [u8],
-    pub source: VersionSource,
-}
-
-impl Artifacts {
-    pub fn at(shared: &SharedScope, tenant_home: impl Into<PathBuf>) -> Self {
-        Self {
-            chain: RecordChain::at(shared.artifacts()),
-            rollup: vak_session::rollup::Rollup::new(shared.artifacts(), shared.artifacts_rollup()),
-            tenant_home: tenant_home.into(),
-        }
-    }
-
-    pub fn path(&self) -> &Path {
-        self.chain.path()
-    }
-
-    /// The rollup's state, less every artifact whose key was destroyed: the
-    /// rollup may have folded its rows before the erasure.
-    fn state(&self) -> State {
-        let mut state: State = self.rollup.read(fold);
-        state
-            .artifacts
-            .retain(|id, _| !vak_session::content::scope_destroyed(&format!("artifact:{id}")));
-        // So may a comment whose author has since been removed.
-        let mut removed: BTreeMap<String, bool> = BTreeMap::new();
-        for (id, artifact) in &mut state.artifacts {
-            artifact.comments.retain(|comment| {
-                let scope = vak_session::objects::contributor_scope(id, &comment.author);
-                !*removed
-                    .entry(scope)
-                    .or_insert_with_key(|scope| vak_session::content::scope_destroyed(scope))
-            });
-        }
-        state
-    }
-
-    /// Every artifact, newest change first.
-    pub fn list(&self) -> Vec<Artifact> {
-        let mut all: Vec<Artifact> = self.state().artifacts.into_values().collect();
-        all.sort_by_key(|artifact| std::cmp::Reverse(artifact.updated_at));
-        all
-    }
-
+impl Tx<'_> {
+    /// An artifact as this transaction sees it, its own pushed events
+    /// included.
     pub fn get(&self, id: &str) -> Option<Artifact> {
-        self.state().artifacts.remove(id)
+        self.state.artifacts.get(id).cloned()
     }
 
-    fn append(&self, event: &ArtifactEvent) -> Result<(), ArtifactError> {
-        let mut row = serde_json::to_value(event).map_err(|error| {
+    /// Pushes `event`: its row is sealed now and appended at commit, and
+    /// what it does is applied to this transaction's state at once, so a
+    /// later step reads it.
+    pub fn push(&mut self, event: ArtifactEvent) -> Result<(), ArtifactError> {
+        let mut row = serde_json::to_value(&event).map_err(|error| {
             store_error(vak_session::types::SessionError::Objects(error.to_string()))
         })?;
         // A comment belongs to who wrote it; everything else an artifact's
@@ -746,7 +692,9 @@ impl Artifacts {
         };
         vak_session::content::seal_fields_under(&mut row, &scope, ROW_CONTENT)
             .map_err(store_error)?;
-        self.chain.append(&row).map_err(store_error)
+        self.rows.push(row);
+        apply(&mut self.state, event);
+        Ok(())
     }
 
     /// Declares the artifact at `path` in `space` (once; a later
@@ -754,7 +702,7 @@ impl Artifacts {
     /// its id.
     #[allow(clippy::too_many_arguments)]
     pub fn declare(
-        &self,
+        &mut self,
         space: &str,
         agent: &str,
         path: &str,
@@ -777,7 +725,7 @@ impl Artifacts {
                 || (artifact.summary.is_none() && summary.is_some())
         });
         if known.is_none() || adds_name {
-            self.append(&ArtifactEvent {
+            self.push(ArtifactEvent {
                 artifact: id,
                 at: Utc::now(),
                 trace: trace.cloned(),
@@ -798,7 +746,7 @@ impl Artifacts {
     /// Adds a version of `artifact`. The same bytes as its parent are no
     /// new version: the parent is returned.
     pub fn version(
-        &self,
+        &mut self,
         artifact: ArtifactId,
         new: NewVersion<'_>,
         trace: Option<&TraceKey>,
@@ -810,7 +758,7 @@ impl Artifacts {
     /// As [`Artifacts::version`], with what the call said about the version
     /// and what its turn read first (doc 90 §5).
     pub fn version_with(
-        &self,
+        &mut self,
         artifact: ArtifactId,
         new: NewVersion<'_>,
         about: About,
@@ -846,7 +794,7 @@ impl Artifacts {
     /// version the workspace last held, or none for a file that was there
     /// before anything of it was recorded.
     pub fn found_in_workspace(
-        &self,
+        &mut self,
         artifact: ArtifactId,
         parent: Option<VersionId>,
         bytes: &[u8],
@@ -871,7 +819,7 @@ impl Artifacts {
 
     /// Appends a version made from exactly `new.parent`.
     fn add_version(
-        &self,
+        &mut self,
         artifact: ArtifactId,
         digest: String,
         new: NewVersion<'_>,
@@ -884,14 +832,15 @@ impl Artifacts {
                 "the file is larger than a version keeps".into(),
             ));
         }
-        let objects = TenantObjects::for_tenant(&self.tenant_home).map_err(store_error)?;
+        let objects =
+            TenantObjects::for_tenant(&self.artifacts.tenant_home).map_err(store_error)?;
         let object = Some(
             objects
                 .put(new.bytes, &object_scope(&artifact))
                 .map_err(store_error)?,
         );
         let version = VersionId::new();
-        self.append(&ArtifactEvent {
+        self.push(ArtifactEvent {
             artifact,
             at: Utc::now(),
             trace: trace.cloned(),
@@ -914,7 +863,7 @@ impl Artifacts {
     /// `parent` or the current head. A head that is already such a version
     /// is returned as it is.
     pub fn removal(
-        &self,
+        &mut self,
         artifact: ArtifactId,
         parent: Option<VersionId>,
         source: VersionSource,
@@ -932,7 +881,7 @@ impl Artifacts {
             return Ok(parent);
         }
         let version = VersionId::new();
-        self.append(&ArtifactEvent {
+        self.push(ArtifactEvent {
             artifact,
             at: Utc::now(),
             trace: trace.cloned(),
@@ -948,7 +897,7 @@ impl Artifacts {
 
     /// Records a person's or a run's step on an artifact.
     pub fn record(
-        &self,
+        &mut self,
         artifact: ArtifactId,
         step: ArtifactStep,
         trace: Option<&TraceKey>,
@@ -967,13 +916,209 @@ impl Artifacts {
         if self.get(&artifact.to_string()).is_none() {
             return Err(ArtifactError::NotFound(artifact.to_string()));
         }
-        self.append(&ArtifactEvent {
+        self.push(ArtifactEvent {
             artifact,
             at: Utc::now(),
             trace: trace.cloned(),
             actor: actor.or_else(|| trace.and_then(|trace| trace.actor)),
             step,
         })
+    }
+}
+
+/// The artifacts of a data home.
+#[derive(Debug, Clone)]
+pub struct Artifacts {
+    chain: RecordChain,
+    rollup: vak_session::rollup::Rollup,
+    tenant_home: PathBuf,
+}
+
+/// What a call said about a version, and what its turn read first.
+#[derive(Debug, Clone, Default)]
+pub struct About {
+    pub title: Option<String>,
+    pub derived_from: Vec<vak_tools::ReadInput>,
+}
+
+/// What a new version is.
+#[derive(Clone)]
+pub struct NewVersion<'a> {
+    /// The version it was made from; `None` makes it from the current head.
+    pub parent: Option<VersionId>,
+    pub bytes: &'a [u8],
+    pub source: VersionSource,
+}
+
+impl Artifacts {
+    pub fn at(shared: &SharedScope, tenant_home: impl Into<PathBuf>) -> Self {
+        Self {
+            chain: RecordChain::at(shared.artifacts()),
+            rollup: vak_session::rollup::Rollup::new(shared.artifacts(), shared.artifacts_rollup()),
+            tenant_home: tenant_home.into(),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        self.chain.path()
+    }
+
+    /// The rollup's state, less every artifact whose key was destroyed: the
+    /// rollup may have folded its rows before the erasure.
+    fn state(&self) -> State {
+        self.snapshot().0
+    }
+
+    /// The state with the chain position it covers, which a [`Tx`] commits
+    /// after.
+    fn snapshot(&self) -> (State, vak_session::tail::Position) {
+        let (mut state, at): (State, _) = self.rollup.read_at(fold);
+        state
+            .artifacts
+            .retain(|id, _| !vak_session::content::scope_destroyed(&format!("artifact:{id}")));
+        // So may a comment whose author has since been removed.
+        let mut removed: BTreeMap<String, bool> = BTreeMap::new();
+        for (id, artifact) in &mut state.artifacts {
+            artifact.comments.retain(|comment| {
+                let scope = vak_session::objects::contributor_scope(id, &comment.author);
+                !*removed
+                    .entry(scope)
+                    .or_insert_with_key(|scope| vak_session::content::scope_destroyed(scope))
+            });
+        }
+        (state, at)
+    }
+
+    /// Decides and records in one step (docs/design/90-file-state.md §3.5):
+    /// `decide` reads the state through its [`Tx`] and pushes the events it
+    /// decides on, and they are appended only if the chain did not move
+    /// since the state was read, under the chain's writer lock that every
+    /// process takes. When another writer, in this process or another one
+    /// on the same data home, appended first, `decide` runs again on what
+    /// the chain holds now, so whether bytes are already a version is never
+    /// decided from a state another write has passed. Each new run follows
+    /// another writer's progress. Nothing is appended when `decide` fails
+    /// or pushes nothing.
+    pub fn transaction<T>(
+        &self,
+        mut decide: impl FnMut(&mut Tx<'_>) -> Result<T, ArtifactError>,
+    ) -> Result<T, ArtifactError> {
+        loop {
+            let (state, at) = self.snapshot();
+            let mut tx = Tx {
+                artifacts: self,
+                state,
+                rows: Vec::new(),
+            };
+            let decided = decide(&mut tx)?;
+            if self
+                .chain
+                .append_all_after(at, &tx.rows)
+                .map_err(store_error)?
+            {
+                return Ok(decided);
+            }
+        }
+    }
+
+    /// Every artifact, newest change first.
+    pub fn list(&self) -> Vec<Artifact> {
+        let mut all: Vec<Artifact> = self.state().artifacts.into_values().collect();
+        all.sort_by_key(|artifact| std::cmp::Reverse(artifact.updated_at));
+        all
+    }
+
+    pub fn get(&self, id: &str) -> Option<Artifact> {
+        self.state().artifacts.remove(id)
+    }
+
+    /// Declares the artifact at `path` in `space` (once; a later
+    /// declaration adds a title or summary the first left out) and returns
+    /// its id.
+    #[allow(clippy::too_many_arguments)]
+    pub fn declare(
+        &self,
+        space: &str,
+        agent: &str,
+        path: &str,
+        kind: ArtifactKind,
+        title: Option<String>,
+        summary: Option<String>,
+        trace: Option<&TraceKey>,
+        actor: Option<PrincipalId>,
+    ) -> Result<ArtifactId, ArtifactError> {
+        self.transaction(|tx| {
+            tx.declare(
+                space,
+                agent,
+                path,
+                kind,
+                title.clone(),
+                summary.clone(),
+                trace,
+                actor,
+            )
+        })
+    }
+
+    /// Adds a version of `artifact`. The same bytes as its parent are no
+    /// new version: the parent is returned.
+    pub fn version(
+        &self,
+        artifact: ArtifactId,
+        new: NewVersion<'_>,
+        trace: Option<&TraceKey>,
+        actor: Option<PrincipalId>,
+    ) -> Result<VersionId, ArtifactError> {
+        self.version_with(artifact, new, About::default(), trace, actor)
+    }
+
+    /// As [`Artifacts::version`], with what the call said about the version
+    /// and what its turn read first (doc 90 §5).
+    pub fn version_with(
+        &self,
+        artifact: ArtifactId,
+        new: NewVersion<'_>,
+        about: About,
+        trace: Option<&TraceKey>,
+        actor: Option<PrincipalId>,
+    ) -> Result<VersionId, ArtifactError> {
+        self.transaction(|tx| tx.version_with(artifact, new.clone(), about.clone(), trace, actor))
+    }
+
+    /// Records what the workspace holds at the artifact's path as a
+    /// version found there (doc 90 §3.5); see [`Tx::found_in_workspace`].
+    pub fn found_in_workspace(
+        &self,
+        artifact: ArtifactId,
+        parent: Option<VersionId>,
+        bytes: &[u8],
+    ) -> Result<VersionId, ArtifactError> {
+        self.transaction(|tx| tx.found_in_workspace(artifact, parent, bytes))
+    }
+
+    /// Adds a version of `artifact` in which the file is gone; see
+    /// [`Tx::removal`].
+    pub fn removal(
+        &self,
+        artifact: ArtifactId,
+        parent: Option<VersionId>,
+        source: VersionSource,
+        trace: Option<&TraceKey>,
+        actor: Option<PrincipalId>,
+    ) -> Result<VersionId, ArtifactError> {
+        self.transaction(|tx| tx.removal(artifact, parent, source.clone(), trace, actor))
+    }
+
+    /// Records a person's or a run's step on an artifact.
+    pub fn record(
+        &self,
+        artifact: ArtifactId,
+        step: ArtifactStep,
+        trace: Option<&TraceKey>,
+        actor: Option<PrincipalId>,
+    ) -> Result<(), ArtifactError> {
+        self.transaction(|tx| tx.record(artifact, step.clone(), trace, actor))
     }
 
     /// Moves a draft into the trash or restores it. Only a draft goes in:
@@ -1171,95 +1316,92 @@ impl vak_tools::ArtifactSink for CallSink {
             self.file(&declaration.path)
         };
         // Declaring, choosing the parent and adding the version are one
-        // decision: an observation of the folder in between would record
-        // these bytes as an edit made outside Vak.
-        let _recording = recording();
+        // decision: an observation of the folder in between, by this
+        // process or another, would record these bytes as an edit made
+        // outside Vak.
         let recorded = bytes_at
             .ok_or_else(|| ArtifactError::Invalid("the declared file was not found".into()))
             .and_then(|file| {
-                if std::fs::metadata(&file).map_err(store_error)?.len() > MAX_VERSION_BYTES {
-                    return Err(ArtifactError::Invalid(
-                        "the file is larger than a version keeps".into(),
-                    ));
-                }
-                let bytes = std::fs::read(&file).map_err(store_error)?;
-                let artifact = if declaration.declared {
-                    self.artifacts.declare(
-                        &space,
-                        &self.agent,
-                        &path,
-                        kind,
-                        declaration.title.clone(),
-                        declaration.summary.clone(),
+                self.artifacts.transaction(|tx| {
+                    if std::fs::metadata(&file).map_err(store_error)?.len() > MAX_VERSION_BYTES {
+                        return Err(ArtifactError::Invalid(
+                            "the file is larger than a version keeps".into(),
+                        ));
+                    }
+                    let bytes = std::fs::read(&file).map_err(store_error)?;
+                    let artifact = if declaration.declared {
+                        tx.declare(
+                            &space,
+                            &self.agent,
+                            &path,
+                            kind,
+                            declaration.title.clone(),
+                            declaration.summary.clone(),
+                            trace,
+                            None,
+                        )?
+                    } else {
+                        known
+                    };
+                    // A revision of an earlier draft is that draft's child.
+                    let current = tx.get(&artifact.to_string());
+                    let parent = declaration
+                        .based_on
+                        .as_deref()
+                        .and_then(vak_tools::drafts::execution_of)
+                        .and_then(|execution| {
+                            current.as_ref()?.versions.iter().find_map(|version| {
+                                match &version.source {
+                                    VersionSource::Call { call, .. } if *call == execution => {
+                                        Some(version.id)
+                                    }
+                                    _ => None,
+                                }
+                            })
+                        })
+                        // A draft made from the workspace file is a version of
+                        // what the workspace holds now, an edit made outside
+                        // Vak included (doc 90 §3.5), never of whichever draft
+                        // happens to be newest.
+                        // A call that wrote the workspace file changed what the
+                        // workspace last held.
+                        .or_else(|| {
+                            if declaration.drafted {
+                                return None;
+                            }
+                            crate::file_state::last_held(current.as_ref()?)
+                        });
+                    let parent = match parent {
+                        Some(parent) => Some(parent),
+                        None if declaration.drafted => {
+                            match crate::file_state::observe_in(tx, &space, &self.cwd, &path, true)
+                                .map(|state| state.workspace_is)
+                            {
+                                Some(crate::file_state::WorkspaceIs::Version(id)) => Some(id),
+                                _ => None,
+                            }
+                        }
+                        None => None,
+                    };
+                    tx.version_with(
+                        artifact,
+                        NewVersion {
+                            parent,
+                            bytes: &bytes,
+                            source: VersionSource::Call {
+                                session: session.unwrap_or_default().to_string(),
+                                call: call.to_string(),
+                                in_workspace: !declaration.drafted,
+                            },
+                        },
+                        About {
+                            title: declaration.change.clone(),
+                            derived_from: declaration.read_first.clone(),
+                        },
                         trace,
                         None,
-                    )?
-                } else {
-                    known
-                };
-                // A revision of an earlier draft is that draft's child.
-                let parent = declaration
-                    .based_on
-                    .as_deref()
-                    .and_then(vak_tools::drafts::execution_of)
-                    .and_then(|execution| {
-                        self.artifacts
-                            .get(&artifact.to_string())?
-                            .versions
-                            .iter()
-                            .find_map(|version| match &version.source {
-                                VersionSource::Call { call, .. } if *call == execution => {
-                                    Some(version.id)
-                                }
-                                _ => None,
-                            })
-                    })
-                    // A draft made from the workspace file is a version of
-                    // what the workspace holds now, an edit made outside
-                    // Vak included (doc 90 §3.5), never of whichever draft
-                    // happens to be newest.
-                    // A call that wrote the workspace file changed what the
-                    // workspace last held.
-                    .or_else(|| {
-                        if declaration.drafted {
-                            return None;
-                        }
-                        crate::file_state::last_held(&self.artifacts.get(&artifact.to_string())?)
-                    })
-                    .or_else(|| {
-                        if !declaration.drafted {
-                            return None;
-                        }
-                        match crate::file_state::observe_recording(
-                            &self.artifacts,
-                            &space,
-                            &self.cwd,
-                            &path,
-                        )?
-                        .workspace_is
-                        {
-                            crate::file_state::WorkspaceIs::Version(id) => Some(id),
-                            _ => None,
-                        }
-                    });
-                self.artifacts.version_with(
-                    artifact,
-                    NewVersion {
-                        parent,
-                        bytes: &bytes,
-                        source: VersionSource::Call {
-                            session: session.unwrap_or_default().to_string(),
-                            call: call.to_string(),
-                            in_workspace: !declaration.drafted,
-                        },
-                    },
-                    About {
-                        title: declaration.change.clone(),
-                        derived_from: declaration.read_first.clone(),
-                    },
-                    trace,
-                    None,
-                )
+                    )
+                })
             });
         if let Err(error) = recorded {
             tracing::warn!(

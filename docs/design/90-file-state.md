@@ -158,6 +158,17 @@ Three facts make `behind` true only when it is:
   (source `Workspace`, actor the owner) with its bytes. "Changed outside Vak
   since" is then a fact in the record, and the history shows the person's
   edit. This is decision D2 below.
+- One decision, one append: whether bytes are already a version, and
+  the version that records them, are decided in one
+  `Artifacts::transaction`. Its rows are appended only if the `artifacts/`
+  chain did not move since the transaction read its rollup
+  (`RecordChain::append_all_after`, checked under the chain's writer
+  lock, which every process takes); when another writer appended first,
+  the decision is made again on what the chain holds now. So the server,
+  the CLI and any other process on one data home never record a call's
+  write and the folder's copy of it as two versions, and no writer holds
+  a lock of its own (built 2026-10-14; it replaces a lock that held only
+  within one process).
 
 ## 4. Decisions (the maintainer, 2026-10-12)
 

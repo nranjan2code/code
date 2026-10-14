@@ -434,28 +434,36 @@ pub fn workspace_path(cwd: &Path, path: &str) -> String {
 /// The state of `path` in `space` as the Core sees it now: the record, and
 /// the digest of the workspace file's bytes (doc 90 §3.1). Reads the file;
 /// hashing is not parsing. `None` when the file cannot be read.
+/// A found version is recorded in one [`Artifacts::transaction`]; when it
+/// cannot be recorded, the state is as read.
 pub fn observe(artifacts: &Artifacts, space: &str, cwd: &Path, path: &str) -> Option<FileState> {
-    let _recording = crate::artifacts::recording();
-    observe_recording(artifacts, space, cwd, path)
+    match artifacts.transaction(|tx| Ok(observe_in(tx, space, cwd, path, true))) {
+        Ok(state) => state,
+        Err(_) => artifacts
+            .transaction(|tx| Ok(observe_in(tx, space, cwd, path, false)))
+            .ok()
+            .flatten(),
+    }
 }
 
-/// [`observe`] for a caller that already holds
-/// [`crate::artifacts::recording`]: what the folder holds is compared with
-/// the record and a found version appended under the one lock, so a call's
-/// own write recorded at the same moment is never also found as an edit
-/// made outside Vak (found by a test, 2026-10-13: a Library read beside a
-/// write recorded the call's bytes twice).
-pub(crate) fn observe_recording(
-    artifacts: &Artifacts,
+/// [`observe`] inside a caller's transaction: what the folder holds is
+/// compared with the record and a found version pushed in the same
+/// decision, so a call's own write recorded at the same moment is never
+/// also found as an edit made outside Vak (found by a test, 2026-10-13: a
+/// Library read beside a write recorded the call's bytes twice). With
+/// `record` false nothing is pushed.
+pub(crate) fn observe_in(
+    tx: &mut crate::artifacts::Tx<'_>,
     space: &str,
     cwd: &Path,
     path: &str,
+    record: bool,
 ) -> Option<FileState> {
     let normal = workspace_path(cwd, path);
     // A path Vak never recorded has nothing to say beyond the folder: the
     // file is not read, so a model reading large files pays nothing.
     let id = artifact_id(space, &normal);
-    let artifact = artifacts.get(&id.to_string())?;
+    let artifact = tx.get(&id.to_string())?;
     let bytes = match std::fs::read(cwd.join(&normal)) {
         Ok(bytes) => Some(bytes),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -478,10 +486,10 @@ pub(crate) fn observe_recording(
         (WorkspaceIs::NotYet, Workspace::Present { .. }) => Some(None),
         _ => None,
     };
-    if let (Some(parent), Some(found)) = (parent, &bytes) {
-        let recorded = artifacts.found_in_workspace(id, parent, found);
+    if record && let (Some(parent), Some(found)) = (parent, &bytes) {
+        let recorded = tx.found_in_workspace(id, parent, found);
         if recorded.is_ok()
-            && let Some(artifact) = artifacts.get(&id.to_string())
+            && let Some(artifact) = tx.get(&id.to_string())
         {
             return Some(file_state(Some(&artifact), &normal, workspace(&bytes)));
         }

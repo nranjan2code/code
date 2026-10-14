@@ -563,10 +563,12 @@ unasked.
   `Tool::artifact` claim with `declared`, or a person's save), never a
   list of files of your own; a new version names its parent, and nothing
   overwrites a version.
-  Decide whether bytes are already a version and record one only while
-  holding `vak_core::artifacts::recording()` (`file_state::observe` and
-  the call sink do): an observation of the folder beside a call's write
-  otherwise records the same bytes as an edit made outside Vak.
+  Decide whether bytes are already a version and record one only inside
+  one `Artifacts::transaction` (`file_state::observe` and the call sink
+  do): its rows are appended only if the chain did not move since it
+  read (`RecordChain::append_all_after`, under the chain's writer lock),
+  else it decides again, so no writer in any process on the data home
+  records the same bytes twice. Never take a lock of your own for it.
 - Address reviewed work by artifact id and version
   (`/library/{id}/versions/{version}/…`, `Version::proposed`); add no new
   route or client call keyed by a session's candidate id, and note every

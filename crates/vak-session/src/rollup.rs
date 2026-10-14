@@ -43,7 +43,18 @@ impl Rollup {
     /// row appended since folded in by `fold` (which sees each row's bytes,
     /// oldest first). A Document that is missing or does not decode is
     /// rebuilt from the chain's start.
-    pub fn read<S>(&self, mut fold: impl FnMut(&mut S, &[u8])) -> S
+    pub fn read<S>(&self, fold: impl FnMut(&mut S, &[u8])) -> S
+    where
+        S: Default + Serialize + DeserializeOwned,
+    {
+        self.read_at(fold).0
+    }
+
+    /// As [`Rollup::read`], with the chain position the state covers: what
+    /// a writer passes to [`crate::chain::RecordChain::append_all_after`]
+    /// so that what it decided from this state is written only if the
+    /// chain did not move.
+    pub fn read_at<S>(&self, mut fold: impl FnMut(&mut S, &[u8])) -> (S, Position)
     where
         S: Default + Serialize + DeserializeOwned,
     {
@@ -75,7 +86,7 @@ impl Rollup {
                 "a rollup was not saved; the next read folds the same rows"
             );
         }
-        state
+        (state, to)
     }
 
     /// Saves `state` as covering the chain up to `position`, unless another

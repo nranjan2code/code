@@ -85,15 +85,49 @@ impl RecordChain {
         self.write(std::slice::from_ref(row), false)
     }
 
+    /// Appends `rows` with one sync only if nothing was appended after
+    /// `after`, the position the caller decided them from (a rollup's
+    /// [`crate::rollup::Rollup::read_at`]): the check and the append are
+    /// one step under the chain's writer lock, which every process takes,
+    /// so a decision made from what a chain held is never written over
+    /// what another writer added since. `false` when the chain moved: read
+    /// it again and decide again.
+    pub fn append_all_after<T: Serialize>(
+        &self,
+        after: crate::tail::Position,
+        rows: &[T],
+    ) -> Result<bool, SessionError> {
+        self.write_if(rows, true, Some(after))
+    }
+
     fn write<T: Serialize>(&self, rows: &[T], sync: bool) -> Result<(), SessionError> {
+        self.write_if(rows, sync, None).map(|_| ())
+    }
+
+    fn write_if<T: Serialize>(
+        &self,
+        rows: &[T],
+        sync: bool,
+        after: Option<crate::tail::Position>,
+    ) -> Result<bool, SessionError> {
         if rows.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
         std::fs::create_dir_all(&self.dir)?;
         let segments = vak_storage::segments::SegmentSet::open(&self.dir).map_err(storage_error)?;
         let lock = segments.lock().map_err(storage_error)?;
         crate::fence::check()?;
         segments.recover(&lock).map_err(storage_error)?;
+        if let Some(after) = after {
+            let mut moved = false;
+            crate::tail::tail(&self.dir, after, |_, _| {
+                moved = true;
+                false
+            });
+            if moved {
+                return Ok(false);
+            }
+        }
         let key = match (crate::keys::of(&self.dir)?, &self.scope) {
             (Some(key), _) => Some(key),
             (None, None) => None,
@@ -136,7 +170,7 @@ impl RecordChain {
             segments.seal(active, &lock).map_err(storage_error)?;
         }
         drop(lock);
-        Ok(())
+        Ok(true)
     }
 
     /// The chain's segments, oldest first, each with its rows: what the
@@ -277,6 +311,35 @@ mod tests {
             .seals()
             .unwrap();
         assert!(!report.is_empty(), "rotation sealed segments");
+    }
+
+    #[test]
+    fn an_append_decided_from_a_moved_chain_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let chain = RecordChain::at(dir.path().join("decided"));
+        let empty = crate::tail::head(chain.path());
+        assert!(
+            chain
+                .append_all_after(empty, &[serde_json::json!({ "n": 1 })])
+                .unwrap()
+        );
+        // A second writer decided from the empty chain too.
+        assert!(
+            !chain
+                .append_all_after(empty, &[serde_json::json!({ "n": 2 })])
+                .unwrap()
+        );
+        let now = crate::tail::head(chain.path());
+        assert!(
+            chain
+                .append_all_after(now, &[serde_json::json!({ "n": 3 })])
+                .unwrap()
+        );
+        let rows: Vec<serde_json::Value> = chain.read();
+        assert_eq!(
+            rows,
+            vec![serde_json::json!({ "n": 1 }), serde_json::json!({ "n": 3 })]
+        );
     }
 
     #[test]

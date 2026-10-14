@@ -646,6 +646,57 @@ fn an_outside_edit_is_recorded_and_a_draft_made_before_it_is_behind() {
     assert_eq!(again.versions.len(), artifact.versions.len());
 }
 
+/// Readers with handles of their own, as the CLI and the server have on one
+/// data home, all see one hand edit at once: it is recorded once, because
+/// each decision is appended only if the chain did not move since it read.
+#[test]
+fn an_outside_edit_seen_by_many_writers_at_once_is_one_version() {
+    let (shared, tenant) = home();
+    let cwd = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(cwd.path()).unwrap();
+    let space = vak_session::trace::local::space(cwd.path()).to_string();
+    let artifacts = Artifacts::at(&shared, &tenant);
+    let id = artifacts
+        .declare(
+            &space,
+            "vak",
+            "race.md",
+            ArtifactKind::Document,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let accepted = artifacts
+        .version(id, by_person(b"one", None), None, None)
+        .unwrap();
+    artifacts
+        .record(id, ArtifactStep::Promoted { version: accepted }, None, None)
+        .unwrap();
+    std::fs::write(cwd.path().join("race.md"), b"one, edited by hand").unwrap();
+
+    let start = std::sync::Barrier::new(8);
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| {
+                let own = Artifacts::at(&shared, &tenant);
+                start.wait();
+                let state = vak_core::file_state::observe(&own, &space, cwd.path(), "race.md");
+                assert!(state.unwrap().changed_outside);
+            });
+        }
+    });
+    let found = artifacts
+        .get(&id.to_string())
+        .unwrap()
+        .versions
+        .into_iter()
+        .filter(|v| matches!(v.source, VersionSource::Workspace))
+        .count();
+    assert_eq!(found, 1);
+}
+
 /// A draft of a file that was in the folder before Vak recorded anything of
 /// it is a version of that file: the file is the record's first version,
 /// the draft its child, and reading the file later does not make the draft
