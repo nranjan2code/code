@@ -39,23 +39,12 @@ across them. Nothing here is started unless it says so.
   2026-10-10. Run: `sh scripts/mail-soak/build.sh`, `sh up.sh`,
   `caffeinate -i python3 soak.py --hours 24`, record the report in the
   mail and calendar plan and AGENTS.md's mail paragraph, `sh down.sh`.
-- The rest of the design-doc audit. Done 2026-10-14: every Status line
-  starts with a status word (`docs/design/INDEX.md`), and 73, 74, 76, 80,
-  82, 86, 88 and 54 were checked against the code and corrected. Not done:
-  the 53 docs marked `implemented` were not each checked against the code
-  (only their status word was set), and the in-progress docs not listed
-  above keep the open parts their own Status lines name.
-  A sweep on 2026-10-14 for code names these docs cite that no longer
-  exist found and corrected stale claims in 03, 13, 22, 23, 28, 30, 33,
-  34, 41, 42, 47, 64, 65 and 66 and in AGENTS.md invariant 32; past
-  sections of 23, 29, 34, 47 and 48 are marked historical. A second pass the
-  same day checked routes, CLI commands and flags, config keys, file
-  names and present-tense claims against the code, and read 02, 04, 05,
-  09, 10, 13, 14, 22, 25, 26, 31, 35, 38, 39, 42, 44, 50, 53 and 55 in
-  full; it found and fixed two bugs (`vak term`'s discarded command edit,
-  promoted skills never discovered). Not read in full yet: 01, 03, 07,
-  08, 15, 28, 29, 30-*, 32, 33, 40, 41, 45, 47, 48, 51, 52, 64, 65, 66,
-  69, 70, 77 (each passed the scripted checks).
+- The design-doc audit is done (2026-10-14): every doc whose status is
+  `implemented` was read against the code and corrected, past sections
+  are marked historical, and the bugs and contract gaps it found are fixed
+  or listed below. Docs that are `in progress` or `proposal` keep the open
+  parts their own Status lines name. A later change keeps them true by the
+  rule in `docs/README.md` ("Keeping it current").
 
 ## Needs the maintainer
 
