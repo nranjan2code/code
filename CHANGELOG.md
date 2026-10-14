@@ -1,3 +1,8 @@
+## Unreleased
+
+- The web app on a server you are not signed in to shows the sign-in screen
+  again, instead of waiting forever with "Vakyartha has not answered yet".
+
 ## 8.0.0 — 2026-10-14
 
 Cards are rebuilt as eighteen forms (docs/design/92-card-forms.md). This

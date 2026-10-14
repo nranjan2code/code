@@ -10,6 +10,13 @@ import type { BackendInfo, WorkspaceReview } from "../types";
 import type { Host, HostFeature, SaveOutcome, TerminalTransport } from "./port";
 import { restartStream, watchHost } from "../streamHub";
 
+/** A refusal from the server, with the status it was refused with. */
+class HttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 /** Same-origin fetch that always carries the session cookie. */
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -28,7 +35,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     parsed = text;
   }
   if (!res.ok) {
-    throw new Error((parsed as { error?: string })?.error ?? `${res.status} ${res.statusText}`);
+    throw new HttpError((parsed as { error?: string })?.error ?? `${res.status} ${res.statusText}`, res.status);
   }
   return parsed as T;
 }
@@ -64,7 +71,12 @@ export const activeHost: Host = {
   },
 
   async info(): Promise<BackendInfo> {
-    const info = await call<BackendInfo>("/host");
+    // Not signed in is the server's answer, not its silence: the gate then
+    // shows sign-in rather than waiting for a server that already replied.
+    const info: BackendInfo = await call<BackendInfo>("/host").catch((e: unknown): BackendInfo => {
+      if (e instanceof HttpError && e.status === 401) return { ready: false, recent_workspaces: [] };
+      throw e;
+    });
     terminalAllowed = info.terminal === true;
     return info;
   },
