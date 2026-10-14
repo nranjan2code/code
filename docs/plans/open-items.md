@@ -101,6 +101,31 @@ Carried over from 7.2.0:
   run's route was not read from its receipts. Figures read "3000 ₹", the
   unit after the value.
 
+## Self-evolving capabilities (docs/design/93)
+
+Agreed 2026-10-14, nothing built. Each stage's "done when" is in doc 93
+§11; tick here only when it holds with the full gate green and checked
+live.
+
+- [x] E0: design agreed, decisions logged, doc 43 superseded.
+- [ ] E1: executable skill (`run` frontmatter, declaration as the tool's
+  permission, `WorkerTask::Capability`, JSON in and out, pinned
+  dependencies). Decide first how dependencies are installed (doc 93 §12).
+- [ ] E2: verification (`tests/`, the `VerifyCapability` worker task as a
+  run, per-case results on the version).
+- [ ] E3: proposal and tiers (`propose_skill` with program, tests and
+  `parent`; Library versions; the tier gate; registry epoch; the AGENTS.md
+  outcome-runtime paragraph on review of tools).
+- [ ] E4: catalog source, prompt index, `find_tools` ranking.
+- [ ] E5: per-version measurement; promotion and withdrawal by observed
+  states (R2).
+- [ ] E6: client experience (projection line, capability sheet, Review,
+  Library Abilities, Settings → Capabilities rewritten, inbox).
+- [ ] E7: admin `#/capabilities` and `#/measurements`; `vak skills` verbs.
+- [ ] E8: the opt-in review of failures as a trigger per Agent.
+- [ ] Maintainer: confirm R1 (one kind: a skill with a program) and R2
+  (no counts in promotion) or reopen them.
+
 ## Installed 7.2.0 run (docs/audits/installed-7.2.0-run-2026-10-14.md)
 
 - The details card offers itself for "a set of readings" and accepts

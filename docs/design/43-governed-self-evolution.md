@@ -1,7 +1,8 @@
 Governed Self-Evolution
 ========================
 
-Status: proposal. Paths below describe targets and may not exist yet.
+Status: superseded by [93-self-evolving-capabilities](93-self-evolving-capabilities.md)
+(2026-10-14). Never built; kept as the record of the first proposal.
 
 ## Goal
 

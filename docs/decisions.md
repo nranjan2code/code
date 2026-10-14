@@ -9,6 +9,15 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-14
 
+- Self-evolving capabilities (`docs/design/93-self-evolving-capabilities.md`
+  §2, D1 to D8): a skill may carry a sandboxed script with tests; tiered
+  admission (live only when sandboxed, no network, workspace reads and
+  draft writes, else Review); evolution stays above the Rust runtime; a
+  near match is extended as a new version and the answer says so;
+  Agent-owned first, Shared on evidence from tests and real use; an
+  opt-in review of failures proposes fixes; a compact index in the prompt
+  plus `find_tools`. Doc 43 is superseded. Screens that get in the way are
+  rewritten, not patched: there are no users yet.
 - Keep one handover and one tracker: superseded handovers are deleted (git
   keeps them); open work lives in `docs/plans/open-items.md`. Every design
   doc's Status starts with one word from a closed set, and

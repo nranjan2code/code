@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 3 proposal, 17 in progress, 54 implemented, 3 reference, 7 superseded, 4 historical.
+Counts: 3 proposal, 17 in progress, 54 implemented, 3 reference, 8 superseded, 4 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -45,7 +45,7 @@ Counts: 3 proposal, 17 in progress, 54 implemented, 3 reference, 7 superseded, 4
 | [40-harness-engineering.md](40-harness-engineering.md) | 40 — Harness engineering | implemented | in 2.0.0 |
 | [41-capability-registry.md](41-capability-registry.md) | Capability registry | implemented | in 2.0.0 |
 | [42-managed-work-contracts.md](42-managed-work-contracts.md) | 42 — Managed work contracts | implemented | for the shipped managed-work paths |
-| [43-governed-self-evolution.md](43-governed-self-evolution.md) | 43-governed-self-evolution.md | proposal | Paths below describe targets and may not exist yet |
+| [43-governed-self-evolution.md](43-governed-self-evolution.md) | 43-governed-self-evolution.md | superseded | by [93-self-evolving-capabilities](93-self-evolving-capabilities.md) (2026-10-14) |
 | [44-shared-config.md](44-shared-config.md) | 44-shared-config.md | implemented | in 3.0.24 |
 | [45-prompt-layers.md](45-prompt-layers.md) | 45 — Editable prompt layers | implemented | in 2.0.0 |
 | [46-stabilization-install-and-onboarding.md](46-stabilization-install-and-onboarding.md) | 46 — Stabilization: one bundle, one install, one first run | historical | proposal, superseded by the shipped 2.0.0 baseline and 3.0.10 lifecycle hardening |
@@ -97,3 +97,4 @@ Counts: 3 proposal, 17 in progress, 54 implemented, 3 reference, 7 superseded, 4
 | [90-file-state.md](90-file-state.md) | 90 — What a turn knows about a file | in progress | Decisions taken 2026-10-12 (D1–D4, §4) |
 | [91-presentation-capabilities.md](91-presentation-capabilities.md) | 91 — Presentations are capabilities | implemented | stages 1 to 5 built 2026-10-14 |
 | [92-card-forms.md](92-card-forms.md) | 92 — Card forms | implemented | F1 to F6 built and checked live 2026-10-14 |
+| [93-self-evolving-capabilities.md](93-self-evolving-capabilities.md) | 93-self-evolving-capabilities.md | proposal | Agreed with the maintainer on 2026-10-14 |
