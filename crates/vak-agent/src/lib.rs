@@ -91,7 +91,7 @@ pub fn auto_approve(
     }
 }
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use futures::FutureExt;
@@ -1754,9 +1754,11 @@ impl Agent {
         let mut repeat_acked: Option<Vec<(String, serde_json::Value)>> = None;
         // Whether this run showed a card (an answer's, a worker's).
         let mut cards_emitted_this_run = false;
-        // A tool delivered a file the person reviews through its own card
-        // (an Office draft): the answer need not present it again.
-        let mut file_delivered_this_run = false;
+        // The files tools delivered for the person to review through their
+        // own cards (an Office draft) or declared as artifacts, by path: the
+        // answer need not present them again, and each planned file needs
+        // one of its own.
+        let mut files_delivered_this_run: BTreeSet<String> = BTreeSet::new();
         // A call succeeded this run: an empty step is told its result stands.
         let mut call_succeeded_this_run = false;
         // Each card recorded this run, in emit order, with the plan
@@ -2577,7 +2579,7 @@ impl Agent {
                 // carries its own result, so neither needs repeated prose.
                 if response.text_content().trim().is_empty()
                     && !cards_emitted_this_run
-                    && !file_delivered_this_run
+                    && files_delivered_this_run.is_empty()
                 {
                     if self.ladder.step(Cause::EmptyStep, false) != Rung::Tell {
                         return TurnOutcome::Failed {
@@ -2667,8 +2669,7 @@ impl Agent {
                             let produced = vak_judge::plan::Produced {
                                 cards: &card_answers,
                                 final_text: &final_text,
-                                file_delivered: file_delivered_this_run
-                                    || receipts.artifact_deliveries > 0,
+                                files_delivered: files_delivered_this_run.len(),
                                 changed: receipts.has_execution_receipt(),
                                 checked: receipts.commands_run > 0 && !verification_stale,
                                 cards_withdrawn: !self.cards_available(),
@@ -3027,13 +3028,16 @@ impl Agent {
             call_succeeded_this_run |= results
                 .iter()
                 .any(|(_, out)| matches!(out, ToolRunOutput::Ok(_)));
-            file_delivered_this_run |= results.iter().any(|(id, out)| {
-                matches!(out, ToolRunOutput::Ok(_))
-                    && call_names
-                        .get(id)
-                        .zip(call_inputs.get(id))
-                        .is_some_and(|(name, input)| self.delivered_file(name, input).is_some())
-            });
+            files_delivered_this_run.extend(
+                results
+                    .iter()
+                    .filter(|(_, out)| matches!(out, ToolRunOutput::Ok(_)))
+                    .filter_map(|(id, _)| call_names.get(id).zip(call_inputs.get(id)))
+                    .filter_map(|(name, input)| {
+                        self.delivered_file(name, input)
+                            .or_else(|| self.tool_artifact(name, input).map(|claim| claim.path))
+                    }),
+            );
             let mut yields: HashMap<String, CallYield> = {
                 let mut pending = self
                     .call_yields

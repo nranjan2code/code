@@ -443,8 +443,11 @@ pub(crate) fn append_sandbox_artifacts(
         // A successful write/edit is already projected from the durable tool
         // result. Its sandbox event is stronger evidence about the same file,
         // not a second artifact. Merge the sidecar metadata and actions so a
-        // result presents one file and one Canvas entry point.
-        if let Some(existing) = timeline.items.iter_mut().find(|item| {
+        // result presents one file and one Canvas entry point. A draft
+        // accepted through Review is also recorded as a write of the folder
+        // file by the call that drafted it: that is the draft's acceptance,
+        // which its status already shows, so it is absorbed too.
+        let same_file = |item: &OutputItem| {
             if item.kind != OutputKind::Artifact
                 || item
                     .provenance
@@ -462,7 +465,15 @@ pub(crate) fn append_sandbox_artifacts(
                 let observed = std::path::Path::new(&path);
                 existing == observed || existing.ends_with(observed) || observed.ends_with(existing)
             })
-        }) {
+        };
+        if let Some(first) = timeline.items.iter().position(&same_file) {
+            let mut at = 0;
+            timeline.items.retain(|item| {
+                let keep = at <= first || !same_file(item);
+                at += 1;
+                keep
+            });
+            let existing = &mut timeline.items[first];
             existing.turn_id = turn_id.clone();
             existing.timestamp = timestamp;
             existing.outcome = result_by_turn.get(&turn_id).cloned();
@@ -3326,6 +3337,80 @@ mod tests {
                 version: 1,
                 saved_as: None
             })
+        );
+    }
+
+    /// A draft accepted through Review is recorded as a write of the folder
+    /// file by the call that drafted it. That is the draft's acceptance, not
+    /// a second file: the conversation shows one card for it.
+    #[test]
+    fn an_accepted_draft_is_one_card_not_two() {
+        let home = tempfile::tempdir().expect("temporary home");
+        let events = home.path().join("sandbox/executions");
+        std::fs::create_dir_all(&events).expect("execution directory");
+        let scratch = home.path().join("runtime/executions/space/vak/call-1");
+        std::fs::create_dir_all(&scratch).expect("scratch directory");
+        let draft = scratch.join("book.xlsx").to_string_lossy().into_owned();
+        let started = vak_tools::SandboxEvent::ExecutionStarted {
+            execution_id: "call-1".into(),
+            owner_session_id: Some("session-1".into()),
+            tool: "office_apply".into(),
+            code_preview: String::new(),
+            language: String::new(),
+            scratch_dir: scratch.to_string_lossy().into_owned(),
+        };
+        let generated = vak_tools::SandboxEvent::ArtifactGenerated {
+            execution_id: "call-1".into(),
+            path: draft.clone(),
+            mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
+            size_bytes: 42,
+        };
+        vak_session::chain::RecordChain::at(events.join("session-1"))
+            .append_all(&[
+                serde_json::to_value(&started).expect("started json"),
+                serde_json::to_value(&generated).expect("event json"),
+            ])
+            .expect("event sidecar");
+        let mut timeline = OutputTimeline::empty("session-1");
+        for (n, path) in [".vak/scratch/vak/call-1/book.xlsx", "book.xlsx"]
+            .into_iter()
+            .enumerate()
+        {
+            timeline.items.push(OutputItem {
+                id: format!("call-1-artifact-{n}"),
+                timestamp: "2026-10-14T10:00:00+00:00".into(),
+                turn_id: "turn-6".into(),
+                role: OutputRole::Tool,
+                kind: OutputKind::Artifact,
+                status: OutputStatus::Succeeded,
+                outcome: None,
+                content: OutputContent::Artifact {
+                    artifact: super::artifact_at(path),
+                },
+                provenance: Some(OutputProvenance {
+                    session_id: Some("session-1".into()),
+                    entry_id: Some("entry-1".into()),
+                    tool_call_id: Some("call-1".into()),
+                    source: Some("office_apply".into()),
+                    presentation_id: None,
+                }),
+                actions: Vec::new(),
+                fallback_text: path.into(),
+            });
+        }
+        super::append_sandbox_artifacts(&mut timeline, home.path(), "session-1");
+        let artifacts: Vec<_> = timeline
+            .items
+            .iter()
+            .filter(|item| item.kind == OutputKind::Artifact)
+            .collect();
+        assert_eq!(artifacts.len(), 1, "{artifacts:?}");
+        assert!(
+            artifacts[0]
+                .actions
+                .iter()
+                .any(|action| action.verb == "review_draft"),
+            "the one card is the draft's, with its Review"
         );
     }
 

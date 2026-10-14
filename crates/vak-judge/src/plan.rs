@@ -13,8 +13,10 @@ pub struct Produced<'a> {
     /// its `answers` field named.
     pub cards: &'a [Option<String>],
     pub final_text: &'a str,
-    /// A file delivered for review, or a declared artifact.
-    pub file_delivered: bool,
+    /// How many distinct files were delivered for review or declared as
+    /// artifacts. Each planned file needs one: two drafts of one workbook
+    /// once stood for a planned report and a planned workbook.
+    pub files_delivered: usize,
     /// A file changed, a command ran, or an integration acted.
     pub changed: bool,
     /// A command ran and nothing changed after it.
@@ -85,6 +87,7 @@ pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
     let (cards_unnamed, rest): (Vec<_>, Vec<_>) = uncovered.into_iter().partition(|deliverable| {
         deliverable.form == DeliverableForm::Card && !produced.cards_withdrawn
     });
+    let mut files_left = produced.files_delivered;
     Gap {
         cards_unnamed,
         cards_unattributed,
@@ -94,7 +97,13 @@ pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
                 DeliverableForm::Card | DeliverableForm::Text => {
                     produced.final_text.trim().is_empty()
                 }
-                DeliverableForm::File => !produced.file_delivered,
+                DeliverableForm::File => match files_left.checked_sub(1) {
+                    Some(left) => {
+                        files_left = left;
+                        false
+                    }
+                    None => true,
+                },
                 DeliverableForm::Change => !produced.changed,
                 DeliverableForm::Check => !produced.checked,
             })
@@ -122,7 +131,7 @@ mod tests {
         Produced {
             cards,
             final_text: text,
-            file_delivered: false,
+            files_delivered: 0,
             changed: false,
             checked: false,
             cards_withdrawn: false,
@@ -191,11 +200,32 @@ mod tests {
         let all = Produced {
             cards: &none,
             final_text: "Done: the parser now accepts empty input.",
-            file_delivered: true,
+            files_delivered: 1,
             changed: true,
             checked: true,
             cards_withdrawn: false,
         };
         assert_eq!(verdict(&gap(&declared, &all)), AnswerVerdict::Accepted);
+    }
+
+    #[test]
+    fn each_planned_file_needs_a_file_of_its_own() {
+        let declared = plan(&[
+            ("report document", DeliverableForm::File),
+            ("workbook", DeliverableForm::File),
+        ]);
+        let none: [Option<String>; 0] = [];
+        let one = Produced {
+            files_delivered: 1,
+            ..produced(&none, "The workbook is ready.")
+        };
+        let left = gap(&declared, &one);
+        assert_eq!(left.others.len(), 1);
+        assert_eq!(left.others[0].name, "workbook");
+        let two = Produced {
+            files_delivered: 2,
+            ..produced(&none, "Both are ready.")
+        };
+        assert_eq!(verdict(&gap(&declared, &two)), AnswerVerdict::Accepted);
     }
 }

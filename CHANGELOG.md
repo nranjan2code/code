@@ -1,3 +1,11 @@
+## Unreleased
+
+- A request for several files is held until each has a file of its own:
+  two drafts of one workbook no longer count as the report and the
+  workbook that were planned, so the turn is told what is missing.
+- Accepting a draft no longer shows the file twice: the draft's card says
+  it is now in your folder, and no second card for the same file appears.
+
 ## 7.3.0 — 2026-10-14
 
 Card layouts become extensions, like skills and MCP servers, and answers
