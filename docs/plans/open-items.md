@@ -113,8 +113,19 @@ live.
   under a sandbox built from its declaration (no network, reads the
   workspace, writes only its drafts when declared), JSON in and out,
   refused when it changed since the turn froze it.
-- [ ] E1b: declared `hosts` through the egress proxy, and `requirements`
-  installed by their own run (R3); both are refused by name until then.
+- [x] E1b: declared `hosts` through the program's own egress proxy (moved
+  from vak-mcp to `vak_tools::egress`, one proxy for both), and pinned
+  Python `requirements` installed by their own worker run into a
+  content-addressed environment (checked live: `six` from PyPI, first call
+  asked, the next ran offline).
+- [ ] The install is a worker dispatch inside the call, not a run record
+  of its own (`Core::runs()`): it gets one when verification does (E2).
+- [ ] Dependencies for Node programs (a lockfile and `npm ci`): an ES
+  module ignores `NODE_PATH`, so the environment has to sit where the
+  module resolves from; designed when a Node capability needs it.
+- [ ] The approval a first install asks reads "'<name>' needs approval:
+  <name>": it should say it installs packages from the declared hosts.
+  Part of the Review screen (E6).
 - [ ] E2: verification (`tests/`, the `VerifyCapability` worker task as a
   run, per-case results on the version).
 - [ ] E3: proposal and tiers (`propose_skill` with program, tests,

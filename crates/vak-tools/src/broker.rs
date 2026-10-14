@@ -498,18 +498,20 @@ async fn execute(
     dispatch(&effective, request, ctx).await
 }
 
-/// What the worker needs to run a skill's program.
+/// What the worker needs to run a skill's program or install its
+/// dependencies.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilityRun {
     /// The skill's name, as the call and the Workbench know it.
     pub name: String,
-    pub interpreter: PathBuf,
-    pub entry: PathBuf,
-    pub args: Value,
     pub tmp: PathBuf,
     pub cache: PathBuf,
     pub drafts: Option<PathBuf>,
     pub timeout_ms: u64,
+    /// Set for the process beside the scrubbed environment: the proxy
+    /// settings of a program or install that reaches the network.
+    pub env: Vec<(String, String)>,
+    pub work: crate::capability::Work,
 }
 
 /// Run a skill's program in a worker wrapped by `sandbox`, the one its

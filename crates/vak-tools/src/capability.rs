@@ -4,9 +4,13 @@
 //! The declaration (`capability.json` beside `SKILL.md`) is the tool's
 //! permission and the program's sandbox at once: the sandbox is built from
 //! what the program declares, never from the session's mode, so a program
-//! that declares no network has none even under FullAccess. The host side
-//! ([`CapabilityTool`]) checks and dispatches; the program runs in a broker
-//! worker ([`Runner`]) that speaks JSON on stdin and stdout.
+//! that declares no network has none even under FullAccess, and one that
+//! declares hosts reaches only those, through an egress proxy of its own
+//! (`crate::egress`). Pinned dependencies are installed once, by a run of
+//! their own whose one way out is the package index the declaration names,
+//! into a content-addressed environment in the cache home. The host side
+//! ([`CapabilityTool`]) checks and dispatches; the work runs in a broker
+//! worker ([`Runner`]).
 
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
@@ -35,14 +39,24 @@ pub struct Declaration {
     /// The JSON Schema of its arguments: an object whose every property
     /// has a type and a description.
     pub arguments: Value,
-    /// Hosts it connects to; empty means no network at all.
+    /// Hosts it connects to, each a name (HTTPS and HTTP) or `name:port`;
+    /// empty means no network at all.
     #[serde(default)]
     pub hosts: Vec<String>,
     #[serde(default)]
     pub writes: Writes,
-    /// Pinned dependencies, relative to the skill directory.
     #[serde(default)]
-    pub requirements: Option<String>,
+    pub requirements: Option<Requirements>,
+}
+
+/// Pinned dependencies and where they come from (doc 93, R3).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Requirements {
+    /// A pip requirements file in the skill directory, every package
+    /// pinned with its hash (`pip install --require-hashes`).
+    pub file: String,
+    /// The package index hosts the install may reach, and nothing else.
+    pub hosts: Vec<String>,
 }
 
 /// Where a program may write besides its own temporary directory.
@@ -84,6 +98,23 @@ impl Interpreter {
     }
 }
 
+/// A program's installed dependencies.
+#[derive(Debug, Clone)]
+pub struct Dependencies {
+    pub file: PathBuf,
+    pub hosts: Vec<String>,
+    /// The environment they are installed in, named by the digest of the
+    /// requirements and the interpreter, so one install serves every
+    /// program that pins the same packages.
+    pub env: PathBuf,
+}
+
+impl Dependencies {
+    pub fn installed(&self) -> bool {
+        self.env.is_dir()
+    }
+}
+
 /// A loaded, checked program.
 #[derive(Debug, Clone)]
 pub struct Program {
@@ -91,7 +122,9 @@ pub struct Program {
     pub entry: PathBuf,
     pub interpreter: Interpreter,
     pub arguments: Value,
+    pub hosts: Vec<String>,
     pub writes: Writes,
+    pub requirements: Option<Dependencies>,
     /// Over every file in the skill directory, so a change to the script,
     /// its tests or its declaration is a different program.
     pub digest: String,
@@ -108,17 +141,6 @@ impl Program {
         };
         let declaration: Declaration = serde_json::from_str(&text)
             .map_err(|error| format!("{DECLARATION} is not a valid declaration: {error}"))?;
-        if !declaration.hosts.is_empty() {
-            return Err(format!(
-                "{DECLARATION} declares hosts; a program that reaches the network runs \
-                 through the egress proxy, which is not built yet"
-            ));
-        }
-        if declaration.requirements.is_some() {
-            return Err(format!(
-                "{DECLARATION} declares requirements; installing dependencies is not built yet"
-            ));
-        }
         let entry = inside(dir, &declaration.entry)?;
         let interpreter = Interpreter::of(&entry).ok_or_else(|| {
             format!(
@@ -127,12 +149,41 @@ impl Program {
             )
         })?;
         check_arguments(&declaration.arguments)?;
+        check_hosts("hosts", &declaration.hosts)?;
+        let requirements = match &declaration.requirements {
+            None => None,
+            Some(requirements) => {
+                if interpreter != Interpreter::Python {
+                    return Err(format!(
+                        "requirements are installed for Python programs; a {} program cannot declare them",
+                        interpreter.program()
+                    ));
+                }
+                if requirements.hosts.is_empty() {
+                    return Err(
+                        "requirements must name the package index hosts they are fetched from"
+                            .into(),
+                    );
+                }
+                check_hosts("requirements.hosts", &requirements.hosts)?;
+                let file = inside(dir, &requirements.file)?;
+                let bytes = std::fs::read(&file)
+                    .map_err(|error| format!("requirements cannot be read: {error}"))?;
+                Some(Dependencies {
+                    env: environment_for(&bytes, interpreter),
+                    file,
+                    hosts: requirements.hosts.clone(),
+                })
+            }
+        };
         Ok(Some(Self {
             dir: dir.to_path_buf(),
             entry,
             interpreter,
             arguments: declaration.arguments,
+            hosts: declaration.hosts,
             writes: declaration.writes,
+            requirements,
             digest: digest(dir)?,
         }))
     }
@@ -154,13 +205,72 @@ impl Program {
         schema
     }
 
+    /// Whether a call can leave the machine: it declares hosts, or its
+    /// dependencies are not installed yet and this call installs them.
+    pub fn leaves_machine(&self) -> bool {
+        !self.hosts.is_empty()
+            || self
+                .requirements
+                .as_ref()
+                .is_some_and(|requirements| !requirements.installed())
+    }
+
     /// What it reaches, from its declaration alone.
     pub fn permission(&self) -> vak_permission::Declared {
-        vak_permission::Declared::reach(match self.writes {
-            Writes::None => vak_permission::Reach::ReadPath,
-            Writes::Drafts => vak_permission::Reach::WritePath,
+        vak_permission::Declared::reach(if self.leaves_machine() {
+            vak_permission::Reach::Network
+        } else {
+            match self.writes {
+                Writes::None => vak_permission::Reach::ReadPath,
+                Writes::Drafts => vak_permission::Reach::WritePath,
+            }
         })
     }
+
+    /// It reads the workspace; what a declared host answers is someone
+    /// else's words.
+    pub fn provenance(&self) -> vak_control::Provenance {
+        if self.hosts.is_empty() {
+            vak_control::Provenance::PRIVATE
+        } else {
+            vak_control::Provenance::BOTH
+        }
+    }
+}
+
+/// The environment for these requirements under this interpreter.
+fn environment_for(requirements: &[u8], interpreter: Interpreter) -> PathBuf {
+    let mut hasher = Sha256::new();
+    if let Some(path) = resolve(interpreter).and_then(|path| path.canonicalize().ok()) {
+        hasher.update(path.to_string_lossy().as_bytes());
+    }
+    hasher.update([0]);
+    hasher.update(requirements);
+    vak_config::paths::cache_home()
+        .join("capability-envs")
+        .join(format!("{:x}", hasher.finalize()))
+}
+
+/// Exact host names, each optionally with a port; no wildcard, scheme or
+/// path, because the proxy matches names exactly.
+fn check_hosts(field: &str, hosts: &[String]) -> Result<(), String> {
+    for host in hosts {
+        let (name, port) = match host.rsplit_once(':') {
+            Some((name, port)) => (name, Some(port)),
+            None => (host.as_str(), None),
+        };
+        let name_ok = !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+        let port_ok = port.is_none_or(|port| port.parse::<u16>().is_ok_and(|port| port > 0));
+        if !name_ok || !port_ok {
+            return Err(format!(
+                "{field} entry '{host}' must be an exact host name, optionally with :port"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `relative` resolved inside `dir`, refusing an absolute path, `..`, or a
@@ -173,7 +283,7 @@ fn inside(dir: &Path, relative: &str) -> Result<PathBuf, String> {
             .any(|part| !matches!(part, Component::Normal(_)))
     {
         return Err(format!(
-            "entry '{relative}' must be a path inside the skill directory"
+            "'{relative}' must be a path inside the skill directory"
         ));
     }
     let root = dir
@@ -182,10 +292,10 @@ fn inside(dir: &Path, relative: &str) -> Result<PathBuf, String> {
     let resolved = root
         .join(candidate)
         .canonicalize()
-        .map_err(|_| format!("entry '{relative}' does not exist"))?;
+        .map_err(|_| format!("'{relative}' does not exist"))?;
     if !resolved.starts_with(&root) || !resolved.is_file() {
         return Err(format!(
-            "entry '{relative}' must be a file inside the skill directory"
+            "'{relative}' must be a file inside the skill directory"
         ));
     }
     Ok(resolved)
@@ -263,14 +373,15 @@ fn resolve(interpreter: Interpreter) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-/// The sandbox a program runs in: reads the system, the workspace, its own
-/// skill directory and its interpreter's installation; writes its temporary
-/// directory and, when declared, its drafts; reaches no network. `None`
-/// where no OS backend can confine it, and the call is then refused.
+/// The sandbox a program or an install runs in: reads the system, the
+/// workspace and `reads`; writes only `writes`; reaches the network only
+/// through `proxy`'s loopback port when one is given. `None` where no OS
+/// backend can confine it, and the call is then refused.
 fn sandbox_for(
     workspace: &Path,
     reads: &[PathBuf],
     writes: &[PathBuf],
+    proxy: Option<u16>,
 ) -> Option<Arc<dyn crate::sandbox::Sandbox>> {
     let real = |paths: &[PathBuf]| -> Vec<PathBuf> {
         paths
@@ -281,7 +392,7 @@ fn sandbox_for(
     let reads = real(reads);
     let writes = real(writes);
     #[cfg(target_os = "macos")]
-    {
+    let sandbox: Option<Arc<dyn crate::sandbox::Sandbox>> = {
         let mut sandbox =
             crate::sandbox::Seatbelt::task_copy(crate::sandbox::SandboxMode::ReadOnly, workspace);
         sandbox.mode = crate::sandbox::SandboxMode::WorkspaceWrite;
@@ -289,9 +400,9 @@ fn sandbox_for(
         sandbox.read_paths.extend(writes.iter().cloned());
         sandbox.write_paths = writes;
         Some(Arc::new(sandbox))
-    }
+    };
     #[cfg(target_os = "linux")]
-    {
+    let sandbox: Option<Arc<dyn crate::sandbox::Sandbox>> = {
         let mut sandbox =
             crate::landlock::Landlock::task_copy(crate::sandbox::SandboxMode::ReadOnly, workspace);
         sandbox.mode = crate::sandbox::SandboxMode::WorkspaceWrite;
@@ -299,12 +410,30 @@ fn sandbox_for(
         sandbox.read_paths.extend(writes.iter().cloned());
         sandbox.write_paths = writes;
         Some(Arc::new(sandbox))
-    }
+    };
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
+    let sandbox: Option<Arc<dyn crate::sandbox::Sandbox>> = {
         let _ = (workspace, reads, writes);
         None
+    };
+    match proxy {
+        Some(port) => sandbox?.proxied_variant(port),
+        None => sandbox,
     }
+}
+
+/// What the worker does for a call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Work {
+    /// Run the program: arguments as JSON on stdin, one JSON value out.
+    Program {
+        interpreter: PathBuf,
+        entry: PathBuf,
+        args: Value,
+    },
+    /// Run each command in turn: an install's steps.
+    Install { steps: Vec<Vec<String>> },
 }
 
 /// A runnable skill as a tool on the host: what the model sees and what
@@ -326,6 +455,114 @@ impl CapabilityTool {
             worker_exe,
         }
     }
+
+    /// Install the dependencies by a run of their own: a fresh environment
+    /// in a staging folder, the package index its one way out, then moved
+    /// into place by the host. Another call that installed the same
+    /// environment first wins, and this one's staging is dropped.
+    async fn install(
+        &self,
+        requirements: &Dependencies,
+        interpreter: &Path,
+        reads: &[PathBuf],
+        scratch: &Scratch,
+        ctx: &ToolContext,
+    ) -> Result<(), Box<ToolOutput>> {
+        let failed = |content: String| Box::new(ToolOutput::error(Fault::Tool, content));
+        let Some(parent) = requirements.env.parent() else {
+            return Err(failed("the dependency environment has no folder".into()));
+        };
+        let staging = parent.join(format!(
+            "{}.{}.staging",
+            requirements
+                .env
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("env"),
+            scratch.execution
+        ));
+        let _ = std::fs::remove_dir_all(&staging);
+        if let Err(error) = std::fs::create_dir_all(&staging) {
+            return Err(failed(format!(
+                "cannot prepare the dependency environment: {error}"
+            )));
+        }
+        let egress = crate::egress::Egress::start(requirements.hosts.clone())
+            .await
+            .map_err(|error| failed(format!("the package index proxy did not start: {error}")))?;
+        let writes = [staging.clone(), scratch.tmp.clone(), scratch.cache.clone()];
+        let Some(sandbox) = sandbox_for(&ctx.cwd, reads, &writes, Some(egress.port())) else {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(Box::new(ToolOutput::error(
+                Fault::Refused,
+                "no sandbox on this system can confine an install to its package index",
+            )));
+        };
+        let python = staging.join("bin").join("python3");
+        let steps = vec![
+            vec![
+                interpreter.display().to_string(),
+                "-m".into(),
+                "venv".into(),
+                staging.display().to_string(),
+            ],
+            vec![
+                python.display().to_string(),
+                "-m".into(),
+                "pip".into(),
+                "install".into(),
+                "--require-hashes".into(),
+                "--no-input".into(),
+                "--disable-pip-version-check".into(),
+                "-r".into(),
+                requirements.file.display().to_string(),
+            ],
+        ];
+        let output = crate::broker::run_capability(
+            &self.worker_exe,
+            sandbox.as_ref(),
+            crate::broker::CapabilityRun {
+                name: self.name.clone(),
+                tmp: scratch.tmp.clone(),
+                cache: scratch.cache.clone(),
+                drafts: None,
+                timeout_ms: scratch.timeout_ms,
+                env: egress.environment(),
+                work: Work::Install { steps },
+            },
+            ctx,
+        )
+        .await;
+        drop(egress);
+        if output.is_error() {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(Box::new(ToolOutput::error(
+                output.fault.unwrap_or(Fault::Tool),
+                format!(
+                    "installing the dependencies of '{}' failed: {}",
+                    self.name, output.content
+                ),
+            )));
+        }
+        if std::fs::rename(&staging, &requirements.env).is_err() {
+            let _ = std::fs::remove_dir_all(&staging);
+            if !requirements.installed() {
+                return Err(failed(
+                    "the installed dependencies could not be moved into place".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A call's own folders, and its time limit.
+struct Scratch {
+    execution: String,
+    tmp: PathBuf,
+    cache: PathBuf,
+    drafts: Option<PathBuf>,
+    timeout_ms: u64,
 }
 
 #[async_trait]
@@ -344,6 +581,14 @@ impl Tool for CapabilityTool {
 
     fn permission(&self) -> vak_permission::Declared {
         self.program.permission()
+    }
+
+    fn provenance(&self) -> vak_control::Provenance {
+        self.program.provenance()
+    }
+
+    fn leaves_machine(&self) -> bool {
+        self.program.leaves_machine()
     }
 
     fn time_limit_argument(&self) -> Option<&'static str> {
@@ -380,19 +625,27 @@ impl Tool for CapabilityTool {
             .and_then(|value| value.as_u64())
             .unwrap_or(vak_control::TimeLimits::shipped().command_secs * 1000)
             .max(1000);
-        let execution_id = ctx
+        let execution = ctx
             .sandbox_sink
             .as_ref()
             .map(|sink| sink.execution_id().to_string())
             .unwrap_or_else(|| "capability".into());
         let own = crate::drafts::own_root(ctx);
-        let tmp = own.join("tmp").join(&execution_id);
-        let cache = own.join("cache");
-        let drafts =
-            (self.program.writes == Writes::Drafts).then(|| crate::drafts::dir(ctx, &execution_id));
-        for dir in [Some(&tmp), Some(&cache), drafts.as_ref()]
-            .into_iter()
-            .flatten()
+        let scratch = Scratch {
+            tmp: own.join("tmp").join(&execution),
+            cache: own.join("cache"),
+            drafts: (self.program.writes == Writes::Drafts)
+                .then(|| crate::drafts::dir(ctx, &execution)),
+            execution,
+            timeout_ms,
+        };
+        for dir in [
+            Some(&scratch.tmp),
+            Some(&scratch.cache),
+            scratch.drafts.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             if let Err(error) = std::fs::create_dir_all(dir) {
                 return ToolOutput::error(
@@ -404,30 +657,68 @@ impl Tool for CapabilityTool {
         let mut reads = vec![self.program.dir.clone()];
         reads.extend(self.worker_exe.parent().map(Path::to_path_buf));
         reads.extend(installation_of(&interpreter));
-        let mut writes = vec![tmp.clone(), cache.clone()];
-        writes.extend(drafts.clone());
-        let Some(sandbox) = sandbox_for(&ctx.cwd, &reads, &writes) else {
+        let mut run_with = interpreter.clone();
+        if let Some(requirements) = &self.program.requirements {
+            if !requirements.installed()
+                && let Err(failed) = self
+                    .install(requirements, &interpreter, &reads, &scratch, ctx)
+                    .await
+            {
+                return *failed;
+            }
+            reads.push(requirements.env.clone());
+            run_with = requirements.env.join("bin").join("python3");
+        }
+        let egress = if self.program.hosts.is_empty() {
+            None
+        } else {
+            match crate::egress::Egress::start(self.program.hosts.clone()).await {
+                Ok(egress) => Some(egress),
+                Err(error) => {
+                    return ToolOutput::error(
+                        Fault::Tool,
+                        format!("the program's network proxy did not start: {error}"),
+                    );
+                }
+            }
+        };
+        let mut writes = vec![scratch.tmp.clone(), scratch.cache.clone()];
+        writes.extend(scratch.drafts.clone());
+        let Some(sandbox) = sandbox_for(
+            &ctx.cwd,
+            &reads,
+            &writes,
+            egress.as_ref().map(crate::egress::Egress::port),
+        ) else {
             return ToolOutput::error(
                 Fault::Refused,
                 "no sandbox on this system can confine a skill's program, so it is not run",
             );
         };
-        crate::broker::run_capability(
+        let output = crate::broker::run_capability(
             &self.worker_exe,
             sandbox.as_ref(),
             crate::broker::CapabilityRun {
                 name: self.name.clone(),
-                interpreter,
-                entry: self.program.entry.clone(),
-                args: program_args,
-                tmp,
-                cache,
-                drafts,
+                tmp: scratch.tmp,
+                cache: scratch.cache,
+                drafts: scratch.drafts,
                 timeout_ms,
+                env: egress
+                    .as_ref()
+                    .map(crate::egress::Egress::environment)
+                    .unwrap_or_default(),
+                work: Work::Program {
+                    interpreter: run_with,
+                    entry: self.program.entry.clone(),
+                    args: program_args,
+                },
             },
             ctx,
         )
-        .await
+        .await;
+        drop(egress);
+        output
     }
 }
 
@@ -440,10 +731,142 @@ fn installation_of(interpreter: &Path) -> Option<PathBuf> {
     Some(bin.parent().unwrap_or(bin).to_path_buf())
 }
 
-/// The program run inside the worker: arguments as JSON on stdin, one JSON
-/// value on stdout.
+/// The work run inside the worker.
 pub struct Runner {
     pub run: crate::broker::CapabilityRun,
+}
+
+/// How a process ended, and what it printed.
+struct Finished {
+    ended: Ended,
+    out: String,
+    err: String,
+    duration_ms: u64,
+}
+
+enum Ended {
+    Exited(std::io::Result<std::process::ExitStatus>),
+    Limit,
+    Cancelled,
+}
+
+impl Runner {
+    /// Start `program` with `args`, feed it `stdin`, stream its output to
+    /// the Workbench, and stop it at `deadline` or when the call is
+    /// cancelled.
+    async fn spawn(
+        &self,
+        program: &Path,
+        args: &[String],
+        stdin: &[u8],
+        deadline: tokio::time::Instant,
+        ctx: &ToolContext,
+    ) -> Result<Finished, String> {
+        let run = &self.run;
+        let mut command = tokio::process::Command::new(program);
+        command
+            .args(args)
+            .current_dir(&ctx.cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        crate::bash::scrub_environment(&mut command);
+        command
+            .env("TMPDIR", &run.tmp)
+            .env("XDG_CACHE_HOME", &run.cache)
+            .env("PIP_CACHE_DIR", run.cache.join("pip"))
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .env("npm_config_cache", run.cache.join("npm"));
+        if let Some(drafts) = &run.drafts {
+            command.env("VAK_DRAFTS", drafts);
+        }
+        for (key, value) in &run.env {
+            command.env(key, value);
+        }
+        crate::bash::isolate_process_group(&mut command);
+        let started = std::time::Instant::now();
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("{} did not start: {error}", program.display()))?;
+        let pid = child.id();
+        if let Some(mut input) = child.stdin.take()
+            && input.write_all(stdin).await.is_err()
+        {
+            crate::bash::kill_process_group(&pid);
+            let _ = child.wait().await;
+            return Err("the program did not read its arguments".into());
+        }
+        let mut stdout = child.stdout.take();
+        let mut stderr = child.stderr.take();
+        let sink_out = ctx.sandbox_sink.clone();
+        let sink_err = ctx.sandbox_sink.clone();
+        let out = tokio::spawn(async move {
+            match stdout.as_mut() {
+                Some(reader) => crate::bash::read_capped_streaming(reader, sink_out, false).await,
+                None => String::new(),
+            }
+        });
+        let err = tokio::spawn(async move {
+            match stderr.as_mut() {
+                Some(reader) => crate::bash::read_capped_streaming(reader, sink_err, true).await,
+                None => String::new(),
+            }
+        });
+        let ended = tokio::select! {
+            status = child.wait() => Ended::Exited(status),
+            _ = tokio::time::sleep_until(deadline) => Ended::Limit,
+            _ = ctx.cancel.cancelled() => Ended::Cancelled,
+        };
+        crate::bash::kill_process_group(&pid);
+        if !matches!(ended, Ended::Exited(_)) {
+            let _ = child.wait().await;
+        }
+        Ok(Finished {
+            ended,
+            out: out.await.unwrap_or_default(),
+            err: err.await.unwrap_or_default(),
+            duration_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
+    /// A process that did not exit cleanly, as the call's error; `None`
+    /// when it exited 0.
+    fn failure(&self, finished: &Finished, what: &str) -> Option<ToolOutput> {
+        let failed = match &finished.ended {
+            Ended::Limit => ToolOutput::error(
+                Fault::Limit,
+                format!(
+                    "{what} stopped at its time limit of {}ms{}",
+                    self.run.timeout_ms,
+                    diagnostics(&finished.err)
+                ),
+            )
+            .ran(None, finished.duration_ms),
+            Ended::Cancelled => ToolOutput::error(Fault::Cancelled, format!("{what} was stopped"))
+                .ran(None, finished.duration_ms),
+            Ended::Exited(Err(error)) => {
+                ToolOutput::error(Fault::Tool, format!("{what} was lost: {error}"))
+            }
+            Ended::Exited(Ok(status)) if status.success() => return None,
+            Ended::Exited(Ok(status)) => ToolOutput::error(
+                Fault::Tool,
+                format!(
+                    "{what} exited with {}{}{}",
+                    status
+                        .code()
+                        .map_or_else(|| "a signal".to_string(), |code| code.to_string()),
+                    diagnostics(&finished.err),
+                    if finished.out.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n\n[output]\n{}", finished.out.trim())
+                    }
+                ),
+            )
+            .ran(status.code(), finished.duration_ms),
+        };
+        Some(failed)
+    }
 }
 
 #[async_trait]
@@ -462,158 +885,118 @@ impl Tool for Runner {
 
     async fn execute(&self, _args: &Value, ctx: &ToolContext) -> ToolOutput {
         let run = &self.run;
-        let mut command = tokio::process::Command::new(&run.interpreter);
-        command
-            .arg(&run.entry)
-            .current_dir(&ctx.cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        crate::bash::scrub_environment(&mut command);
-        command
-            .env("TMPDIR", &run.tmp)
-            .env("XDG_CACHE_HOME", &run.cache)
-            .env("PYTHONDONTWRITEBYTECODE", "1")
-            .env("npm_config_cache", run.cache.join("npm"));
-        if let Some(drafts) = &run.drafts {
-            command.env("VAK_DRAFTS", drafts);
-        }
-        crate::bash::isolate_process_group(&mut command);
-        if let Some(sink) = &ctx.sandbox_sink {
-            sink.emit_execution_started(
-                &run.name,
-                &run.entry.display().to_string(),
-                run.interpreter
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("program"),
-                &ctx.cwd.display().to_string(),
-            );
-        }
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_millis(run.timeout_ms);
         let started = std::time::Instant::now();
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                return ToolOutput::error(
-                    Fault::Tool,
-                    format!("the program did not start: {error}"),
-                );
-            }
-        };
-        let pid = child.id();
-        if let Some(mut stdin) = child.stdin.take() {
-            let input = serde_json::to_vec(&run.args).unwrap_or_default();
-            if stdin.write_all(&input).await.is_err() {
-                crate::bash::kill_process_group(&pid);
-                let _ = child.wait().await;
-                return ToolOutput::error(Fault::Tool, "the program did not read its arguments");
-            }
-        }
-        let mut stdout = child.stdout.take();
-        let mut stderr = child.stderr.take();
-        let sink_out = ctx.sandbox_sink.clone();
-        let sink_err = ctx.sandbox_sink.clone();
-        let out = tokio::spawn(async move {
-            match stdout.as_mut() {
-                Some(reader) => crate::bash::read_capped_streaming(reader, sink_out, false).await,
-                None => String::new(),
-            }
-        });
-        let err = tokio::spawn(async move {
-            match stderr.as_mut() {
-                Some(reader) => crate::bash::read_capped_streaming(reader, sink_err, true).await,
-                None => String::new(),
-            }
-        });
-        let limit = tokio::time::sleep(std::time::Duration::from_millis(run.timeout_ms));
-        let ended = tokio::select! {
-            status = child.wait() => Ended::Exited(status),
-            _ = limit => Ended::Limit,
-            _ = ctx.cancel.cancelled() => Ended::Cancelled,
-        };
-        crate::bash::kill_process_group(&pid);
-        if !matches!(ended, Ended::Exited(_)) {
-            let _ = child.wait().await;
-        }
-        let out = out.await.unwrap_or_default();
-        let err = err.await.unwrap_or_default();
-        let duration_ms = started.elapsed().as_millis() as u64;
-        let drafts = run
-            .drafts
-            .as_deref()
-            .map(|dir| written(dir, ctx))
-            .unwrap_or_default();
-        if let Some(sink) = &ctx.sandbox_sink {
-            let code = match &ended {
-                Ended::Exited(Ok(status)) => status.code().unwrap_or(-1),
-                _ => -1,
-            };
-            sink.emit_finished(code, duration_ms, drafts.clone());
-        }
-        let status = match ended {
-            Ended::Limit => {
-                return ToolOutput::error(
-                    Fault::Limit,
-                    format!(
-                        "the program stopped at its time limit of {}ms{}",
-                        run.timeout_ms,
-                        diagnostics(&err)
-                    ),
-                )
-                .ran(None, duration_ms);
-            }
-            Ended::Cancelled => {
-                return ToolOutput::error(Fault::Cancelled, "the program was stopped")
-                    .ran(None, duration_ms);
-            }
-            Ended::Exited(Err(error)) => {
-                return ToolOutput::error(Fault::Tool, format!("the program was lost: {error}"));
-            }
-            Ended::Exited(Ok(status)) => status,
-        };
-        let code = status.code();
-        if !status.success() {
-            return ToolOutput::error(
-                Fault::Tool,
-                format!(
-                    "the program exited with {}{}{}",
-                    code.map_or_else(|| "a signal".to_string(), |code| code.to_string()),
-                    diagnostics(&err),
-                    if out.trim().is_empty() {
-                        String::new()
-                    } else {
-                        format!("\n\n[output]\n{}", out.trim())
+        match &run.work {
+            Work::Install { steps } => {
+                if let Some(sink) = &ctx.sandbox_sink {
+                    sink.emit_execution_started(
+                        &run.name,
+                        "installing dependencies",
+                        "install",
+                        &ctx.cwd.display().to_string(),
+                    );
+                }
+                for step in steps {
+                    let Some((program, args)) = step.split_first() else {
+                        continue;
+                    };
+                    let finished = match self
+                        .spawn(Path::new(program), args, &[], deadline, ctx)
+                        .await
+                    {
+                        Ok(finished) => finished,
+                        Err(error) => return ToolOutput::error(Fault::Tool, error),
+                    };
+                    if let Some(failed) = self.failure(&finished, "the install") {
+                        if let Some(sink) = &ctx.sandbox_sink {
+                            sink.emit_finished(
+                                -1,
+                                started.elapsed().as_millis() as u64,
+                                Vec::new(),
+                            );
+                        }
+                        return failed;
                     }
-                ),
-            )
-            .ran(code, duration_ms);
-        }
-        let result: Value = match serde_json::from_str(out.trim()) {
-            Ok(result) => result,
-            Err(_) => {
-                return ToolOutput::error(
-                    Fault::Tool,
-                    format!(
-                        "the program must print one JSON value on stdout; it printed:\n{}{}",
-                        out.trim(),
-                        diagnostics(&err)
-                    ),
-                )
-                .ran(code, duration_ms);
+                }
+                let duration_ms = started.elapsed().as_millis() as u64;
+                if let Some(sink) = &ctx.sandbox_sink {
+                    sink.emit_finished(0, duration_ms, Vec::new());
+                }
+                ToolOutput::ok("dependencies installed").ran(Some(0), duration_ms)
             }
-        };
-        let content = match &run.drafts {
-            Some(_) => serde_json::json!({"result": result, "drafts": drafts}),
-            None => result,
-        };
-        ToolOutput::ok(content.to_string()).ran(code, duration_ms)
+            Work::Program {
+                interpreter,
+                entry,
+                args,
+            } => {
+                if let Some(sink) = &ctx.sandbox_sink {
+                    sink.emit_execution_started(
+                        &run.name,
+                        &entry.display().to_string(),
+                        interpreter
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("program"),
+                        &ctx.cwd.display().to_string(),
+                    );
+                }
+                let input = serde_json::to_vec(args).unwrap_or_default();
+                let finished = match self
+                    .spawn(
+                        interpreter,
+                        &[entry.display().to_string()],
+                        &input,
+                        deadline,
+                        ctx,
+                    )
+                    .await
+                {
+                    Ok(finished) => finished,
+                    Err(error) => return ToolOutput::error(Fault::Tool, error),
+                };
+                let drafts = run
+                    .drafts
+                    .as_deref()
+                    .map(|dir| written(dir, ctx))
+                    .unwrap_or_default();
+                if let Some(sink) = &ctx.sandbox_sink {
+                    let code = match &finished.ended {
+                        Ended::Exited(Ok(status)) => status.code().unwrap_or(-1),
+                        _ => -1,
+                    };
+                    sink.emit_finished(code, finished.duration_ms, drafts.clone());
+                }
+                if let Some(failed) = self.failure(&finished, "the program") {
+                    return failed;
+                }
+                let code = match &finished.ended {
+                    Ended::Exited(Ok(status)) => status.code(),
+                    _ => None,
+                };
+                let result: Value = match serde_json::from_str(finished.out.trim()) {
+                    Ok(result) => result,
+                    Err(_) => {
+                        return ToolOutput::error(
+                            Fault::Tool,
+                            format!(
+                                "the program must print one JSON value on stdout; it printed:\n{}{}",
+                                finished.out.trim(),
+                                diagnostics(&finished.err)
+                            ),
+                        )
+                        .ran(code, finished.duration_ms);
+                    }
+                };
+                let content = match &run.drafts {
+                    Some(_) => serde_json::json!({"result": result, "drafts": drafts}),
+                    None => result,
+                };
+                ToolOutput::ok(content.to_string()).ran(code, finished.duration_ms)
+            }
+        }
     }
-}
-
-enum Ended {
-    Exited(std::io::Result<std::process::ExitStatus>),
-    Limit,
-    Cancelled,
 }
 
 fn diagnostics(stderr: &str) -> String {
@@ -726,23 +1109,61 @@ mod tests {
     }
 
     #[test]
-    fn what_is_not_built_yet_is_refused_by_name() {
+    fn hosts_are_exact_names_and_make_the_call_leave_the_machine() {
+        for bad in [
+            "*.example.com",
+            "https://api.example.com",
+            "api.example.com/v1",
+            "api.example.com:0",
+            "",
+        ] {
+            let dir = skill(json!({"entry": "run.py", "arguments": arguments(), "hosts": [bad]}));
+            assert!(
+                Program::load(dir.path())
+                    .unwrap_err()
+                    .contains("exact host name"),
+                "{bad}"
+            );
+        }
         let dir = skill(
-            json!({"entry": "run.py", "arguments": arguments(), "hosts": ["api.example.com"]}),
+            json!({"entry": "run.py", "arguments": arguments(), "hosts": ["api.example.com", "localhost:8443"]}),
         );
+        let program = Program::load(dir.path()).unwrap().unwrap();
+        assert!(program.leaves_machine());
+        assert_eq!(program.permission().reach, vak_permission::Reach::Network);
+        assert_eq!(program.provenance(), vak_control::Provenance::BOTH);
+    }
+
+    #[test]
+    fn requirements_name_their_index_and_are_python_only() {
+        let dir = skill(json!({"entry": "run.py", "arguments": arguments(),
+            "requirements": {"file": "requirements.txt", "hosts": []}}));
+        std::fs::write(dir.path().join("requirements.txt"), "").unwrap();
         assert!(
             Program::load(dir.path())
                 .unwrap_err()
-                .contains("egress proxy")
+                .contains("package index")
         );
-        let dir = skill(
-            json!({"entry": "run.py", "arguments": arguments(), "requirements": "requirements.txt"}),
-        );
+        let dir = skill(json!({"entry": "run.sh", "arguments": arguments(),
+            "requirements": {"file": "requirements.txt", "hosts": ["pypi.org"]}}));
+        std::fs::write(dir.path().join("run.sh"), "").unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "").unwrap();
+        assert!(Program::load(dir.path()).unwrap_err().contains("Python"));
+        let dir = skill(json!({"entry": "run.py", "arguments": arguments(),
+            "requirements": {"file": "requirements.txt", "hosts": ["pypi.org", "files.pythonhosted.org"]}}));
+        std::fs::write(
+            dir.path().join("requirements.txt"),
+            "six==1.16.0 --hash=sha256:00\n",
+        )
+        .unwrap();
+        let program = Program::load(dir.path()).unwrap().unwrap();
+        let requirements = program.requirements.clone().unwrap();
         assert!(
-            Program::load(dir.path())
-                .unwrap_err()
-                .contains("dependencies")
+            requirements
+                .env
+                .starts_with(vak_config::paths::cache_home())
         );
+        assert_eq!(program.leaves_machine(), !requirements.installed());
     }
 
     #[test]

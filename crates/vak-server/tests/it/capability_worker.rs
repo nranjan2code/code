@@ -136,3 +136,124 @@ async fn a_program_changed_after_the_turn_froze_it_is_not_run() {
     assert!(output.is_error());
     assert!(output.content.contains("next turn"), "{}", output.content);
 }
+
+/// An echo server on loopback, and the port it listens on.
+async fn echo() -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let (mut read, mut write) = stream.split();
+                let _ = tokio::io::copy(&mut read, &mut write).await;
+            });
+        }
+    });
+    port
+}
+
+/// A program that asks its proxy for `target` and reports what came back,
+/// and whether it could also connect to `direct` without the proxy.
+fn through_proxy(target: &str, direct: u16) -> String {
+    format!(
+        r#"import json, os, socket
+proxy = os.environ.get('HTTPS_PROXY', '')
+answer = {{'proxy': bool(proxy)}}
+if proxy:
+    host, port = proxy.rsplit('/', 1)[-1].split(':')
+    s = socket.create_connection((host, int(port)), timeout=5)
+    s.sendall(b'CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n')
+    head = s.recv(1024).decode()
+    answer['status'] = head.split(' ')[1] if ' ' in head else head
+    if answer['status'] == '200':
+        s.sendall(b'ping')
+        answer['echo'] = s.recv(16).decode()
+try:
+    socket.create_connection(('127.0.0.1', {direct}), timeout=3)
+    answer['direct'] = True
+except OSError:
+    answer['direct'] = False
+print(json.dumps(answer))
+"#
+    )
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn a_declared_host_is_reached_through_the_proxy_and_nothing_else() {
+    let allowed = echo().await;
+    let other = echo().await;
+    let workspace = tempfile::tempdir().unwrap();
+    for (target, status, echoed) in [
+        (format!("127.0.0.1:{allowed}"), "200", Some("ping")),
+        (format!("127.0.0.1:{other}"), "403", None),
+    ] {
+        let skill = tempfile::tempdir().unwrap();
+        let tool = tool(
+            skill.path(),
+            &through_proxy(&target, allowed),
+            json!({"hosts": [format!("127.0.0.1:{allowed}")]}),
+        );
+        assert!(tool.leaves_machine());
+        let output = tool
+            .execute(&json!({"timeout_ms": 20000}), &context(workspace.path()))
+            .await;
+        assert!(!output.is_error(), "{}", output.content);
+        let answer: Value = serde_json::from_str(&output.content).unwrap();
+        assert_eq!(answer["proxy"], json!(true), "{answer}");
+        assert_eq!(answer["status"], json!(status), "{target}: {answer}");
+        assert_eq!(answer["echo"].as_str(), echoed, "{answer}");
+        assert_eq!(
+            answer["direct"],
+            json!(false),
+            "only through the proxy: {answer}"
+        );
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn requirements_are_installed_once_into_their_own_environment() {
+    let workspace = tempfile::tempdir().unwrap();
+    let skill = tempfile::tempdir().unwrap();
+    std::fs::write(skill.path().join("requirements.txt"), "").unwrap();
+    let first = tool(
+        skill.path(),
+        "import json, sys\nprint(json.dumps({'prefix': sys.prefix}))\n",
+        json!({"requirements": {"file": "requirements.txt", "hosts": ["127.0.0.1:9"]}}),
+    );
+    let env = Program::load(skill.path())
+        .unwrap()
+        .unwrap()
+        .requirements
+        .unwrap()
+        .env;
+    let _ = std::fs::remove_dir_all(&env);
+    assert!(first.leaves_machine(), "the first call installs");
+    let output = first
+        .execute(&json!({"timeout_ms": 120000}), &context(workspace.path()))
+        .await;
+    assert!(!output.is_error(), "{}", output.content);
+    let answer: Value = serde_json::from_str(&output.content).unwrap();
+    let prefix = PathBuf::from(answer["prefix"].as_str().unwrap());
+    assert_eq!(
+        prefix.canonicalize().unwrap(),
+        env.canonicalize().unwrap(),
+        "{answer}"
+    );
+    let staging: Vec<_> = std::fs::read_dir(env.parent().unwrap())
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".staging"))
+        .collect();
+    assert!(staging.is_empty(), "no staging left behind");
+    let again = tool(
+        skill.path(),
+        "import json, sys\nprint(json.dumps({'prefix': sys.prefix}))\n",
+        json!({"requirements": {"file": "requirements.txt", "hosts": ["127.0.0.1:9"]}}),
+    );
+    assert!(
+        !again.leaves_machine(),
+        "installed: later calls stay on the machine"
+    );
+}

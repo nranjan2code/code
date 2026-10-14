@@ -15,6 +15,7 @@ pub mod contract;
 pub mod doc_read;
 pub mod drafts;
 pub mod edit;
+pub mod egress;
 pub mod find_tools;
 pub mod glob;
 pub mod grep;

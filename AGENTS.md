@@ -1614,7 +1614,12 @@ crates/vak-sandbox   the isolated-execution contract, deliberately ignorant
                      54-task-environments-and-promotion.md)
 crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse/
                      find_tools/recall behind Tool trait, the one reader
-                     of every call's arguments (arguments.rs), versioned
+                     of every call's arguments (arguments.rs), a skill's
+                     program run as a tool under its own declared sandbox
+                     (capability.rs, docs/design/93-self-evolving-
+                     capabilities.md), the loopback egress proxy every
+                     networked process reaches its declared hosts through
+                     (egress.rs), versioned
                      broker-worker protocol, bounded subprocess
                      environment, resource claims, sandbox backends
                      (Seatbelt/Landlock). `find_tools` ranks the deferred
@@ -1667,9 +1672,10 @@ crates/vak-commit    durable commitments (docs/design/47): lifecycle, the
 crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
 crates/vak-mcp       MCP stdio client behind a lazy meta-tool; the on-demand
                      connection pool (no warm-up, idle eviction, failure
-                     backoff) and its observations; the per-server egress
-                     proxy a networked server reaches its declared hosts
-                     through (egress.rs, docs/design/09-extensibility.md)
+                     backoff) and its observations; each networked server
+                     reaches its declared hosts through an egress proxy of
+                     its own (`vak_tools::egress`,
+                     docs/design/09-extensibility.md)
 crates/vak-bus       distributed event + message fabric for agent swarms:
                      CloudEvents envelopes, W3C trace context + Merkle
                      causal lineage, AES-256-GCM payload encryption,

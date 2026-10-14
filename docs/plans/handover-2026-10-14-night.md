@@ -18,10 +18,10 @@ Run `git status` and `git log --oneline -8`. Stage only your own paths;
 keep only `main`. We are on a Claude Code Pro plan: read lean (grep and
 line ranges, not whole files), commit each verified step, keep the
 tracker ticked, and rewrite this handover's prompt and 'Where things
-stand' before the session's limit. Next: build stage E1b (doc 93 §11:
-declared hosts through the egress proxy, requirements installed by their
-own run; E1a is built; decisions D1 to D8 and R1 to R7 are settled) as a
-design, never spot fixes or tuned numbers;
+stand' before the session's limit. Next: build stage E2 (doc 93 §11:
+tests/ run by the runtime as a VerifyCapability worker task with a run
+record, per-case results on the version; E1 is built; decisions D1 to D8
+and R1 to R7 are settled) as a design, never spot fixes or tuned numbers;
 UI that gets in the way is rewritten, not patched (no users yet). Live
 runs use launch entry `vak-e1-live` (port 8905, a throwaway
 VAK_HOME=/tmp/vak-live/e1-home, workspace /tmp/vak-live/forms; set the
@@ -32,7 +32,20 @@ home-version stamp). Short progress lines."
 
 ## Where things stand
 
-**E1a is built** (this session, gate green, checked live): a skill may
+**E1b is built** (2026-10-15, gate green, checked live): a program's
+declared `hosts` are reached through an egress proxy of its own (the MCP
+proxy, moved to `vak_tools::egress` so there is one), and its sandbox may
+connect only to that port; pinned Python `requirements` (file + index
+hosts, both declared) install by their own worker run into
+`cache_home()/capability-envs/<digest>` from a staging folder the host
+moves into place; until installed the tool declares Network, so the first
+call asks. Tests in `capability_worker.rs` (declared host tunnelled,
+another host 403, direct connect blocked; install once, no staging left).
+Live: `six` 1.17.0 installed from PyPI after the approval, next call ran
+offline with no ask. Open: the install has no run record yet (E2), Node
+dependencies, and the approval wording (E6).
+
+**E1a is built** (2026-10-14, gate green, checked live): a skill may
 carry `capability.json` + a script; `vak_tools::capability` loads and
 checks it (entry inside the skill, every argument typed and described,
 `timeout_ms` reserved, digest over every file), `CapabilityTool` offers it
@@ -120,7 +133,7 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Build E1b, then E2 and E3, each step with the full gate and a live
+1. Build E2, then E3, each step with the full gate and a live
    turn; tick `docs/plans/open-items.md` and doc 93's Status as stages
    land.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are

@@ -1,7 +1,8 @@
-//! The loopback egress proxy a networked MCP server reaches the network
-//! through (docs/design/09-extensibility.md "Network"). The server runs
-//! inside the OS sandbox with this proxy's port as its one way out; the
-//! proxy answers HTTP `CONNECT` for the hosts declared for that server and
+//! The loopback egress proxy a networked process reaches the network
+//! through: an MCP server (docs/design/09-extensibility.md "Network") or a
+//! skill's program (docs/design/93-self-evolving-capabilities.md §3). The
+//! process runs inside the OS sandbox with this proxy's port as its one way
+//! out; the proxy answers HTTP `CONNECT` for the hosts declared for it and
 //! refuses everything else. It tunnels bytes and never reads them: what a
 //! server sends inside TLS stays between it and the host it named.
 

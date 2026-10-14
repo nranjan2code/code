@@ -97,4 +97,4 @@ Counts: 2 proposal, 18 in progress, 54 implemented, 3 reference, 8 superseded, 4
 | [90-file-state.md](90-file-state.md) | 90 — What a turn knows about a file | in progress | Decisions taken 2026-10-12 (D1–D4, §4) |
 | [91-presentation-capabilities.md](91-presentation-capabilities.md) | 91 — Presentations are capabilities | implemented | stages 1 to 5 built 2026-10-14 |
 | [92-card-forms.md](92-card-forms.md) | 92 — Card forms | implemented | F1 to F6 built and checked live 2026-10-14 |
-| [93-self-evolving-capabilities.md](93-self-evolving-capabilities.md) | 93-self-evolving-capabilities.md | in progress | E1a (a skill's program runs as a tool under its own sandbox) built 2026-10-14 |
+| [93-self-evolving-capabilities.md](93-self-evolving-capabilities.md) | 93-self-evolving-capabilities.md | in progress | E1 built (E1a 2026-10-14: a skill's program runs as a tool under its own sandbox |

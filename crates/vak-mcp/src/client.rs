@@ -99,7 +99,7 @@ pub struct McpClient {
     server_info: Value,
     /// The proxy a networked server reaches its hosts through, kept for as
     /// long as the connection: dropping it closes the server's way out.
-    _egress: Option<crate::egress::Egress>,
+    _egress: Option<vak_tools::egress::Egress>,
 }
 
 impl McpClient {
@@ -128,7 +128,7 @@ impl McpClient {
             None
         } else {
             Some(
-                crate::egress::Egress::start(config.hosts.clone())
+                vak_tools::egress::Egress::start(config.hosts.clone())
                     .await
                     .map_err(|e| McpError::Spawn(format!("egress proxy: {e}")))?,
             )
@@ -167,7 +167,10 @@ impl McpClient {
         for (k, v) in &config.env {
             cmd.env(k, v);
         }
-        for (k, v) in egress.iter().flat_map(crate::egress::Egress::environment) {
+        for (k, v) in egress
+            .iter()
+            .flat_map(vak_tools::egress::Egress::environment)
+        {
             cmd.env(k, v);
         }
         // Operational basics every runtime needs (PATH for interpreters,

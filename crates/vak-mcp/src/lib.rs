@@ -3,7 +3,6 @@
 //! fetched on demand so context stays lean.
 
 pub mod client;
-pub mod egress;
 pub mod manager;
 pub mod tool;
 

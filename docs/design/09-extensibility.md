@@ -179,7 +179,8 @@ a wildcard or a URL matches nothing. No `hosts` means no network at all.
 `hosts` replaces the old `network = true`, which ran the server outside the
 sandbox entirely.
 
-- **The proxy** (`vak_mcp::egress`) listens on a free loopback port for as
+- **The proxy** (`vak_tools::egress`, shared with a skill's program,
+  docs/design/93-self-evolving-capabilities.md) listens on a free loopback port for as
   long as the connection lasts. It answers HTTP `CONNECT` for a declared
   host and refuses everything else (another host 403, a plain request 405);
   it tunnels the bytes and never reads them. The server is told where it is

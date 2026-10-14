@@ -1,8 +1,10 @@
 Self-Evolving Capabilities
 ==========================
 
-Status: in progress: E1a (a skill's program runs as a tool under its own
-sandbox) built 2026-10-14; E1b and E2 to E9 not built. Agreed with the
+Status: in progress: E1 built (E1a 2026-10-14: a skill's program runs as
+a tool under its own sandbox; E1b 2026-10-15: declared hosts through the
+egress proxy, pinned Python requirements installed by their own run); E2
+to E9 not built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -94,7 +96,7 @@ decisions"); the maintainer may reopen any of them:
   for that Agent. No count anywhere; the ladder is `vak_control::Ladder`.
 - **R3 Dependencies install once, as their own run.** A capability names
   its packages with exact versions and hashes (`requirements.txt` with
-  `--require-hashes`, or a `package-lock.json`). Installing is a separate
+  `--require-hashes`; Node lockfiles are open, see the tracker). Installing is a separate
   install run in the broker worker whose one reachable host is the
   package index, through the egress proxy; it fills the space's execution
   cache. A capability that needs an install is Review the first time (it
@@ -152,19 +154,38 @@ names the tool:
 - `entry`: the script inside the skill directory; `.py` runs with
   `python3`, `.sh` with `sh`, `.mjs`/`.js` with `node`, found on the PATH
   a scrubbed command gets.
-- `hosts`: outbound hosts; empty is no network at all (E1b adds the
-  egress proxy; until then a declaration with hosts is refused by name).
+- `hosts`: outbound hosts, each an exact name (HTTPS and HTTP) or
+  `name:port`, no wildcard, scheme or path; empty is no network at all.
+  A call with hosts starts an egress proxy of its own
+  (`vak_tools::egress`, the one MCP servers use) and the program's sandbox
+  may connect to that proxy's loopback port alone
+  (`Sandbox::proxied_variant`); the proxy settings reach it as
+  `HTTPS_PROXY` and its kin.
 - `writes`: `none` or `drafts` (its execution's drafts, named
   `.vak/scratch/<agent>/<execution>/…`, given to it as `VAK_DRAFTS`).
-- `requirements`: pinned dependencies (R3, E1b; refused by name until
-  then).
+- `requirements`: `{"file": "requirements.txt", "hosts": [...]}`, a pip
+  requirements file every package of which is pinned with its hash, and
+  the package index hosts it is fetched from (named by the declaration,
+  never by Vak). Python programs only (a shell or Node program declaring
+  them is refused). The environment is content-addressed, under
+  `cache_home()/capability-envs/<digest of the file and the interpreter>`,
+  so one install serves every program pinning the same packages. When it
+  is missing, the call first runs `python3 -m venv` and `pip install
+  --require-hashes` in a worker whose sandbox writes only a staging folder
+  and reaches only those hosts through their own proxy; the host moves the
+  folder into place (a call that installed it first wins). Until it is
+  installed the tool declares `Reach::Network` and `leaves_machine`, so
+  the permission engine asks on the first call in a restricted mode;
+  afterwards the program runs offline from the environment.
 - `timeout_ms` is the runtime's: added to the advertised schema, filled
   by the loop (`Tool::time_limit_argument`), never passed to the
   program; a declaration that names it is refused.
 
 What the program reaches is derived, never declared twice: `writes:
-none` is `Reach::ReadPath`, `writes: drafts` is `Reach::WritePath`, and
-(E1b) any host is `Reach::Network`. The tool is named as the skill and
+none` is `Reach::ReadPath`, `writes: drafts` is `Reach::WritePath`, and a
+host, or dependencies not installed yet, is `Reach::Network`. Its results
+are private (it reads the workspace), and private and untrusted when it
+declares hosts. The tool is named as the skill and
 is offered only when no tool of the turn has that name. Its digest is
 over every file in the skill directory: a call to a program changed
 since the turn froze it is refused, and its new version is offered from

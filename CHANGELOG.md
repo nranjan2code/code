@@ -6,7 +6,12 @@
   declares, whatever the conversation's access level: it reads the
   workspace, writes only its own drafts when it says so, and reaches no
   network. It answers in JSON, and its output streams to the Workbench.
-  (docs/design/93-self-evolving-capabilities.md, stage E1a.)
+  A program may name the hosts it connects to, and then reaches those
+  alone, through a proxy of its own. A Python program may pin its packages
+  with their hashes and the package index they come from: the first call
+  installs them (and asks first, like anything that reaches the network),
+  and later calls run offline from that environment.
+  (docs/design/93-self-evolving-capabilities.md, stage E1.)
 - A data home refused for predating the baseline now says it was written
   by "a version of vak that did not record itself", instead of wrongly
   saying 7.x or earlier.
