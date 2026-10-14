@@ -6263,6 +6263,28 @@ impl Agent {
         let Some(turn_id) = session.latest_directive_entry_id() else {
             return (ToolRunOutput::Ok(checked.content), CallVerdict::Accepted);
         };
+        if let Some(replaced) = input
+            .get("replaces")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            let shown: Vec<String> = session
+                .presentations()
+                .into_iter()
+                .filter(|(_, record)| record.turn_id == turn_id)
+                .map(|(entry_id, _)| entry_id)
+                .collect();
+            if !shown.iter().any(|id| id == replaced) {
+                return (
+                    ToolRunOutput::Err(
+                        Fault::Shape,
+                        vak_control::card_replaces_unknown(replaced, &shown),
+                    ),
+                    CallVerdict::Refused(Refusal::Tool),
+                );
+            }
+        }
         let digest = vak_session::types::payload_digest(&info.payload);
         if session.has_presentation(&turn_id, &digest) {
             return (

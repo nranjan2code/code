@@ -267,6 +267,27 @@ pub fn card_unplanned(answers: &str, open: &[String], shown: &[String]) -> Strin
     )
 }
 
+/// What a card is told when its `replaces` names no card shown in this
+/// answer: the card is not shown, and the answer's cards are given by id.
+pub fn card_replaces_unknown(named: &str, shown: &[String]) -> String {
+    let ids = if shown.is_empty() {
+        "No card is shown in this answer yet, so leave `replaces` out.".to_string()
+    } else {
+        format!(
+            "The cards shown in this answer are {}: name one of them, or leave `replaces` out \
+             for a new card.",
+            shown
+                .iter()
+                .map(|id| format!("`{id}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!(
+        "[card-plan]: not shown — `replaces` is `{named}`, which is no card in this answer. {ids}"
+    )
+}
+
 /// What a call stopped at its time limit is told: below the operator's
 /// longest limit it may ask for more; at it, asking again changes nothing.
 pub fn limit_reached(named: u64, ceiling: u64) -> String {

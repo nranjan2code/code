@@ -1741,6 +1741,17 @@ impl Tool for EmitCardTool {
             "deliverable".into(),
             string("The deliverable from your plan this card delivers, by the name you gave it there. A planned card counts as shown only when a card names it here; leave it out for a card your plan does not list."),
         );
+        properties.insert(
+            "replaces".into(),
+            string("Optional. To improve a card you already showed in this answer, the presentation id its acknowledgement gave: this card takes its place. Leave it out for a new card."),
+        );
+        properties.insert(
+            "beside_previous".into(),
+            serde_json::json!({
+                "type": "boolean",
+                "description": "Optional. true to place this card beside the card before it where the screen is wide enough, for two short cards read together; leave it out to give the card the full width."
+            }),
+        );
         serde_json::json!({"type": "object", "properties": properties, "required": own["required"]})
     }
 
@@ -1817,10 +1828,14 @@ fn validate_call(
     };
     let mut own = args.clone();
     own.remove("semantic_type");
-    // Every card takes these two beside its own fields: `deliverable` names
-    // the plan deliverable it delivers (read by the loop, never stored), and
+    // Every card takes these beside its own fields: `deliverable` names the
+    // plan deliverable it delivers, `replaces` the card it takes the place
+    // of and `beside_previous` its placement (all three read from the call
+    // by the loop and the projection, never stored in the card), and
     // `label` is the model's own words for it, shown above it.
     own.remove("deliverable");
+    own.remove("replaces");
+    own.remove("beside_previous");
     let label = own
         .remove("label")
         .and_then(|label| label.as_str().map(str::trim).map(str::to_string))
@@ -2130,6 +2145,8 @@ mod tests {
                     "semantic_type".to_string(),
                     "deliverable".to_string(),
                     "label".to_string(),
+                    "replaces".to_string(),
+                    "beside_previous".to_string(),
                 ])
                 .collect();
             let mut calls = vec![json!({}), fixture.clone()];

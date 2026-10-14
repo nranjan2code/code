@@ -776,29 +776,11 @@ fn snapshot_inner(
     let mut successful_runs = std::collections::HashSet::new();
     let mut assistant_tool_context: HashMap<String, TurnTool> = HashMap::new();
     let mut pending_tool_context: Option<TurnTool> = None;
-    // Tracks, per semantic_type, the id of the most recently pushed
-    // tool-emitted `Structured` card within the CURRENT logical answer —
-    // reset on a genuine new user request. Paired with `repair_armed`
-    // below: a same-type card is only ever superseded (not just recorded)
-    // while armed, i.e. strictly after a `[fence-check]`/
-    // `[duplicate-card-check]` repair-nudge fired for this answer. Without
-    // that guard, two intentionally distinct same-type cards the model
-    // emits back-to-back in one turn (e.g. "here's revenue, and here's
-    // cost", both `chart`) would be wrongly collapsed to one — nothing
-    // else in this projection distinguishes "two calls in one batch" from
-    // "a retry of the same call".
-    //
-    // Why this exists: a weak/small local model sometimes "retries" a
-    // repair nudge by calling the same `emit_*_card` tool again rather
-    // than only fixing its prose (observed live against gemma4:e2b-mlx),
-    // which otherwise leaves two separate `Structured` items for what the
-    // user experiences as one card. See `ids_to_remove` below: the earlier
-    // attempt is dropped in favor of the retry's result, mirroring
-    // `vak-agent`'s own bounded repair-turn semantics (the model's LATEST
-    // attempt is authoritative).
-    let mut card_group_by_type: HashMap<String, String> = HashMap::new();
+    // A card the model sent with `replaces` takes the place of the card of
+    // that presentation id in the answer; the ledger keeps both. Keyed by
+    // the Presentation entry id the card's acknowledgement named.
+    let mut item_of_presentation: HashMap<String, String> = HashMap::new();
     let mut seen_cards: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut repair_armed = false;
     let mut ids_to_remove: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in &chain {
         match &entry.payload {
@@ -973,17 +955,12 @@ fn snapshot_inner(
                     && control.is_none()
                     && has_user_request_content(&record.message.content)
                 {
-                    card_group_by_type.clear();
                     seen_cards.clear();
-                    repair_armed = false;
                     answered_in_turn = false;
                     replying_to_runtime = false;
                 }
                 if control == Some(vak_intent::control::ControlKind::PlanCheck) {
                     replying_to_runtime = answered_in_turn;
-                }
-                if control.is_some_and(|kind| kind.retries_answer()) {
-                    repair_armed = true;
                 }
                 if control.is_some_and(|kind| kind.discards_assistant_draft())
                     && let Some(draft) = last_assistant_entry.take()
@@ -1384,10 +1361,19 @@ fn snapshot_inner(
                                         continue;
                                     }
                                     let item_id = format!("{id}-structured-{structured_index}");
-                                    let previous = card_group_by_type
-                                        .insert(output.semantic_type.clone(), item_id.clone());
-                                    if repair_armed && let Some(superseded) = previous {
-                                        ids_to_remove.insert(superseded);
+                                    if let Some(replaced) = tool_inputs
+                                        .get(id)
+                                        .and_then(|(_, input)| input.get("replaces"))
+                                        .and_then(serde_json::Value::as_str)
+                                        .and_then(|replaced| {
+                                            item_of_presentation.get(replaced.trim())
+                                        })
+                                    {
+                                        ids_to_remove.insert(replaced.clone());
+                                    }
+                                    if let Some(presentation) = &presentation_entry_id {
+                                        item_of_presentation
+                                            .insert(presentation.clone(), item_id.clone());
                                     }
                                     let fallback_text = structured_markdown(&output);
                                     let workspace_owner = session
@@ -1624,6 +1610,7 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
     let mut plans: HashMap<String, Vec<vak_intent::Deliverable>> = HashMap::new();
     let mut proposed: HashMap<String, (String, Vec<vak_intent::Deliverable>)> = HashMap::new();
     let mut calls: HashMap<String, (String, Option<String>)> = HashMap::new();
+    let mut placed_beside: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut blocks_named: HashMap<(String, usize), Option<String>> = HashMap::new();
     let named = |input: &serde_json::Value| {
         input
@@ -1648,6 +1635,9 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
                         proposed.insert(id.clone(), (turn.clone(), plan));
                     }
                     calls.insert(id.clone(), (turn.clone(), named(input)));
+                    if input.get("beside_previous") == Some(&serde_json::Value::Bool(true)) {
+                        placed_beside.insert(id.clone());
+                    }
                     // An `answer` call's blocks each name their own.
                     if let Some(blocks) = input.get("blocks").and_then(serde_json::Value::as_array)
                     {
@@ -1669,7 +1659,7 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
             }
         }
     }
-    if plans.is_empty() {
+    if plans.is_empty() && placed_beside.is_empty() {
         return Vec::new();
     }
     // A card an `answer` block showed: the block it came from, by the
@@ -1708,13 +1698,23 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
     let mut outlines = Vec::new();
     for turn_id in turns {
         let of_turn = || items.iter().filter(|item| item.turn_id == turn_id);
-        let Some(plan) =
-            of_turn().find_map(|item| call_of(item).and_then(|(turn, _)| plans.get(turn)))
-        else {
+        let beside: Vec<String> = of_turn()
+            .filter(|item| item.kind == OutputKind::Card)
+            .filter(|item| {
+                item.provenance
+                    .as_ref()
+                    .and_then(|provenance| provenance.tool_call_id.as_ref())
+                    .is_some_and(|call| placed_beside.contains(call))
+            })
+            .map(|item| item.id.clone())
+            .collect();
+        let plan = of_turn().find_map(|item| call_of(item).and_then(|(turn, _)| plans.get(turn)));
+        if plan.is_none() && beside.is_empty() {
             continue;
-        };
+        }
         let mut sections: Vec<vak_delivery::AnswerSection> = plan
-            .iter()
+            .into_iter()
+            .flatten()
             .map(|deliverable| vak_delivery::AnswerSection {
                 name: deliverable.name.clone(),
                 form: deliverable.form.as_str().to_string(),
@@ -1745,6 +1745,7 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
         outlines.push(vak_delivery::AnswerOutline {
             turn_id: turn_id.to_string(),
             sections,
+            beside,
         });
     }
     outlines
@@ -3974,170 +3975,6 @@ mod tests {
         assert_eq!(user_items[0].turn_id, "turn-1");
     }
 
-    /// Regression coverage for a verified real bug: `gemma4:e2b-mlx`
-    /// (via Ollama) called `emit_chart_card` successfully, then vak-agent's
-    /// fence-check repair asked it to fix a malformed fence in its
-    /// following text, and instead of just editing the text it called
-    /// `emit_chart_card` AGAIN — leaving two separate `Structured` tool
-    /// results for what the user experiences as one card (confirmed via
-    /// `vak export`/direct `snapshot()` against the real session). A
-    /// `[fence-check]` (or `[duplicate-card-check]`) nudge marks a retry of
-    /// the SAME answer, not a new user request, so a second same-type card
-    /// after one of these markers must supersede the earlier one rather
-    /// than both surviving into the timeline.
-    #[test]
-    fn a_retried_tool_card_after_a_repair_nudge_supersedes_the_earlier_one() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let mut log = SessionLog::create(
-            dir.path().join("duplicate-card.jsonl"),
-            SessionHeader {
-                space: None,
-                run: None,
-                cause: None,
-                agent: None,
-                session_id: "duplicate-card".into(),
-                created_at: chrono::Utc::now(),
-                cwd: PathBuf::from("/tmp/project"),
-                parent_session_id: None,
-                contract_id: None,
-                work_item_id: None,
-                conversation: None,
-                contract: FrozenContract {
-                    app_version: "test".into(),
-                    provider: "test".into(),
-                    model: "test".into(),
-                    route_ladder: Vec::new(),
-                    route_objective: String::new(),
-                    route_annotations: Vec::new(),
-                    system_prompt: String::new(),
-                    permission_mode: "read-only".into(),
-                    capabilities: Vec::new(),
-                    prompt_layers: Vec::new(),
-                },
-            },
-        )
-        .expect("create session");
-
-        log.append_message(MessageRecord {
-            message: Message::user_text("show me a chart"),
-            meta: None,
-        })
-        .expect("append user message");
-
-        let chart_input = |summary: &str| serde_json::json!({"semantic_type":"chart","chart_type":"line","data":[{"series":"s","x":"Mon","y":1}],"accessible_summary":summary});
-        let ack = || "Card displayed to the user (chart).".to_string();
-
-        log.append_message(MessageRecord {
-            message: Message::assistant(vec![ContentBlock::ToolUse {
-                id: "call-1".into(),
-                name: "emit_chart_card".into(),
-                input: chart_input("first attempt"),
-            }]),
-            meta: None,
-        })
-        .expect("append call 1");
-        log.append_message(MessageRecord {
-            message: Message {
-                role: Role::User,
-                content: vec![ContentBlock::ToolResult {
-                    tool_use_id: "call-1".into(),
-                    content: ack(),
-                    is_error: false,
-                }],
-            },
-            meta: None,
-        })
-        .expect("append result 1");
-        append_presentation_for_call(
-            &mut log,
-            "emit_chart_card",
-            "call-1",
-            &chart_input("first attempt"),
-        );
-        log.append_message(MessageRecord {
-            message: Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text {
-                    text: "```vak\n{broken json\n```".into(),
-                }],
-            },
-            meta: None,
-        })
-        .expect("append malformed fence");
-
-        // The repair nudge: same logical answer, not a new user request.
-        log.append_message(MessageRecord {
-            message: Message::user_text(
-                "[fence-check]: The ```vak card block in your last answer has invalid JSON and failed to parse. Resend it.",
-            ),
-            meta: Some(vak_session::MessageMeta {
-                control: Some(vak_intent::control::ControlKind::FenceCheck),
-                ..Default::default()
-            }),
-        })
-        .expect("append fence-check nudge");
-
-        log.append_message(MessageRecord {
-            message: Message::assistant(vec![ContentBlock::ToolUse {
-                id: "call-2".into(),
-                name: "emit_chart_card".into(),
-                input: chart_input("retried attempt"),
-            }]),
-            meta: None,
-        })
-        .expect("append call 2");
-        log.append_message(MessageRecord {
-            message: Message {
-                role: Role::User,
-                content: vec![ContentBlock::ToolResult {
-                    tool_use_id: "call-2".into(),
-                    content: ack(),
-                    is_error: false,
-                }],
-            },
-            meta: None,
-        })
-        .expect("append result 2");
-        append_presentation_for_call(
-            &mut log,
-            "emit_chart_card",
-            "call-2",
-            &chart_input("retried attempt"),
-        );
-        log.append_message(MessageRecord {
-            message: Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text {
-                    text: "Chart is displayed above.".into(),
-                }],
-            },
-            meta: None,
-        })
-        .expect("append final prose");
-
-        let timeline = snapshot("duplicate-card", &log);
-        let chart_items: Vec<_> = timeline
-            .items
-            .iter()
-            .filter(|item| {
-                matches!(&item.content, OutputContent::Structured { output } if output.semantic_type == "chart")
-            })
-            .collect();
-        assert_eq!(
-            chart_items.len(),
-            1,
-            "the earlier attempt's card must be superseded, not left duplicated: {chart_items:?}"
-        );
-        assert_eq!(
-            chart_items[0]
-                .provenance
-                .as_ref()
-                .and_then(|p| p.tool_call_id.as_deref()),
-            Some("call-2"),
-            "the SURVIVING card must be the retried (latest) attempt, not the first"
-        );
-    }
-
     /// A second same-type card with NO repair nudge in between is a
     /// legitimate distinct card (e.g. "chart A, then chart B") and must
     /// NOT be collapsed.
@@ -5058,6 +4895,78 @@ mod tests {
         );
     }
 
+    /// A card sent with `replaces` takes the place of that card in the
+    /// answer (the ledger keeps both), and a card sent with
+    /// `beside_previous` is listed for the client to place beside the one
+    /// before it. Both are the model's own typed choices.
+    #[test]
+    fn a_card_replaces_the_card_it_names_and_placement_is_the_models() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "replaces");
+        log.append_message(MessageRecord {
+            message: Message::user_text("a five k plan"),
+            meta: None,
+        })
+        .expect("directive");
+        let call = |log: &mut SessionLog, id: &str, name: &str, input: serde_json::Value| {
+            log.append_message(MessageRecord {
+                message: Message::assistant(vec![ContentBlock::ToolUse {
+                    id: id.into(),
+                    name: name.into(),
+                    input: input.clone(),
+                }]),
+                meta: None,
+            })
+            .expect("call");
+            log.append_message(MessageRecord {
+                message: Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::ToolResult {
+                        tool_use_id: id.into(),
+                        content: "ok".into(),
+                        is_error: false,
+                    }],
+                },
+                meta: None,
+            })
+            .expect("result");
+            append_presentation_for_call(log, name, id, &input);
+            log.presentations().last().expect("recorded").0.clone()
+        };
+        let first = call(
+            &mut log,
+            "c1",
+            "emit_list_card",
+            serde_json::json!({"items": ["Week 1: walk"]}),
+        );
+        call(
+            &mut log,
+            "c2",
+            "emit_callout_card",
+            serde_json::json!({"tone": "tip", "text": "Rest between runs.", "beside_previous": true}),
+        );
+        call(
+            &mut log,
+            "c3",
+            "emit_list_card",
+            serde_json::json!({"items": ["Week 1: run one minute"], "replaces": first}),
+        );
+        let timeline = snapshot("replaces", &log);
+        let cards: Vec<String> = timeline
+            .items
+            .iter()
+            .filter(|item| item.kind == OutputKind::Card)
+            .filter_map(|item| item.provenance.as_ref()?.tool_call_id.clone())
+            .collect();
+        assert_eq!(cards, ["c2", "c3"], "c3 takes c1's place");
+        let [outline] = timeline.answers.as_slice() else {
+            panic!("an outline for the placement: {:?}", timeline.answers);
+        };
+        assert!(outline.sections.is_empty(), "no plan, no sections");
+        assert_eq!(outline.beside.len(), 1);
+        assert!(outline.beside[0].starts_with("c2-"), "{:?}", outline.beside);
+    }
+
     fn channel_log(dir: &tempfile::TempDir, name: &str) -> SessionLog {
         SessionLog::create(
             dir.path().join(format!("{name}.jsonl")),
@@ -5503,7 +5412,11 @@ mod tests {
     }
 
     #[test]
-    fn a_retried_card_is_delivered_once_and_a_nudge_is_not_a_turn() {
+    /// A runtime nudge is not a new turn: a card sent after it belongs to
+    /// the same answer, beside the earlier one. Only the model's own
+    /// `replaces` takes a card's place (docs/design/87 "Placement and
+    /// revision").
+    fn a_card_after_a_nudge_is_in_the_same_answer() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut log = channel_log(&dir, "ch4");
         log.append_message(MessageRecord {
@@ -5519,10 +5432,9 @@ mod tests {
         .expect("nudge");
         append_card_call(&mut log, "c2", "RETRY");
         let text = super::text_with_run_cards(&log, String::new());
-        assert!(
-            text.contains("RETRY") && !text.contains("FIRST-ATTEMPT"),
-            "{text}"
-        );
+        let first = text.find("FIRST-ATTEMPT").expect("first card");
+        let retry = text.find("RETRY").expect("second card");
+        assert!(first < retry, "{text}");
     }
 
     /// Real ledger (gemma, "weather in noida"): a prose draft, a presentation

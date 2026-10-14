@@ -148,3 +148,17 @@ from the ledger and seen in the browser at 1440 × 900 and 390 × 844, light
 and dark. The cases: the pantry request, the herb guide, a single
 measurement, a decision between options, a budget, a trip day plan, a code
 change with its check, a distant follow-up and a topic switch.
+
+## Placement and revision (2026-10-14)
+
+Decided by the maintainer: the model places its own cards. Every card
+tool takes two optional typed arguments, read from the call and never
+stored in the card. `beside_previous: true` puts the card beside the one
+before it where the answer is wide enough (`AnswerOutline.beside`); a row
+holds two, and a narrow screen stacks them. `replaces` names a card of
+this answer by the presentation id its acknowledgement gave: the new card
+takes that card's place in the answer, and the ledger keeps both; an id
+that is no card of this answer is refused with the answer's ids. These
+replace the client's fixed list of forms allowed to share a row and the
+projection's supersede-by-type after a repair nudge.
+

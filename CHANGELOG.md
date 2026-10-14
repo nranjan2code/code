@@ -34,6 +34,9 @@ the data home up again after installing.
 - Today (your mail and calendar) is a button in the top bar, beside Share
   and Details, instead of floating over the conversation.
 - An answer's cards arrive together rather than one at a time.
+- When the assistant improves a card it already showed, the new card takes
+  its place instead of appearing as a second copy; and two short cards it
+  means to be read together sit side by side on a wide screen.
 - Accepting a draft no longer shows the file twice: the draft's card says
   it is now in your folder, and no second card for the same file appears.
 

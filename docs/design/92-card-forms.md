@@ -142,4 +142,5 @@ Progress:
   ones); card prose renders as the conversation's markdown and wraps long
   words; Today moved into the top bar. Format-free requests (a fact, hidden
   numbers, two small asks, a bill split) stayed prose; a hidden plan drew
-  summary, steps, callout and sources. Open: card revision (open items).
+  summary, steps, callout and sources. Card revision and placement are the
+  model's typed choices (doc 87, "Placement and revision").

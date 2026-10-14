@@ -66,13 +66,6 @@ Carried over from 7.2.0:
 - `isFleetingNarration` (vak-client-ui `structured.ts`) folds a short
   message by a length of 180 characters, a tuned number; replace it with a
   typed marker from the host.
-- A card cannot revise one already shown. Live 2026-10-14 (a 5k plan):
-  the model sent a second steps card for the same deliverable, then a
-  "Correction: disregard the earlier outline" callout; both stay shown.
-  Needs the maintainer: a typed `replaces` (the presentation id the ack
-  returns) that hides the earlier card in the answer while the ledger
-  keeps both, or a rule that a deliverable's later card of the same form
-  replaces its earlier one.
 - Cards arriving in one step rests on wording only (the prompt seed and
   the plan's result); measured live 2026-10-14 it batched in four of six
   card-bearing turns. Not a mechanism; revisit if it regresses.

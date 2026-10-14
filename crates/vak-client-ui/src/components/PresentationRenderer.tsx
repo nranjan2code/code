@@ -1151,19 +1151,18 @@ function blockOf(item: OutputItem): string {
   return item.content.type === "structured" ? item.content.output.block ?? "" : "";
 }
 
-/** Blocks narrow enough to sit beside a neighbour of the same kind on a wide screen. */
-const SMALL_BLOCKS = new Set(["stats", "callout"]);
-
 /** Lays out an answer's blocks as one document (docs/design/87-composed-answers.md §2):
  *  the summary leads, then the plan's sections in the order the model declared them,
  *  then every block that named no section, in the order it was produced. Nothing is
- *  placed in a section it did not name. */
+ *  placed in a section it did not name. A block the model placed beside the one
+ *  before it shares that block's row where the answer is wide enough. */
 function composeAnswer(
   entries: { item: OutputItem; node: JSX.Element }[],
   outline: import("../types").AnswerOutline | undefined,
 ): JSX.Element {
+  const paired = new Set<string>();
   const block = (entry: { item: OutputItem; node: JSX.Element }) => (
-    <div class="answer-block" data-block={blockOf(entry.item) || undefined} data-small={SMALL_BLOCKS.has(blockOf(entry.item)) ? "" : undefined}>
+    <div class="answer-block" data-block={blockOf(entry.item) || undefined} data-paired={paired.has(entry.item.id) ? "" : undefined}>
       {entry.node}
     </div>
   );
@@ -1176,6 +1175,17 @@ function composeAnswer(
     .map((section) => ({ name: section.name, entries: body.filter((entry) => section.items.includes(entry.item.id)) }))
     .filter((section) => section.entries.length > 0);
   const placed = new Set(sections.flatMap((section) => section.entries.map((entry) => entry.item.id)));
+  // A row holds two blocks: one placed beside a block already in a row
+  // takes the full width.
+  const shown = [...lead, ...sections.flatMap((section) => section.entries), ...body.filter((entry) => !placed.has(entry.item.id))];
+  const beside = new Set(outline?.beside ?? []);
+  shown.forEach((entry, index) => {
+    const previous = shown[index - 1];
+    if (previous && beside.has(entry.item.id) && !paired.has(previous.item.id)) {
+      paired.add(previous.item.id);
+      paired.add(entry.item.id);
+    }
+  });
   return <>
     {lead.map(block)}
     {sections.map((section) => <section class="answer-section" aria-label={section.name}>{section.entries.map(block)}</section>)}

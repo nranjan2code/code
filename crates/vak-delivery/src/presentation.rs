@@ -193,11 +193,17 @@ pub struct OutputTimeline {
 }
 
 /// One turn's answer as a document: the plan's deliverables, in the order
-/// the model declared them, are its sections.
+/// the model declared them, are its sections, and the model's own placement
+/// of its cards.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnswerOutline {
     pub turn_id: String,
     pub sections: Vec<AnswerSection>,
+    /// Items the model placed beside the item before them (a card's
+    /// `beside_previous`); a client lays them side by side where there is
+    /// room, and one under the other where there is not.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub beside: Vec<String>,
 }
 
 /// One section of an answer and the items that deliver it. An item is

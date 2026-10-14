@@ -225,10 +225,13 @@ export interface OutputTimeline {
   answers?: AnswerOutline[];
 }
 
-/** A turn's answer as a document: the plan's deliverables are its sections. */
+/** A turn's answer as a document: the plan's deliverables are its sections,
+ *  and the model's own placement of its cards. */
 export interface AnswerOutline {
   turn_id: string;
   sections: AnswerSection[];
+  /** Items the model placed beside the item before them. */
+  beside?: string[];
 }
 
 /** A section and the ids of the items that deliver it. An item that named no

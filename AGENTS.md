@@ -1179,7 +1179,9 @@ commit (invariant 30).
   draws by block in one shared card shell; a kind only selects a pack on
   the host. A form's own kind is its name; a pack adds kinds to a form
   (doc 91); nothing else does. An answer uses as many cards as it has
-  parts, laid out by doc 87. Nothing decides a card by words or counts:
+  parts, laid out by doc 87; the model alone places a card: `replaces`
+  (a presentation id of this answer) puts it in that card's place, and
+  `beside_previous` beside the card before it. Nothing decides a card by words or counts:
   no signals read from text, no title word lists, no row thresholds. The
   contributor guide is `docs/design/67-presentation-renderer-guide.md`. A model shows
   each card by calling the card tool that owns its kind, by its own name

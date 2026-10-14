@@ -354,6 +354,65 @@ async fn several_cards_in_one_step_are_recorded_in_call_order() {
     );
 }
 
+/// A card's `replaces` names a card of this answer by the presentation id
+/// its acknowledgement gave; any other id is refused with the answer's
+/// card ids, and nothing is shown for it.
+#[tokio::test]
+async fn a_card_replacing_no_card_of_this_answer_is_refused_with_its_ids() {
+    let dir = tempdir().unwrap();
+    let chart = |title: &str, replaces: Option<&str>| {
+        let mut input = serde_json::json!({"semantic_type": "chart", "title": title, "points": [{"series": "s", "x": "1", "y": 1}]});
+        if let Some(id) = replaces {
+            input["replaces"] = serde_json::json!(id);
+        }
+        input
+    };
+    let mut agent = build_agent(
+        &dir,
+        "replaces-unknown",
+        vec![
+            tool_call_msg("c1", "emit_chart_card", chart("First", None)),
+            tool_call_msg("c2", "emit_chart_card", chart("Second", Some("not-a-card"))),
+            text_msg("Above."),
+        ],
+        vec![Arc::new(FakeEmitChartCard)],
+        true,
+    );
+    let outcome = agent
+        .run(
+            "a chart",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let presentations = session.presentations();
+    assert_eq!(presentations.len(), 1, "{presentations:?}");
+    let shown = presentations[0].0.clone();
+    let refusal = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .find_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error: true,
+            } if tool_use_id == "c2" => Some(content),
+            _ => None,
+        })
+        .expect("c2 refused");
+    assert!(
+        refusal.contains("`not-a-card`") && refusal.contains(&format!("`{shown}`")),
+        "{refusal}"
+    );
+}
+
 #[tokio::test]
 async fn recall_by_id_returns_the_full_evidence_content() {
     let dir = tempdir().unwrap();

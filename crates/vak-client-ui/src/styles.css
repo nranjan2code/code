@@ -3027,13 +3027,12 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
   padding: 0 0 var(--space-2);
 }
 /* An answer is one document: its sections add no box of their own, every
-   block spans the answer, and two small neighbours share a row when the
-   answer is wide enough. */
+   block spans the answer, and two blocks the model paired share a row when
+   the answer is wide enough. */
 .answer-section { display: contents; }
 .answer-block { grid-column: 1 / -1; min-width: 0; }
 @container (min-width: 560px) {
-  .answer-block[data-small]:has(+ .answer-block[data-small]),
-  .answer-block[data-small] + .answer-block[data-small] { grid-column: span 1; }
+  .answer-block[data-paired] { grid-column: span 1; }
 }
 
 .answer-block > .adaptive-presentation{
