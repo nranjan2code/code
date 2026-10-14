@@ -53,8 +53,8 @@ version of vak that did not record itself". And the full gate found the
 baseline check counting a top-level `agents/` folder as old records:
 current paths make `agents/<id>` before any Core stamps a home, so a new
 home could be refused for good (seen as an order-dependent failure in
-`vak-core`'s `agent_identity_per_turn`). Only a tenant store, or the
-pre-7.0 top-level `sessions/`, marks an older home now.
+`vak-core`'s `agent_identity_per_turn`). Every data home is 8.x (maintainer, 2026-10-14), so
+only a tenant store with no version stamp marks an older home now.
 
 **Self-evolving capabilities are designed**
 (`docs/design/93-self-evolving-capabilities.md`, status in progress). The

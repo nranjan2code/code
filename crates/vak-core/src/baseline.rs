@@ -25,8 +25,7 @@ pub fn is_pre_baseline(version: &str) -> bool {
 
 /// Refuses a data home written before the baseline. A home names the
 /// version that created it in its [`HOME_VERSION_FILE`]; one that holds
-/// records (a tenant's object store, or the session and Agent trees older
-/// homes kept at the top) but no such file was made before the file
+/// records (a tenant's object store) but no such file was made before the file
 /// existed, so it is older than any baseline that reads it. A home holding
 /// no records passes, whatever bound its folders, and nothing is written:
 /// [`stamp_data_home`] is the one writer.
@@ -48,13 +47,12 @@ pub fn check_data_home(data: &std::path::Path) -> Result<(), String> {
     }
 }
 
-/// Whether `data` holds records: a tenant's object store, or the session
-/// tree a home before the tenant layout kept at its top. An Agent's folder
-/// (`agents/<id>`) is not a record: current paths make it before any Core
-/// has stamped the home, and counting it refused a new home for good.
+/// Whether `data` holds records: a tenant's object store, where every
+/// record of a supported home lives. A folder alone (an Agent's
+/// `agents/<id>`, a bound space) is not a record: current paths make them
+/// before any Core has stamped the home.
 fn holds_records(data: &std::path::Path) -> bool {
-    let top = data.join("sessions").exists();
-    let stores = std::fs::read_dir(data.join(vak_config::paths::TENANTS_DIR))
+    std::fs::read_dir(data.join(vak_config::paths::TENANTS_DIR))
         .map(|tenants| {
             tenants.flatten().any(|tenant| {
                 tenant
@@ -63,8 +61,7 @@ fn holds_records(data: &std::path::Path) -> bool {
                     .exists()
             })
         })
-        .unwrap_or(false);
-    top || stores
+        .unwrap_or(false)
 }
 
 /// Names this build as the creator of a data home that has no
@@ -168,13 +165,11 @@ mod tests {
             vak_config::paths::TENANTS_DIR,
             vak_config::paths::TENANT_STORE_DIR
         );
-        for state in ["sessions", store.as_str()] {
-            let home = tempfile::tempdir().unwrap();
-            std::fs::create_dir_all(home.path().join(state)).unwrap();
-            let refused = check_data_home(home.path()).unwrap_err();
-            assert!(refused.contains("predates the 8.0.0 baseline"), "{refused}");
-            assert!(refused.contains("vak self uninstall --purge"), "{refused}");
-        }
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(store)).unwrap();
+        let refused = check_data_home(home.path()).unwrap_err();
+        assert!(refused.contains("predates the 8.0.0 baseline"), "{refused}");
+        assert!(refused.contains("vak self uninstall --purge"), "{refused}");
     }
 
     #[test]
@@ -211,7 +206,14 @@ mod tests {
     #[test]
     fn a_home_with_only_caches_and_logs_is_not_pre_baseline() {
         let dir = tempfile::tempdir().unwrap();
-        for sub in ["cache", "logs", "vak-home", "runtime", "agents/vak"] {
+        for sub in [
+            "cache",
+            "logs",
+            "vak-home",
+            "runtime",
+            "agents/vak",
+            "sessions",
+        ] {
             std::fs::create_dir_all(dir.path().join(sub)).unwrap();
         }
         assert!(check_data_home(dir.path()).is_ok());
