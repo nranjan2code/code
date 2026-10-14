@@ -28,7 +28,7 @@ covers local services and a headless host.
 
 ```bash
 scripts/build.sh
-/Applications/Vak.app/Contents/MacOS/vak self services-sync  # macOS
+/Applications/Vakyartha.app/Contents/MacOS/vak self services-sync  # macOS
 # ~/.local/share/vak/bin/vak self services-sync              # Linux
 ```
 
@@ -211,7 +211,7 @@ rebinding is defended identically inside a container.
 ```bash
 git pull
 scripts/build.sh
-/Applications/Vak.app/Contents/MacOS/vak self services-sync
+/Applications/Vakyartha.app/Contents/MacOS/vak self services-sync
 ```
 
 Before updating an existing data home, read the release notes for its

@@ -1,6 +1,6 @@
 # 30 — Output engineering and channel delivery
 
-Status: implemented: schema-v2 semantic timeline with result-scoped outcome/evidence metadata
+Status: implemented (checked against the code on 2026-10-14): schema-v2 semantic timeline with result-scoped outcome/evidence metadata
 and projected collaborative goal state, deterministic CommonMark compiler,
 universal recipe catalog (research, coding diffs/tests, telemetry charts,
 spreadsheet grids, terminal sessions, culinary recipes, UI previews) and tool-provenance signal
@@ -195,7 +195,7 @@ says whether it arrived. Webhooks receive the key as `Idempotency-Key`. The
 inbox copy is written before transport, so missing credentials or remote
 failure cannot erase the signal.
 
-Attached TUI and desktop clients should normally render semantic events locally:
+Attached clients (desktop, web, `vak term`) should normally render semantic events locally:
 they know terminal width, theme, accessibility mode, and window state. The
 worker is primarily for Telegram, webhooks, scheduled tasks, and unattended
 surfaces. A small plain-text emergency path may remain in the server for
@@ -224,8 +224,9 @@ compatibility and forensic inspection.
 The SolidJS desktop uses a closed component registry keyed by semantic node
 type. A completed turn is outcome-first: user request, blocking approval,
 outcome, artifact shelf, optional activity/audit, and persistent recovery for
-failed work. Outcome, Balanced, and Audit modes are different projections of
-the same timeline. Prose is continuous; only code, tables, diffs, callouts,
+failed work. One Show technical details setting reveals the detail behind it
+(docs/design/75-visual-refresh.md); the earlier Outcome, Balanced and Audit
+modes are gone. Prose is continuous; only code, tables, diffs, callouts,
 artifacts, approvals, and recovery states get purpose-built containment.
 An intermediate tool error in a run that later records successful completion
 remains in Activity as a failed, recoverable step; only an unresolved tool
@@ -248,8 +249,8 @@ the host's `vak_presentation::compile()` emits. The behaviors are unchanged:
   source badges, and verified source link tiles with domain favicons.
 - **`diff`**: an editor-grade diff viewer with file drawer, delta
   counters (`+` / `-`), unified vs. side-by-side mode toggle, gutter line
-  numbering, and one-click `openInEditor` host integration. The standalone
-  `DiffInspector.tsx` remains for its non-registry call sites.
+  numbering, and one-click `openInEditor` host integration. The review pane's
+  diff is `DiffPane.tsx`.
 - **`test_matrix`**: Test suite dashboard featuring an SVG circular pass-rate
   progress ring, filter chips (`All` vs `Failed Only`), and collapsible
   assertion traceback drawers.
@@ -258,10 +259,11 @@ the host's `vak_presentation::compile()` emits. The behaviors are unchanged:
   crosshair line with floating glass data bubble, and one-click CSV export.
 - **`table` / `comparison`**: Interactive tabular grid with numeric-aware column
   sorting, real-time client-side search filtering, tabular alignment, and CSV
-  export. Standard markdown tables with $\ge 3$ rows automatically promote to
-  this grid.
-- **`terminal`**: Authentic dark terminal container with prompt line,
-  exit code status pill (`Exit 0`), execution duration, and formatted output.
+  export. A Markdown table with at least two rows or three columns becomes
+  this grid (`PresentationRenderer.tsx`).
+- **`terminal`**: Authentic dark terminal container with prompt line, how the
+  run ended (`Exit 1 · 4 ms`, `Stopped · 5.0 s`) and its output, all taken from
+  the call that ran the command (`Tool::output_of_command`, invariant 36).
 - **`recipe`**: Dynamic servings scaler (`-` 2 `+`) that recalculates
   ingredient weights and measurements, paired with live countdown step timers.
 - **`ui_preview`**: Live interactive sandboxed iframe for React and web UI
@@ -423,7 +425,7 @@ Markdown remains the export and emergency fallback for every projection.
 5. Stable semantic packet returned to sidecars and available to native clients:
    complete.
 6. Universal presentation surface embedded in continuous chat canvas
-   (`research` with citation popovers, Zed-grade `diff`, `test_matrix` with
+   (`research` with citation popovers, an editor-grade `diff`, `test_matrix` with
    pass-rate ring, `chart` with mouse crosshair tracking and KPI pods, `table`
    with column sorting and search, `terminal` with exit codes, `recipe` with
    scaling and timers, `ui_preview` with viewport modes and preview dock

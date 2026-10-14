@@ -1,6 +1,6 @@
 # 30-render-architecture — Cross-surface rendering architecture
 
-Status: **implemented contract, with explicitly listed future extensions**. The
+Status: **implemented contract, with explicitly listed future extensions** (checked against the code on 2026-10-14). The
 schema-v2 semantic timeline, result-scoped eligibility/evidence metadata,
 collaborative goal projection, deterministic fallback, and cross-surface
 delivery path are shipped in 3.0.10. The open questions at the end are not
@@ -445,11 +445,13 @@ schema now describes those fields separately, and the chart tool safely
 normalizes `semantic_type` values `line`, `bar` or `area` to the default
 `chart` category. The visual style remains in `chart_type`.
 
-**A card is identified by its `semantic_type`.** Every type belongs to one
-card tool, so the agent loop routes a card call to the admitted card tool
-that owns its type (`normalize_card_type`), whatever card tool it named,
-including one that does not exist; with no type, a name `emit_<type>_card`
-names it. Measured on captured requests: a form card was written in full
+**A card is identified by the tool it calls.** (Historical: until the
+cards became one tool per block, the loop routed a call by its
+`semantic_type` to the card tool owning that type, `normalize_card_type`.
+Now a stray `semantic_type` in a call's arguments never sends it to another
+block, a call is matched by its exact tool name, and only a fence resolves
+its block from `semantic_type`; AGENTS.md "Code rules".) The measurement
+that led to the routing: Measured on captured requests: a form card was written in full
 under `emit_ui_preview_card` in 7 of 8 runs and a transaction card under an
 invented `emit_transaction_card` in 7 of 8, with the right `semantic_type`
 almost every time; rewording the tool description and the prompt changed
@@ -489,9 +491,10 @@ be a workspace path) must appear in
 the person's own messages or in a successful non-card tool call's arguments
 or result, its whole evidence body included (`SessionLog::evidence_text`);
 a failed fetch's URL is not evidence. A card citing anything else is not
-shown: the model is told which URL nothing retrieved and to fetch it or
-answer in text, and a second such card ends the turn on an honest statement
-(`uncited_sources_outcome`). Found live: with no search tool configured, a
+shown: the call is refused with which URL nothing retrieved
+(`[uncited-source]`, `vak_control::uncited_source`), to fetch it or answer
+in text, and goes through the one correction ladder like any refusal; no
+runtime ending replaces the answer (docs/design/88-control-plane.md §5). Found live: with no search tool configured, a
 research card's sources were written after a fetched search-results page
 that contained none of them.
 
@@ -524,7 +527,10 @@ an error value, never a page): the honest answer reports the failure, and a
 card would have no data. No
 per-type rules live in the loop.
 
-**Card completion check.** After a tool-emitted card, structured assistant
+**Card completion check (removed with the presentation check; kept as
+history).** The model now plans its deliverables and the plan check names a
+missing card (docs/design/86-model-plans-runtime-checks.md). As it was: after
+a tool-emitted card, structured assistant
 text (headings with lists, tables, or several sections) signals that requested
 parts may still be in prose. The loop records one `[card-completion-check]` in
 the same logical turn and asks the model to emit matching cards for remaining
@@ -614,17 +620,18 @@ contains one `RendererDecision` per block plus a summary (`markdown:native`, a
 single renderer id, or `mixed`). `builtin:generic` is an explicit surface
 fallback, never a recipe default.
 
-**Plugin extension point:** `RecipeCatalog::register(plugin_recipe)` allows
-any installed plugin to contribute recipes. Matching requires every declared
+**Plugin extension point:** an installed plugin contributes recipe files,
+merged with `RecipeCatalog::merge_recipe_files` (each through
+`RecipeCatalog::register`). Matching requires every declared
 signal and every required primary type, then ranks candidates by an explicit
 specificity/priority tuple with stable id/version tie-breaking. Renderer
 bindings are never supplied by a recipe. The built-in catalog is the default
 register; plugin recipes are additive.
 
-**Signal extensibility:** Plugins contribute signal definitions (keyword
-patterns, tool-name mappings) to the `SignalRegistry`. The core `signals_from_text()`
-merges builtin + plugin signals on each call. This is level-triggered — a new
-plugin's signals appear on the next `snapshot()` call.
+**Signals are not extensible.** The signal vocabulary is the built-in one in
+`vak_delivery::skills`; a plugin adds recipes over it, not signals. (A
+`SignalRegistry` was designed and not built.) Planning recipes from words
+is an open question in `docs/plans/open-items.md`.
 
 ### 30.5 Surface Capability Profiles
 
@@ -733,9 +740,9 @@ requests, regardless of which model or provider produced the original output.
 | Layer | Tests |
 |---|---|
 | Compiler | `compiles_commonmark_without_losing_source`, `tight_lists_keep_inline_runs_together`, `unsafe_links_and_html_remain_inert`, `fenced_diff_receives_a_native_block`, `mermaid_is_preserved_as_a_safe_diagram_source` |
-| Structured projection | `project_structured_fences_replaces_vak_blocks`, `project_structured_fences_leaves_plain_code_intact`, `structured_markdown_renders_all_known_types`, `project_structured_fences_never_panics_on_malformed` |
-| Markup converters | Telegram: `converts_links_to_angle_pipe_form`, `rewrites_links_with_a_visible_suppressed_url`, `split_html_chunks_balances_tags`, `passes_through_native_markdown`; Slack: `bold_and_italic_converted`, `links_as_angle_pipe`, `tables_as_code_block`; Discord: `links_wrap_url`, `tables_as_code_block` |
-| Chunking | `chunking_is_unicode_safe_and_prefers_line_boundaries`, `split_html_chunks_closes_and_reopens_tags`, `chunk_markdown_preserving_fences_reopens_fences` |
+| Structured projection | `tool_result_with_vak_fence_is_projected`, `malformed_vak_fence_is_preserved_as_code_block`, `structured_fence_projected_on_telegram_html`, `structured_fence_projected_on_slack_mrkdwn`, `structured_fence_projected_on_discord_markdown`, `structured_fence_passed_through_as_json_for_native_surface`, `red_team_code_fence_abuse` |
+| Markup converters | Telegram: `converts_and_escapes_supported_markdown`, `renders_aligned_table`, `preserves_fence_language_as_code_class`; Slack: `converts_bold_and_italic_conventions`, `converts_links_to_angle_pipe_form`, `renders_table_as_aligned_code_block`; Discord: `passes_through_native_markdown_unchanged`, `keeps_masked_links_for_discord_to_render` |
+| Chunking | `chunking_is_unicode_safe_and_prefers_line_boundaries`, `chunker_closes_and_reopens_tags`, `no_cards_means_no_chunks_and_never_a_blank_message` |
 | Integration | `persistent_worker_renders_multiple_jobs` (worker process test), golden fixtures for cross-surface rendering of a representative document |
 | Coverage | Every `project_structured_fences` call adds `Coverage::Rendered` entries for the replaced blocks |
 

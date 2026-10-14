@@ -5,7 +5,7 @@ secured server) is the canonical management surface for vak:
 observation, operation, and interaction against the same audited core the
 TUI and desktop use.
 
-Status: **implemented**. All endpoints live behind the standard
+Status: **implemented** (checked against the code on 2026-10-14). All endpoints live behind the standard
 auth stack; nothing here bypasses permission checks or brokered tools.
 
 ## Goals
@@ -220,7 +220,6 @@ SDKs to preflight a model.
 | `/gateway/bindings/:key` | DELETE | Remove binding and override; preserve session ledger |
 | `/memory` (secured shared route) | GET, POST | List or append workspace/profile memory notes |
 | `/memory/:note_id` (secured shared route) | PATCH, DELETE | Amend or explicitly forget one scoped note |
-| `/memory/cleanup` (secured shared route) | POST | Remove abandoned memory artifacts and empty workspace directories; never notes |
 | `/sessions/:id/workers` (secured shared route) | GET | List live child agents for a session |
 | `/sessions/:id/workers/:child/steer` (secured shared route) | POST | Queue steering text for a live child, parent-scoped |
 | `/sessions/:id/workers/:child/stop` (secured shared route) | POST | Cancel a live child, parent-scoped |
@@ -441,9 +440,10 @@ with exponential-backoff reconnect.
 
 The Gateway split answered "who may talk to this agent, and under what
 permission". Extensions answers the same question for everything else that
-widens what the agent can do. `#/integrations` is four hash routes —
-`#/integrations` (Connected apps), `/skills` (Skills), `/hooks`
-(Automations), `/tasks` (Scheduled tasks) — presented in
+widens what the agent can do. `#/integrations` is five hash routes —
+`#/integrations` (Connected apps), `/skills` (Skills), `/hooks` (hooks),
+`/plugins` (Plugins) and `/social` (social connectors); scheduled work is
+`#/automations` — presented in
 a tab bar and as sidebar sub-rows, structurally identical to the Gateway
 section so the two governance surfaces read as one system.
 

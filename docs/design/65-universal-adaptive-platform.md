@@ -10,7 +10,7 @@ research synthesis, writing, operational triage, and quantitative analysis.
 A user may ask a question, request a complex data extraction, initiate a multi-source research review, or delegate a multi-agent workflow. The interface presents calm, outcome-focused deliverables with living interactivity:
 - Every table produced in conversation provides client-side sorting, search filtering, and instant CSV export.
 - Documents across all major formats (Markdown, CSV, TSV, JSON, YAML, TOML, INI, ENV, HTML, XML) are ingested token-efficiently without external runtime dependencies.
-- Specialist agents (`researcher`, `writer`, `operator`, `analyst`) bring dedicated epistemic stances, prompt layers, and tools to complex problems.
+- Specialist roles (`researcher`, `writer`, `operator`, `analyst`) bring dedicated epistemic stances as prompt layers; a worker under a role has the same tools as any worker.
 - Agents durably own scheduled executions and record verifiable run receipts to append-only ledgers.
 
 ## 2. Core Architectural Components
@@ -38,6 +38,7 @@ A user may ask a question, request a complex data extraction, initiate a multi-s
    - **Tabular**: CSV, TSV, JSON array of objects.
    - **Structured Config**: TOML, YAML, INI, ENV, Properties.
    - **Markup & Web**: Markdown, HTML, XML (with tag-aware heading outline and `<table>` row scraper).
+   - **Office and PDF**: Word, Excel, PowerPoint and Visio packages and PDF, read by `crates/vak-ooxml` and `crates/vak-pdf` (docs/design/72-openxml-documents.md, 77-pdf-documents.md).
 3. **Boundary Confinement (Invariant 10)**:
    - Canonical target path resolution against `ctx.cwd.canonicalize()` fails closed on any path escaping the workspace root.
 
@@ -48,7 +49,7 @@ A user may ask a question, request a complex data extraction, initiate a multi-s
    - **`operator`**: Operational reliability, environment triage, runbook execution, system safety (sun/calm).
    - **`analyst`**: Quantitative reasoning, data aggregation, decision matrices, statistical synthesis (spark/quiet).
 2. **Worker Role Inheritance**:
-   - Roles admitted into `Core::prompt_role_names()` and `role_prompts`.
+   - Roles admitted into `Core::prompt_role_names()` and `role_prompts`: the four built-in ones plus any `agents/<role>` prompt layer in the Shared layer or the project.
    - Workers dispatched via `task` automatically inherit domain archetype instructions in their prompt layers.
 3. **Verification**:
    - `general_multi_agent_collaboration` eval case tests end-to-end multi-disciplinary delegation combining quantitative metrics, citations, and executive synthesis.
@@ -60,4 +61,4 @@ Scheduled work is an automation (`vak_core::triggers::Trigger`: a prompt or a sc
 
 1. **Workspace Boundary**: All file reading and document extraction strictly resolve inside the canonical workspace.
 2. **Non-destructive Extension**: Living outcome canvas and document ingestion enhance assistant capabilities without altering append-only session ledgers or per-turn route receipts.
-3. **Zero External Subprocesses**: Document parsing and tabular conversions execute entirely in-memory in pure Rust.
+3. **No external runtime**: Document parsing and tabular conversions are pure Rust with no outside program, run in the broker worker (invariant 14), never in the server, desktop or gateway process.

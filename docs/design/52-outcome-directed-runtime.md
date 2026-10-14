@@ -1,6 +1,7 @@
 # 52 — Outcome-directed runtime
 
-Status: implemented for the repository-verifiable runtime slices;
+Status: implemented for the repository-verifiable runtime slices (checked
+against the code on 2026-10-14);
 live workload measurement remains operational validation.
 
 ## Decision
@@ -253,12 +254,12 @@ does not bypass admission. A stale preview cannot set execution bounds.
    “yes, do that” against the actual proposal it references.
 3. Use deterministic extraction for concrete references, dates and explicit
    choices. Lexical hints nominate candidates, not irreversible decisions.
-4. For requests needing semantic interpretation, let the normal model propose
-   a structured spec before its first affected action. The host validates it.
-   This can share the first ordinary dispatch; a separate classifier is optional.
-5. Invoke a separate classifier only when the expected consequence of ambiguity
-   justifies its configured latency and cost, within the admitted turn route.
-   Record its dispatch and cancellation like every other model call.
+4. For requests needing semantic interpretation, the normal model declares
+   its deliverables with the loop-owned `plan` tool before its first affected
+   action, and the runtime checks them against receipts
+   (docs/design/86-model-plans-runtime-checks.md). No separate model reads
+   the request: the classifier tiers were removed on 2026-10-11, and the
+   reader is the fixed one alone (docs/design/88-control-plane.md §12.1).
 
 Host validation checks schema, references, consistency, and non-widening. It
 cannot prove arbitrary natural-language equivalence. Uncertain interpretations
@@ -288,15 +289,15 @@ material, resolve it explicitly.
 
 Bootstrap admission allows the ordinary model request under existing policy;
 an effectful proposal must reference an admitted spec revision before dispatch.
-New sessions use known demand before freezing routes where practical. Existing
-sessions retain their route contract: no classification can reorder or expand
-it. If the ladder cannot satisfy a required modality, report the mismatch.
+Each turn plans its route ladder fresh (invariant 7), and no reading can
+reorder or expand it. If the ladder cannot satisfy a required modality,
+report the mismatch.
 
-An inferred discovery preference may be revised without widening authority.
-An enforced restriction remains in force for that admission. Restoring a tool
-excluded by an enforced slice requires a subsequent admission at a turn
-boundary, using the existing ceiling and recorded revision; never mutate the
-active grant. New permissions, higher spending caps and irreversible actions
+No reading removes a tool (docs/design/88-control-plane.md §12.1): which
+admitted tools are loaded follows each tool's declaration, and a deferred
+one is one `find_tools` call away. An enforced restriction (a policy, a
+channel overlay, an envelope) remains in force for that admission; never
+mutate the active grant. New permissions, higher spending caps and irreversible actions
 still follow their existing human boundaries. Capability additions follow the
 registry's next-turn epoch rule; revocations apply immediately.
 
@@ -338,9 +339,9 @@ subset they own. A renderer does not need the entire prompt or provider secrets.
 Keep permission admission separate from model context selection. Within an
 admitted epoch, show a compact catalog and load schemas through the canonical
 capability discovery path. Loading a schema from that already admitted catalog
-is progressive disclosure, not a new permission grant. If this is implemented,
-replace the old intent slice as the discovery mechanism rather than running
-both selection systems indefinitely.
+is progressive disclosure, not a new permission grant. This is built
+(`find_tools` over the "More tools" catalogue, docs/design/41-capability-registry.md),
+and it replaced the intent slice rather than running beside it.
 
 Effect restrictions such as “review only” are enforced independently at the
 broker. A broadly capable Bash tool cannot be labelled read-only merely because
@@ -711,6 +712,12 @@ by the additive ledger contract, not a second live classification mode.
 | 6: measured optimization | Optional classifier, richer ranking and bounded recovery | Held-out task outcomes justify each optimization's latency and restriction costs |
 
 ### Implementation audit
+
+> **Historical record**: the audit as written when the phases shipped.
+> Removed since: the intent caps on the turn ladder, turn budget and
+> delegation (invariant 32), the freshness policy and its check
+> (docs/design/88-control-plane.md §5), and the optional classifier of
+> phase 6 (§12.1).
 
 The implementation is shipped and verified across the runtime, rather than
 only represented by this proposal:

@@ -182,28 +182,30 @@ The standard failure matrix and where each case is handled.
   outcome cannot be marked complete by a prose claim alone: a successful
   result from a tool that declares artifact production must be receipted in
   the same run. Tool declarations are the extension point; the runtime does
-  not maintain a domain or file-type list. The ordinary bounded stop guard
-  asks the model to recover when that receipt is missing; if the recovery
-  budget expires, the run returns a failure instead of accepting the prose
-  claim as completion.
+  not maintain a domain or file-type list. When that receipt is missing,
+  the plan check names the missing deliverable once
+  (docs/design/86-model-plans-runtime-checks.md); what is left then stands,
+  and the outcome records the file as not delivered rather than accepting
+  the prose claim.
 
 ## Crash & recovery
 
-- **Session ledgers are append-only record segments** — a crash mid-write loses at most
-  the trailing partial line, which `SessionLog::open` skips; nothing else is
-  rewritten. Model context is always *derived* from the log, so a crashed run
+- **Session ledgers are append-only record segments** — a crash mid-write
+  loses at most the frame being written, and a crash while a segment is
+  sealed leaves a readable prefix that the next open finishes or discards
+  (`crates/vak-storage/src/segments.rs`); nothing else is rewritten. Model context is always *derived* from the log, so a crashed run
   resumes with full history.
 - **Checkpoint ledgers** write via tmp-file + rename (atomic).
 - **Flow state ledgers** persist after every node completion; `flow run
   --resume` replays only non-completed nodes.
-- **Terminal restore**: TUI raw mode is restored by a Drop guard even on
-  panic.
+- **Terminal restore**: `vak term`'s raw mode and mouse capture are
+  restored by a Drop guard (`TerminalGuard`) even on panic.
 
 ## Start / stop / resume
 
 | operation | path |
 |---|---|
-| start | `exec`, TUI, `serve`, `flow run`, `plan` |
+| start | `exec`, `serve`, `flow run`, `plan`; `vak term` is a client of `serve` |
 | stop (user) | Ctrl-C → cancel token → `Aborted{partial}`; partial assistant output is persisted |
 | stop (server) | `POST /sessions/:id/cancel` → same path + `RunFinished{cancelled}` |
 | resume (session) | `exec --session <id>` reopens the ledger; projection includes all history |

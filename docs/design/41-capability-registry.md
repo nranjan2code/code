@@ -1,5 +1,5 @@
 # Capability registry
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; checked against the code on 2026-10-14.
 
 VAK treats every extension as a typed capability: tool, skill, MCP server,
 hook, command. One registry owns all five, one reconcile loop keeps them
@@ -71,8 +71,9 @@ for a name this build has never heard of.
 
 Built-in tools declare domains beside their schema, skills in `serves:`
 frontmatter, MCP servers in `serves` under `[mcp.servers.<name>]`, plugins per
-contribution. The intent kernel derives *required domains* from the reading's
-own axes and the slice is a set intersection.
+contribution. Since 2026-10-11 no reading derives required domains: a
+declaration says what a capability is for, and the tool surface reads it
+(below, and docs/design/88-control-plane.md §12.1).
 
 The distinction from the table this replaces is the one that matters: the
 host defines a **vocabulary**, and capabilities are **data** classified
@@ -83,8 +84,8 @@ answer.
 
 Two rules keep it honest:
 
-1. **Undeclared fails open.** A capability that declares nothing is never
-   narrowed away. Slicing saves context; it does not enforce policy — `reach`
+1. **Undeclared fails open.** A capability that declares nothing is always
+   loaded. Deferring saves context; it does not enforce policy — `reach`
    and the permission engine do that — so the failure modes are asymmetric:
    an extra capability costs a little context, a missing one costs the task.
 2. **Domains are never inferred.** An MCP server with no `serves` stays
@@ -306,14 +307,14 @@ the `vak_tools::Tool` trait — the harness keeps no table of tool names:
 - `always_loaded()` — the orientation and discovery primitives (`read`,
   `glob`, `grep`, `find_tools`, `recall`, `skill`, `mcp`, `session_search`,
   `commitments`) are loaded on every turn;
-- `serves()` — a tool is loaded when it serves a domain the reading requires;
-  an undeclared tool is always loaded (deferring saves context, it is not
+- `serves()` — an undeclared tool (empty `serves`) is always loaded; a tool
+  that declares what it serves is deferred behind `find_tools` unless an
+  earlier turn of the session loaded it (deferring saves context, it is not
   policy);
 - `presents_cards()` — every admitted presentation tool is loaded from the
   first model call, on every provider. Its schema is the output vocabulary,
-  not historical content or a requirement to emit a card. Request prediction
-  still informs output demand and composition; it does not hide alternative
-  shapes behind a keyword match or an extra discovery call.
+  not historical content or a requirement to emit a card, and no keyword
+  match or extra discovery call hides a shape.
 
 Everything else is deferred: named in the prompt's "More tools" catalogue
 (`tool_catalogue`: name and first sentence, sorted, a function of the

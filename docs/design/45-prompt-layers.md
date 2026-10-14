@@ -1,5 +1,5 @@
 # 45 — Editable prompt layers
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; checked against the code on 2026-10-14.
 
 ## Current composition algorithm
 
@@ -320,12 +320,13 @@ one API, not a port.
 ### Terminal
 
 ```bash
-vak prompts show --effective
+vak prompts show --provenance
 ```
 
-`show` (assembled, with a provenance column), `edit <block> --scope`
-(`$EDITOR` round-trip), `reset <block> --scope`, `diff` (against the shipped
-seed), and `preview --surface chat --bot support`. The CLI is the only surface
+`show` (assembled; `--provenance` names each block's layer, `--scope` one
+layer's own text), `edit <block> --scope` (`$EDITOR` round-trip), `set`,
+`reset <block> --scope`, `diff` (against the shipped seed), `preview
+--surface chat --role analyst`, and `roles`. The CLI is the only surface
 that can act on a machine with no UI, so it gets the full verb set, not a
 read-only view.
 

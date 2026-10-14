@@ -1,5 +1,5 @@
 # 01 — LLM layer (vak-llm)
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; checked against the code on 2026-10-14.
 
 ## Decisions
 
@@ -40,18 +40,20 @@ blocks: `Text | Thinking{signature} | ToolUse{id,name,input} | ToolResult{tool_u
 | family | adapter | covers |
 |---|---|---|
 | anthropic-messages | `anthropic.rs` | Anthropic |
-| openai-completions | `openai.rs` | OpenRouter, Ollama, Groq, Together, vLLM, any `/v1/chat/completions` endpoint that supports the requested feature set |
+| openai-completions | `openai.rs` | OpenAI, OpenRouter, NVIDIA NIM, Amazon Bedrock's OpenAI-compatible endpoint, OpenCode Zen, and any `/v1/chat/completions` endpoint that supports the requested feature set |
+| ollama (native) | `ollama.rs` | Ollama over `/api/chat` with `keep_alive` and `num_ctx` (docs/design/68-context-engine.md §8) |
 | openai-responses | `openai_responses.rs` | OpenAI and OpenRouter (`/v1/responses`, for models/features that require the Responses dialect) |
 | google-generative-ai | `google.rs` | Gemini (`streamGenerateContent?alt=sse`) |
-| openai-completions (compatible gateway) | `openai.rs` | OpenAI-compatible gateway |
 
-Registry names: `anthropic`, `openai`, `openai-responses`, `openrouter`,
-`openrouter-responses`, compatible gateways, `ollama`, `google` (lazy-built,
-cached). Auth via
-`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
-`GEMINI_API_KEY`; Ollama needs no key. Base-URL
-overrides: `VAK_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA,GOOGLE,
-compatible gateways).
+Registry names (`vak_llm::registry::default_registry`): `anthropic`,
+`openai`, `openai-responses`, `openrouter`, `openrouter-responses`,
+`opencode-zen`, `nvidia`, `bedrock`, `ollama`, `google` (lazy-built,
+cached). Keys come from the secret chain (a real environment variable such
+as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` or
+`GEMINI_API_KEY` first); Ollama needs no key. Base-URL overrides:
+`VAK_ANTHROPIC_BASE_URL`, `VAK_OPENAI_BASE_URL`, `VAK_OPENROUTER_BASE_URL`,
+`VAK_OLLAMA_BASE_URL`, `VAK_GOOGLE_BASE_URL`, `VAK_NVIDIA_BASE_URL` and
+`VAK_BEDROCK_BASE_URL`.
 
 The adapters intentionally implement these API dialects, rather than infer
 features from a model-name prefix:
@@ -62,7 +64,7 @@ features from a model-name prefix:
 | `openai-responses` | OpenAI Responses + named SSE events | Preferred for native OpenAI reasoning/tool combinations. |
 | `openai` | OpenAI-compatible Chat Completions + delta SSE | The endpoint must accept the requested model and features. |
 | `openrouter-responses` | OpenRouter Responses | Use when OpenRouter's selected model/feature combination requires Responses. |
-| `openrouter`, compatible gateways, `ollama` | OpenAI-compatible Chat Completions | Compatibility is endpoint- and model-specific; reject live mismatches rather than assuming support. |
+| `openrouter`, `opencode-zen`, `nvidia`, `bedrock` | OpenAI-compatible Chat Completions | Compatibility is endpoint- and model-specific; reject live mismatches rather than assuming support. |
 | `google` | Gemini `streamGenerateContent` + SSE | Client function declarations/results are supported; Google recommends its newer Interactions API for new agent integrations, but this route remains a distinct supported wire contract. |
 
 ### Reasoning and sampling
@@ -174,10 +176,11 @@ tested as reachable.
 
 | shape | providers | request | response |
 |---|---|---|---|
-| OpenAI listing | `openai`, `openai-responses`, `openrouter`, `openrouter-responses`, compatible gateways, `ollama` | `GET {base}/models`, bearer | `{ data: [{ id }] }` |
+| OpenAI listing | `openai`, `openai-responses`, `openrouter`, `openrouter-responses`, `opencode-zen`, `nvidia`, `bedrock`, `ollama` | `GET {base}/models`, bearer | `{ data: [{ id }] }` |
 | Anthropic | `anthropic` | `GET {base}/v1/models`, `x-api-key` + `anthropic-version` | `{ data: [{ id }], has_more, last_id }` |
 | Google | `google` | `GET {base}/models?key=…` | `{ models: [{ name: "models/x" }], nextPageToken }` |
 | OpenAI-compatible gateway (including Bedrock Mantle) | configured endpoint | `GET {base}/models`, bearer | `{ data: [{ id }] }` |
+| Ollama model detail | `ollama` | `POST {root}/api/show` | context window (`num_ctx`) and quantisation |
 
 Anthropic (default 20/page) and Google (default 50/page) **paginate** — both
 are followed to exhaustion (`after_id` / `pageToken`, capped at 20 pages) or

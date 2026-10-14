@@ -311,17 +311,18 @@ input. Route changes create new frozen execution sessions while preserving the
 visible conversation only within its authorized audience. Atomic cross-process
 admission prevents duplicate roots and competing writers.
 
-Agent pause cancels its runs, schedules, and descendants; endpoint pause affects
-work authorized through that endpoint. Resume never automatically replays
+Agent pause refuses its next turn, whatever starts it (a person, a channel,
+an automation or a delegation), and a turn already running finishes, as
+above; endpoint pause affects work authorized through that endpoint. Resume never automatically replays
 cancelled effects. Denial remains sticky. Archive disables admission and retains
 evidence. Removal requires explicit disposition of endpoint, schedule, and
 effect references; dangling references fail visibly.
 
-There is one resolver used by desktop, CLI, TUI, voice, gateway, schedules,
-heartbeats, flows, best-of-N, and workers:
+There is one admission path, used by desktop, web, CLI, voice, gateway,
+schedules, heartbeats, flows, best-of-N and workers: `Core` resolves the
+Agent at admission (`crates/vak-core/src/admission.rs`, `Core::run`), then
 
 ```text
-resolve_agent(workspace, agent_id, endpoint?)
   → effective narrowing policy
   → identity + prompt layers
   → admitted route/capability/budget contract
@@ -387,6 +388,9 @@ model choices and voice route, while the shared FinOps ledger records hosted
 voice requests with unknown cost when providers return no rated usage.
 
 ## Replacement plan (completed)
+
+> **Historical record**: the steps the replacement was built in, as
+> planned; names such as the TUI are as they were then.
 
 1. Inventory every ingress/store and define core records, access predicates,
    layering, lifecycle transitions, and new-major refusal guards, with tests.

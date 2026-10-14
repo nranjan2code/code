@@ -530,6 +530,12 @@ invitation token never reaches it (doc 69).
 
 ### 9.1 Exit tests
 
+> **Historical record**: the exit tests as planned for each phase. The
+> tests that shipped cover them under their own names, in
+> `crates/vak-server/tests/it/library_api.rs`, `library_editing.rs`,
+> `library_sharing.rs` and `crates/vak-core/tests/it/artifact_versions.rs`;
+> the names below were not kept.
+
 - **L1**:
   - `library_lists_declared_deliverables_across_conversations`: a report
     from `office_apply` and a dashboard from a titled `write`, made in two

@@ -1,5 +1,6 @@
 # 07 — System prompt
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; current contract checked against the code on
+2026-10-14.
 
 ## Current contract
 
@@ -57,8 +58,8 @@ identity and rules: the whole-prompt `.vak/SYSTEM.md` override was retired in
 The presentation contract is universal: the prompt may select semantic shapes
 such as maps, calendars, boards, entities, evidence, documents, graphs, forms,
 transactions, alerts, conversations, and simulations in addition to coding,
-research, data, and lifestyle results. The built-in seed pack currently ships
-70 disabled, revision-3 presentation definitions. New built-in definitions are
+research, data, and lifestyle results. The built-in seed pack ships 86 disabled
+presentation definitions (`vak_presentation::seeds::built_in_seed_pack`). New built-in definitions are
 reconciled additively at server startup; user presentations and activations are
 retained.
 
@@ -75,14 +76,18 @@ For the full call-to-card sequence and fault-isolation guide, see
 `docs/design/30-render-architecture.md` §30.1.
 
 Historical results are not added to each request to fill available space. The
-working-set planner carries at most the compact card for an immediate
-anaphoric referent. Older or larger details come from `recall` only when the
-current request needs them, including an explicit reference many turns back.
+working-set planner carries the compact card of the turn the request follows,
+whatever its words, and nothing older (invariant 36). Older or larger details
+come from `recall` when the model finds the current request needs them,
+including a reference many turns back.
 The ledger remains complete; the model sees the current turn and the selected
 historical evidence. Keep this instruction next to the multi-card rule so a
 presentation update does not restore stale-context behavior.
 
 ## Diff notes
+
+> **Historical record**: one note per change to the seed, newest first,
+> each true as of its version; the current wording is the seed itself.
 
 - 7.0.0-dev (data-architecture M3b slice 4): the sandbox line names
   `$TMPDIR` for scratch files instead of `.vak/scratch/`, which is now only

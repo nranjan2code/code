@@ -1,5 +1,5 @@
 # 08 — Permissions (vak-permission)
-Status: implemented in 2.0.0; declared reach replaces the name tables (2026-10-12); the provenance gate (2026-10-13)
+Status: implemented in 2.0.0; checked against the code on 2026-10-14; declared reach replaces the name tables (2026-10-12); the provenance gate (2026-10-13)
 
 ## Model
 
@@ -19,7 +19,12 @@ The agent loop gates every tool call before dispatch. `Ask` is resolved by an
 | `HttpApprover` | desktop app, admin console, and — unattended — scheduled tasks and best-of-N | matches whether a client is watching |
 | `GatewayApprover` | a chat gateway in forward mode | true only in forward mode |
 
-There is no interactive terminal approver. `vak exec` and `vak plan` are
+Two wrappers add to these without deciding a gate differently:
+`DeferringApprover` (`vak-core/src/intent.rs`) parks a gate no surface can
+answer in the inbox and suspends its commitment (doc 47, `Defer`), and the
+CLI's `CliApprover` (`crates/vak/src/question_prompt.rs`) leaves gates to
+`AutoApprove`/`AutoDeny` and only reads a worker's *question* from the
+keyboard (doc 84). There is no interactive terminal approver for gates. `vak exec` and `vak plan` are
 one-shot: `--yes` installs `AutoApprove`, its absence installs `AutoDeny`, and
 a denied call's reason is fed back to the model as an error tool result so it
 can adapt instead of crashing.

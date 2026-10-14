@@ -49,11 +49,11 @@ The Canvas opens a `CanvasSubject` (`src/canvasSubject.ts`), which names what is
 ### A. SolidJS State Atoms (`store.ts`)
 Earlier iterations coupled layout modes and active artifact payloads inside a single compound signal. Toggling view modes caused the compound object to change identity, triggering unwanted iframe reloads and resetting runtime application state.
 
-The state is cleanly decoupled into discrete atoms:
-- `canvasSubject`: The active `CanvasSubject` (or `null` when closed).
-- `canvasMode`: `"split" | "focused"` layout signal.
-- `canvasDevice`: `"desktop" | "tablet" | "mobile"` responsive viewport simulation.
-- `canvasOpen`: Derived memo checking `canvasSubject() !== null`.
+The state is cleanly decoupled:
+- `canvasStacks`: each conversation's open tabs (`canvasEntries`), with the one in front (`canvasEntry`); a Canvas belongs to its conversation (§0a).
+- `canvasSubject` and `canvasMode` (`"split" | "focused"`): read from the entry in front.
+- `canvasDevice`: `"desktop" | "tablet" | "mobile"` responsive viewport simulation, one signal for the device.
+- `canvasOpen`: whether the active conversation has an entry in front.
 
 `createEffect` in `ArtifactCanvas` tracks `canvasSubject()` strictly, ensuring that toggling between split/focused modes or switching between 100%/768px/375px viewports never reloads the underlying iframe.
 
@@ -73,6 +73,8 @@ Closing the last tab slides the Canvas away (`canvasSlideOut`, `EXIT_MS = 220` i
 | **Dev Servers** | a `live_server` subject, shown from the Live preview list in the dock | Live `<iframe>` on the server's own port, framed under the other loopback name than the app's, started and stopped by the viewer | `origin` sandbox (§3.1) |
 | **PDF Documents** | `.pdf` extension | Native browser PDF viewer in full-bleed `<iframe>` | Loaded via authenticated raw stream `api.readFileRaw()`, converted to managed blob URL, revoked on cleanup |
 | **Images** | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.ico`, `.bmp` | Responsive image viewport with checkerboard transparency grid | Blob URL streaming, containment sizing |
+| **Office files** | a Word, Excel, PowerPoint or Visio package by content type | `OfficeViewer`: the read projection drawn by the client, with the document pane for text | Parsed only in the broker worker (invariant 39); nothing in the package runs |
+| **Tables** | `.csv`, `.tsv` and similar | `TableViewer`: a sortable, searchable grid | Text content, no script execution |
 | **Code & Config** | `.rs`, `.ts`, `.tsx`, `.py`, `.json`, `.toml`, `.yaml`, `.md`, `.sh`, etc. | Formatted `<pre><code>` block with one-click clipboard copy | Text content display, no script execution |
 
 ### 3.1 Preview isolation
@@ -110,5 +112,5 @@ The Live preview list in the dock (`LivePreviewPanel.tsx`) is the one place dev 
   - `100%` (Desktop)
   - `768px` (Tablet, with subtle device curvature and shadow)
   - `375px` (Mobile, with mobile device frame styling)
-- **Theme Awareness**: Dynamic canvas background styling conforming to Dark Obsidian, Quiet Sage, Soft Paper, Mist, Dawn, and High Contrast palettes.
+- **Theme Awareness**: the canvas follows the client's themes (`theme.ts`: match system, light, dark, high contrast, frosted light, frosted dark; docs/design/75-visual-refresh.md).
 - **Keyboard Navigation**: Pressing `Escape` closes the canvas.

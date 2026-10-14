@@ -55,8 +55,12 @@ listed here unless the maintainer reopens it.
   erasure-request queue, audit export, merging two machines that both wrote.
 - Visual refresh: decisions D1 to D5 (`docs/plans/visual-refresh-plan.md`).
 - The product name is Vakyartha (2026-09-25, AGENTS.md "Identity").
-- Single-owner app: no multi-user login, roles or approvals
-  (`docs/design/74-lifecycle-and-data-administration.md`, Status).
+- Single-owner app (2026-10-08): one owner per install, no other accounts,
+  data roles, admins or second-person approvals of the owner's actions
+  (`docs/design/74-lifecycle-and-data-administration.md`, Status). Guests
+  exist only through share links and coworking invitations to one
+  conversation (`docs/design/69-shared-conversation-coworking.md`); the
+  owner may hand a guest one pending approval there.
 - Mail and calendar against the storage of the time, on a feature branch
   since merged (`docs/design/80-mail-and-calendar.md`).
 - Main only: no pull requests, side branches or leftover worktrees.

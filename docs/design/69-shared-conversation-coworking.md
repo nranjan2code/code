@@ -20,7 +20,7 @@ The same Agent and conversation stay visible to everyone admitted to that audien
 
 - Comments are append-only records with author, conversation, object ID, candidate digest, optional file/line anchor, body, timestamp, and supersession link. Edits append a revision; deletion appends a tombstone.
 - Agent feedback is an explicit intervention derived from a comment or a new message. Comments do not silently become model instructions. The conversion is logged, attributed, and permission checked.
-- Candidate review is bound to the server-held candidate ID and exact selected paths. Review, candidate acceptance, target setup, and publish/deploy are separate decisions with separate receipts.
+- Review is addressed by artifact id and version (`/library/{id}/versions/{version}/…`, AGENTS.md "The data rules"); the candidate behind a version stays server-held, with its exact selected paths. Review, candidate acceptance, target setup, and publish/deploy are separate decisions with separate receipts.
 - Only an authorized approver can accept a candidate. The accept action records actor identity and candidate digest, rechecks destination state, and produces a promotion receipt. A conversation message or previewed document cannot resolve an approval.
 - The owner may assign one server-held pending approval to one active participant. The assignment is recorded in the conversation ledger and binds that invitation to the exact request ID; a pending gate cannot silently move to another participant. It grants no standing approval authority. The first valid answer consumes the gate, records the verified actor on the resolved approval activity, and cannot create a persistent permission rule. Candidate acceptance remains a separate authority.
 - The conversation displays the current result, review state, outstanding comments, and any blocking decision. Technical execution remains available from that result without becoming the default layout.
@@ -39,7 +39,7 @@ The same Agent and conversation stay visible to everyone admitted to that audien
 ## Implementation boundaries
 
 1. Add a principal and scoped grant layer to browser authentication; retain the existing operator login as the owner principal. Do not pass an invitation token through the general `/app` API surface.
-2. Bind Agent conversation read, run, event, and artifact routes to one audience authorization function. Reuse `ConversationKey` and Agent ownership from `64-agent-owned-platform.md`.
+2. Bind Agent conversation read, run, event, and artifact routes to one audience authorization function. Reuse the conversation's key and Agent ownership from `64-agent-owned-platform.md`.
 3. Add attributed message/comment ledger entries and projections. Preserve append-only replay and exact model-visible reconstruction.
 4. Bind immutable candidate records, previews, checks, and comments to stable result and candidate IDs. Reuse the presentation timeline rather than a parallel coworking state store.
 5. Add invitation, participant, comment, review, and revocation controls to desktop/web. Channel participants use their authenticated sender identity and the same audience grants.

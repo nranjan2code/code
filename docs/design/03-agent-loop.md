@@ -1,14 +1,15 @@
 # 03 — Agent loop (vak-agent)
 Status: implemented in 2.0.0; request assembly and completion gates extended
-in 3.5.0 (docs/design/68-context-engine.md)
+in 3.5.0 (docs/design/68-context-engine.md); checked against the code on
+2026-10-14.
 
 ## Shape
 
 ```
 run_message(prompt, steering, cancel, events) -> TurnOutcome
   outcome = run_message_inner(...)      // the loop below
-  if outcome is a system-authored Completed (drift/stale-data/card-repeat
-  exhaustion) and not already the ledger's last message: log it
+  if outcome is a system-authored Completed (drift, or a repeat straight
+  after a no-op ack) and not already the ledger's last message: log it
   close_turn(outcome)                   // builds and appends this turn's
                                          // TurnCard once it has closed
   return outcome
@@ -18,8 +19,11 @@ run_message_inner(prompt, steering, cancel, events) -> TurnOutcome
   loop turn in 0..max_turns:
     drain steering queue → user messages
     index = TurnIndex::from_log(session); index.ensure_cards(estimator)
-    plan  = planner::plan(profile, index, directive, reading, prefix_tokens,
-                           tail_tokens, current_turn_tokens)
+    plan  = planner::plan(PlanInput{ profile, index, directive, reading,
+                           prefix_tokens, tail_tokens, current_turn_tokens })
+                           // carries the card of the turn the request
+                           // follows; the directive's words only annotate
+                           // its links (invariant 36)
     messages = session.derive_with_plan(plan)   // Full/Card/Packet per turn
     tail  = compose_tail(temporal, stance, intent, work_contract, thread)
     attach_tail(messages, tail, directive_index)  // one block, before the
@@ -43,11 +47,11 @@ run_message_inner(prompt, steering, cancel, events) -> TurnOutcome
     if model drift detected: steer, maybe end the turn (see below)
     if calls.is_empty():
       if response has neither text nor a tool call: one [empty-step] redo
-      if directive wants live data and nothing retrieved: gate/redo/fail-closed
-      if stop_reason != ToolUse -> Completed
-    gate any emit_*_card call against the same freshness rule, before execution
+      if stop_reason != ToolUse -> Completed (after the plan check and the
+                                  stop gate, docs/design/86, 88)
     execute tool batch (parallel by default, source-order results)
-    breaker: N consecutive all-repeat card batches -> close on that card
+    a step whose calls were all no-op acks, repeated straight after the ack
+      -> close on what was delivered (an observed state, not a count)
     append user message of ToolResult blocks
 ```
 
@@ -66,10 +70,9 @@ No panics; session-write failures become `Failed`.
   permission/approval denial, revocation, authentication, and rate limiting
   do not receive recovery advice. The corrected call still passes the normal
   authorization, sandbox, hook, repeated-call, turn, and dispatch-ceiling checks.
-  When the model fails to repair a correctable fault across consecutive turns,
-  the loop escalates past the hint into a system-authored, schema-resurfacing
-  directive and finally a bounded stop that degrades the outcome (see
-  `docs/design/15-reliability.md`). Never kills the run.
+  When the model fails to repair a correctable fault again, the tool is shown
+  its schema, and then withdrawn for the turn; the turn itself goes on
+  (`docs/design/15-reliability.md`). Never kills the run.
 - **Parallel by default**, results re-ordered into assistant source order.
 - **Steering + follow-up are two queues**: steering drains before the next
   model call; follow-up is exposed for callers after natural stops.
@@ -80,8 +83,8 @@ No panics; session-write failures become `Failed`.
 
 ## Completion gates added in 3.5.0
 
-Five bounded, system-authored checks run inside the loop, each with its own
-`ControlKind` marker so the nudge is visible on the ledger
+The system-authored checks that remain run inside the loop, each with its
+own `ControlKind` marker so the nudge is visible on the ledger
 (docs/design/68-context-engine.md §7, §10):
 
 - **`[empty-step]`**: the response carried neither text nor a tool call (a
@@ -131,23 +134,19 @@ before/after tables.
 
 ## Stop gate (built-in premature-completion policy)
 
-Small models frequently end their turn mid-plan. The loop consults an
-internal `StopPolicy` (vak-agent) at every completion point, BEFORE
-returning `Completed`:
+A turn can end before its work is done. The loop consults an internal
+`StopPolicy` (`crates/vak-agent/src/stop_policy.rs`) at every completion
+point, BEFORE returning `Completed`, and holds a turn only on observed
+facts:
 
-- **marker gate**: for work whose reading needs a tool, final text ends
-  with a bare plan marker, a non-heading trailing `:` line, or an unclosed
-  fenced code block → looks truncated. A letter or an agenda is never
-  checked: its last line is the deliverable;
-- **verify gate**: what completion needs comes from the admitted
-  `OutcomeSpec`, never from phrases in the request. A `verification` stop
-  profile needs an execution receipt, and changed code must have been run;
-  an effectful act or a named file deliverable needs an execution receipt;
-  a `locate`/`verify` act needs an inspection or tool receipt unless the
-  answer is substantive (the material came with the request); and a check
-  that ran before code changed must run again. The phrase lists this
-  replaced read "run a quick grammar check" as a demand for a shell command
-  and only spoke English;
+- **marker gate**: the final text ends inside an unclosed fenced code block
+  (an odd number of fences), which a renderer would show cut off;
+- **verify gate**: a file-changing tool ran after the last verification
+  command, so a check that ran before code changed must run again. What a
+  request needs is the model's declared plan, checked against receipts
+  (docs/design/86-model-plans-runtime-checks.md), never phrases in the
+  request; the phrase lists this replaced read "run a quick grammar check"
+  as a demand for a shell command and only spoke English;
 - **unresolved failure**: a call failed and no later call of its tool
   succeeded. It is recorded as a decision and the answer stands: whether an
   answer owns up to a failure is not something its words can establish, and
@@ -206,9 +205,11 @@ strength its `evidence` axis demands; the model may propose criteria and may
 never mark one passed. The stop gate's job narrows accordingly, to "did this
 episode terminate cleanly" rather than "is the objective met".
 
-The turn's reading also supplies a `stop` profile — `message`, `inspection`,
-`effect`, or `verification`. An act that changes something and produced no
-effect did not finish, whatever the final message says.
+The turn's reading also records a `stop` profile (`message`, `inspection`,
+`effect`, `verification`) in its `OutcomeSpec`, narrowed to at most
+`inspection` for a worker (`crates/vak-agent/src/task.rs`). No gate reads it
+since the verify gate became receipt-based; what a turn must deliver is its
+plan, checked against receipts.
 
 ## Workers and their cards
 

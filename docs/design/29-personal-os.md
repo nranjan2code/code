@@ -41,27 +41,31 @@ self-curating skills.
 ## Surfaces rule
 
 Every personal-os capability ships on **all three surfaces** in the same
-phase: CLI/TUI, desktop SPA, and gateway channels where delivery applies.
+phase: the CLI, the desktop and web client, and gateway channels where
+delivery applies. (The inline TUI this table once listed was withdrawn;
+`vak term` is a client of the server.)
 
-| Capability | TUI/CLI | Desktop | Channels |
+| Capability | CLI | Desktop | Channels |
 |---|---|---|---|
-| Memory profile + forget/amend/cleanup | `/memory`, `vak memory` | Admin/desktop Learning page: profile tier, effective policy status, cleanup artifacts, forget (confirm), inline amend | — |
-| Cross-project search | `/search --all`, CLI | Search page w/ global toggle | — |
-| Automations (cron, interval, once, watchdog, pinning) | `/triggers`, `/runs`, `/effects`, `vak triggers`, `vak runs`, `vak effects` | Automations sheet with its Runs panel and Send again; admin `#/automations`, `#/runs` | summaries delivered as effects of their runs; a folder that is not a git repository runs in a copy environment whose changes come back for Review |
-| Budget alerts | TUI status strip marker | Budget card alert state | 80%/100% push once per window |
+| Memory profile + forget/amend/consolidate | `vak memory` | Admin/desktop Learning page: profile tier, effective policy status, cleanup artifacts, forget (confirm), inline amend | — |
+| Cross-project search | `vak data grep`; `GET /search?all=true` | Search page w/ global toggle | — |
+| Automations (cron, interval, once, watchdog, pinning) | `vak triggers`, `vak runs`, `vak effects` | Automations sheet with its Runs panel and Send again; admin `#/automations`, `#/runs` | summaries delivered as effects of their runs; a folder that is not a git repository runs in a copy environment whose changes come back for Review |
+| Budget alerts | — | Budget card alert state | 80%/100% push once per window |
 | Doctor/health | `vak doctor`, `/doctor` | Services panel diagnostics section | — |
 | Backup export/import | `vak backup …` | Settings: folder picker → export/import buttons | — |
 | Weekly digest | `vak digest` | Digest card | scheduled digest as an ordinary task (`deliver_to`) |
 | webfetch / browse | approval prompt + transcript (url shown) | approval queue w/ URL shown | forwarded gates per doc 22 rules |
-| Skill curation | `skills-review consolidate` | Learning page duplicate badges + merge review | — |
-| Inbox | `/inbox`, `vak inbox list/show/ack/count` | InboxPage + bell badge + ack/ack-all | entries mirror every delivery (single chokepoint) |
-| Heartbeat | status-row ✉ badge when findings unread | inbox kind chip + native notification while hidden | URGENT findings push; everything else parks |
+| Skill curation | `vak skills-review list` (duplicate flags) | Learning page duplicate badges + merge review | — |
+| Inbox | `vak inbox list/show/ack/count` | InboxPage + bell badge + ack/ack-all | entries mirror every delivery (single chokepoint) |
+| Heartbeat | `vak inbox` | inbox kind chip + native notification while hidden | URGENT findings push; everything else parks |
 
 Server gains the backing endpoints so the embedded router inside desktop
 needs no special-casing; unattended surfaces keep failing closed (doc 22,
 invariant 15).
 
 ## v0.5.0 dogfood postscript
+
+> **Historical record**: the 0.5.0 live pass, as found then.
 
 The live-fire pass (restored-real-data sandbox home, `serve --gateway`)
 caught two defects before any user did — both fixed in the release:
@@ -85,10 +89,12 @@ outside the process.
 
 - Invariant 1: USER.md recall, webfetch/browse output, digest data reaching a
   model all arrive as logged session entries. Nothing ambient.
-- Invariant 2: sessions untouched; memory/skill stores remain plain,
-  hand-editable markdown outside the ledger.
+- Invariant 2: sessions untouched; memory notes and skill proposals are
+  Documents outside the ledger, read and changed through the app, the CLI
+  and `/memory`.
 - Invariant 3: every new failure (SSRF reject, cron parse error, backup
   conflict) is a typed value, never a panic.
-- No new dependencies. HTTP reuses workspace-pinned reqwest 0.12; cron and
-  tar-free directory backups are hand-rolled.
+- No new dependencies. HTTP reuses workspace-pinned reqwest 0.12; cron is
+  hand-rolled, and a backup is the data home as stored, encrypted
+  (`Core::backup_restore`, docs/design/74-lifecycle-and-data-administration.md).
 - Secrets stay out of backups by default; `--include-secrets` warns loudly.

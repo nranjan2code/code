@@ -1,6 +1,6 @@
 # 51 — Retired Tool and Plugin Lifecycle
 
-Status: implemented
+Status: implemented; checked against the code on 2026-10-14.
 
 ## Problem
 
@@ -70,12 +70,11 @@ This runs during `vak setup seed`, `vak self services-sync`, and
 ### 5. Startup Warning (`vak-core::Core::new_with_trust`)
 
 At every Core initialization, `warn_retired_plugins()` scans the
-capability roots and emits an `eprintln!` warning for each retired
-plugin found. This gives operators immediate feedback even if they
-haven't run setup/update.
-
-The warning message names the plugin, the retired tools it references,
-and the repair command (`vak setup seed` or `vak plugins remove <name>`).
+capability roots and logs a content-free `tracing` warning for each
+retired plugin found, with the count of retired tools it references and
+the repair command (`vak setup seed`); library code never writes to a
+person's stderr. The plugin's name is in `vak doctor` (§6), which a
+person reads.
 
 ### 6. Doctor Check (`vak-core::health`)
 

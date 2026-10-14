@@ -31,10 +31,7 @@ pre-kernel behaviour exactly.
 flowchart LR
     A[Human request and trusted channel facts] --> B[Core gathers workspace and session facts]
     B --> C[vak-intent: segment and resolve strands]
-    C --> D{Reading weak?}
-    D -- Yes, configured --> E[Core: budgeted classifier dispatch]
-    D -- No or unavailable --> F[Resolved intent]
-    E --> F
+    C --> F[Resolved intent]
     F --> G[Plan commitment episodes and apply live envelopes]
     G --> H[Record IntentRecord in session ledger]
     H --> I[Compose capability surface, route, context and approval posture]
@@ -46,8 +43,8 @@ flowchart LR
 The crates split policy from effects. `vak-intent` resolves a reading and
 derives a narrowing engagement without dispatching a provider or tool.
 `vak-commit` owns the durable event ledger, projection, satisfaction rules and
-priority calculation. `vak-core` supplies runtime facts, performs optional
-classification, admits work, enforces gates, and runs upkeep. Session entries
+priority calculation. `vak-core` supplies runtime facts, admits work,
+enforces gates, and runs upkeep. Session entries
 record model-visible intent text; commitment events record obligations and
 their outcomes. Neither ledger stands in for the other.
 
@@ -159,16 +156,14 @@ does, never from what it is about ("customer", "payment", "live" are topics).
 
 #### Confidence is per-axis
 
-A single scalar conflates independent questions. Capability slicing depends
-only on `act`; the context profile only on `horizon`. Gating both on the
-weakest axis meant an unsignalled horizon — most requests, since few say how
-long they will take — suppressed slicing the act reading was certain about.
-
-For the slice specifically, the question is not "which single act won" but
-"does the slice cover this request". Acts within half the winner's weight join
-the slice, and confidence is how much of the total act evidence that set
-accounts for. "Fix the failing test" is a `modify` *and* a `verify`; resolving
-the tie by argmax would remove half of what it needs.
+A single scalar conflates independent questions: the context profile depends
+only on `horizon`, and a weak `horizon` (most requests say nothing of how long
+they will take) must not weaken an act the reading was certain about. Acts
+within half the winner's weight join the reading, and confidence is how much
+of the total act evidence that set accounts for. "Fix the failing test" is a
+`modify` *and* a `verify`; resolving the tie by argmax would drop half of it.
+(Until 2026-10-11 the act set also chose which tools were loaded; it no
+longer does, docs/design/88-control-plane.md §12.1.)
 
 ### Strands: a request is several pieces of work
 
@@ -352,47 +347,28 @@ flowchart TD
     C --> D[Combine declared axes with signals; build reading]
     D --> E{Below provisional threshold?}
     E -- Yes --> F[Orienting engagement; preserve observed modality, attendance and stated risk]
-    E -- No --> G{Act slice reaches acceptance threshold?}
-    G -- Yes --> H[Load confident capability slice]
-    G -- No --> I[Keep orientation floor and defer discovery]
+    E -- No --> H[Reading for the part]
     F --> J[Assign strand relation and cross-turn lineage]
     H --> J
-    I --> J
     J --> K[Compose strands and record provenance]
-    K --> L{Any weak or provisional part; escalation enabled?}
-    L -- Yes --> M[Core attempts classified dispatch and folds its result cautiously]
-    L -- No --> N[Use deterministic result]
-    M --> O[Engagement for the turn]
-    N --> O
+    K --> O[Engagement for the turn]
 ```
 
 `resolve` is a pure function of the request, declared axes, authority and
 resolver config. For each part it calls `assemble`, derives an engagement,
 and gives the strand an id from the host's turn id. A weak part falls back to
 `Reading::general` while retaining its observed attendance and modalities and
-any stated higher stakes or evidence requirement. A provisional part may
-raise caution but does not qualify for a confident capability slice. The
-composite keeps a turn-level reading for consumers needing one answer and
+any stated higher stakes or evidence requirement. The composite keeps a turn-level reading for consumers needing one answer and
 uses `Engagement::compose` for its operating limits.
 
-The returned `Resolution` is either `Settled` or `Escalate { partial, reason }`.
-Core can decline or fail the classifier dispatch and still use `partial`.
-`apply_classification` cannot lower caution established by deterministic
-signals; a classifier answer without confidence does not earn capability
-slicing. The lexicon digest test pins the signal tables and segmentation
-vocabulary to resolver version 6.
+`resolve` returns the turn's `Intent` directly; there is no escalation
+result, because no model is asked. The lexicon digest test pins the signal
+tables and segmentation vocabulary to `RESOLVER_VERSION` (22 today).
 
-Delivery also uses the original request's outcome contract. `Author` means
-produce content for the conversation; it does not by itself load document or
-web tools or label the answer as a saved artifact. If the outcome names a
-saved file or an explicit Office output format, Core adds the document
-capability and records `Artifact` delivery for that turn. A bare mention of
-“presentation” can refer to native in-conversation cards and is not evidence
-of a requested Office file; explicit formats such as PowerPoint, PDF, or a
-slide deck remain file-backed outputs. The `write` tool enforces the same
-distinction at execution, so an old tool schema carried for provider cache
-stability cannot turn “easy to share” or “presentation cards” into an
-unsolicited workspace file.
+What a turn delivers (a card, text, a file, a change, a check) is the model's
+declared plan, checked against receipts
+(docs/design/86-model-plans-runtime-checks.md); a reading of the request
+neither loads document tools nor decides that a file was asked for.
 
 ### Authority: the autonomy spectrum
 
@@ -428,12 +404,11 @@ expiry, a closed commitment or a spent limit applies at the very next gate.
 An ask raised by an operator's rule or by the circuit breaker is never one a
 grant stands in for.
 
-`intent.autonomy`, `intent.escalate = "cloud"`, and switching the kernel or
-its posture off (`intent.enabled = false`, `intent.posture = false`) are
-**privileged config**, stripped for an untrusted project. A cloned repository
-must not grant itself the right to act without asking, spend the user's
-credentials classifying, or remove the approval floor the kernel raises for
-irreversible work.
+`intent.autonomy` and switching the kernel or its posture off
+(`intent.enabled = false`, `intent.posture = false`) are **privileged
+config**, stripped for an untrusted project. A cloned repository must not
+grant itself the right to act without asking, or remove the approval floor
+the kernel raises for irreversible work.
 
 Under a gated permission mode, irreversible work reaches a human whatever
 was delegated. `full-access` is an exception: the permission engine allows
@@ -850,6 +825,8 @@ fixes:
 * The misread ledger scanned the whole session for escalations. Scoped.
 
 ## What the second review changed
+
+> **Historical record**: what the second review found, as it was.
 
 A second review (resolver version 3, 2026-09-26) measured the reader on
 real inputs and followed every derived value to where the runtime used it.

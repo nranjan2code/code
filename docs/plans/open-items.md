@@ -104,9 +104,26 @@ across them. Nothing here is started unless it says so.
 - `[ui] composer`, `keymap`, `osc52` and `accessibility` parse and are read
   by nothing since the inline TUI was withdrawn; like `accept_confidence`,
   decide whether anything should show or use them.
-- `vak_delivery::skills::signals_from_text` reads words and is now called
-  only by the delivery audit tests; decide whether it and those audits
-  should go.
+- The agent loop recognises its own no-op acks by the start of their text
+  (`is_no_op_ack`, `DRAFT_REPEAT_ACK`, `DRAFT_COPY_REFUSED` in
+  `crates/vak-agent/src/lib.rs`); AGENTS.md asks runtime-authored traffic
+  to be typed, never sniffed, so a no-op should be a typed outcome of the
+  call.
+- An `/until-done` hold is released by a message that is exactly one of
+  "done", "stop", "you can stop" or "that's enough"
+  (`StopPolicy::is_done_message`): a list of English phrases deciding
+  control, where invariant 32 asks for explicit commands
+  (`vak_intent::parse_command`).
+- `OutcomeSpec.stop` (the reading's stop profile) is computed and narrowed
+  for workers, and no gate reads it; decide whether it goes.
+- Presentation recipes are planned from words: the server's projection
+  calls `signals_from_context` (`crates/vak-server/src/projection.rs`),
+  which reads the answer's text for keyword signals, and
+  `PresentationPlanner::plan` picks a composition from them
+  (docs/design/30-render-architecture.md §30.4). It decides how a result is
+  laid out, not what runs, but it is a word list deciding behaviour; and
+  `signals_from_text` is otherwise called only by the delivery audit tests.
+  Decide whether layout should come from the cards and their types alone.
 
 ## Known limits in the product
 

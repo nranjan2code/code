@@ -8,7 +8,7 @@ same bundle must keep serving the Tauri desktop shell, and must extend to a
 single-tenant cloud deployment without a second codebase or a second
 security model.
 
-Status: **implemented: Phases 0–4.** What follows describes what exists, with
+Status: **implemented: Phases 0–4** (checked against the code on 2026-10-14). What follows describes what exists, with
 the places implementation corrected the plan called out in place. Phase E
 (multi-user cloud) remains explicitly out of scope.
 
@@ -66,6 +66,9 @@ Everything below follows from that sentence.
 ---
 
 ## 2. Where we actually are
+
+> **Historical record**: the inventory before Phase 0, kept as the reason for the
+> phases; §15 says what shipped.
 
 Honest inventory, because three of these are blockers people will hit in
 the first five minutes and two of them are documented as working.
@@ -755,6 +758,9 @@ single-operator assumption into route shapes.
 ---
 
 ## 10. Phases
+
+> **Historical record**: the phases as planned; §15 says what shipped and how it
+> is measured.
 
 Each phase is independently shippable and independently valuable. No
 phase leaves the tree in a state where the desktop is worse than it is

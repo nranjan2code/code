@@ -1,5 +1,5 @@
 # 32 — Release engineering
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; checked against the code on 2026-10-14.
 
 The practical runbook — what to run, and what a person on each platform
 gets — is `docs/release-and-install.md`. This document owns the contract.
@@ -17,7 +17,7 @@ no plists pointing into build trees, no spot-fixing deploys.
    at build/run time from the binary (`--version`, `env!("CARGO_PKG_VERSION")`).
 2. **Installed ≠ built.** Services never execute from `target/`.
    `self install` copies release artifacts into a managed prefix
-   (`/Applications/vak.app/Contents/MacOS/` on macOS,
+   (`/Applications/Vakyartha.app/Contents/MacOS/` on macOS,
    `~/.local/share/vak/bin/` on Linux) plus an `install.json` manifest
    {version, git_sha, installed_at, binaries}. The build tree may be
    cleaned at any time without touching a running deployment.
@@ -185,7 +185,8 @@ scripts/build.sh                    build, then `self install`, then `self verif
 scripts/release.sh --base-url URL   gate, build, checksum, emit release.json
 ```
 
-`release.sh` gates on `check-version.sh`, `cargo fmt --check`, `cargo
+`release.sh` gates on `check-version.sh`, the record and doc-path checks
+(`check_records.py`, `check_doc_paths.py`), `cargo fmt --check`, `cargo
 clippy -D warnings`, `cargo test`, a clean working tree, and an unused
 `v<version>` tag before it builds anything. It then writes
 `dist/<version>/` containing the binaries, `SHA256SUMS`, and the
@@ -210,8 +211,8 @@ Cargo metadata, rather than a workspace compilation, to refresh `Cargo.lock`.
 
 `vak_config::paths` is the single source of truth for data, cache, and log
 homes. Project-local `.vak/` and the CLI workspace-trust marker are
-separate scoped contracts; pre-0.8 `~/.vak` references below describe
-legacy migration only.
+separate scoped contracts. Nothing before the 7.0 baseline is read or
+migrated (invariant 29).
 
 ### macOS (default)
 
@@ -223,7 +224,7 @@ legacy migration only.
 | **User secrets** | Shared secret scope (macOS Keychain, or the encrypted-file fallback under `<data_home>` when Keychain is unreachable) |
 | **Config state** | `<data_home>/` (sessions, memory, tasks, inbox) |
 | **Data catalog** | `<data>/tenants/<tenant>/catalog/catalog.db` (rebuildable from the records) |
-| **Binary bundle** | `/Applications/vak.app/Contents/MacOS/` |
+| **Binary bundle** | `/Applications/Vakyartha.app/Contents/MacOS/` |
 
 ### Linux (default)
 

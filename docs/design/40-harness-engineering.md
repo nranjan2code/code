@@ -1,5 +1,5 @@
 # 40 — Harness engineering
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; checked against the code on 2026-10-14.
 
 VAK has four complementary regression lanes:
 
@@ -8,7 +8,7 @@ VAK has four complementary regression lanes:
   per-case timeouts, parallel workers, and JSON/Markdown evidence.
 * `scripts/compound_regression.py` exercises multi-step offline workflows and
   bounded live Ollama workflows, including skills, child agents, memory,
-  plugins, MCP, schedules, hooks, and feed ingestion.
+  plugins, MCP, schedules and hooks.
 * `scripts/prompt_scenarios.py` gives a real model natural-language tasks in
   fresh workspaces and verifies postconditions, scope, ledger evidence, and
   final output. Model mistakes are retained as failures rather than hidden by
@@ -31,7 +31,7 @@ slower and less deterministic than Rust tests.
 
 Prompt scenario identity is a hash of the task, fixture, postcondition, output
 contract, scope contract, and allowed changes. Renaming an identical fixture
-does not create a new semantic scenario. Evidence comes from parsed ledger entries
+does not create a new semantic scenario. Evidence comes from parsed ledger
 `tool_use` records, not substring matches against user or system prompt text.
 The runner snapshots the complete workspace around each case, rejects
 unexpected changes, verifies that child process groups are gone, writes atomic
@@ -66,8 +66,8 @@ Concurrency acceptance therefore includes a serial correctness baseline,
 
 ### Provider routing policy
 
-Routing is admission-time constraint satisfaction followed by a frozen,
-deterministic ladder. A candidate is eligible only when its endpoint is
+Routing is per-turn constraint satisfaction followed by a deterministic
+ladder for that turn. A candidate is eligible only when its endpoint is
 configured, credentials are present, the model was discovered or explicitly
 permitted, the request fits its context/tool/structured-output capabilities,
 and its current health/quota state is not a hard deny. Among eligible
@@ -80,10 +80,12 @@ admission to prefer another eligible pool; transient failures use bounded
 exponential backoff with jitter, while authentication, permission,
 invalid-model, and invalid-request failures are not retried blindly.
 
-The route is frozen into the session contract so a changing workspace default
-cannot rewrite an active session. Dispatch walks only that ladder, records
-provider/model attribution for every attempt, and may settle to a later leg
-only on a typed failure permitted by the work receipt ceiling. A provider/key
+Each turn plans its ladder fresh from the live effective route and evidence
+(AGENTS.md invariant 7); the session header keeps only the admission
+snapshot, for audit. Dispatch walks that turn's ladder, records
+provider/model attribution for every attempt in the turn's work receipt,
+and may settle to a later leg only on a typed failure within the receipt's
+dispatch ceiling. A provider/key
 pool is the capacity owner; model is a capability and quality dimension
 inside that pool, not a separate concurrency pool.
 
