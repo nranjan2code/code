@@ -7,6 +7,9 @@
   the card it was built from.
 - Presentation packs appear in the capability inventory beside tools,
   skills, MCP servers, hooks and commands.
+- A plugin's presentation packs are on while the plugin is enabled and off
+  when it is disabled, like its skills. The social add-ons' separate "Add
+  layouts" step is gone: enabling the add-on brings its layouts.
 - A pack that lays things out in rows, stacks or titled sections is drawn
   that way; before, every part stood in one column.
 

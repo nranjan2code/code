@@ -105,6 +105,55 @@ impl PresentationStore {
     }
 }
 
+/// The library as it applies to `owner`'s workspace: what was saved, the
+/// built-in seeds, and `plugins` (the packs of every enabled plugin), each
+/// active there unless suppressed or an explicit activation already draws
+/// one of its kinds (docs/design/91-presentation-capabilities.md §2).
+pub fn effective(
+    library: &PresentationLibrary,
+    owner: &str,
+    plugins: Vec<vak_presentation::StoredPresentation>,
+) -> PresentationLibrary {
+    let mut effective = library.clone();
+    for record in vak_presentation::seeds::built_in_seed_pack()
+        .into_iter()
+        .chain(plugins)
+    {
+        let id = record.spec.id.clone();
+        let revision = record.spec.revision;
+        let accepts = record.spec.accepts.clone();
+        if library.is_suppressed(&id, vak_presentation::LibraryScope::User, "user")
+            || library.is_suppressed(&id, vak_presentation::LibraryScope::Workspace, owner)
+        {
+            continue;
+        }
+        if let Err(error) = effective.register(record) {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a presentation pack was unavailable");
+            continue;
+        }
+        let chosen_elsewhere = accepts.iter().any(|kind| {
+            effective
+                .select_preferred(kind, "user", owner)
+                .is_some_and(|selected| {
+                    selected.spec.id != id
+                        && selected.spec.metadata.get("seed").map(String::as_str) != Some("true")
+                })
+        });
+        if chosen_elsewhere {
+            continue;
+        }
+        if let Err(error) = effective.activate(
+            &id,
+            revision,
+            vak_presentation::LibraryScope::Workspace,
+            owner,
+        ) {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a presentation pack did not activate");
+        }
+    }
+    effective
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod tests {

@@ -1143,10 +1143,6 @@ fn router_with_state(state: AppState) -> Router {
             "/social/connectors/{id}/install",
             post(install_social_connector),
         )
-        .route(
-            "/social/connectors/{id}/presentations/install",
-            post(install_social_presentations),
-        )
         .route("/commands", get(list_commands))
         .route("/plugins", get(list_plugins))
         .route("/plugins/catalog", get(plugin_catalog))
@@ -3528,59 +3524,15 @@ fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
     Ok(())
 }
 
-/// Built-in recipes are available in every build without writing a standing
-/// user preference. An explicit user or workspace activation still wins.
-fn effective_presentation_library(
-    library: &vak_presentation::PresentationLibrary,
-    workspace_owner: &str,
-) -> vak_presentation::PresentationLibrary {
-    let mut effective = library.clone();
-    for seed in vak_presentation::seeds::built_in_seed_pack() {
-        let id = seed.spec.id.clone();
-        let revision = seed.spec.revision;
-        let accepts = seed.spec.accepts.clone();
-        if library.is_suppressed(&id, vak_presentation::LibraryScope::User, "user")
-            || library.is_suppressed(
-                &id,
-                vak_presentation::LibraryScope::Workspace,
-                workspace_owner,
-            )
-        {
-            continue;
-        }
-        if let Err(error) = effective.register(seed) {
-            tracing::warn!(kind = %id, error_kind = %vak_telemetry::error_kind(&error), "a built-in presentation pack was unavailable");
-            continue;
-        }
-        if accepts.iter().any(|semantic_type| {
-            effective
-                .select_preferred(semantic_type, "user", workspace_owner)
-                .is_some_and(|selected| {
-                    selected.spec.metadata.get("seed").map(String::as_str) != Some("true")
-                })
-        }) {
-            continue;
-        }
-        if let Err(error) = effective.activate(
-            &id,
-            revision,
-            vak_presentation::LibraryScope::Workspace,
-            workspace_owner,
-        ) {
-            tracing::warn!(kind = %id, error_kind = %vak_telemetry::error_kind(&error), "a built-in presentation pack did not activate");
-        }
-    }
-    effective
-}
-
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod built_in_presentation_tests {
     #[test]
     fn every_built_in_pack_is_selected_without_a_saved_activation() {
-        let library = super::effective_presentation_library(
+        let library = vak_core::presentation_store::effective(
             &vak_presentation::PresentationLibrary::default(),
             "/tmp/presentation-selection",
+            Vec::new(),
         );
         for seed in vak_presentation::seeds::built_in_seed_pack() {
             let selected = library
@@ -3599,7 +3551,7 @@ mod built_in_presentation_tests {
             vak_presentation::LibraryScope::Workspace,
             owner,
         );
-        let effective = super::effective_presentation_library(&library, owner);
+        let effective = vak_core::presentation_store::effective(&library, owner, Vec::new());
         assert!(
             effective
                 .select_preferred("timeline", "user", owner)
@@ -3613,7 +3565,7 @@ mod built_in_presentation_tests {
         store.save(&library).expect("save suppression");
         library = store.load().expect("reload suppression");
         assert!(
-            super::effective_presentation_library(&library, owner)
+            vak_core::presentation_store::effective(&library, owner, Vec::new())
                 .select_preferred("timeline", "user", owner)
                 .is_none()
         );
@@ -3630,7 +3582,7 @@ mod built_in_presentation_tests {
                 owner,
             )
             .expect("activate seed");
-        let effective = super::effective_presentation_library(&library, owner);
+        let effective = vak_core::presentation_store::effective(&library, owner, Vec::new());
         assert_eq!(
             effective
                 .select_preferred("timeline", "user", owner)
@@ -4360,7 +4312,7 @@ fn live_presentation_snapshot(
         vak_core::presentation_store::PresentationStore::new(core.scope().presentations());
     let mut timeline = match adaptive_store.load() {
         Ok(library) => {
-            let effective = effective_presentation_library(&library, &core.cwd().to_string_lossy());
+            let effective = core.effective_presentations(&library, &core.cwd().to_string_lossy());
             crate::projection::snapshot_with_planner_and_library(
                 session_id, session, &planner, &effective,
             )
@@ -7897,10 +7849,9 @@ async fn presentation_snapshot(
             let planner = delivery::merged_presentation_planner(&handle.core);
             let mut timeline = match presentation_store(&state).load() {
                 Ok(library) => {
-                    let effective = effective_presentation_library(
-                        &library,
-                        &handle.core.cwd().to_string_lossy(),
-                    );
+                    let effective = handle
+                        .core
+                        .effective_presentations(&library, &handle.core.cwd().to_string_lossy());
                     crate::projection::snapshot_with_planner_and_library(
                         &id, session, &planner, &effective,
                     )
@@ -7930,8 +7881,9 @@ async fn presentation_snapshot(
                         .header()
                         .map(|header| header.contract_cwd().to_string_lossy().into_owned())
                         .unwrap_or_default();
-                    let effective = effective_presentation_library(&library, &owner);
-                    let planner = delivery::merged_presentation_planner(&state.active_core());
+                    let core = state.active_core();
+                    let effective = core.effective_presentations(&library, &owner);
+                    let planner = delivery::merged_presentation_planner(&core);
                     crate::projection::snapshot_with_planner_and_library(
                         &id, &session, &planner, &effective,
                     )
@@ -7970,10 +7922,9 @@ async fn session_result(
             let planner = delivery::merged_presentation_planner(&handle.core);
             match presentation_store(&state).load() {
                 Ok(library) => {
-                    let effective = effective_presentation_library(
-                        &library,
-                        &handle.core.cwd().to_string_lossy(),
-                    );
+                    let effective = handle
+                        .core
+                        .effective_presentations(&library, &handle.core.cwd().to_string_lossy());
                     crate::projection::snapshot_with_planner_and_library(
                         &id, session, &planner, &effective,
                     )
@@ -7994,8 +7945,9 @@ async fn session_result(
                     .header()
                     .map(|header| header.contract_cwd().to_string_lossy().into_owned())
                     .unwrap_or_default();
-                let effective = effective_presentation_library(&library, &owner);
-                let planner = delivery::merged_presentation_planner(&state.active_core());
+                let core = state.active_core();
+                let effective = core.effective_presentations(&library, &owner);
+                let planner = delivery::merged_presentation_planner(&core);
                 crate::projection::snapshot_with_planner_and_library(
                     &id, &session, &planner, &effective,
                 )
@@ -11846,10 +11798,8 @@ async fn list_presentations(State(state): State<AppState>) -> axum::response::Re
         if changed || library.definitions().count() != before {
             store.save(&library)?;
         }
-        Ok(effective_presentation_library(
-            &library,
-            &state.active_core().cwd().to_string_lossy(),
-        ))
+        let core = state.active_core();
+        Ok(core.effective_presentations(&library, &core.cwd().to_string_lossy()))
     }) {
         Ok(library) => Json(serde_json::json!({
             "definitions": library.definitions().collect::<Vec<_>>(),
@@ -12659,82 +12609,6 @@ async fn install_social_connector(
     })();
     let _ = std::fs::remove_dir_all(&staging);
     plugin_result(result)
-}
-
-async fn install_social_presentations(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
-    Query(query): Query<SocialAgentQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    if let Err(status) = operator_only(&principal) {
-        return status.into_response();
-    }
-    let Some(presentation_files) = vak_core::social::presentations(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let core = scoped_core!(&state, None, query.agent.as_deref());
-    let installed = [InstallScope::Workspace, InstallScope::User]
-        .into_iter()
-        .any(|scope| {
-            plugin_store(&core, scope)
-                .list()
-                .ok()
-                .is_some_and(|items| items.iter().any(|plugin| plugin.name == id))
-        });
-    if !installed {
-        return (
-            StatusCode::PRECONDITION_FAILED,
-            Json(serde_json::json!({"error":"Install the platform add-on before adding its presentation pack."})),
-        )
-            .into_response();
-    }
-    let mut records = Vec::new();
-    for (path, bytes) in presentation_files {
-        let spec = match vak_presentation::parse_spec(bytes.as_bytes()) {
-            Ok(spec) => spec,
-            Err(error) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error":format!("Built-in presentation pack failed validation: {error}")})),
-                )
-                    .into_response();
-            }
-        };
-        let digest = match vak_presentation::digest(&spec) {
-            Ok(digest) => digest,
-            Err(error) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error":format!("Could not fingerprint presentation: {error}")})),
-                )
-                    .into_response();
-            }
-        };
-        records.push(vak_presentation::StoredPresentation {
-            spec,
-            digest,
-            origin: vak_presentation::PresentationOrigin {
-                scope: vak_presentation::LibraryScope::Workspace,
-                owner: core.cwd().to_string_lossy().into_owned(),
-                plugin_id: Some(id.clone()),
-                generation: Some(format!("1.0.0:{path}")),
-            },
-            enabled: false,
-        });
-    }
-    match presentation_store(&state).register_pack(records) {
-        Ok(registered) => {
-            Json(serde_json::json!({"registered":registered,"enabled":false,"plugin_id":id}))
-                .into_response()
-        }
-        Err(error) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error":error.to_string()})),
-        )
-            .into_response(),
-    }
 }
 
 async fn plugin_audit(
@@ -27132,7 +27006,8 @@ mod sandbox_promotion_tests {
     #[tokio::test]
     async fn development_library_activates_seed_recipes_without_persisting_them() {
         let empty = vak_presentation::PresentationLibrary::default();
-        let effective = super::effective_presentation_library(&empty, "/tmp/vak-dev-workspace");
+        let effective =
+            vak_core::presentation_store::effective(&empty, "/tmp/vak-dev-workspace", Vec::new());
         assert_eq!(empty.definitions().count(), 0);
         assert!(empty.activations().is_empty());
         assert_eq!(

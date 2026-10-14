@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "social.linkedin.takeaway-board",
-  "revision": 1,
+  "revision": 2,
   "accepts": [
     "social.linkedin.takeaway_board"
   ],

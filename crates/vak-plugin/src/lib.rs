@@ -190,7 +190,17 @@ impl PackageInspection {
             .collect();
         let mut specs = Vec::new();
         for file in &self.files {
-            if !declared.contains(file.path.as_str()) || !file.path.ends_with(".json") {
+            // A declared entry is a file or a folder of files, as the
+            // manifests write it (`"presentation": ["presentation"]`).
+            let in_declared = declared.iter().any(|entry| {
+                let entry = entry.trim_end_matches('/');
+                file.path == entry
+                    || file
+                        .path
+                        .strip_prefix(entry)
+                        .is_some_and(|rest| rest.starts_with('/'))
+            });
+            if !in_declared || !file.path.ends_with(".json") {
                 continue;
             }
             let path = self.root.join(&file.path);

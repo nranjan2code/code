@@ -54,9 +54,14 @@ id. Like a skill it affects what is shown, never what is authorized.
   disabling a pack takes effect from the next turn of every live session
   and never needs a restart (invariant 31). A pack kind is built by its
   block's builder exactly as the block's own kind is.
-- **Enable and disable.** Active means enabled and activated for the
-  scope, as today; registration stays preview-only, and no refresh
-  activates anything (doc 39). Disabling revokes from the next turn.
+- **Enable and disable.** A plugin's packs are read from the enabled
+  plugins whenever the library is read (`Core::effective_presentations`,
+  composed by `presentation_store::effective` with the seeds), as its
+  skills are: enabling the plugin activates them in the workspace unless
+  the owner suppressed one or an explicit activation already draws one of
+  its kinds, and disabling the plugin removes them on the next read. No
+  copy is written to the library and no refresh activates anything
+  (doc 39). The social add-ons' own pack route is removed (invariant 30).
 - **Inheritance.** Built-in → Shared (user) → project, narrowest wins
   (invariant 27). A project may suppress an inherited pack, as it may
   already suppress a seed.

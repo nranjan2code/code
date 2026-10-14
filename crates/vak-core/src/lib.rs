@@ -3931,15 +3931,49 @@ impl Core {
             .collect()
     }
 
+    /// The presentation library as it applies to `owner`'s workspace: what
+    /// was saved, the built-in seeds, and the packs of every enabled plugin,
+    /// each active there unless suppressed or an explicit activation already
+    /// draws one of its kinds. Read on demand, so enabling or disabling a
+    /// plugin reaches its packs at once, as it reaches its skills
+    /// (docs/design/91-presentation-capabilities.md §2).
+    pub fn effective_presentations(
+        &self,
+        library: &vak_presentation::PresentationLibrary,
+        owner: &str,
+    ) -> vak_presentation::PresentationLibrary {
+        let mut plugins = Vec::new();
+        for root in self.capability_roots() {
+            let Ok(enabled) = vak_plugin::PluginStore::new(&root.path).enabled() else {
+                continue;
+            };
+            for plugin in enabled {
+                let records = vak_plugin::inspect_package(&plugin.package_path)
+                    .and_then(|package| package.presentation_records(&plugin.name, owner));
+                match records {
+                    Ok(records) => plugins.extend(records.into_iter().map(|mut record| {
+                        record.enabled = true;
+                        record
+                    })),
+                    Err(error) => {
+                        tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a plugin's presentation packs could not be read");
+                    }
+                }
+            }
+        }
+        presentation_store::effective(library, owner, plugins)
+    }
+
     /// The kinds the active presentation packs add to card blocks, read
     /// afresh for each turn's tools so a pack enabled or disabled anywhere
     /// applies from the next turn (docs/design/91-presentation-capabilities.md).
     pub fn pack_kinds(&self) -> presentation_tools::PackKinds {
         let store = presentation_store::PresentationStore::new(self.scope().presentations());
+        let owner = self.inner.cwd.to_string_lossy();
         match store.load() {
             Ok(library) => presentation_tools::PackKinds::from_library(
-                &library,
-                &self.inner.cwd.to_string_lossy(),
+                &self.effective_presentations(&library, &owner),
+                &owner,
             ),
             Err(error) => {
                 tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the presentation library could not be read");
@@ -10498,6 +10532,47 @@ mod plugin_runtime_tests {
         assert_eq!(server.command, "lookup-bin");
         assert_eq!(server.args, ["--safe"]);
         assert!(server.hosts.is_empty());
+    }
+
+    /// An enabled plugin's pack adds its kinds to the block it names, and
+    /// disabling the plugin takes them away on the next read
+    /// (docs/design/91-presentation-capabilities.md §2).
+    #[test]
+    fn an_enabled_plugin_pack_adds_card_kinds_until_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = dir.path().join("plugin");
+        std::fs::create_dir_all(package.join("presentation")).unwrap();
+        std::fs::write(
+            package.join("vak-plugin.json"),
+            r#"{"schema":1,"name":"garden-pack","version":"1.0.0","description":"Garden","license":"MIT","components":{"presentation":["presentation"]}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            package.join("presentation/brief.json"),
+            r#"{"schema_version":1,"id":"garden.brief","revision":1,"accepts":["garden.brief"],"block":"research","root":{"primitive":"research","props":{"*":{"kind":"binding","path":"$"}}}}"#,
+        )
+        .unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
+        let store = vak_plugin::PluginStore::new(dir.path().join(".vak"));
+        store
+            .install_local(package.as_path(), vak_plugin::InstallOptions::default())
+            .unwrap();
+        let research_kinds = |core: &Core| {
+            presentation_tools::EmitCardTool::with_packs(&core.pack_kinds())
+                .into_iter()
+                .find(|tool| vak_tools::Tool::name(tool) == "emit_research_card")
+                .map(|tool| vak_tools::Tool::card_kinds(&tool))
+                .unwrap_or_default()
+        };
+        assert!(!research_kinds(&core).contains(&"garden.brief".to_string()));
+        store.enable("garden-pack").unwrap();
+        assert!(research_kinds(&core).contains(&"garden.brief".to_string()));
+        assert!(core.capability_declarations().iter().any(|declaration| {
+            declaration.id == crate::capability::CapabilityId::new(CapabilityKind::Presentation, "garden.brief")
+        }));
+        store.disable("garden-pack").unwrap();
+        assert!(!research_kinds(&core).contains(&"garden.brief".to_string()));
     }
 
     /// The whole point of caching `McpManager` on `Core` (see

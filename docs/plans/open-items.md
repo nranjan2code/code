@@ -50,8 +50,8 @@ across them. Nothing here is started unless it says so.
 
 - Stages 1 to 3 are built; stage 4 (presentation packages judged by real
   turns) and stage 5 (workspace before user in pack selection, channel
-  allow and deny for presentations, the capability screens listing them,
-  and a plugin's enable and disable reaching its packs) are open.
+  allow and deny for presentations, the capability screens listing them)
+  are open.
 
 ## Needs the maintainer
 

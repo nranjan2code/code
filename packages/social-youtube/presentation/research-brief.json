@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "social.youtube.research-brief",
-  "revision": 1,
+  "revision": 2,
   "accepts": [
     "social.youtube.research_brief"
   ],

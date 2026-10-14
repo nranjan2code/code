@@ -615,13 +615,6 @@ export function installSocialConnector(id: string, scope: "user" | "workspace", 
   });
 }
 
-export function installSocialPresentations(id: string, agent?: string): Promise<{ registered: number; enabled: false; plugin_id: string }> {
-  return req(withAgent(`/social/connectors/${encodeURIComponent(id)}/presentations/install`, agent), {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
-}
-
 export interface YoutubePreviewItem { kind: "video" | "channel"; id: string; url: string; title: string; description: string; channel_title: string; published_at: string }
 export type SocialCredentialScope = "user" | undefined;
 export interface SocialCredentialState { configured: boolean; inherited: boolean }

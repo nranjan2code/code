@@ -85,9 +85,9 @@ pub fn package(id: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// Declarative, platform-specific presentation previews shipped with each
-/// add-on. They use the existing research renderer and stay unactivated until
-/// an operator chooses a layout in Presentation settings.
+/// Declarative, platform-specific presentation packs shipped with each
+/// add-on. Each names the research block; they are active while the add-on
+/// is enabled (docs/design/91-presentation-capabilities.md).
 pub fn presentations(id: &str) -> Option<[(&'static str, &'static str); 3]> {
     let files = match id {
         "social-reddit" => [

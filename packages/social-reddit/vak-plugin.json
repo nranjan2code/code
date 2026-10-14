@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "name": "social-reddit",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Owner-only Reddit search preview through the official Data API, using your own installed-app Client ID; no agent access.",
   "license": "MIT",
   "homepage": "https://redditinc.com/policies/data-api-terms",

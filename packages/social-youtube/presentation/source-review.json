@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "social.youtube.source-review",
-  "revision": 1,
+  "revision": 2,
   "accepts": [
     "social.youtube.source_review"
   ],

@@ -68,22 +68,6 @@ async fn each_social_addon_registers_its_own_inactive_presentation_pack() {
         assert_eq!(response.status(), reqwest::StatusCode::OK, "{id}");
         let installed: serde_json::Value = response.json().await.unwrap();
         assert_eq!(installed["native_adapter"], adapter, "{id}");
-
-        let response = client
-            .post(format!(
-                "http://{addr}/social/connectors/{id}/presentations/install?agent=vak"
-            ))
-            .bearer_auth(&token)
-            .json(&serde_json::json!({}))
-            .send()
-            .await
-            .unwrap();
-        let status = response.status();
-        let response_text = response.text().await.unwrap();
-        assert_eq!(status, reqwest::StatusCode::OK, "{id}: {response_text}");
-        let body: serde_json::Value = serde_json::from_str(&response_text).unwrap();
-        assert_eq!(body["registered"], 3, "{id}");
-        assert_eq!(body["enabled"], false, "{id}");
     }
 
     let response = client

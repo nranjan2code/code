@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "social.x.source-review",
-  "revision": 1,
+  "revision": 2,
   "accepts": [
     "social.x.source_review"
   ],
