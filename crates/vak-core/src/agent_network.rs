@@ -59,6 +59,13 @@ impl BrokerCapability {
     }
 }
 
+/// Why [`AgentNetworkBroker::serve_unix`] returned without an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Served {
+    /// Another process (the gateway, usually) already serves the socket.
+    Elsewhere,
+}
+
 #[derive(Clone)]
 pub struct AgentNetworkBroker {
     inner: Arc<Mutex<BrokerState>>,
@@ -398,8 +405,11 @@ impl AgentNetworkBroker {
         vak_config::paths::runtime_dir().join("agent-network.sock")
     }
 
+    /// Serves the broker on `socket` until it fails. A socket another
+    /// process already answers on is that process's: this one does not
+    /// compete for it and returns [`Served::Elsewhere`].
     #[cfg(unix)]
-    pub async fn serve_unix(&self, socket: &std::path::Path) -> Result<(), String> {
+    pub async fn serve_unix(&self, socket: &std::path::Path) -> Result<Served, String> {
         use std::os::unix::fs::FileTypeExt;
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         use tokio::net::UnixListener;
@@ -418,7 +428,7 @@ impl AgentNetworkBroker {
                 return Err("agent network socket path is not a socket".into());
             }
             if tokio::net::UnixStream::connect(socket).await.is_ok() {
-                return Err("agent network broker is already running".into());
+                return Ok(Served::Elsewhere);
             }
             tokio::fs::remove_file(socket)
                 .await
@@ -604,6 +614,27 @@ mod tests {
         assert!(broker.revoke(&b));
         assert!(broker.receive(&b).is_err());
         assert!(broker.send(&a, &b, b"again".to_vec()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_socket_another_broker_serves_is_left_to_it() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let socket = root.path().join("broker.sock");
+        let first = AgentNetworkBroker::default();
+        let first_socket = socket.clone();
+        let task = tokio::spawn(async move { first.serve_unix(&first_socket).await });
+        while tokio::net::UnixStream::connect(&socket).await.is_err() {
+            assert!(!task.is_finished(), "the first broker stopped");
+            tokio::task::yield_now().await;
+        }
+        let second = AgentNetworkBroker::default().serve_unix(&socket).await;
+        assert_eq!(second, Ok(Served::Elsewhere));
+        assert!(
+            tokio::net::UnixStream::connect(&socket).await.is_ok(),
+            "the first broker still serves"
+        );
+        task.abort();
     }
 
     #[cfg(unix)]

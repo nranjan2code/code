@@ -24,14 +24,18 @@ across them. Nothing here is started unless it says so.
   services running, the home names `8.1.0`, the plugins seeded.
 - [ ] The maintainer runs `vak setup` with the provider key; then `doctor`
   in `~/vak-home`. AWS stays on 8.0.0 until the maintainer asks.
-- [ ] Seen on 2026-10-15: `vak setup` run from the source checkout set the
-  route in that folder's project layer (`.vak/config.toml`, tracked in
-  git) and left the Shared layer with no provider, so `doctor` in
-  `~/vak-home` still reports none. Setup's route belongs in the Shared
-  layer whatever folder it was started from (invariant 27); to find
-  where the setup screen chooses the layer. Its terminal also showed
-  `WARN`/`INFO` log lines (the agent network broker stopping, a
-  lifecycle pass) among the words meant for the person.
+- [x] Seen on 2026-10-15, fixed the same day: `vak setup` run from the
+  source checkout set the route in that folder's project layer. The setup
+  screen saved the route (and its access level step, through
+  `/config/mode`) to `"project"`; both now save to the Shared layer
+  (`PATCH /config/global`), checked in the running admin from a fresh
+  project folder (the Shared file changed, the project got no `.vak`).
+  Its terminal showed log lines: the CLI's terminal echo now shows
+  warnings and errors only unless `VAK_LOG` is set, and a second server
+  finding the agent network broker served by the gateway reports
+  `Served::Elsewhere` at info instead of a warning that it stopped.
+- [x] The maintainer ran `vak setup` (2026-10-15): the Shared route is
+  ollama `qwen3.5:0.8b-mlx` with full access, by their choice.
 
 8.0.0 (2026-10-14), a major version with a purge (maintainer's choice):
 

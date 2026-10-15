@@ -3261,8 +3261,13 @@ pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (
         }
         let socket = vak_core::agent_network::AgentNetworkBroker::socket_path();
         tokio::spawn(async move {
-            if let Err(error) = broker.serve_unix(&socket).await {
-                tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the agent network broker stopped");
+            match broker.serve_unix(&socket).await {
+                Ok(vak_core::agent_network::Served::Elsewhere) => {
+                    tracing::info!("the agent network broker is served by another process");
+                }
+                Err(error) => {
+                    tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the agent network broker stopped");
+                }
             }
         });
     }

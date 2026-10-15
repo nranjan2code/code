@@ -5048,7 +5048,9 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
               <select
                 onChange={(e) =>
                   void run("Model saved", () =>
-                    api.patchConfigScope("project", { provider: chosenProvider(), model: e.currentTarget.value }, selectedAgentIdOrUndefined()),
+                    // Setup configures this install, so the route is the
+                    // Shared layer's, whatever folder setup was opened in.
+                    api.patchConfigScope("user", { provider: chosenProvider(), model: e.currentTarget.value }, selectedAgentIdOrUndefined()),
                   )
                 }
               >
@@ -5071,7 +5073,7 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
                   // Unrestricted is a deliberate human decision and is
                   // never selected on someone's behalf (invariant 13).
                   if (p.danger && !window.confirm("Unrestricted means Vakyartha can reach anything on this machine, unsandboxed. Continue?")) return;
-                  void run(`Set to ${p.title}`, () => api.setMode(p.mode, selectedAgentIdOrUndefined()));
+                  void run(`Set to ${p.title}`, () => api.patchConfigScope("user", { permission_mode: p.mode }, selectedAgentIdOrUndefined()));
                 }}
               >
                 <strong>{p.title}</strong>

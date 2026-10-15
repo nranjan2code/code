@@ -1,5 +1,18 @@
 ## Unreleased
 
+- Setup saves the model and the access level for the whole install,
+  whatever folder it was started from. Started from a project folder, it
+  used to write them into that folder's own settings and leave the
+  install with no model.
+- A new data home records its version when its first records are made,
+  not only when the app first opens it, so a home whose records were made
+  by another command first is no longer refused as older than 8.0.
+- A command's terminal shows warnings and errors only; the rest of its log
+  stays in the log file. Set `VAK_LOG` to see more there.
+- Starting a second server (such as the one `vak setup` runs) while the
+  gateway is running no longer warns that the agent network stopped: the
+  gateway keeps serving it.
+
 ## 8.1.0 — 2026-10-15
 
 Skills can carry programs (docs/design/93-self-evolving-capabilities.md,

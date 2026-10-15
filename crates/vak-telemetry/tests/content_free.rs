@@ -159,7 +159,7 @@ fn a_log_file_rotates_past_its_size() {
         200,
         2,
     )));
-    let layer = vak_telemetry::ContentFree::new(vak_telemetry::Sink::File(file), "test", false);
+    let layer = vak_telemetry::ContentFree::new(vak_telemetry::Sink::File(file), "test", None);
     use tracing_subscriber::prelude::*;
     let subscriber = tracing_subscriber::registry().with(layer);
     tracing::subscriber::with_default(subscriber, || {

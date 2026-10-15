@@ -336,11 +336,13 @@ impl RotatingFile {
 pub struct ContentFree {
     sink: Sink,
     service: String,
-    human: bool,
+    /// The least severe level echoed to a person's terminal; `None` when
+    /// stderr is not a terminal.
+    human: Option<tracing::Level>,
 }
 
 impl ContentFree {
-    pub fn new(sink: Sink, service: &str, human: bool) -> Self {
+    pub fn new(sink: Sink, service: &str, human: Option<tracing::Level>) -> Self {
         Self {
             sink,
             service: service.to_string(),
@@ -384,7 +386,7 @@ impl ContentFree {
     fn emit(&self, line: serde_json::Map<String, serde_json::Value>) {
         let text = serde_json::Value::Object(line.clone()).to_string();
         self.sink.write_line(&text);
-        if self.human {
+        if echoed(self.human, &line) {
             let mut human = String::new();
             for key in ["level", "target", "message", "event"] {
                 if let Some(value) = line.get(key).and_then(serde_json::Value::as_str) {
@@ -515,7 +517,7 @@ where
         if !spans.is_empty() {
             line.insert("spans".into(), spans.into());
         }
-        if self.human {
+        if self.human.is_some() {
             // A span's close is for the waterfall, not the terminal.
             self.sink
                 .write_line(&serde_json::Value::Object(line).to_string());
@@ -534,21 +536,43 @@ pub fn log_path(service: &str) -> PathBuf {
 pub const ROTATE_BYTES: u64 = 16 * 1024 * 1024;
 pub const ROTATE_KEEP: u32 = 5;
 
+/// Whether a line is echoed to a terminal that shows `least` and more
+/// severe: a line at a level, never one without.
+fn echoed(
+    least: Option<tracing::Level>,
+    line: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    least.is_some_and(|least| {
+        line.get("level")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|level| level.parse::<tracing::Level>().ok())
+            .is_some_and(|level| level <= least)
+    })
+}
+
 /// Installs this process's subscriber for `service`: content-free JSON
 /// lines in [`log_path`], and a short human form on stderr when it is a
 /// terminal. `VAK_LOG` filters (as `RUST_LOG` would); the default is
-/// `info`. A second call does nothing.
+/// `info`. The terminal shows warnings and errors only, since a person
+/// at it is reading the command's own words, unless `VAK_LOG` is set, when
+/// it shows what the filter keeps. A second call does nothing.
 pub fn init(service: &str) {
-    let filter = tracing_subscriber::EnvFilter::try_new(
-        vak_config::get_var("VAK_LOG").unwrap_or_else(|| "info".into()),
-    )
-    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let chosen = vak_config::get_var("VAK_LOG");
+    let human = std::io::stderr().is_terminal().then(|| {
+        if chosen.is_some() {
+            tracing::Level::TRACE
+        } else {
+            tracing::Level::WARN
+        }
+    });
+    let filter = tracing_subscriber::EnvFilter::try_new(chosen.unwrap_or_else(|| "info".into()))
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     let sink = Sink::File(Arc::new(Mutex::new(RotatingFile::new(
         log_path(service),
         ROTATE_BYTES,
         ROTATE_KEEP,
     ))));
-    let layer = ContentFree::new(sink, service, std::io::stderr().is_terminal());
+    let layer = ContentFree::new(sink, service, human);
     let _ = tracing_subscriber::registry()
         .with(filter)
         .with(layer)
@@ -563,7 +587,7 @@ pub fn capture(buffer: Arc<Mutex<Vec<u8>>>) -> impl Subscriber + Send + Sync {
 /// A subscriber writing `service`'s lines to `buffer`: a process with no
 /// log of its own (the tool worker) hands them to the one that has.
 pub fn capture_as(buffer: Arc<Mutex<Vec<u8>>>, service: &str) -> impl Subscriber + Send + Sync {
-    tracing_subscriber::registry().with(ContentFree::new(Sink::Memory(buffer), service, false))
+    tracing_subscriber::registry().with(ContentFree::new(Sink::Memory(buffer), service, None))
 }
 
 /// The raw lines of a captured buffer, at most `limit` of them and
@@ -671,4 +695,30 @@ pub fn services(dir: &Path) -> Vec<String> {
         .unwrap_or_default();
     found.sort();
     found
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::*;
+
+    fn at(level: &str) -> serde_json::Map<String, serde_json::Value> {
+        let mut line = serde_json::Map::new();
+        line.insert("level".into(), level.into());
+        line
+    }
+
+    #[test]
+    fn a_terminal_shows_warnings_unless_the_filter_was_chosen() {
+        let warn = Some(tracing::Level::WARN);
+        assert!(echoed(warn, &at("ERROR")));
+        assert!(echoed(warn, &at("WARN")));
+        assert!(!echoed(warn, &at("INFO")));
+        assert!(!echoed(warn, &at("TRACE")));
+        assert!(echoed(Some(tracing::Level::TRACE), &at("INFO")));
+        assert!(!echoed(None, &at("ERROR")), "no terminal");
+        assert!(
+            !echoed(warn, &serde_json::Map::new()),
+            "a line with no level"
+        );
+    }
 }
