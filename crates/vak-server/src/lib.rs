@@ -4960,20 +4960,8 @@ fn summarize_jsonl(
                     conversation = h.conversation;
                 }
                 vak_session::EntryPayload::Message(rec) => {
-                    if title.is_none()
-                        && rec.message.role == vak_llm::Role::User
-                        && rec.control_kind().is_none()
-                    {
-                        let text = rec.message.text_content();
-                        let text = text.trim();
-                        if !text.is_empty() {
-                            let first_line = text.lines().next().unwrap_or(text).trim();
-                            let mut snippet: String = first_line.chars().take(72).collect();
-                            if first_line.chars().count() > 72 {
-                                snippet.push('…');
-                            }
-                            title = Some(snippet);
-                        }
+                    if title.is_none() {
+                        title = rec.conversation_title();
                     }
                 }
                 vak_session::EntryPayload::Compaction(_) => {}

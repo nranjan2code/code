@@ -344,6 +344,14 @@ fn session_entry(
         session.audience = audience;
         return Ok(());
     }
+    if let EntryPayload::Message(record) = &entry.payload
+        && let Some(title) = record.conversation_title()
+    {
+        tx.execute(
+            "UPDATE nodes SET title = ?2 WHERE id = ?1 AND title IS NULL",
+            params![session_id, title],
+        )?;
+    }
     let Some(turn) = entry.at_turn.as_deref().map(turn_node) else {
         // Text written outside any turn belongs to the session itself.
         if let EntryPayload::Message(record) = &entry.payload

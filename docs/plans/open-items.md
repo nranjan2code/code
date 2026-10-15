@@ -162,9 +162,10 @@ live.
 - [ ] Dependencies for Node programs (a lockfile and `npm ci`): an ES
   module ignores `NODE_PATH`, so the environment has to sit where the
   module resolves from; designed when a Node capability needs it.
-- [ ] The approval a first install asks reads "'<name>' needs approval:
+- [x] The approval a first install asks reads "'<name>' needs approval:
   <name>": it should say it installs packages from the declared hosts.
-  Part of the Review screen (E6).
+  Closed by E3b (the approval carries `Tool::reaches`, "Installs its
+  packages from <hosts>, once"); pinned by a test 2026-10-15.
 - [x] E2: verification (2026-10-15): `tests/<name>.json` cases, run by
   `Core::verify_skill_program` (`vak skills verify <name>`) in a run of
   their own through the call path, per-case verdicts kept per program
@@ -268,9 +269,11 @@ live.
   you; filters by name, Agent and state; Settings → Capabilities as
   Learned, Installed, Connections and Discover. Checked in the running
   app on the installed home.
-- [ ] A conversation in the catalog has no title, so the sheet names a
+- [x] A conversation in the catalog has no title, so the sheet names a
   use by the sidebar's title or its Agent; give session nodes their
-  title.
+  title. Done 2026-10-15: `MessageRecord::conversation_title` is the one
+  wording (the sidebar's list uses it too); the catalog sets a session
+  node's title from its first such message (schema 6, rebuilt once).
 - [x] E7 (2026-10-15): admin Learned abilities (`#/capabilities`) with
   revoke, the per-version table in How the models did, `vak skills`
   verbs replacing `skills-review`. Checked against the installed home.

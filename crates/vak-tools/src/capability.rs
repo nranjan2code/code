@@ -1404,6 +1404,37 @@ mod tests {
     }
 
     #[test]
+    fn a_first_install_says_it_installs_packages_and_from_where() {
+        let dir = skill(json!({"entry": "run.py", "arguments": arguments()}));
+        let mut program = Program::load(dir.path()).unwrap().unwrap();
+        assert_eq!(
+            program.reaches(),
+            [
+                "Reads the files in this project",
+                "Reaches nothing outside this computer"
+            ]
+        );
+        let env = dir.path().join("env");
+        program.requirements = Some(Dependencies {
+            file: dir.path().join("requirements.txt"),
+            hosts: vec!["pypi.org".into(), "files.pythonhosted.org".into()],
+            env: env.clone(),
+        });
+        assert!(program.leaves_machine());
+        assert!(program.reaches().contains(
+            &"Installs its packages from pypi.org, files.pythonhosted.org, once".to_string()
+        ));
+        std::fs::create_dir(&env).unwrap();
+        assert!(!program.leaves_machine());
+        assert!(
+            !program
+                .reaches()
+                .iter()
+                .any(|line| line.starts_with("Installs"))
+        );
+    }
+
+    #[test]
     fn an_entry_outside_the_skill_is_refused() {
         for entry in ["../run.py", "/usr/bin/python3", "", "missing.py"] {
             let dir = skill(json!({"entry": entry, "arguments": arguments()}));

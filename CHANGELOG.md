@@ -1,5 +1,7 @@
 ## Unreleased
 
+- An ability's page names each conversation that used it by its first
+  words, as the sidebar does, rather than by its Agent.
 - A table or chart of what one of your Agent's abilities answered now
   shows exactly the values it answered, filled by Vakyartha from that
   answer rather than copied by the model, however many rows there are.

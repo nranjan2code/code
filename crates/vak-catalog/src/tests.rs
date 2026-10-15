@@ -550,3 +550,22 @@ fn a_tools_calls_are_listed_with_how_each_ended() {
                 .is_some_and(|id| id.ends_with(&session)))
     );
 }
+
+#[test]
+fn a_conversation_is_named_by_its_first_words() {
+    let (_lock, cwd, data, folder) = home();
+    let catalog = catalog(&cwd, &data, "titles.db");
+    let (_, session, _, _) = run_with_turn(
+        &data,
+        &folder,
+        "vak",
+        "local",
+        "Split a dinner bill\nfive of us, 15% tip",
+    );
+    catalog.catch_up().unwrap();
+    let node = catalog
+        .open_node(&crate::ingest::session_node(&session))
+        .unwrap()
+        .unwrap();
+    assert_eq!(node.title.as_deref(), Some("Split a dinner bill"));
+}

@@ -48,7 +48,7 @@ pub const FILE_NAME: &str = "catalog.db";
 /// The schema this build writes, and what it derives from the records (5:
 /// a call's outcome as its status, `done` or `failed`). A catalog stamped with another is dropped and rebuilt,
 /// never adapted: it is derived.
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {

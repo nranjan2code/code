@@ -374,6 +374,25 @@ impl MessageRecord {
     pub fn control_kind(&self) -> Option<vak_intent::control::ControlKind> {
         self.meta.as_ref().and_then(|meta| meta.control)
     }
+
+    /// The line a conversation is named by when this is its first
+    /// message from a person: the first line of a user's own words,
+    /// shortened to 72 characters. `None` for anything else.
+    pub fn conversation_title(&self) -> Option<String> {
+        if self.message.role != vak_llm::Role::User || self.control_kind().is_some() {
+            return None;
+        }
+        let text = self.message.text_content();
+        let first = text.trim().lines().next()?.trim();
+        if first.is_empty() {
+            return None;
+        }
+        let mut title: String = first.chars().take(72).collect();
+        if first.chars().count() > 72 {
+            title.push('…');
+        }
+        Some(title)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

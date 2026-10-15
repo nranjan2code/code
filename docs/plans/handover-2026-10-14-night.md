@@ -13,10 +13,10 @@ failure' and 'Verification before every commit'), then
 docs/plans/handover-2026-10-14-night.md whole.
 
 Run `git status` and `git log --oneline -8`. If the newest commit is not
-'Doc 93 E9: …', the E9 work is in the working tree uncommitted: run
-`scripts/gate.sh` (about 13 minutes, in the background), fix what it
-finds, and commit it with the message in the handover's 'Where things
-stand'. Stage only your own paths; keep only `main`; check `git show
+'Catalog: a conversation is named by its first words', that work is in
+the working tree uncommitted: run `scripts/gate.sh` (about 13 minutes,
+in the background), fix what it finds, and commit it with that
+message. Stage only your own paths; keep only `main`; check `git show
 --stat` before every push. We are on a Claude Code Pro plan, so keep
 token use to what the task needs: read with grep and line ranges, never
 whole large files; batch independent commands; filter command output;
@@ -28,9 +28,10 @@ only user: rewrite a wrong design or screen rather than patch it.
 
 Self-evolving capabilities (doc 93) are implemented, E1 to E9. What is
 left is in docs/plans/open-items.md 'Self-evolving capabilities' (the
-open lines: an Agent asking before proposing a new version, ability
-history lost before E6a on the installed home, conversations without a
-title in the catalog) and the release questions under 'Next', which are
+open lines: an Agent asking before proposing a new version (observed,
+nothing in Vak asks it), ability history lost before E6a on the
+installed home (data only; fixed for new versions), Node dependencies
+(designed when needed)) and the release questions under 'Next', which are
 the maintainer's to decide; ask before cutting a release.
 
 Live runs: the installed home (8.1.0, OpenAI key, gpt-6-luna) may be
@@ -43,6 +44,18 @@ throwaway VAK_HOME, PATCH /config to ollama qwen3.5:4b-mlx). Short
 progress lines."
 
 ## Where things stand
+
+**Catalog session titles** (2026-10-15, after E9):
+`MessageRecord::conversation_title` is the one wording for a
+conversation's name (first line of the first user words, as the
+sidebar showed it); the server's session list and the catalog both use
+it, and a session node takes its title from its first such message
+(catalog schema 6, rebuilt once on open). The ability sheet already
+read the node's title, so its uses are now named. The first-install
+approval wording item was already closed by E3b; a test pins it.
+Checked live on the installed home (port 8907): the sheets of
+`restaurant-bill-splitter` and `powers-table` list their uses by the
+conversations' first words.
 
 **Scheduled work (doc 94) is built, S0 to S5** (2026-10-15, each step
 gated and pushed; checked live on the dev route, port 8905, throwaway
