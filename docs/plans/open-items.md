@@ -439,7 +439,12 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   take, and fill the "Chosen" table in `docs/brand/media/README.md`
   (Pip's and Tavi's tuned sounds first). Batch 5 (2026-10-15) added each
   companion's own spoken lines and completed every sound family, two takes
-  each, to choose from too; nothing in it is wired into the app yet. The
+  each, to choose from too; nothing in it is wired into the app yet.
+  Batch 6 added the Open Graph card and three feature illustrations (four
+  takes each); the spot has a v2 cut with the card landing
+  (`docs/video/spot-2026/`), and the "Heard" film's two generated shots
+  are made (`docs/video/heard-2026/`), its screen recordings and edit
+  not yet. The
   generation subscription ends on 2026-10-16, so nothing can be generated
   again in a companion's voice after that.
 - Sync: moving one conversation alone, and whether provider keys may

@@ -7,8 +7,8 @@ description: Lay out instructions for doing or making something (a repair, a set
 
 1. `emit_summary_card`: what the person will have done, how long it takes
    and how hard it is, in one headline and one sentence.
-2. `emit_checklist_card` with what is needed before starting (tools,
-   materials, accounts), when anything is.
+2. `emit_list_card` with `checkable: true` for what is needed before
+   starting (tools, materials, accounts), when anything is.
 3. `emit_steps_card`: one step per action, in order, each a short
    imperative label with a detail only when the action needs one, and a
    duration when the person would plan around it.

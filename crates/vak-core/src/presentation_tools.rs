@@ -2290,6 +2290,47 @@ mod tests {
             .unwrap()
     }
 
+    /// A skill Vakyartha ships names only card tools that exist: a card
+    /// retired or renamed leaves no skill telling the model to call it.
+    #[test]
+    fn every_card_tool_a_shipped_skill_names_exists() {
+        let names: Vec<String> = EmitCardTool::all()
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+        let packages = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+        let mut checked = 0;
+        for package in std::fs::read_dir(&packages).unwrap().flatten() {
+            let Ok(skills) = std::fs::read_dir(package.path().join("skills")) else {
+                continue;
+            };
+            for skill in skills.flatten() {
+                let Ok(text) = std::fs::read_to_string(skill.path().join("SKILL.md")) else {
+                    continue;
+                };
+                checked += 1;
+                for (start, _) in text.match_indices("emit_") {
+                    let named: String = text[start..]
+                        .chars()
+                        .take_while(|c| c.is_ascii_lowercase() || *c == '_')
+                        .collect();
+                    if named.ends_with("_card") {
+                        assert!(
+                            names.contains(&named),
+                            "{} names {named}, which is not a card tool",
+                            skill.path().display()
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "no shipped skills under {}",
+            packages.display()
+        );
+    }
+
     /// A call's arguments as they reach the builder: read by the one
     /// argument reader, then given the tool's own defaults.
     fn sent(tool: &EmitCardTool, args: &mut Value) {

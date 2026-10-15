@@ -14,64 +14,21 @@
 //! now, against the workspace the operator actually chose. Updates run the
 //! same reconciliation so newly shipped standard capabilities reach existing
 //! workspaces without overwriting user edits.
+//!
+//! Every skill Vakyartha ships lives in a shipped package (`packages/`,
+//! `crate::packages::SHIPPED`): there is no second way to ship one.
 
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use vak_config::HookConfig;
 use vak_plugin::{InstallOptions, InstallScope, PluginStore};
 
-/// name, description, guidance body, `serves:` domains (in `Domain::parse`
-/// vocabulary). A skill declares what it is for itself, in its own
-/// frontmatter, exactly as a plugin or user-authored skill would — there is
-/// no name-keyed table anywhere that grants these seeds special treatment.
-const SKILLS: &[(&str, &str, &str, &[&str])] = &[
-    (
-        "getting-started",
-        "Explain tasks clearly and help a new user choose the simplest next step.",
-        "Translate jargon into plain language. Ask only for information that is genuinely needed, then present a short, actionable next step before optional detail.",
-        &["documents"],
-    ),
-    (
-        "research-and-sources",
-        "Research a question with traceable sources and clearly separated evidence and inference.",
-        "Define the question and freshness requirement, prefer primary sources, record publication dates, and distinguish sourced facts from your own synthesis. Never present an unverified assumption as a citation.",
-        &["web", "live-data"],
-    ),
-    (
-        "planning-and-organizing",
-        "Turn goals into practical plans, checklists, and prioritised next actions.",
-        "Clarify the desired outcome, identify dependencies and decisions, then produce a plan sized to the work. Keep ownership, deadlines, and open questions explicit.",
-        &["orchestration"],
-    ),
-    (
-        "debugging",
-        "Diagnose failures from evidence before proposing or applying a fix.",
-        "Reproduce or isolate the failure, capture the first meaningful error, trace inputs to the failing boundary, and test the smallest fix. Separate confirmed cause from hypotheses.",
-        &["code-exec", "observability"],
-    ),
-    (
-        "code-review",
-        "Review code for correctness, security, regressions, and maintainability with actionable findings.",
-        "Read the diff in context, prioritise concrete defects over style preferences, include impact and a precise location, and say when a concern is unverified rather than overstating it.",
-        &["vcs", "documents"],
-    ),
-    (
-        "data-and-spreadsheets",
-        "Clean, analyse, and explain tabular data without silently changing its meaning.",
-        "Inspect headers, types, missing values, and units before transforming data. Keep source data intact, make calculations reproducible, and label estimates, exclusions, and assumptions.",
-        &["documents", "code-exec"],
-    ),
-];
-
 const SEED_MANIFEST: &str = ".seed-manifest.json";
 
 pub fn seed_shared_capabilities() -> Result<(), String> {
     let workspace = vak_config::scope::WorkspaceScope::new(vak_config::paths::default_workspace());
     let root = workspace.project_dir();
-    seed_skills(&workspace.skills())
-        .map_err(|error| format!("Shared skill seed failed: {error}"))?;
     seed_plugins(&root).map_err(|error| format!("Shared plugin seed failed: {error}"))?;
     cleanup_retired_plugins(&root)
         .map_err(|error| format!("Retired plugin cleanup failed: {error}"))?;
@@ -120,67 +77,6 @@ fn cleanup_retired_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>
         }
     }
     Ok(())
-}
-
-/// Render a seeded `SKILL.md`. `serves` is the skill's own classification of
-/// what it is for — front-matter it writes about itself, in the same
-/// `serves:` field a plugin or user-authored skill would use. An empty list
-/// stays undeclared, exactly as an unclassified skill from any other source
-/// would.
-fn skill_markdown(name: &str, description: &str, body: &str, serves: &[&str]) -> String {
-    if serves.is_empty() {
-        format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n")
-    } else {
-        format!(
-            "---\nname: {name}\ndescription: {description}\nserves: {}\n---\n\n{body}\n",
-            serves.join(", ")
-        )
-    }
-}
-
-fn seed_skills(root: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(root)?;
-    let manifest_root = root.parent().unwrap_or(root);
-    let mut shipped = load_seed_manifest(manifest_root);
-    let previous = shipped.clone();
-    for (name, description, body, serves) in SKILLS {
-        let dir = root.join(name);
-        std::fs::create_dir_all(&dir)?;
-        let path = dir.join("SKILL.md");
-        let content = skill_markdown(name, description, body, serves);
-        let expected = content.as_bytes();
-        let expected_digest = digest(expected);
-        match std::fs::read(&path) {
-            Ok(current) if digest(&current) == expected_digest => {
-                shipped.insert(name.to_string(), expected_digest);
-            }
-            Ok(current) => {
-                // Only advance a seed when the file still equals the last
-                // bytes we shipped. An untracked pre-existing file is treated
-                // as user-owned and is never overwritten.
-                if previous
-                    .get(*name)
-                    .is_some_and(|old| *old == digest(&current))
-                {
-                    std::fs::write(&path, expected)?;
-                    shipped.insert(name.to_string(), expected_digest);
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::write(&path, expected)?;
-                shipped.insert(name.to_string(), expected_digest);
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    write_seed_manifest(manifest_root, &shipped)?;
-    Ok(())
-}
-
-fn digest(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("sha256:{:x}", hasher.finalize())
 }
 
 fn load_seed_manifest(root: &Path) -> BTreeMap<String, String> {
@@ -264,7 +160,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seed_manifest_tracks_standard_skills_without_clobbering_edits() {
+    fn seed_manifest_tracks_shipped_packages_without_clobbering_edits() {
         let _home = vak_config::paths::isolate_home_for_tests();
         let _ = seed_shared_capabilities();
         let root = vak_config::paths::default_workspace().join(".vak");
@@ -272,19 +168,7 @@ mod tests {
             &std::fs::read(root.join(SEED_MANIFEST)).expect("seed manifest"),
         )
         .expect("valid seed manifest");
-        assert_eq!(
-            manifest.len(),
-            SKILLS.len() + crate::packages::SHIPPED.len()
-        );
-
-        let edited = root.join("skills/debugging/SKILL.md");
-        let before = std::fs::read(&edited).expect("seed skill");
-        std::fs::write(&edited, [before.as_slice(), b"\noperator edit\n"].concat())
-            .expect("edit seed skill");
-        let _ = seed_shared_capabilities();
-        let after = std::fs::read(&edited).expect("edited seed skill");
-        assert!(after.ends_with(b"\noperator edit\n"));
-
+        assert_eq!(manifest.len(), crate::packages::SHIPPED.len());
         let plugins = PluginStore::new(&root).list().expect("seed plugins");
         let package = plugins
             .iter()

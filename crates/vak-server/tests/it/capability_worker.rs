@@ -353,6 +353,38 @@ async fn verification_runs_each_case_in_a_run_of_its_own_and_keeps_what_it_found
 }
 
 /// A folder the Agent prepared: a program splitting a bill, and its tests.
+/// Every program a shipped package carries passes its own tests through
+/// the worker, under the sandbox its declaration gives it.
+#[tokio::test]
+async fn every_shipped_program_passes_its_own_tests() {
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(workspace.path()).unwrap();
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).unwrap();
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+    let mut verified = Vec::new();
+    for package in std::fs::read_dir(&packages).unwrap().flatten() {
+        let Ok(skills) = std::fs::read_dir(package.path().join("skills")) else {
+            continue;
+        };
+        for skill in skills.flatten() {
+            if !skill.path().join(DECLARATION).is_file() {
+                continue;
+            }
+            let name = skill.file_name().to_string_lossy().into_owned();
+            let verification = core
+                .verify_skill_program(&name, &skill.path())
+                .await
+                .unwrap();
+            assert!(verification.passed(), "{name}: {:?}", verification.cases);
+            verified.push(name);
+        }
+    }
+    verified.sort();
+    assert_eq!(verified, ["date-calculator", "table-profile"]);
+}
+
 fn prepared(workspace: &Path, folder: &str, divisor: &str, expect_each: u64) {
     let dir = workspace.join(folder);
     std::fs::create_dir_all(dir.join(vak_tools::capability::TESTS_DIR)).unwrap();

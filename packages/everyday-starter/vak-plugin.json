@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "name": "everyday-starter",
-  "version": "1.1.0",
-  "description": "Plain-language writing, planning, research, and data help for everyday work.",
+  "version": "1.2.0",
+  "description": "Writing, planning, research and data for everyday work, with a date calculator and a table profiler.",
   "license": "MIT",
   "components": {
     "skills": [
