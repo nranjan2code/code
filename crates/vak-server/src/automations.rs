@@ -136,6 +136,10 @@ fn projection(
             serde_json::json!(triggers::next_slot(trigger, &claim, catch_up(state))),
         );
         object.insert("last_run".into(), serde_json::json!(last));
+        object.insert(
+            "when_words".into(),
+            serde_json::json!(trigger.when_words(&state.core.owner_timezone())),
+        );
         // When a run last finished its work: a mail watch's last successful
         // check.
         object.insert(
@@ -213,7 +217,12 @@ pub(crate) struct TriggerDraft {
     agent_revision: Option<u64>,
     #[serde(default)]
     enabled: Option<bool>,
-    kind: TriggerKind,
+    /// The stored schedule; a screen sends `repeat` instead.
+    #[serde(default)]
+    kind: Option<TriggerKind>,
+    /// A schedule as a person picks it (docs/design/94 §5).
+    #[serde(default)]
+    repeat: Option<triggers::Repeat>,
     action: TriggerAction,
     #[serde(default)]
     deliver_to: Option<String>,
@@ -224,6 +233,22 @@ pub(crate) struct TriggerDraft {
     /// The conversation its results are delivered into (docs/design/94 §3).
     #[serde(default)]
     home: Option<String>,
+}
+
+/// The schedule a draft names: `repeat` as a person picked it, else its
+/// stored `kind`; one is required.
+fn draft_kind(state: &AppState, draft: &TriggerDraft) -> Result<TriggerKind, Box<Response>> {
+    match (&draft.repeat, &draft.kind) {
+        (Some(repeat), _) => repeat
+            .schedule(&state.core.owner_timezone(), Utc::now())
+            .map(|schedule| TriggerKind::Schedule { schedule })
+            .map_err(|reason| Box::new(error_response(StatusCode::BAD_REQUEST, reason))),
+        (None, Some(kind)) => Ok(kind.clone()),
+        (None, None) => Err(Box::new(error_response(
+            StatusCode::BAD_REQUEST,
+            "say when it runs (repeat)",
+        ))),
+    }
 }
 
 fn check_deliver_to(deliver_to: Option<&str>) -> Result<(), Box<Response>> {
@@ -281,6 +306,10 @@ pub(crate) async fn create_trigger(
             "A source's poll is made with the source (/intake/sources).",
         );
     }
+    let kind = match draft_kind(&state, &draft) {
+        Ok(kind) => kind,
+        Err(response) => return *response,
+    };
     let id = TriggerId::new();
     let routine = draft.scope.is_some();
     let mut trigger = Trigger {
@@ -295,7 +324,7 @@ pub(crate) async fn create_trigger(
         // A mail/calendar routine is saved paused so the owner can inspect a
         // read-only sample run before its schedule or watcher is active.
         enabled: draft.enabled.unwrap_or(!routine) && !routine,
-        kind: draft.kind,
+        kind,
         action: draft.action,
         deliver_to: draft.deliver_to,
         on_crash: draft.on_crash.unwrap_or_default(),
@@ -369,12 +398,16 @@ pub(crate) async fn put_trigger(
             "a mail/calendar routine's Agent and account are fixed; recreate the routine to change its owner",
         );
     }
+    let kind = match draft_kind(&state, &draft) {
+        Ok(kind) => kind,
+        Err(response) => return *response,
+    };
     let mut candidate = current.clone();
     candidate.name = draft.name;
     candidate.agent = agent;
     candidate.agent_revision = draft.agent_revision;
     candidate.enabled = draft.enabled.unwrap_or(current.enabled);
-    candidate.kind = draft.kind;
+    candidate.kind = kind;
     candidate.action = draft.action;
     candidate.deliver_to = draft.deliver_to;
     candidate.on_crash = draft.on_crash.unwrap_or(current.on_crash);

@@ -32,17 +32,19 @@ pub struct AutomationsTool {
     pub owner_zone: String,
 }
 
-fn render(trigger: &Trigger, runs: &vak_session::runs::Runs) -> Value {
+fn render(trigger: &Trigger, runs: &vak_session::runs::Runs, zone: &str) -> Value {
     let last = triggers::last_run(runs, &trigger.id).ok().flatten();
     serde_json::json!({
         "id": trigger.id.to_string(),
         "name": trigger.name,
         "enabled": trigger.enabled,
         "agent": trigger.agent,
-        "when": trigger.kind,
+        "when": trigger.when_words(zone),
         "does": trigger.action,
         "deliver_to": trigger.deliver_to,
-        "next_run": trigger.next_slot_after(chrono::Utc::now()),
+        "next_run": trigger
+            .next_slot_after(chrono::Utc::now())
+            .map(|at| triggers::local_words(at, zone)),
         "last_run": last.map(|run| serde_json::json!({
             "status": run.status,
             "started_at": run.opened_at,
@@ -192,7 +194,7 @@ impl vak_tools::Tool for AutomationsTool {
                 }
                 let rendered: Vec<Value> = all
                     .iter()
-                    .map(|trigger| render(trigger, &self.runs))
+                    .map(|trigger| render(trigger, &self.runs, &self.owner_zone))
                     .collect();
                 vak_tools::ToolOutput::ok(
                     serde_json::to_string_pretty(&rendered).unwrap_or_default(),
@@ -307,7 +309,8 @@ impl vak_tools::Tool for AutomationsTool {
                 vak_tools::ToolOutput::ok(format!(
                     "created automation {}\n{}",
                     trigger.id,
-                    serde_json::to_string_pretty(&render(&trigger, &self.runs)).unwrap_or_default()
+                    serde_json::to_string_pretty(&render(&trigger, &self.runs, &self.owner_zone))
+                        .unwrap_or_default()
                 ))
             }
             "enable" | "disable" | "remove" => {

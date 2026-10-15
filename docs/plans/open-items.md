@@ -223,7 +223,12 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   head. Tests in `vak-server/tests/it/scheduled_runs.rs`.
 - [ ] Draw a delivered run's cards as cards in the home conversation
   (they arrive in their text form today).
-- [ ] S2: `triggers::describe` and the schedule picker's vocabulary.
+- [x] S2 (2026-10-15): `triggers::describe` (`Trigger::when_words`) is the
+  one wording, used by the tool's results, `vak triggers list`/`add` and
+  the server's `when_words`; `triggers::Repeat` is the picker's
+  vocabulary (once, daily, weekdays, weekly, every N minutes or hours,
+  custom cron), accepted as `repeat` by the server's create and change.
+  The picker screen itself comes with S5.
 - [ ] S3: one set of operations; the tool's `update`, `run_now`, by name.
 - [ ] S4: the automation card in chat.
 - [ ] S5: the Automations page (replaces `AutomationsModal`).

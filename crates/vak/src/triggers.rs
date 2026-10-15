@@ -21,7 +21,7 @@ pub fn run_triggers(cwd: std::path::PathBuf, action: crate::cli::TriggersAction)
     match action {
         crate::cli::TriggersAction::List => match triggers::list(&shared) {
             Ok(all) => {
-                list(&all, &core.runs());
+                list(&all, &core.runs(), &core.owner_timezone());
                 0
             }
             Err(e) => {
@@ -88,7 +88,12 @@ pub fn run_triggers(cwd: std::path::PathBuf, action: crate::cli::TriggersAction)
             };
             match triggers::create(&shared, &trigger) {
                 Ok(()) => {
-                    println!("added automation {} · {}", trigger.id, detail(&trigger));
+                    println!(
+                        "added automation {} · {} · {}",
+                        trigger.id,
+                        trigger.when_words(&core.owner_timezone()),
+                        detail(&trigger)
+                    );
                     println!("      next run {}", next_run(&trigger, chrono::Utc::now()));
                     0
                 }
@@ -272,26 +277,14 @@ fn shell_quote(path: &Path) -> String {
     format!("'{}'", raw.replace('\'', "'\\''"))
 }
 
-fn schedule_text(trigger: &Trigger) -> String {
-    match trigger.schedule() {
-        Some(Schedule::Cron { expr, timezone }) => match timezone {
-            Some(zone) => format!("{expr} ({zone})"),
-            None => expr.clone(),
-        },
-        Some(Schedule::Interval { every_secs, .. }) => format!("every {every_secs}s"),
-        Some(Schedule::Once { at }) => format!("once at {}", at.to_rfc3339()),
-        None => "manual".into(),
-    }
-}
-
-fn list(all: &[Trigger], runs: &vak_session::runs::Runs) {
+fn list(all: &[Trigger], runs: &vak_session::runs::Runs, owner_zone: &str) {
     if all.is_empty() {
         println!("no automations");
         return;
     }
     let width = all.iter().map(|t| t.name.len()).max().unwrap_or(0);
     println!(
-        "  {:<width$}  {:<3}  {:<18}  {:<22}  last run",
+        "  {:<width$}  {:<3}  {:<34}  {:<22}  last run",
         "name",
         "on",
         "schedule",
@@ -317,10 +310,10 @@ fn list(all: &[Trigger], runs: &vak_session::runs::Runs) {
             })
             .unwrap_or_else(|| "—".into());
         println!(
-            "  {:<width$}  {:<3}  {:<18}  {:<22}  {last}",
+            "  {:<width$}  {:<3}  {:<34}  {:<22}  {last}",
             trigger.name,
             if trigger.enabled { "yes" } else { "no" },
-            schedule_text(trigger),
+            trigger.when_words(owner_zone),
             next_run(trigger, now),
             width = width
         );

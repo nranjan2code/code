@@ -1028,10 +1028,315 @@ pub fn next_slot(
     trigger.next_slot_after(after)
 }
 
+// ---- Plain words for a schedule (docs/design/94 §3) ------------------------
+
+const WEEKDAYS: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+
+fn clock(hour: u32, minute: u32) -> String {
+    let (h, half) = match hour {
+        0 => (12, "AM"),
+        1..=11 => (hour, "AM"),
+        12 => (12, "PM"),
+        _ => (hour - 12, "PM"),
+    };
+    format!("{h}:{minute:02} {half}")
+}
+
+/// `values` as one step from `0` that divides `whole`, when they are one.
+fn even_step(values: &BTreeSet<u32>, whole: u32) -> Option<u32> {
+    let step = *values.iter().nth(1)?;
+    (whole.is_multiple_of(step)
+        && values.first() == Some(&0)
+        && values.iter().copied().eq((0..whole).step_by(step as usize)))
+    .then_some(step)
+}
+
+fn plural(count: u64, unit: &str) -> String {
+    if count == 1 {
+        format!("Every {unit}")
+    } else {
+        format!("Every {count} {unit}s")
+    }
+}
+
+fn cron_words(expr: &str) -> Option<String> {
+    let cron = CronExpr::parse(expr).ok()?;
+    let one = |set: &FieldSet| {
+        (set.values.len() == 1)
+            .then(|| set.values.first().copied())
+            .flatten()
+    };
+    let all = |set: &FieldSet, count: usize| set.starred || set.values.len() == count;
+    if !all(&cron.months, 12) {
+        return None;
+    }
+    let days_all = all(&cron.days_of_month, 31) && all(&cron.days_of_week, 7);
+    if let (Some(minute), Some(hour)) = (one(&cron.minutes), one(&cron.hours)) {
+        let at = clock(hour, minute);
+        if days_all {
+            return Some(format!("Every day at {at}"));
+        }
+        if all(&cron.days_of_month, 31) {
+            let days = &cron.days_of_week.values;
+            if days.iter().copied().eq(1..=5) {
+                return Some(format!("Weekdays at {at}"));
+            }
+            if days.iter().copied().eq([0, 6]) {
+                return Some(format!("Weekends at {at}"));
+            }
+            let names: Vec<&str> = days.iter().map(|day| WEEKDAYS[*day as usize]).collect();
+            return Some(format!("Every {} at {at}", names.join(", ")));
+        }
+        if all(&cron.days_of_week, 7)
+            && let Some(day) = one(&cron.days_of_month)
+        {
+            return Some(format!("On day {day} of every month at {at}"));
+        }
+        return None;
+    }
+    if !days_all {
+        return None;
+    }
+    if all(&cron.hours, 24) {
+        if let Some(step) = even_step(&cron.minutes.values, 60) {
+            return Some(plural(u64::from(step), "minute"));
+        }
+        if let Some(minute) = one(&cron.minutes) {
+            return Some(if minute == 0 {
+                "Every hour".into()
+            } else {
+                format!("Every hour at {minute} past")
+            });
+        }
+        if cron.minutes.starred {
+            return Some("Every minute".into());
+        }
+    }
+    if one(&cron.minutes) == Some(0)
+        && let Some(step) = even_step(&cron.hours.values, 24)
+    {
+        return Some(plural(u64::from(step), "hour"));
+    }
+    None
+}
+
+/// How `schedule` reads to the owner, whose zone is `owner_zone`: the
+/// one wording every surface uses ("Weekdays at 8:00 AM", "Every 2 hours",
+/// "Once, on Friday 17 October at 9:00 AM").
+pub fn describe(schedule: &Schedule, owner_zone: &str) -> String {
+    match schedule {
+        Schedule::Cron { expr, timezone } => {
+            let words =
+                cron_words(expr).unwrap_or_else(|| format!("On a custom schedule ({expr})"));
+            match timezone.as_deref() {
+                Some(zone) if zone != owner_zone => {
+                    format!("{words}, {} time", zone.replace('_', " "))
+                }
+                _ => words,
+            }
+        }
+        Schedule::Interval { every_secs, .. } => {
+            let secs = *every_secs;
+            if secs.is_multiple_of(86_400) {
+                plural(secs / 86_400, "day")
+            } else if secs.is_multiple_of(3_600) {
+                plural(secs / 3_600, "hour")
+            } else if secs.is_multiple_of(60) {
+                plural(secs / 60, "minute")
+            } else {
+                plural(secs, "second")
+            }
+        }
+        Schedule::Once { at } => {
+            let words = |local: DateTime<chrono_tz::Tz>| {
+                format!(
+                    "Once, on {} {} {} at {}",
+                    WEEKDAYS[local.weekday().num_days_from_sunday() as usize],
+                    local.day(),
+                    local.format("%B %Y"),
+                    clock(local.hour(), local.minute())
+                )
+            };
+            match owner_zone.parse::<chrono_tz::Tz>() {
+                Ok(tz) => words(at.with_timezone(&tz)),
+                Err(_) => words(at.with_timezone(&chrono_tz::UTC)),
+            }
+        }
+    }
+}
+
+impl Trigger {
+    /// When it runs, in `describe`'s words.
+    pub fn when_words(&self, owner_zone: &str) -> String {
+        match self.schedule() {
+            Some(schedule) => describe(schedule, owner_zone),
+            None => "Only when someone runs it".into(),
+        }
+    }
+}
+
+/// How a person picks a schedule (docs/design/94 §5): never a cron box.
+/// Times are the owner's local `HH:MM`; days are 0 (Sunday) to 6.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Repeat {
+    Once {
+        at: String,
+    },
+    Daily {
+        time: String,
+    },
+    Weekdays {
+        time: String,
+    },
+    Weekly {
+        days: Vec<u8>,
+        time: String,
+    },
+    EveryMinutes {
+        minutes: u64,
+    },
+    EveryHours {
+        hours: u64,
+    },
+    /// Behind Show technical details.
+    Custom {
+        cron: String,
+    },
+}
+
+fn hour_minute(time: &str) -> Result<(u32, u32), String> {
+    let parsed = chrono::NaiveTime::parse_from_str(time.trim(), "%H:%M")
+        .map_err(|_| format!("'{time}' is not a time like 08:30"))?;
+    Ok((parsed.hour(), parsed.minute()))
+}
+
+impl Repeat {
+    /// The schedule this choice means, in `zone`, made at `now`.
+    pub fn schedule(&self, zone: &str, now: DateTime<Utc>) -> Result<Schedule, String> {
+        let cron = |expr: String| Schedule::Cron {
+            expr,
+            timezone: Some(zone.to_string()),
+        };
+        let every = |secs: u64| Schedule::Interval {
+            every_secs: secs,
+            anchor: now,
+        };
+        Ok(match self {
+            Repeat::Once { at } => Schedule::Once {
+                at: local_instant(at, zone, now)?,
+            },
+            Repeat::Daily { time } => {
+                let (h, m) = hour_minute(time)?;
+                cron(format!("{m} {h} * * *"))
+            }
+            Repeat::Weekdays { time } => {
+                let (h, m) = hour_minute(time)?;
+                cron(format!("{m} {h} * * 1-5"))
+            }
+            Repeat::Weekly { days, time } => {
+                let (h, m) = hour_minute(time)?;
+                let days: BTreeSet<u8> = days.iter().copied().collect();
+                if days.is_empty() || days.iter().any(|day| *day > 6) {
+                    return Err("pick at least one day, Sunday (0) to Saturday (6)".into());
+                }
+                let list: Vec<String> = days.iter().map(u8::to_string).collect();
+                cron(format!("{m} {h} * * {}", list.join(",")))
+            }
+            Repeat::EveryMinutes { minutes } => every(minutes.saturating_mul(60)),
+            Repeat::EveryHours { hours } => every(hours.saturating_mul(3_600)),
+            Repeat::Custom { cron: expr } => {
+                CronExpr::parse(expr)?;
+                cron(expr.trim().to_string())
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[test]
+    fn every_kind_of_schedule_reads_in_plain_words() {
+        let zone = "Asia/Kolkata";
+        let now = Utc.with_ymd_and_hms(2026, 10, 15, 0, 0, 0).unwrap();
+        let said = |repeat: Repeat| describe(&repeat.schedule(zone, now).unwrap(), zone);
+        let time = || "08:00".to_string();
+        assert_eq!(said(Repeat::Daily { time: time() }), "Every day at 8:00 AM");
+        assert_eq!(
+            said(Repeat::Weekdays { time: time() }),
+            "Weekdays at 8:00 AM"
+        );
+        assert_eq!(
+            said(Repeat::Weekly {
+                days: vec![5, 1],
+                time: "17:30".into()
+            }),
+            "Every Monday, Friday at 5:30 PM"
+        );
+        assert_eq!(
+            said(Repeat::Weekly {
+                days: vec![0, 6],
+                time: time()
+            }),
+            "Weekends at 8:00 AM"
+        );
+        assert_eq!(
+            said(Repeat::EveryMinutes { minutes: 15 }),
+            "Every 15 minutes"
+        );
+        assert_eq!(said(Repeat::EveryHours { hours: 1 }), "Every hour");
+        assert_eq!(
+            said(Repeat::Once {
+                at: "2026-10-17 09:00".into()
+            }),
+            "Once, on Saturday 17 October 2026 at 9:00 AM"
+        );
+        let cron = |expr: &str, timezone: &str| Schedule::Cron {
+            expr: expr.into(),
+            timezone: Some(timezone.into()),
+        };
+        assert_eq!(
+            describe(&cron("*/10 * * * *", zone), zone),
+            "Every 10 minutes"
+        );
+        assert_eq!(describe(&cron("0 */2 * * *", zone), zone), "Every 2 hours");
+        assert_eq!(
+            describe(&cron("0 9 1 * *", zone), zone),
+            "On day 1 of every month at 9:00 AM"
+        );
+        assert_eq!(
+            describe(&cron("0 0 * * *", "America/New_York"), zone),
+            "Every day at 12:00 AM, America/New York time"
+        );
+        assert_eq!(
+            describe(&cron("5 4 * 2 *", zone), zone),
+            "On a custom schedule (5 4 * 2 *)"
+        );
+        assert!(
+            Repeat::Weekly {
+                days: vec![],
+                time: time()
+            }
+            .schedule(zone, now)
+            .is_err()
+        );
+        assert!(
+            Repeat::Daily { time: "8am".into() }
+                .schedule(zone, now)
+                .is_err()
+        );
+    }
 
     #[test]
     fn a_slot_in_a_skipped_hour_runs_once_at_the_first_minute_after_it() {

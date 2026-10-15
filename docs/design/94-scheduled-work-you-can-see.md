@@ -4,7 +4,8 @@ Scheduled Work You Can See
 Status: in progress: S0 built 2026-10-15 (the owner's time zone, set in
 Settings, `at` in local time, a cron always names its zone, the gap
 rule, with fixed-clock tests); S1 built 2026-10-15 (`home`, `made_by`,
-delivery into the conversation); S2 to S5 not built.
+delivery into the conversation); S2 built 2026-10-15 (`describe`,
+`Repeat`; the picker screen with S5); S3 to S5 not built.
 Agreed with the maintainer on 2026-10-15. Paths below describe targets and may not exist yet. Rewrites the
 experience of automations; the engine stays `vak_core::triggers`
 (doc 73 §8, invariant 38).

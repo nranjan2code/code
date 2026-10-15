@@ -10,6 +10,8 @@
   it, as the Agent's reply marked "Scheduled" with its name and time, and
   you can answer it there ("make it shorter"). A run that could not start
   says why in the same place. The Inbox still lists each one.
+- Schedules read in plain words everywhere ("Weekdays at 8:00 AM",
+  "Every 2 hours"), in the Agent's answers and in `vak triggers list`.
 - `vak inbox` shows what automations and the gateway deliver. It read a
   different inbox from the one they write, so it always said there was
   nothing.
