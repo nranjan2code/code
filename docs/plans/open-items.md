@@ -17,6 +17,14 @@ across them. Nothing here is started unless it says so.
 
 ## Before the next release
 
+8.3.0 (2026-10-15), additive within 8.x, no purge (the shipped skills):
+
+- [x] CHANGELOG: the `## 8.3.0` section.
+- [x] Version: 8.3.0 (`scripts/bump-version.sh`).
+- [ ] `scripts/release.sh`: every gate passed, tagged `v8.3.0`.
+- [ ] This Mac: `dist/8.3.0/vak self install`, `self services-sync`,
+  `self verify`; the packages re-seeded at their new versions.
+
 8.2.0 (2026-10-15), additive within 8.x, no purge:
 
 - [x] CHANGELOG: the `## 8.2.0` section.

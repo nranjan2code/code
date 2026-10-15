@@ -1,4 +1,8 @@
-## Unreleased
+## 8.3.0 — 2026-10-15
+
+The skills Vakyartha ships are real procedures, and two of them are
+tested abilities. Additive within 8.x: no purge, the data baseline stays
+8.0.
 
 - The skills Vakyartha ships are rewritten as real procedures that name
   the tools and cards it has today: getting started, research and
