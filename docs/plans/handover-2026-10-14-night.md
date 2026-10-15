@@ -13,7 +13,7 @@ failure' and 'Verification before every commit'), then
 docs/plans/handover-2026-10-14-night.md whole.
 
 Run `git status` and `git log --oneline -8`. If the newest commit is not
-'Handover: 8.2.0 installed fresh on this Mac', read 'Where things stand' and finish what
+'Handover: 8.3.0 released and installed', read 'Where things stand' and finish what
 it says is unfinished. Stage only your own paths; keep only `main`; check `git show
 --stat` before every push. We are on a Claude Code Pro plan, so keep
 token use to what the task needs: read with grep and line ranges, never
@@ -44,6 +44,18 @@ throwaway VAK_HOME, PATCH /config to ollama qwen3.5:4b-mlx). Short
 progress lines."
 
 ## Where things stand
+
+**8.3.0 released and installed on this Mac** (2026-10-15, `e9bcf11fc`,
+tag `v8.3.0`): the shipped skills are real procedures in the packages
+(the `seed.rs` skill table is gone), with two tested programs,
+`date-calculator` and `table-profile`. The installed route is ollama
+`qwen3.5:0.8b-mlx` with no OpenAI key, by the maintainer's choice:
+Vakyartha must work with the smallest model, so failures seen there are
+Vak's contract to investigate, never a reason to change the route.
+Seen on that route before 8.3.0 (not yet investigated): "remember that"
+never called `remember`; "whats my name?" looped over made-up file
+previews and shell searches until stopped; one-cell table rows were
+refused three times in a turn.
 
 **8.2.0 released 2026-10-15** (`6957c0dd5`, tag `v8.2.0`, artifacts in
 `dist/8.2.0`, feed at the local 127.0.0.1:8899 URL like 8.1.0): doc 93

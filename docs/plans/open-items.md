@@ -21,9 +21,13 @@ across them. Nothing here is started unless it says so.
 
 - [x] CHANGELOG: the `## 8.3.0` section.
 - [x] Version: 8.3.0 (`scripts/bump-version.sh`).
-- [ ] `scripts/release.sh`: every gate passed, tagged `v8.3.0`.
-- [ ] This Mac: `dist/8.3.0/vak self install`, `self services-sync`,
-  `self verify`; the packages re-seeded at their new versions.
+- [x] `scripts/release.sh`: every gate passed (`e9bcf11fc`), tagged `v8.3.0`.
+- [x] This Mac: `dist/8.3.0/vak self install`, `self services-sync`,
+  `self verify` clean; everyday-starter and developer-starter 1.2.0 and
+  answer-layouts 1.1.0 seeded; the six 8.2.0 seed copies in
+  `~/vak-home/.vak/skills` (unedited) moved out by hand, since nothing
+  seeds or removes them now; the server lists 13 skills, one per name.
+  The route stays ollama `qwen3.5:0.8b-mlx` (the maintainer's choice).
 
 8.2.0 (2026-10-15), additive within 8.x, no purge:
 
