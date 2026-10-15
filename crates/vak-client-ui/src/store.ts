@@ -29,7 +29,7 @@ import type {
 } from "./types";
 
 export type Item =
-  | { kind: "user"; text: string; entryId?: string; authorId?: string; authorName?: string; files?: api.InboxFile[]; artifacts?: { id: string; name: string; mode: "continue" | "another" }[] }
+  | { kind: "user"; text: string; entryId?: string; authorId?: string; authorName?: string; scheduled?: { name: string; failed: boolean; at?: string }; files?: api.InboxFile[]; artifacts?: { id: string; name: string; mode: "continue" | "another" }[] }
   | { kind: "assistant"; key: string; text: string; streaming: boolean }
   | { kind: "thinking"; key: string; text: string; done: boolean }
   | {
@@ -1069,7 +1069,7 @@ export function transcriptToItems(
       const joined = stripControlScaffolding(texts.join("\n"));
       const authorPrefix = meta?.author_name ? `${meta.author_name}: ` : "";
       const displayText = authorPrefix && joined.startsWith(authorPrefix) ? joined.slice(authorPrefix.length) : joined;
-      if (displayText || files.length || artifacts.length) next.push({ kind: "user", text: displayText, entryId: meta?.entry_id, authorId: meta?.author_id ?? undefined, authorName: meta?.author_name ?? undefined, files: files.length ? files : undefined, artifacts: artifacts.length ? artifacts : undefined });
+      if (displayText || files.length || artifacts.length) next.push({ kind: "user", text: displayText, entryId: meta?.entry_id, authorId: meta?.author_id ?? undefined, authorName: meta?.author_name ?? undefined, scheduled: meta?.scheduled ? { ...meta.scheduled, at: meta.at } : undefined, files: files.length ? files : undefined, artifacts: artifacts.length ? artifacts : undefined });
     } else {
       const baseKey = `${id}-h${assistantSeq++}`;
       const hasText = m.content.some(

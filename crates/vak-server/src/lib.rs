@@ -8364,6 +8364,8 @@ mod transcript_reply_tests {
             artifacts: Vec::new(),
             typed: None,
             removed: false,
+            scheduled: None,
+            at: chrono::Utc::now(),
         }
     }
 
@@ -8521,6 +8523,11 @@ pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
                 "removed": item.removed,
                 "attachments": item.attachments,
                 "artifacts": item.artifacts,
+                "at": item.at,
+                "scheduled": item.scheduled.as_ref().map(|scheduled| serde_json::json!({
+                    "name": scheduled.name,
+                    "failed": scheduled.failed,
+                })),
             })
         })
         .collect();

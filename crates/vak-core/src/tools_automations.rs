@@ -405,7 +405,7 @@ impl vak_tools::Tool for AutomationsTool {
                 "action": {
                     "type": "string",
                     "enum": ["list", "add", "change", "pause", "resume", "run_now", "remove"],
-                    "description": "What to do"
+                    "description": "What to do. `run_now` runs it once at once, paused or not, and leaves its schedule and pause as they are; `resume` turns a paused schedule back on and runs nothing now; `pause` stops its schedule until resumed"
                 },
                 "automation": {
                     "type": "string",

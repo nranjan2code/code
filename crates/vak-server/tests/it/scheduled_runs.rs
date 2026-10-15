@@ -1051,11 +1051,33 @@ async fn a_run_that_answered_with_a_card_delivers_the_card_as_a_card() {
         "Here it is.",
         "the narration, not the card's text again"
     );
+    let head = items
+        .iter()
+        .find(|item| {
+            item["role"] == "user"
+                && item["content"]["document"]["metadata"]["scheduled_name"] == "quote"
+        })
+        .expect("the run's prompt is drawn under its Scheduled head");
+    assert!(
+        head["fallback_text"]
+            .as_str()
+            .unwrap()
+            .contains("Scheduled automation 'quote'"),
+        "the head keeps the prompt, not the answer's narration: {head}"
+    );
     let (_, transcript) = server.get(&format!("/sessions/{session}/transcript")).await;
     assert!(
         transcript
             .to_string()
             .contains("Small steps make big change."),
         "the model still reads the card's text: {transcript}"
+    );
+    assert!(
+        transcript["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["scheduled"]["name"] == "quote"),
+        "the chat learns which message an automation delivered: {transcript}"
     );
 }

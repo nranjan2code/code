@@ -188,6 +188,11 @@ export interface TranscriptEntryMeta {
   /** Library artifacts attached to this message; `block` is the block the
    *  server wrote about each, which the chat draws as the artifact. */
   artifacts?: { block: number; artifact: string; name: string; mode: "continue" | "another" }[];
+  /** When the entry was written. */
+  at?: string;
+  /** An automation delivered this message: the chat draws its head, not a
+   *  bubble the person wrote (docs/design/94 §4). */
+  scheduled?: { name: string; failed: boolean } | null;
 }
 
 export interface OutputItem {

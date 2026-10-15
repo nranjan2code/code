@@ -9,7 +9,7 @@ import AgentMark from "./AgentMark";
 import SetupBanner from "./SetupBanner";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
-import PresentationTimelineView, { Artifact, ResultCard, StructuredView } from "./PresentationRenderer";
+import PresentationTimelineView, { Artifact, ResultCard, ScheduledHead, StructuredView } from "./PresentationRenderer";
 import { attachFiles } from "../attachFiles";
 import type { OutputItem } from "../types";
 import { hasSettledProjection, serverTurnFor } from "../turnPairing";
@@ -605,6 +605,7 @@ function deliverableItem(art: { name: string; path: string; execId?: string }, f
 function itemBody(item: Item, sessionId?: string | null): JSX.Element {
   if (item.kind === "user") {
     const text = stripControlScaffolding(item.text);
+    if (item.scheduled) return <ScheduledHead name={item.scheduled.name} failed={item.scheduled.failed} timestamp={item.scheduled.at} title={text} />;
     if (!text && !item.files?.length && !item.artifacts?.length) return null;
     return (
       <div class="msg user">

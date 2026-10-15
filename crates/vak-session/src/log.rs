@@ -2930,6 +2930,8 @@ impl SessionLog {
                         .unwrap_or_default(),
                     typed: record.meta.as_ref().and_then(|meta| meta.typed.clone()),
                     removed: record.meta.as_ref().is_some_and(|meta| meta.removed),
+                    scheduled: record.meta.as_ref().and_then(|meta| meta.scheduled.clone()),
+                    at: entry.ts,
                 }),
                 EntryPayload::Compaction(c) => Some(TranscriptMessage {
                     entry_id: entry.id.clone(),
@@ -2945,6 +2947,8 @@ impl SessionLog {
                     artifacts: Vec::new(),
                     typed: None,
                     removed: false,
+                    scheduled: None,
+                    at: entry.ts,
                 }),
                 _ => None,
             })

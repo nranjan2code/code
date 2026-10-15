@@ -268,13 +268,24 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   Delete. The owner's changes from a screen leave `made_by` alone, so a
   card stays under its turn. Checked live at 1440 × 900 light and
   390 × 844 dark (change time, pause and resume from the card).
-- [ ] Live, dev route (2026-10-15): "Pause my morning line." was
-  answered "The morning line is paused" with no call (a callout card
-  only); `automations` is a deferred tool there (reached through
-  `find_tools`, which the turn did not call). Find what in the tool
-  surface left it out of reach (doc 68 §5: whether the More-tools
-  catalogue names it, and whether a conversation that owns automations
-  should load the tool) before calling it model behaviour.
+- [x] Live, dev route (2026-10-15): "Pause my morning line." was
+  answered with no call while `automations` was a deferred tool; the
+  conversation now keeps the tools it called loaded from its ledger
+  (`SessionLog::called_tools`). Checked again after a restart
+  (2026-10-15): the same request listed and paused it. "Run my morning
+  line now" on the paused automation called `resume`: the `action`
+  field said only "What to do", so for a paused one run-now and resume
+  read alike; it now says what each does (`run_now` runs once, paused or
+  not, and leaves the schedule as it is), and "pause it again, then run
+  my morning line now" called pause then `run_now`. The run's answer (a
+  summary card) came back as a card, but its prompt was drawn as the
+  owner's bubble: the projection put the narration in place of the
+  prompt's text too (an all-card answer has none, so the head item was
+  dropped), and the chat draws people's turns from `/transcript`, whose
+  entries did not say an automation wrote one. The narration now
+  replaces only the answer; transcript entries carry `scheduled` and
+  `at`, and the chat draws the shared `ScheduledHead`. Seen in the
+  running app: "Scheduled · morning line · Thu 11:55" over the card.
 - [x] S5 (2026-10-15): the Automations page (`AutomationsPage.tsx`,
   from the sidebar and the Inbox) replaces `AutomationsModal`: each
   automation as its card (the same buttons as in chat), its history, and

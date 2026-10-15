@@ -1069,6 +1069,7 @@ fn snapshot_inner(
                             // A delivered answer whose cards are drawn above
                             // shows its narration, not their text again.
                             let text = scheduled
+                                .filter(|_| assistant)
                                 .and_then(|scheduled| scheduled.narration.as_deref())
                                 .unwrap_or(text);
                             let cleaned_text_storage = clean_scaffolding(text);

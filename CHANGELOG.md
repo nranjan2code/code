@@ -1,5 +1,9 @@
 ## Unreleased
 
+- A scheduled run's prompt shows as a "Scheduled" line with the
+  automation's name and time in the conversation, not as a message you
+  wrote, also when its answer is only cards; and "run it now" on a
+  paused automation runs it once instead of resuming its schedule.
 - Schedules mean your time. Vakyartha has one time zone for you
   (`[owner] timezone`, this machine's unless you set it), every repeating
   schedule is saved with it, and "remind me at 9" is 9 in that zone

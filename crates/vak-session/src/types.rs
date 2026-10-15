@@ -316,6 +316,10 @@ pub struct TranscriptMessage {
     /// The message stands in for one a participant had removed
     /// (`MessageMeta::removed`).
     pub removed: bool,
+    /// An automation delivered this message (`MessageMeta::scheduled`).
+    pub scheduled: Option<ScheduledMeta>,
+    /// When the entry was written.
+    pub at: DateTime<Utc>,
 }
 
 /// `message` with its first text block replaced by what the person typed, when
