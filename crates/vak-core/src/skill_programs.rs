@@ -113,7 +113,11 @@ impl Core {
         );
         let text = serde_json::to_string(&verification)
             .map_err(|error| format!("the verification did not encode: {error}"))?;
-        vak_session::documents::create(&self.verification_path(&program.digest), &text)?;
+        // A program verified again (proposed again unchanged) keeps each
+        // run as a new version of its digest's record; the latest is read.
+        vak_session::documents::update(&self.verification_path(&program.digest), |_| {
+            Ok(Some((text.clone(), ())))
+        })?;
         Ok(verification)
     }
 
@@ -158,6 +162,8 @@ pub struct ProgramProposal<'a> {
     pub name: &'a str,
     pub description: &'a str,
     pub instructions: &'a str,
+    /// The kinds of work it serves (`serves:` in its SKILL.md).
+    pub serves: &'a [String],
     pub folder: &'a Path,
     pub session: &'a str,
     pub call: &'a str,
@@ -224,6 +230,15 @@ impl ProgramReview {
     }
 }
 
+/// The `serves:` line of a skill's frontmatter; none when it declares none.
+pub fn serves_line(serves: &[String]) -> String {
+    if serves.is_empty() {
+        String::new()
+    } else {
+        format!("serves: [{}]\n", serves.join(", "))
+    }
+}
+
 /// The inbox key of the entry that says proposal `id` is waiting.
 pub fn waiting_key(id: &str) -> String {
     format!("proposal-waiting|{id}")
@@ -287,8 +302,9 @@ impl Core {
         }
         vak_tools::capability::unbundle(&vak_tools::capability::bundle(proposal.folder)?, staging)?;
         let skill_md = format!(
-            "---\nname: \"{name}\"\ndescription: \"{}\"\n---\n\n{}\n",
+            "---\nname: \"{name}\"\ndescription: \"{}\"\n{}---\n\n{}\n",
             proposal.description.replace('"', "'"),
+            serves_line(proposal.serves),
             proposal.instructions
         );
         std::fs::write(staging.join("SKILL.md"), &skill_md)

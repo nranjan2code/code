@@ -158,8 +158,8 @@ impl Tool for ManagedFlowTool {
         true
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        FLOW_SERVES
+    fn serves(&self) -> Vec<&str> {
+        FLOW_SERVES.to_vec()
     }
 
     fn description(&self) -> &str {
@@ -5776,9 +5776,9 @@ impl Agent {
 
     /// What a `recall` result holds (docs/design/08-permissions.md
     /// "Provenance"): the owner's own history always, and what the turn or
-    /// call it reopens held. A search of cards, a card payload and another
-    /// conversation are taken to hold words someone else wrote, since
-    /// nothing recorded says they do not.
+    /// call it reopens held. A search or a card of this conversation holds
+    /// what its turns held; another conversation is taken to hold words
+    /// someone else wrote, since nothing recorded here says it does not.
     async fn recall_provenance(&self, input: &Value) -> vak_control::Provenance {
         use vak_control::Provenance;
         let Ok(request) = vak_tools::parse_recall_args(input) else {
@@ -5801,9 +5801,15 @@ impl Agent {
                         .map(|tool| tool.provenance())
                 })
             }),
-            RecallRequest::Presentation(_)
-            | RecallRequest::Search { .. }
-            | RecallRequest::Elsewhere { .. } => None,
+            // What a search or a card of this conversation returns came
+            // from its own turns, so it holds at most what they held.
+            RecallRequest::Presentation(_) | RecallRequest::Search { .. } => Some(
+                TurnIndex::from_log(&session)
+                    .turns
+                    .iter()
+                    .fold(Provenance::NONE, |held, turn| held.join(turn.provenance)),
+            ),
+            RecallRequest::Elsewhere { .. } => None,
         };
         Provenance::PRIVATE.join(reopened.unwrap_or(Provenance::UNTRUSTED))
     }

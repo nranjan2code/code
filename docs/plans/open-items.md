@@ -199,8 +199,26 @@ live.
   one made in another folder never shows there (the API for that folder
   lists it). Review belongs to E6, drawn from the Library's waiting
   versions rather than a list per folder.
-- [ ] E4: catalog source, prompt index, `find_tools` ranking; the tool
-  carries the skill's `serves:` so it defers (E1a loads it every turn).
+- [x] E4 (2026-10-15): `Tool::serves` returns `Vec<&str>` borrowed from
+  the tool, so a program's tool carries its skill's `serves:`
+  (`propose_skill` takes `serves`) and defers; the prompt's catalogue
+  lists the turn's program tools; loading the skill shows its program's
+  files and how to improve it; `Origin::Agent` names an Agent's own
+  skill. Live with gpt-6-luna on the installed home: a bill splitter
+  built with `serves: [code-exec, planning-and-organizing]`; a fresh
+  conversation asked about a dinner bill, loaded the skill, found the
+  tool with `find_tools` and answered to the cent from it; "improve your
+  ability with weights" wrote and tested a copy and proposed it again,
+  recorded as versions 2 to 4, each naming its parent. Found and fixed on
+  the way: the skill block called the Agent's own ability `workspace`
+  (the model prepared a copy for the owner instead of proposing); a
+  `recall` search of the same conversation was labelled someone else's
+  words, sending the improvement to Review (it now holds what the
+  conversation's turns held); verifying the same program twice failed on
+  its kept record (each run is now a new version of it).
+- [ ] Seen live (E4): before proposing a new version of a live ability the
+  model asked for confirmation once ("Confirmation before activating
+  version" in its plan). Nothing in Vak asks it to; left as observed.
 - [ ] Seen live (E1a, dev route): a card the model drew after the
   program answered showed one per-person figure and dropped the extra
   cent the program gave one person. E9 (card data from the call) is the

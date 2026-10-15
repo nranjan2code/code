@@ -105,8 +105,8 @@ impl Tool for McpTool {
         "mcp"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        Self::SERVES
+    fn serves(&self) -> Vec<&str> {
+        Self::SERVES.to_vec()
     }
 
     fn always_loaded(&self) -> bool {

@@ -44,8 +44,8 @@ impl vak_tools::Tool for ForgetMemoryTool {
         "forget_memory"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["memory"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["memory"]
     }
 
     fn description(&self) -> &str {
@@ -112,6 +112,7 @@ impl ProposeSkillTool {
         description: &str,
         instructions: &str,
         source: &str,
+        serves: &[String],
         ctx: &vak_tools::ToolContext,
     ) -> vak_tools::ToolOutput {
         use crate::skill_programs::{ProgramProposal, Standing};
@@ -141,6 +142,7 @@ impl ProposeSkillTool {
                 name,
                 description,
                 instructions,
+                serves,
                 folder: &folder,
                 session: &self.session_id,
                 call: &call,
@@ -201,8 +203,8 @@ impl vak_tools::Tool for RememberTool {
         "remember"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["memory"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["memory"]
     }
 
     fn description(&self) -> &str {
@@ -330,8 +332,8 @@ impl vak_tools::Tool for ProposeSkillTool {
         "propose_skill"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["memory"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["memory"]
     }
 
     fn description(&self) -> &str {
@@ -356,7 +358,12 @@ impl vak_tools::Tool for ProposeSkillTool {
                 "instructions": {"type": "string",
                                  "description": "Markdown procedure the future agent should follow"},
                 "source": {"type": "string",
-                           "description": format!("Optional: a folder you wrote for a skill with a program; its SKILL.md is written from name, description and instructions. {}", vak_tools::capability::FORMAT)}
+                           "description": format!("Optional: a folder you wrote for a skill with a program; its SKILL.md is written from name, description and instructions. {}", vak_tools::capability::FORMAT)},
+                "serves": {"type": "array", "items": {"type": "string"},
+                           "description": format!(
+                               "Optional: the kinds of work it serves, so a later turn finds it with `find_tools` instead of loading it every turn: any of {}, or a word of your own",
+                               crate::capability::Domain::known().iter().map(|domain| domain.as_str().to_string()).collect::<Vec<_>>().join(", ")
+                           )}
             },
             "required": ["name", "description", "instructions"]
         })
@@ -397,6 +404,27 @@ impl vak_tools::Tool for ProposeSkillTool {
             );
         }
 
+        let serves: Vec<String> = args
+            .get("serves")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|domain| {
+                        crate::capability::Domain::parse(domain)
+                            .as_str()
+                            .to_string()
+                    })
+                    .filter(|domain| {
+                        !domain.is_empty()
+                            && domain
+                                .chars()
+                                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         if let Some(source) = args
             .get("source")
             .and_then(Value::as_str)
@@ -404,7 +432,7 @@ impl vak_tools::Tool for ProposeSkillTool {
             .filter(|source| !source.is_empty())
         {
             return self
-                .propose_program(&name, description, instructions, source, ctx)
+                .propose_program(&name, description, instructions, source, &serves, ctx)
                 .await;
         }
         let id = uuid::Uuid::now_v7().simple().to_string();
@@ -422,7 +450,8 @@ impl vak_tools::Tool for ProposeSkillTool {
             None => String::new(),
         };
         let body = format!(
-            "---\nname: \"{name}\"\ndescription: \"{desc}\"\n{dup_line}---\n\n{instr}\n\n<!-- proposed-by: {sid} at {ts}; proposal id {id} -->\n",
+            "---\nname: \"{name}\"\ndescription: \"{desc}\"\n{serves_line}{dup_line}---\n\n{instr}\n\n<!-- proposed-by: {sid} at {ts}; proposal id {id} -->\n",
+            serves_line = crate::skill_programs::serves_line(&serves),
             desc = description.replace('"', "'"),
             instr = instructions,
             sid = self.session_id,

@@ -114,8 +114,8 @@ mod tests {
         async fn execute(&self, _: &Value, _: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
             vak_tools::ToolOutput::ok("")
         }
-        fn serves(&self) -> &'static [&'static str] {
-            self.serves
+        fn serves(&self) -> Vec<&str> {
+            self.serves.to_vec()
         }
         fn always_loaded(&self) -> bool {
             self.always

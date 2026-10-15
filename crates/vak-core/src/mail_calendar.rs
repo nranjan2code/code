@@ -639,8 +639,8 @@ impl vak_tools::Tool for MailCalendarTool {
         "mail_calendar"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["mail", "calendar"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["mail", "calendar"]
     }
 
     fn always_loaded(&self) -> bool {

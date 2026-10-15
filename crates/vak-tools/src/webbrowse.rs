@@ -200,8 +200,8 @@ impl Tool for WebBrowseTool {
         "browse"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["web", "live-data"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["web", "live-data"]
     }
 
     fn description(&self) -> &str {

@@ -98,6 +98,22 @@ impl Domain {
         }
     }
 
+    /// The domains this build knows, as a capability names them.
+    pub fn known() -> [Domain; 10] {
+        [
+            Domain::LiveData,
+            Domain::Web,
+            Domain::Filesystem,
+            Domain::CodeExec,
+            Domain::Memory,
+            Domain::Messaging,
+            Domain::Documents,
+            Domain::Orchestration,
+            Domain::Vcs,
+            Domain::Observability,
+        ]
+    }
+
     pub fn parse_list(values: &[String]) -> BTreeSet<Domain> {
         values
             .iter()

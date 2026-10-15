@@ -678,6 +678,7 @@ pub struct CapabilityTool {
     description: String,
     program: Program,
     worker_exe: PathBuf,
+    serves: Vec<String>,
 }
 
 impl CapabilityTool {
@@ -691,7 +692,16 @@ impl CapabilityTool {
             description,
             program,
             worker_exe,
+            serves: Vec::new(),
         }
+    }
+
+    /// The kinds of work its skill says it serves (`serves:` in SKILL.md),
+    /// so the tool surface can defer it and `find_tools` rank it; none
+    /// declared, it is loaded every turn.
+    pub fn with_serves(mut self, serves: Vec<String>) -> Self {
+        self.serves = serves;
+        self
     }
 
     /// Install the dependencies by a run of their own: a fresh environment
@@ -831,6 +841,10 @@ impl Tool for CapabilityTool {
 
     fn reaches(&self) -> Vec<String> {
         self.program.reaches()
+    }
+
+    fn serves(&self) -> Vec<&str> {
+        self.serves.iter().map(String::as_str).collect()
     }
 
     fn time_limit_argument(&self) -> Option<&'static str> {

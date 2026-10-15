@@ -337,6 +337,19 @@ async fn verification_runs_each_case_in_a_run_of_its_own_and_keeps_what_it_found
         vak_session::runs::RunStatus::Failed,
         "the run settled as its tests did"
     );
+
+    let again = core
+        .verify_skill_program("split", skill.path())
+        .await
+        .expect("the same program is verified again");
+    assert_ne!(again.run, verification.run);
+    assert_eq!(
+        core.skill_program_verification(&verification.digest)
+            .unwrap()
+            .run,
+        again.run,
+        "the latest run is the one kept"
+    );
 }
 
 /// A folder the Agent prepared: a program splitting a bill, and its tests.
@@ -604,4 +617,80 @@ async fn the_owners_switch_and_a_skills_packs_are_honoured() {
         out.content
     );
     assert_eq!(core.pack_kinds().block_of("bill_split"), Some("stats"));
+}
+
+/// Doc 93 E4: a skill proposed with `serves` gives its program's tool those
+/// domains, so the tool surface defers it and the prompt's catalogue names
+/// it; loading the skill shows its program's files and how to improve it,
+/// and proposing it again under its name records a version whose parent is
+/// the last one.
+#[tokio::test]
+async fn a_learned_ability_defers_by_what_it_serves_and_is_improved_from_its_files() {
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(workspace.path()).unwrap();
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).unwrap();
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let tool = vak_core::learning::ProposeSkillTool {
+        sessions_home: core.scope().into_root(),
+        cwd: workspace.path().to_path_buf(),
+        session_id: "sess-serves".into(),
+        core: Some(core.clone()),
+    };
+    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_agent_id("vak");
+    let propose = |source: &str| {
+        json!({"name": "bill-splitter", "description": "Split a bill evenly",
+               "instructions": "Call the tool with the amount and people.",
+               "source": source, "serves": ["documents", "Bill Splitting", "money"]})
+    };
+    prepared(workspace.path(), "v1", "args['people']", 30);
+    let out = tool.execute(&propose("v1"), &ctx).await;
+    assert!(
+        out.content.contains("yours from your next turn"),
+        "{}",
+        out.content
+    );
+
+    let frozen: Vec<_> = vak_core::skills::frozen_from_capabilities(&core.capability_descriptors())
+        .into_iter()
+        .filter(|skill| skill.name == "bill-splitter")
+        .collect();
+    assert_eq!(frozen.len(), 1);
+    let programs = vak_core::skills::programs(
+        &frozen,
+        PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")),
+    );
+    assert_eq!(programs[0].serves(), vec!["documents", "money"]);
+    let surface = vak_core::capability::build_tool_surface(&programs, true, &Default::default());
+    assert!(surface.core.is_empty());
+    assert_eq!(surface.deferred[0].name, "bill-splitter");
+
+    assert_eq!(frozen[0].provenance.as_deref(), Some("agent"));
+    let loaded = frozen[0].load().unwrap();
+    assert!(loaded.contains("You made this ability."), "{loaded}");
+    assert!(
+        loaded.contains("propose it again as `bill-splitter`"),
+        "{loaded}"
+    );
+    assert!(loaded.contains("<file path=\"run.py\">"), "{loaded}");
+    assert!(
+        loaded.contains("<file path=\"tests/even.json\">"),
+        "{loaded}"
+    );
+
+    prepared(workspace.path(), "v2", "max(args['people'], 1)", 30);
+    let out = tool.execute(&propose("v2"), &ctx).await;
+    assert!(
+        out.content.contains("yours from your next turn"),
+        "{}",
+        out.content
+    );
+    let artifact = core
+        .artifacts()
+        .list()
+        .into_iter()
+        .find(|artifact| artifact.title.as_deref() == Some("bill-splitter"))
+        .expect("recorded in the Library");
+    assert_eq!(artifact.versions.len(), 2);
+    assert_eq!(artifact.versions[1].parent, Some(artifact.versions[0].id));
 }

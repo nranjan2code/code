@@ -408,3 +408,31 @@ async fn recall_reaches_inside_a_line_a_window_cut() {
         "recall by characters returns it"
     );
 }
+
+/// A recall search of this conversation holds what its own turns held, not
+/// someone else's words (invariant 43): a turn that only read private data
+/// stays private after looking back.
+#[tokio::test]
+async fn a_recall_search_of_this_conversation_holds_what_its_turns_held() {
+    let dir = tempdir().unwrap();
+    let log = open(dir.path());
+    let recall = msg(
+        vec![ContentBlock::ToolUse {
+            id: "r1".into(),
+            name: "recall".into(),
+            input: serde_json::json!({"query": "splitting the bill"}),
+        }],
+        StopReason::ToolUse,
+    );
+    let r = run(log, 50_000, "look back", vec![recall, say("done")], false).await;
+    assert!(
+        matches!(r.outcome, TurnOutcome::Completed { .. }),
+        "{:?}",
+        r.outcome
+    );
+    let held = SessionLog::open_read_only(r.path)
+        .unwrap()
+        .call_provenance("r1")
+        .expect("labelled");
+    assert!(held.private && !held.untrusted, "{held:?}");
+}

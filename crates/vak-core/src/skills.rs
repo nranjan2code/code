@@ -81,9 +81,18 @@ impl FrozenSkill {
         let base = self.path.parent().unwrap_or(Path::new("."));
         let provenance = self.provenance.as_deref().unwrap_or("workspace-or-user");
         let program = match vak_tools::capability::Program::load(base) {
-            Ok(Some(_)) => format!(
-                "\n\nThis skill has a program: call the `{}` tool to run it.",
-                self.name
+            Ok(Some(program)) => format!(
+                "\n\n{owner}This skill has a program: call the `{name}` tool to run it. To improve \
+                 it, write a changed copy of these files in a folder of the workspace and \
+                 propose it again as `{name}` with `source`; it becomes a new version of this \
+                 one.{files}",
+                name = self.name,
+                owner = if provenance == "agent" {
+                    "You made this ability. "
+                } else {
+                    ""
+                },
+                files = program_files(base, &program)
             ),
             Ok(None) => String::new(),
             Err(reason) => format!("\n\nThis skill's program cannot run: {reason}."),
@@ -98,6 +107,41 @@ impl FrozenSkill {
             program
         ))
     }
+}
+
+/// The text of a program's own files (declaration, script, requirements,
+/// tests), each named by its path in the skill, so a turn can change it
+/// from what it is.
+fn program_files(base: &Path, program: &vak_tools::capability::Program) -> String {
+    let mut paths = vec![
+        base.join(vak_tools::capability::DECLARATION),
+        base.join(&program.entry),
+    ];
+    if let Some(requirements) = &program.requirements {
+        paths.push(base.join(&requirements.file));
+    }
+    if let Ok(entries) = std::fs::read_dir(base.join(vak_tools::capability::TESTS_DIR)) {
+        let mut tests: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+        tests.sort();
+        paths.extend(tests);
+    }
+    let canonical = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    paths
+        .iter()
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(path).ok()?;
+            let shown = path
+                .strip_prefix(base)
+                .or_else(|_| path.strip_prefix(&canonical))
+                .unwrap_or(path)
+                .display()
+                .to_string();
+            Some(format!(
+                "\n\n<file path=\"{shown}\">\n{}\n</file>",
+                text.trim_end()
+            ))
+        })
+        .collect()
 }
 
 /// The tool of each frozen skill that carries a program
@@ -115,14 +159,20 @@ pub fn programs(
         let Ok(Some(program)) = vak_tools::capability::Program::load(dir) else {
             continue;
         };
-        out.push(
-            std::sync::Arc::new(vak_tools::capability::CapabilityTool::new(
+        let serves = std::fs::read_to_string(&skill.path)
+            .ok()
+            .and_then(|text| parse_text(&text, &skill.path))
+            .and_then(|parsed| parsed.serves)
+            .unwrap_or_default();
+        out.push(std::sync::Arc::new(
+            vak_tools::capability::CapabilityTool::new(
                 skill.name.clone(),
                 skill.description.clone(),
                 program,
                 worker_exe.clone(),
-            )) as std::sync::Arc<dyn vak_tools::Tool>,
-        );
+            )
+            .with_serves(serves),
+        ) as std::sync::Arc<dyn vak_tools::Tool>);
     }
     out
 }
@@ -254,8 +304,8 @@ impl vak_tools::Tool for SkillTool {
         "skill"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        Self::SERVES
+    fn serves(&self) -> Vec<&str> {
+        Self::SERVES.to_vec()
     }
 
     fn always_loaded(&self) -> bool {

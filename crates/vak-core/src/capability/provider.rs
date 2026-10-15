@@ -158,7 +158,7 @@ impl Core {
                 id: CapabilityId::new(CapabilityKind::Tool, &name),
                 origin: Origin::Builtin,
                 summary: String::new(),
-                serves: Serves::from_labels(serves),
+                serves: Serves::from_labels(&serves.iter().map(String::as_str).collect::<Vec<_>>()),
                 digest: None,
                 source: None,
                 configuration: serde_json::Value::Null,
@@ -375,6 +375,7 @@ fn origin_from_provenance(provenance: Option<&str>) -> Origin {
             }
         }
         Some("user") => Origin::Shared,
+        Some("agent") => Origin::Agent,
         Some("project") => Origin::Workspace,
         _ => Origin::Workspace,
     }

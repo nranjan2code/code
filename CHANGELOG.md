@@ -1,5 +1,11 @@
 ## Unreleased
 
+- An ability an Agent made says what kind of work it serves, so it no
+  longer takes room in every request: it is listed among "more tools" and
+  loaded when needed. Asking an Agent to improve one shows it the
+  ability's own files, and the improvement is kept as a new version of
+  the same ability. Looking back through the same conversation no longer
+  counts as reading someone else's words.
 - An ability an Agent makes for itself now says what it reaches ("Reads
   the files in this project", "Connects to …") in its approval, in the
   proposal waiting for you and in your inbox. Settings → Capabilities has

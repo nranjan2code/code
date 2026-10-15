@@ -56,8 +56,8 @@ impl Tool for DocReadTool {
     // A file the person sent is in front of the Agent as much as any other
     // workspace file, and `read` refuses Office files in favour of this
     // tool, so it is loaded wherever `read` is.
-    fn serves(&self) -> &'static [&'static str] {
-        &["filesystem", "documents"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["filesystem", "documents"]
     }
 
     fn always_loaded(&self) -> bool {

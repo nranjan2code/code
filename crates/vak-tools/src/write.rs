@@ -28,8 +28,8 @@ impl Tool for WriteTool {
             .map(|path| (crate::FileAccess::Write, path.to_string()))
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["documents"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["documents"]
     }
 
     fn always_loaded(&self) -> bool {

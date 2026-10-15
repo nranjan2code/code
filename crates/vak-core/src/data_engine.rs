@@ -204,8 +204,8 @@ impl vak_tools::Tool for DataQueryTool {
         "data_query"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["documents"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["documents"]
     }
 
     fn description(&self) -> &str {

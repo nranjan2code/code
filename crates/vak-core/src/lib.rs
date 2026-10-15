@@ -3637,16 +3637,26 @@ impl Core {
     }
 
     /// The prompt's catalogue of admitted tools a turn may defer: every one
-    /// in `admitted` that is neither always loaded nor a presentation tool. Read from the tools' own
-    /// declarations, so it matches what `build_tool_surface` can defer.
-    fn tool_catalogue_for(&self, admitted: &std::collections::BTreeSet<String>) -> String {
-        let tools: Vec<Arc<dyn vak_tools::Tool>> = self
+    /// in `admitted`, and every program of the turn's skills whose name is
+    /// free, that is neither always loaded nor a presentation tool. Read
+    /// from the tools' own declarations, so it matches what
+    /// `build_tool_surface` can defer.
+    fn tool_catalogue_for(
+        &self,
+        admitted: &std::collections::BTreeSet<String>,
+        programs: &[Arc<dyn vak_tools::Tool>],
+    ) -> String {
+        let mut tools: Vec<Arc<dyn vak_tools::Tool>> = self
             .scoped_tools(&ToolScope::default())
             .into_iter()
-            .filter(|tool| {
-                admitted.contains(tool.name()) && !tool.always_loaded() && !tool.presents_cards()
-            })
+            .filter(|tool| admitted.contains(tool.name()))
             .collect();
+        for program in programs {
+            if !tools.iter().any(|tool| tool.name() == program.name()) {
+                tools.push(program.clone());
+            }
+        }
+        tools.retain(|tool| !tool.always_loaded() && !tool.presents_cards());
         let mut entries: Vec<(&str, &str)> = tools
             .iter()
             .map(|tool| (tool.name(), tool.description()))
@@ -4278,11 +4288,16 @@ impl Core {
 
     /// `(name, serves)` for every tool a turn could be offered, including the
     /// three the turn binds itself. The capability declarations read this.
-    fn tool_declarations(&self) -> Vec<(String, &'static [&'static str])> {
-        let mut out: Vec<(String, &'static [&'static str])> = self
+    fn tool_declarations(&self) -> Vec<(String, Vec<String>)> {
+        let mut out: Vec<(String, Vec<String>)> = self
             .scoped_tools(&ToolScope::default())
             .iter()
-            .map(|tool| (tool.name().to_string(), tool.serves()))
+            .map(|tool| {
+                (
+                    tool.name().to_string(),
+                    tool.serves().into_iter().map(str::to_string).collect(),
+                )
+            })
             .collect();
         let bound = [
             (!self.skills().is_empty()).then_some(("skill", skills::SkillTool::SERVES)),
@@ -4294,7 +4309,10 @@ impl Core {
         ];
         for (name, serves) in bound.into_iter().flatten() {
             if self.channel_tool_allowed(name) {
-                out.push((name.to_string(), serves));
+                out.push((
+                    name.to_string(),
+                    serves.iter().map(|domain| (*domain).to_string()).collect(),
+                ));
             }
         }
         out
@@ -7026,8 +7044,9 @@ impl Core {
         // to list. No reading of the request decides it (docs/design/88 §12.1).
         let progressive =
             self.inner.config.intent.enabled && self.inner.config.intent.slice_capabilities;
+        let programs = skills::programs(&turn_capabilities.frozen_skills, self.tool_worker_exe());
         let tool_catalogue = if progressive {
-            self.tool_catalogue_for(&turn_capabilities.tool_names)
+            self.tool_catalogue_for(&turn_capabilities.tool_names, &programs)
         } else {
             String::new()
         };
@@ -7353,7 +7372,6 @@ impl Core {
             }),
         });
         let frozen_skills = std::mem::take(&mut turn_capabilities.frozen_skills);
-        let programs = skills::programs(&frozen_skills, self.tool_worker_exe());
         let skill_tool = (!frozen_skills.is_empty())
             .then(|| Arc::new(skills::SkillTool::new(frozen_skills)) as Arc<dyn vak_tools::Tool>);
         if let Some(skill_tool) = &skill_tool {

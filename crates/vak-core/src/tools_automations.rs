@@ -369,8 +369,8 @@ impl vak_tools::Tool for AutomationsTool {
         vak_control::Provenance::PRIVATE
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["orchestration"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["orchestration"]
     }
 
     fn permission(&self) -> vak_permission::Declared {

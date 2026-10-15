@@ -160,7 +160,7 @@ impl Tool for ScopedWriteTool {
         self.inner.refusal(args)
     }
 
-    fn serves(&self) -> &'static [&'static str] {
+    fn serves(&self) -> Vec<&str> {
         self.inner.serves()
     }
 

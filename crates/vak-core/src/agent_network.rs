@@ -98,8 +98,8 @@ impl vak_tools::Tool for AgentNetworkTool {
         vak_control::Provenance::BOTH
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["messaging"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["messaging"]
     }
 
     fn description(&self) -> &str {

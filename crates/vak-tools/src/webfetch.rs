@@ -233,8 +233,8 @@ impl Tool for WebFetchTool {
         "webfetch"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["web", "live-data"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["web", "live-data"]
     }
 
     fn always_loaded(&self) -> bool {

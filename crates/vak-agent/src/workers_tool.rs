@@ -302,8 +302,8 @@ impl Tool for WorkersTool {
         "workers"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        Self::SERVES
+    fn serves(&self) -> Vec<&str> {
+        Self::SERVES.to_vec()
     }
 
     fn description(&self) -> &str {

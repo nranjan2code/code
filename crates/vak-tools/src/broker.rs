@@ -367,7 +367,7 @@ impl Tool for BrokeredTool {
         self.inner.changes_workspace(args)
     }
 
-    fn serves(&self) -> &'static [&'static str] {
+    fn serves(&self) -> Vec<&str> {
         self.inner.serves()
     }
 

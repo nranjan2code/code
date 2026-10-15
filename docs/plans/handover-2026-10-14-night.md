@@ -11,8 +11,8 @@ AGENTS.md first (especially 'The data rules', 'No word lists, no tuned
 limits', 'A tool's permission is what it declares', 'Investigating a
 failure' and 'Verification before every commit'), then
 docs/plans/handover-2026-10-14-night.md whole, then
-docs/design/94-scheduled-work-you-can-see.md whole (the current work)
-and docs/design/93-self-evolving-capabilities.md §2, §5, §11.
+docs/design/93-self-evolving-capabilities.md §2, §5, §7, §9 and §11 (the
+current work).
 
 Run `git status` and `git log --oneline -8`. Stage only your own paths;
 keep only `main`; check `git show --stat` before every push. We are on
@@ -28,23 +28,13 @@ this handover's prompt and 'Where things stand' before the session's
 limit, telling the maintainer when the session is near it. The maintainer is the only user and there are no others: rewrite
 a wrong design or screen rather than patch it.
 
-First, one live check of doc 94's follow-ups on the dev route (launch
-entry `vak-e1-live`, /tmp/vak-live/say.sh and items.sh, conversation id
-in /tmp/vak-live/s94): say "Pause my morning line." and see that the
-automations tool is called (it is now loaded from the ledger, so the
-restart does not matter); run the morning line now and see its answer
-delivered, with any card drawn as a card. Record what you see in
-docs/plans/open-items.md.
-
-Then return to self-evolving capabilities (doc 93), which doc 94
-interrupted: E1a, E1b, E2 and E3a are built; next is E3b (the owner's
-switch "Let Agents switch on new abilities that only work with your
-files", on by default, off sends every proposal to Review; an inbox
-entry for a program waiting for review; approval and Review wording that
-says what it reaches; presentation packs in a skill's `presentation/`
-activated from an Agent's own skills), then E4 (catalog source, prompt
-index, `find_tools` ranking; the tool carries the skill's `serves:` so
-it defers), then E5 to E9 as doc 93 §11 orders them. Build each as a
+Self-evolving capabilities (doc 93) stand at E4: E1a, E1b, E2, E3a, E3b
+and E4 are built and checked live. Next is E5 (per-version measurement;
+promotion offered and withdrawal by observed states, R2: §11), then E6
+(the client experience, which also owns the found gap that Settings
+lists only the proposals of the Agent's own folder: Review drawn from the
+Library's waiting versions), E7, E8 and E9 as doc 93 §11 orders them.
+Build each as a
 design, never spot fixes or tuned numbers.
 
 Live runs: the installed home (8.1.0, OpenAI key, gpt-6-luna) may be
@@ -89,9 +79,41 @@ route pin); a scheduled run's cards are drawn as cards in the home turn
 model still reads their text). Left on the dev home: the "morning line"
 automation and its test conversation.
 
-**Self-evolving capabilities (doc 93) stand at E3a**: E1a, E1b, E2 and
-E3a built and live-checked; E3b to E9 not started (tracker lines in
-open-items "Self-evolving capabilities").
+**Self-evolving capabilities (doc 93) stand at E4** (2026-10-15, full
+gate green, pushed): E5 to E9 not started (tracker lines in open-items
+"Self-evolving capabilities").
+
+**E4 is built** (checked live with gpt-6-luna on the installed home):
+`Tool::serves` returns `Vec<&str>` borrowed from the tool, so a program's
+tool carries its skill's `serves:` (`propose_skill` takes `serves`,
+described from `Domain::known`) and defers; the prompt's "More tools"
+catalogue lists the turn's program tools (`tool_catalogue_for`), the one
+capability index; loading a skill with a program shows its files and how
+to improve it (a changed copy proposed again under its name, a new
+Library version naming its parent); `Origin::Agent` labels an Agent's
+own skill `agent`. Fixed on the way: a `recall` search or card of the
+same conversation now holds what its turns held (was always "someone
+else's words"); verifying the same program twice saves a new version of
+its record (was a create conflict). Left on the installed home: the
+`restaurant-bill-splitter` skill (versions 1 to 4, v4 live), declined
+proposals, and the folders in /tmp/vak-live/e3.
+
+**E3b is built** (2026-10-15): `[owner] abilities_go_live` (on by
+default, a narrower layer only turns it off, `PUT /config/owner` now
+takes each field optionally) in Settings > Capabilities > Manage >
+Skills; `Program::reaches` is the one wording of what a program reaches,
+declared as `Tool::reaches` and carried by an approval's reason; a
+proposal waiting for review records `ProgramReview` and writes a
+`ProposalOpened` inbox entry, cleared on approve or decline
+(`Core::proposal_settled`); packs in a skill's `presentation/` are
+checked at proposal and active from the Agent's own skills.
+
+**Doc 94's follow-ups were checked live** (2026-10-15): tools stay loaded
+after a restart; "run it now" on a paused automation called `resume`
+until the `action` field said what each action does; a scheduled answer
+of cards only lost its "Scheduled" head (the narration replaced the
+prompt's text too, and the chat drew the prompt from `/transcript`,
+which now carries `scheduled` and `at`).
 
 **E3a is built** (2026-10-15, gate green, checked live with gpt-6-luna on
 the installed home): `propose_skill` takes `source`, a folder the Agent
@@ -241,10 +263,8 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. The live check of doc 94's follow-ups (the prompt says how), then
-   doc 93's E3b, then E4, each step with the full gate and a live
-   turn; tick `docs/plans/open-items.md` and the docs' Status as stages
-   land.
+1. Doc 93 E5, then E6 to E9 (doc 93 §11), each with the full gate and a
+   live turn; tick `docs/plans/open-items.md` and the doc's Status.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are
    the maintainer's; ask before cutting.
 
@@ -343,6 +363,13 @@ Git and release:
   profile; running remote `setup` over SSH is the owner's to do.
 
 ## Traps learned this session
+
+- Two dev servers on `localhost` share cookies (cookies ignore the port):
+  signing in on one signs the other's tab out (401s in Settings). Keep
+  one tab and sign in again with `?token=` when switching ports.
+- `scripts/gate.sh --changed` fails clippy on "items after a test
+  module" when a function is appended to the end of a file that ends in
+  `mod tests`.
 
 - `git mv` stages the rename at once; naming the old path in a later
   `git add` fails the whole add, and a `&&`-chained commit then commits

@@ -306,8 +306,8 @@ pub trait Tool: Send + Sync {
     /// itself so the harness never keeps a name table. Empty means
     /// undeclared, and an undeclared tool is always loaded: deferring is a
     /// context saving, never a policy, so an unknown tool fails open.
-    fn serves(&self) -> &'static [&'static str] {
-        &[]
+    fn serves(&self) -> Vec<&str> {
+        Vec::new()
     }
 
     /// What this tool reaches and what a permission rule about it matches

@@ -139,8 +139,8 @@ impl vak_tools::Tool for EntityRecordTool {
         vak_control::Provenance::PRIVATE
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["memory"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["memory"]
     }
 
     fn description(&self) -> &str {
@@ -324,8 +324,8 @@ impl vak_tools::Tool for EntityQueryTool {
         vak_control::Provenance::PRIVATE
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["memory"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["memory"]
     }
 
     fn description(&self) -> &str {

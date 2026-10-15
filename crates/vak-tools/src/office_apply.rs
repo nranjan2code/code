@@ -84,8 +84,8 @@ impl Tool for OfficeApplyTool {
         "office_apply"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["documents"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["documents"]
     }
 
     /// A draft for review of `path`, revised from `source` when that is an

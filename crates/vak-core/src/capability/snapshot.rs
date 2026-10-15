@@ -47,6 +47,9 @@ pub enum Origin {
     Workspace,
     /// The shared/user-level capability root.
     Shared,
+    /// The Agent's own skills (`agents/<id>/skills`): what it learned
+    /// (docs/design/93-self-evolving-capabilities.md).
+    Agent,
     /// Contributed by an installed plugin.
     Plugin { plugin: String, scope: String },
     /// Injected at runtime by a host surface.
@@ -59,6 +62,7 @@ impl Origin {
             Origin::Builtin => "builtin".into(),
             Origin::Workspace => "workspace".into(),
             Origin::Shared => "shared".into(),
+            Origin::Agent => "agent".into(),
             Origin::Plugin { plugin, scope } => format!("plugin:{scope}:{plugin}"),
             Origin::Runtime => "runtime".into(),
         }

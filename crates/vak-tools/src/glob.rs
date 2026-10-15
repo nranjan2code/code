@@ -28,8 +28,8 @@ impl Tool for GlobTool {
         "glob"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["filesystem"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["filesystem"]
     }
 
     fn always_loaded(&self) -> bool {

@@ -86,8 +86,8 @@ impl vak_tools::Tool for SessionSearchTool {
         vak_control::Provenance::BOTH
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["memory"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["memory"]
     }
 
     fn always_loaded(&self) -> bool {

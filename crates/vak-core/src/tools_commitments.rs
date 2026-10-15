@@ -56,8 +56,8 @@ impl vak_tools::Tool for CommitmentsTool {
         "commitments"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["memory", "orchestration"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["memory", "orchestration"]
     }
 
     fn always_loaded(&self) -> bool {

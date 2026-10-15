@@ -29,8 +29,8 @@ impl Tool for GrepTool {
         "grep"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["filesystem"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["filesystem"]
     }
 
     fn always_loaded(&self) -> bool {

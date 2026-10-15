@@ -31,8 +31,8 @@ impl Tool for ReadTool {
             .map(|path| (crate::FileAccess::Read, path.to_string()))
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["filesystem"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["filesystem"]
     }
 
     fn always_loaded(&self) -> bool {

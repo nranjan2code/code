@@ -10,7 +10,10 @@ their own, kept per digest); E3a built 2026-10-15 (propose_skill with a
 gate, the Agent's own skills discovered; checked live with gpt-6-luna);
 E3 built 2026-10-15 (E3b: the owner's switch `[owner] abilities_go_live`,
 the waiting proposal's inbox entry and review record, what a program
-reaches in approvals, packs from an Agent's own skills); E4 to E9 not
+reaches in approvals, packs from an Agent's own skills); E4 built
+2026-10-15 (a program's tool carries its skill's `serves:` and defers,
+listed in the prompt's catalogue; loading the skill shows its files and
+how to improve it; checked live across conversations); E5 to E9 not
 built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
@@ -400,7 +403,20 @@ Every rule in AGENTS.md "The data rules" holds; the ones that bite here:
   (`ToolSurface`). As built in E1a, a program's tool declares no `serves`
   domains, so `build_tool_surface` loads it on every turn (undeclared
   fails open); E4 carries the skill's `serves:` onto its tool so it
-  defers. A capability declares `serves` so the surface can
+  defers. As built in E4: `propose_skill` takes `serves` (described from
+  `Domain::known`), written into the skill's frontmatter;
+  `CapabilityTool::with_serves` gives the tool those domains; the
+  prompt's "More tools" catalogue is the capability index and lists the
+  turn's program tools beside the Core's own (`tool_catalogue_for`), so
+  there is one index, not a second list. Loading a skill that has a
+  program (`FrozenSkill::load`) shows its declaration, script,
+  requirements and tests and says how to improve it: a changed copy in
+  the workspace proposed again under its name, which the Library records
+  as a new version whose parent is the last. An Agent's own skill has
+  its own origin (`Origin::Agent`, provenance `agent`), so the model is
+  told it made it. The catalog already holds a skill as an artifact node
+  (its name, description and path as text; `produced_by` edges to the
+  call and run of each version); a version is not a node of its own. A capability declares `serves` so the surface can
   rank it; undeclared fails open (doc 41, `capability/domain.rs`).
 - The prompt seed gains no instruction naming any capability. What the
   model needs to know about building is the `propose_skill` tool's own

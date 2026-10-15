@@ -29,8 +29,8 @@ impl Tool for BashTool {
         "bash"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["code-exec"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["code-exec"]
     }
 
     fn always_loaded(&self) -> bool {

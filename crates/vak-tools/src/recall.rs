@@ -236,8 +236,8 @@ impl Tool for RecallTool {
         "recall"
     }
 
-    fn serves(&self) -> &'static [&'static str] {
-        &["memory"]
+    fn serves(&self) -> Vec<&str> {
+        vec!["memory"]
     }
 
     fn always_loaded(&self) -> bool {
