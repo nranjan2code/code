@@ -187,15 +187,69 @@ fn next_fire<Tz: TimeZone>(expr: &CronExpr, after: DateTime<Tz>) -> Option<DateT
                 if candidate < start_minute {
                     continue;
                 }
-                // Gap → None → skip forward to the next existing match;
-                // fold → earliest instant wins.
-                if let Some(dt) = tz.from_local_datetime(&candidate).earliest() {
+                // Fold → its first occurrence; gap → the first minute
+                // after it that exists, once (docs/design/94 §6).
+                if let Some(dt) = first_existing(&tz, candidate) {
                     return Some(dt);
                 }
             }
         }
     }
     None
+}
+
+/// `local` in `tz`: its first occurrence when the clocks went back, or the
+/// first minute after a skipped hour when they went forward.
+fn first_existing<Tz: TimeZone>(tz: &Tz, local: chrono::NaiveDateTime) -> Option<DateTime<Tz>> {
+    (0..=24 * 60).find_map(|minutes| {
+        tz.from_local_datetime(&(local + chrono::Duration::minutes(minutes)))
+            .earliest()
+    })
+}
+
+/// This machine's IANA time zone, or `UTC` when it has none that can be
+/// named: the owner's when they have set none
+/// (`vak_config::Config::owner_timezone`).
+pub fn host_timezone() -> String {
+    iana_time_zone::get_timezone()
+        .ok()
+        .filter(|zone| zone.parse::<chrono_tz::Tz>().is_ok())
+        .unwrap_or_else(|| "UTC".into())
+}
+
+/// A date and time as a person says it, read in `zone`: `2026-10-17 09:00`
+/// (seconds and a `T` are fine), or an RFC3339 instant whose own offset
+/// is kept. A time that has passed is refused with the time now.
+pub fn local_instant(text: &str, zone: &str, now: DateTime<Utc>) -> Result<DateTime<Utc>, String> {
+    let tz: chrono_tz::Tz = zone
+        .parse()
+        .map_err(|_| format!("unknown IANA timezone '{zone}'"))?;
+    let text = text.trim();
+    let at = match DateTime::parse_from_rfc3339(text) {
+        Ok(at) => at.with_timezone(&Utc),
+        Err(_) => {
+            let local = [
+                "%Y-%m-%d %H:%M",
+                "%Y-%m-%dT%H:%M",
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S",
+            ]
+            .iter()
+            .find_map(|format| chrono::NaiveDateTime::parse_from_str(text, format).ok())
+            .ok_or_else(|| format!("'{text}' is not a date and time like 2026-10-17 09:00"))?;
+            first_existing(&tz, local)
+                .ok_or_else(|| format!("'{text}' does not exist in {zone}"))?
+                .with_timezone(&Utc)
+        }
+    };
+    if at <= now {
+        return Err(format!(
+            "{} has already passed; it is now {} in {zone}",
+            at.with_timezone(&tz).format("%Y-%m-%d %H:%M"),
+            now.with_timezone(&tz).format("%Y-%m-%d %H:%M")
+        ));
+    }
+    Ok(at)
 }
 
 /// What a trigger does when it fires.
@@ -390,9 +444,15 @@ impl Trigger {
                     expr: expr.clone(),
                     reason,
                 })?;
-                if let Some(zone) = timezone.as_deref()
-                    && zone.parse::<chrono_tz::Tz>().is_err()
-                {
+                // A cron is read in a zone it names, never in whatever
+                // zone the host happens to have (docs/design/94 §6).
+                let Some(zone) = timezone.as_deref() else {
+                    return Err(TriggerError::BadSchedule {
+                        expr: expr.clone(),
+                        reason: "a repeating schedule names its time zone".into(),
+                    });
+                };
+                if zone.parse::<chrono_tz::Tz>().is_err() {
                     return Err(TriggerError::BadSchedule {
                         expr: zone.into(),
                         reason: "unknown IANA timezone".into(),
@@ -412,6 +472,18 @@ impl Trigger {
 
     /// The first slot strictly after `after`, `None` when there is none
     /// (a manual trigger, a past one-shot, an unsatisfiable cron).
+    /// A repeating schedule made without a zone is made in `zone`, the
+    /// owner's: the one place a missing zone is decided.
+    pub fn in_zone(&mut self, zone: &str) {
+        if let TriggerKind::Schedule {
+            schedule: Schedule::Cron { timezone, .. },
+        } = &mut self.kind
+            && timezone.is_none()
+        {
+            *timezone = Some(zone.to_string());
+        }
+    }
+
     pub fn next_slot_after(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
         match self.schedule()? {
             Schedule::Cron { expr, timezone } => match timezone.as_deref() {
@@ -910,6 +982,101 @@ pub fn next_slot(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[test]
+    fn a_slot_in_a_skipped_hour_runs_once_at_the_first_minute_after_it() {
+        // New York skips 02:00-03:00 on 2026-03-08.
+        let after: DateTime<Utc> = "2026-03-08T05:00:00Z".parse().unwrap();
+        let next = cron_next_after_timezone("30 2 * * *", after, "America/New_York").unwrap();
+        assert_eq!(
+            next,
+            "2026-03-08T07:00:00Z".parse::<DateTime<Utc>>().unwrap(),
+            "03:00 local"
+        );
+        let after_that = cron_next_after_timezone("30 2 * * *", next, "America/New_York").unwrap();
+        assert_eq!(
+            after_that,
+            "2026-03-09T06:30:00Z".parse::<DateTime<Utc>>().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_repeated_hour_runs_once_at_its_first_occurrence() {
+        // New York repeats 01:00-02:00 on 2026-11-01.
+        let after: DateTime<Utc> = "2026-11-01T04:00:00Z".parse().unwrap();
+        let next = cron_next_after_timezone("30 1 * * *", after, "America/New_York").unwrap();
+        assert_eq!(
+            next,
+            "2026-11-01T05:30:00Z".parse::<DateTime<Utc>>().unwrap(),
+            "EDT first"
+        );
+        let after_that = cron_next_after_timezone("30 1 * * *", next, "America/New_York").unwrap();
+        assert_eq!(
+            after_that,
+            "2026-11-02T06:30:00Z".parse::<DateTime<Utc>>().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_local_time_is_read_in_the_owners_zone() {
+        let now: DateTime<Utc> = "2026-10-15T03:00:00Z".parse().unwrap();
+        let at = local_instant("2026-10-17 09:00", "Asia/Kolkata", now).unwrap();
+        assert_eq!(at, "2026-10-17T03:30:00Z".parse::<DateTime<Utc>>().unwrap());
+        let kept = local_instant("2026-10-17T09:00:00-04:00", "Asia/Kolkata", now).unwrap();
+        assert_eq!(
+            kept,
+            "2026-10-17T13:00:00Z".parse::<DateTime<Utc>>().unwrap(),
+            "its own offset"
+        );
+        let passed = local_instant("2026-10-14 09:00", "Asia/Kolkata", now).unwrap_err();
+        assert!(
+            passed.contains("already passed") && passed.contains("2026-10-15 08:30"),
+            "{passed}"
+        );
+        assert!(local_instant("next friday", "Asia/Kolkata", now).is_err());
+    }
+
+    #[test]
+    fn a_cron_without_a_zone_is_made_in_the_owners_and_never_read_in_the_hosts() {
+        let mut trigger = Trigger {
+            id: vak_session::ids::TriggerId::new(),
+            name: "zone".into(),
+            agent: "vak".into(),
+            agent_revision: None,
+            space: "space".into(),
+            enabled: true,
+            kind: TriggerKind::Schedule {
+                schedule: Schedule::Cron {
+                    expr: "0 8 * * 1-5".into(),
+                    timezone: None,
+                },
+            },
+            action: TriggerAction::Script {
+                command: "true".into(),
+            },
+            deliver_to: None,
+            on_crash: OnCrash::Skip,
+            scope: None,
+            created_at: Utc::now(),
+            created_by: None,
+        };
+        assert!(trigger.validate().is_err(), "a cron names its zone");
+        trigger.in_zone("Asia/Kolkata");
+        assert!(trigger.validate().is_ok());
+        assert_eq!(
+            trigger.schedule(),
+            Some(&Schedule::Cron {
+                expr: "0 8 * * 1-5".into(),
+                timezone: Some("Asia/Kolkata".into())
+            })
+        );
+        trigger.in_zone("UTC");
+        assert!(
+            matches!(trigger.schedule(), Some(Schedule::Cron { timezone: Some(zone), .. }) if zone == "Asia/Kolkata"),
+            "a named zone is never replaced"
+        );
+    }
+
     use chrono::{FixedOffset, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone};
 
     fn local(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<chrono::Local> {

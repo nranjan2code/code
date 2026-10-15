@@ -257,7 +257,7 @@ fn stale_script(
                     "{} * * * *",
                     (chrono::Timelike::minute(&chrono::Utc::now()) + 30) % 60
                 ),
-                timezone: None,
+                timezone: Some("UTC".into()),
             },
         },
         action: vak_core::triggers::TriggerAction::Script {

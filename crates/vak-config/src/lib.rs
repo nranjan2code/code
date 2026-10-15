@@ -179,6 +179,8 @@ pub struct FileConfig {
     #[serde(default)]
     pub automation: AutomationSettings,
     #[serde(default)]
+    pub owner: OwnerSettings,
+    #[serde(default)]
     pub update: UpdateSettings,
     #[serde(default)]
     pub tools: ToolsSettings,
@@ -872,6 +874,16 @@ pub struct AutomationSettings {
     pub catch_up_missed: Option<bool>,
 }
 
+/// About the install's one owner (docs/design/94-scheduled-work-you-can-see.md
+/// §6).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct OwnerSettings {
+    /// The owner's IANA time zone, such as `Asia/Kolkata`: what "9 AM"
+    /// means in a schedule and the time line. Unset, this machine's.
+    pub timezone: Option<String>,
+}
+
 /// Opt-in update awareness (docs/design/29-personal-os.md P3). A `None`
 /// url disables update checks entirely; checks never auto-install.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -1407,6 +1419,8 @@ pub struct Config {
     pub intent: IntentResolved,
     pub commitment: CommitmentResolved,
     pub automation: AutomationResolved,
+    /// `[owner] timezone` as written; `Core::owner_timezone` resolves it.
+    pub owner_timezone: Option<String>,
     pub update: UpdateResolved,
     pub tools: ToolsResolved,
     pub heartbeat: HeartbeatResolved,
@@ -1753,6 +1767,7 @@ impl Default for Config {
             automation: AutomationResolved {
                 catch_up_missed: true,
             },
+            owner_timezone: None,
             update: UpdateResolved {
                 url: None,
                 interval_hours: 24,
@@ -3343,6 +3358,12 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     };
     cfg.sandbox.image = merged.sandbox.image.clone();
     cfg.automation.catch_up_missed = merged.automation.catch_up_missed.unwrap_or(true);
+    cfg.owner_timezone = merged
+        .owner
+        .timezone
+        .clone()
+        .map(|zone| zone.trim().to_string())
+        .filter(|zone| !zone.is_empty());
     cfg.update.url = merged.update.url.clone();
     cfg.update.interval_hours = merged.update.interval_hours.unwrap_or(24);
     cfg.tools.web_fetch = merged.tools.web_fetch.unwrap_or(true);
@@ -3542,6 +3563,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "sandbox",
     "finops",
     "automation",
+    "owner",
     "update",
     "tools",
     "heartbeat",
@@ -3635,6 +3657,7 @@ const KNOWN_SANDBOX_KEYS: &[&str] = &["backend", "image"];
 const KNOWN_OUTBOUND_KEYS: &[&str] = &["webhooks"];
 const KNOWN_WEBHOOK_KEYS: &[&str] = &["url", "token_env"];
 const KNOWN_AUTOMATION_KEYS: &[&str] = &["catch_up_missed"];
+const KNOWN_OWNER_KEYS: &[&str] = &["timezone"];
 const KNOWN_UPDATE_KEYS: &[&str] = &["url", "interval_hours"];
 const KNOWN_TOOLS_KEYS: &[&str] = &["web_fetch", "browse"];
 const KNOWN_HEARTBEAT_KEYS: &[&str] = &[
@@ -3846,6 +3869,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             if !KNOWN_SANDBOX_KEYS.contains(&key.as_str()) {
                 out.push(format!(
                     "{}: unknown sandbox key 'sandbox.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(t) = top.get("owner").and_then(toml::Value::as_table) {
+        for key in t.keys() {
+            if !KNOWN_OWNER_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown owner key 'owner.{key}' (ignored)",
                     path.display()
                 ));
             }
@@ -4305,6 +4338,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.automation.catch_up_missed.is_some() {
         base.automation.catch_up_missed = over.automation.catch_up_missed;
+    }
+    if over.owner.timezone.is_some() {
+        base.owner.timezone = over.owner.timezone;
     }
     if over.update.url.is_some() {
         base.update.url = over.update.url;

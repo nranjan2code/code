@@ -280,7 +280,7 @@ pub(crate) async fn create_trigger(
     }
     let id = TriggerId::new();
     let routine = draft.scope.is_some();
-    let trigger = Trigger {
+    let mut trigger = Trigger {
         id,
         name: draft.name,
         agent: draft
@@ -305,6 +305,7 @@ pub(crate) async fn create_trigger(
         created_at: Utc::now(),
         created_by: Some(crate::request_actor(&state)),
     };
+    trigger.in_zone(&state.core.owner_timezone());
     if let Err(response) = check_routine(&state, &trigger).await {
         return *response;
     }
@@ -372,6 +373,7 @@ pub(crate) async fn put_trigger(
         scope.routine_id = current.id.uuid().to_string();
         scope
     });
+    candidate.in_zone(&state.core.owner_timezone());
     if let Err(response) = check_routine(&state, &candidate).await {
         return *response;
     }

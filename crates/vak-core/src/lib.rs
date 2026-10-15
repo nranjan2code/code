@@ -1156,36 +1156,29 @@ path must start with the workspace's. Commands start in it.\n",
     )
 }
 
-/// The per-turn time line (docs/design/68-context-engine.md §6). Names the
-/// host's IANA zone rather than a bare offset, so a daylight-saving date
-/// converts correctly, and says whether that zone is the person's: on a
-/// surface on this machine it is; a chat, web or API reader may be anywhere.
-pub fn temporal_context(surface: &Surface, now: chrono::DateTime<chrono::Utc>) -> String {
-    let local = now.with_timezone(&chrono::Local);
-    let zone = iana_time_zone::get_timezone()
-        .ok()
-        .filter(|zone| zone.parse::<chrono_tz::Tz>().is_ok());
-    let host = match &zone {
-        Some(zone) => format!("{zone}, UTC{}", local.format("%:z")),
-        None => format!("UTC{}", local.format("%:z")),
-    };
-    let whose = match surface {
-        Surface::Cli | Surface::Terminal | Surface::Desktop => {
-            "The person is at this machine, so this is their time zone."
-        }
+/// The per-turn time line (docs/design/68-context-engine.md §6): the
+/// owner's local time in their IANA zone (`Core::owner_timezone`), so a
+/// daylight-saving date converts correctly and "9 AM" means the same on
+/// every surface and every host (docs/design/94 §6).
+pub fn temporal_context(
+    zone: &str,
+    surface: &Surface,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let tz: chrono_tz::Tz = zone.parse().unwrap_or(chrono_tz::UTC);
+    let local = now.with_timezone(&tz);
+    let note = match surface {
         Surface::Background => {
-            "This is a scheduled run: read relative dates in the request (\"today\", \
+            " This is a scheduled run: read relative dates in the request (\"today\", \
              \"this week\") against this time unless it names a specific date."
         }
-        _ => {
-            "The person may be in another time zone; when a date or time depends on \
-             theirs and they have not said it, ask or state the zone you assumed."
-        }
+        _ => "",
     };
     format!(
-        "\nCurrent time: {} UTC; host local time {} ({host}). {whose}",
+        "\nCurrent time: {} UTC; the owner's local time {} ({zone}, UTC{}).{note}",
         now.format("%Y-%m-%d %H:%M"),
         local.format("%A %Y-%m-%d %H:%M"),
+        local.format("%:z"),
     )
 }
 
@@ -1673,6 +1666,16 @@ impl Core {
         Self::read_override(&self.inner.control_override)
             .unwrap_or_else(|| self.config().control.clone())
             .step_defaults(provider, model)
+    }
+
+    /// The owner's IANA time zone: `[owner] timezone` when it names one,
+    /// else this machine's (docs/design/94 §6).
+    pub fn owner_timezone(&self) -> String {
+        self.config()
+            .owner_timezone
+            .clone()
+            .filter(|zone| zone.parse::<chrono_tz::Tz>().is_ok())
+            .unwrap_or_else(crate::triggers::host_timezone)
     }
 
     /// The operator's time limits (docs/design/88-control-plane.md §5a):
@@ -3707,7 +3710,7 @@ impl Core {
             mcp: mcp_config_section(&server_caps),
             standing,
             tool_index: tool_catalogue.to_string(),
-            temporal: temporal_context(&self.surface, chrono::Utc::now()),
+            temporal: temporal_context(&self.owner_timezone(), &self.surface, chrono::Utc::now()),
         };
         let resolution = prompts::resolve(&self.prompt_layers(seed.content), &runtime);
         let temporal = runtime.temporal;
@@ -4096,6 +4099,7 @@ impl Core {
                 .agent_identity()
                 .map_or_else(|| "vak".to_string(), |agent| agent.id.clone()),
             default_deliver_to: self.default_deliver_to.clone(),
+            owner_zone: self.owner_timezone(),
         }));
         if self.effective_commitment() {
             tools.push(Arc::new(tools_commitments::CommitmentsTool {
@@ -9271,16 +9275,16 @@ mod channel_mcp_network_tests {
                 .contains(marker)
         );
         let now = chrono::Utc::now();
-        let desk = crate::temporal_context(&Surface::Desktop, now);
-        assert!(desk.contains("this is their time zone"), "{desk}");
         let chat = crate::temporal_context(
+            "Asia/Kolkata",
             &crate::Surface::Chat {
                 channel: "telegram".into(),
             },
             now,
         );
-        assert!(chat.contains("may be in another time zone"), "{chat}");
-        let scheduled = crate::temporal_context(&Surface::Background, now);
+        assert!(chat.contains("the owner's local time"), "{chat}");
+        assert!(chat.contains("(Asia/Kolkata, UTC+05:30)"), "{chat}");
+        let scheduled = crate::temporal_context("Asia/Kolkata", &Surface::Background, now);
         assert!(scheduled.contains("scheduled run"), "{scheduled}");
     }
 

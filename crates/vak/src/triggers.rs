@@ -43,6 +43,9 @@ pub fn run_triggers(cwd: std::path::PathBuf, action: crate::cli::TriggersAction)
                 preset,
             } = *add;
             let dir = trigger_cwd.unwrap_or_else(|| cwd.clone());
+            // A schedule is made in the owner's zone unless one is named
+            // (docs/design/94 §6).
+            let timezone = timezone.or_else(|| Some(core.owner_timezone()));
             let built = match preset.as_deref() {
                 None => build_trigger(
                     name.as_deref().unwrap_or_default(),
@@ -382,7 +385,7 @@ mod tests {
                 script,
                 every,
                 cron,
-                None,
+                Some("Asia/Kolkata"),
                 dir.path(),
                 None,
                 None,

@@ -26,6 +26,10 @@ pub struct AutomationsTool {
     /// the model's `add` call omits `deliver_to`: a person asking for a
     /// reminder from inside a chat means "tell me here", not "tell nobody".
     pub default_deliver_to: Option<String>,
+    /// The owner's IANA zone (`Core::owner_timezone`): what a time the
+    /// model gives means, and the zone of a repeating schedule made
+    /// without one.
+    pub owner_zone: String,
 }
 
 fn render(trigger: &Trigger, runs: &vak_session::runs::Runs) -> Value {
@@ -89,11 +93,12 @@ impl vak_tools::Tool for AutomationsTool {
          schedule ('remind me on Friday at 9', 'every weekday at 8 send me \
          the headlines', 'check disk space hourly and tell me if it's low'). \
          `action: \"add\"` creates one. For a single future moment give \
-         `due_at` (an RFC3339 instant: convert the person's local time using \
-         the timezone in <turn_context>). For a repeating schedule give \
-         `cron` (5-field: min hour dom mon dow, e.g. '0 9 * * 1-5' for \
-         weekdays at 9am) with `timezone` set to the person's IANA zone, or \
-         `every_secs` for a plain interval: exactly one of the three. When \
+         `at`, the person's local date and time as they said it \
+         ('2026-10-17 09:00'), read in the owner's time zone. For a \
+         repeating schedule give `cron` (5-field: min hour dom mon dow, e.g. \
+         '0 9 * * 1-5' for weekdays at 9am), read in the owner's time zone \
+         unless `timezone` names another, or `every_secs` for a plain \
+         interval: exactly one of the three. When \
          the day or time is ambiguous and it matters, confirm the \
          interpreted date and time before adding. Give exactly one of \
          `prompt` (a task for you, running as a fresh turn later) or \
@@ -132,19 +137,19 @@ impl vak_tools::Tool for AutomationsTool {
                 },
                 "cron": {
                     "type": "string",
-                    "description": "5-field cron expression for a repeating schedule, read in `timezone` (XOR with 'every_secs' and 'due_at')"
+                    "description": "5-field cron expression for a repeating schedule, read in the owner's time zone unless `timezone` names another (XOR with 'every_secs' and 'at')"
                 },
                 "every_secs": {
                     "type": "integer",
-                    "description": "Plain interval in seconds, from now (XOR with 'cron' and 'due_at'; at least 60)"
+                    "description": "Plain interval in seconds, from now (XOR with 'cron' and 'at'; at least 60)"
                 },
                 "timezone": {
                     "type": "string",
-                    "description": "IANA timezone name the cron is read in, such as Asia/Kolkata or America/New_York; without it the host's zone is used"
+                    "description": "IANA timezone name the cron is read in, such as America/New_York, only when it is not the owner's own"
                 },
-                "due_at": {
+                "at": {
                     "type": "string",
-                    "description": "A single future instant in RFC3339 (with its offset) for a one-time reminder or run; cannot be combined with cron or every_secs"
+                    "description": "A single future date and time for a one-time reminder or run, as the person's local time like '2026-10-17 09:00' (read in the owner's time zone); cannot be combined with cron or every_secs"
                 },
                 "deliver_to": {
                     "type": "string",
@@ -220,20 +225,15 @@ impl vak_tools::Tool for AutomationsTool {
                     }
                 };
                 let now = chrono::Utc::now();
-                let due_at = match str_arg("due_at") {
-                    Some(raw) => match raw.parse::<chrono::DateTime<chrono::Utc>>() {
+                let once = match str_arg("at") {
+                    Some(raw) => match triggers::local_instant(&raw, &self.owner_zone, now) {
                         Ok(at) => Some(at),
-                        Err(_) => {
-                            return vak_tools::ToolOutput::error(
-                                Fault::Shape,
-                                "'due_at' must be an RFC3339 instant with its offset",
-                            );
-                        }
+                        Err(reason) => return vak_tools::ToolOutput::error(Fault::Shape, reason),
                     },
                     None => None,
                 };
                 let every_secs = args.get("every_secs").and_then(Value::as_u64);
-                let schedule = match (str_arg("cron"), every_secs, due_at) {
+                let schedule = match (str_arg("cron"), every_secs, once) {
                     (Some(expr), None, None) => Schedule::Cron {
                         expr,
                         timezone: str_arg("timezone"),
@@ -246,13 +246,13 @@ impl vak_tools::Tool for AutomationsTool {
                     (None, None, None) => {
                         return vak_tools::ToolOutput::error(
                             Fault::Shape,
-                            "give one of 'cron', 'every_secs' or 'due_at'",
+                            "give one of 'cron', 'every_secs' or 'at'",
                         );
                     }
                     _ => {
                         return vak_tools::ToolOutput::error(
                             Fault::Shape,
-                            "give only one of 'cron', 'every_secs' or 'due_at'",
+                            "give only one of 'cron', 'every_secs' or 'at'",
                         );
                     }
                 };
@@ -277,7 +277,7 @@ impl vak_tools::Tool for AutomationsTool {
                     },
                     None => (self.agent.clone(), None),
                 };
-                let trigger = Trigger {
+                let mut trigger = Trigger {
                     id: vak_session::ids::TriggerId::new(),
                     name,
                     agent,
@@ -292,6 +292,7 @@ impl vak_tools::Tool for AutomationsTool {
                     created_at: now,
                     created_by: None,
                 };
+                trigger.in_zone(&self.owner_zone);
                 if let Err(e) = triggers::create(&self.shared, &trigger) {
                     return vak_tools::ToolOutput::error(Fault::Tool, e.to_string());
                 }
@@ -368,6 +369,7 @@ mod tests {
             cwd: cwd.to_path_buf(),
             agent: "vak".into(),
             default_deliver_to: Some("telegram:42".into()),
+            owner_zone: "Asia/Kolkata".into(),
         }
     }
 
