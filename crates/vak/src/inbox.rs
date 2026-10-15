@@ -19,8 +19,9 @@ pub(crate) fn run_inbox(cwd: PathBuf, action: Option<crate::cli::InboxAction>) -
             return 2;
         }
     };
+    // The inbox is shared, as the server and the scheduler write it.
     run_with_home(
-        &core.scope().into_root(),
+        &core.shared_scope().into_root(),
         action.unwrap_or(crate::cli::InboxAction::List {
             all: false,
             limit: DEFAULT_LIMIT,
