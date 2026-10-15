@@ -28,7 +28,8 @@ pub fn is_pre_baseline(version: &str) -> bool {
 /// records (a tenant's object store) but no such file was made before the file
 /// existed, so it is older than any baseline that reads it. A home holding
 /// no records passes, whatever bound its folders, and nothing is written:
-/// [`stamp_data_home`] is the one writer.
+/// the one writer is `vak_session::objects::stamp_home_version`, called by
+/// [`stamp_data_home`] for an empty home and by a tenant's first store.
 ///
 /// [`HOME_VERSION_FILE`]: vak_config::paths::HOME_VERSION_FILE
 pub fn check_data_home(data: &std::path::Path) -> Result<(), String> {
@@ -71,27 +72,7 @@ fn holds_records(data: &std::path::Path) -> bool {
 ///
 /// [`HOME_VERSION_FILE`]: vak_config::paths::HOME_VERSION_FILE
 pub fn stamp_data_home(data: &std::path::Path) -> std::io::Result<()> {
-    let path = data.join(vak_config::paths::HOME_VERSION_FILE);
-    if path.exists() {
-        return Ok(());
-    }
-    vak_session::fence::check().map_err(std::io::Error::other)?;
-    std::fs::create_dir_all(data)?;
-    // Staged under a name of its own and linked into place, so two
-    // processes opening an empty home at once never share a staging file
-    // and the first to link is the one that named it.
-    let staged = data.join(format!(
-        ".{}.{}",
-        vak_config::paths::HOME_VERSION_FILE,
-        uuid::Uuid::now_v7()
-    ));
-    std::fs::write(&staged, crate::APP_VERSION)?;
-    let linked = std::fs::hard_link(&staged, &path);
-    let _ = std::fs::remove_file(&staged);
-    match linked {
-        Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => Err(error),
-        _ => Ok(()),
-    }
+    vak_session::objects::stamp_home_version(data)
 }
 
 /// The refusal an operator reads. `what` names the artifact ("this data",

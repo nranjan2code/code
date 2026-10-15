@@ -117,6 +117,18 @@ pub(crate) fn opened() -> Vec<Arc<TenantObjects>> {
 impl TenantObjects {
     /// The process's handle on the tenant at `tenant_home`, opened once.
     pub fn for_tenant(tenant_home: &Path) -> Result<Arc<Self>, SessionError> {
+        // The first record store a home gets is where it is created, so its
+        // version is named before that store exists: a reader never sees
+        // records in a home that does not name its version (invariant 29).
+        // Before the registry is taken: the stamp checks the fence, which
+        // reads every opened tenant.
+        if !tenant_home
+            .join(vak_config::paths::TENANT_STORE_DIR)
+            .exists()
+            && let Some(data) = data_home_of(tenant_home)
+        {
+            stamp_home_version(data)?;
+        }
         let mut open = open_tenants()
             .lock()
             .map_err(|_| SessionError::Objects("tenant stores poisoned".into()))?;
@@ -129,6 +141,7 @@ impl TenantObjects {
     }
 
     fn open(tenant_home: &Path) -> Result<Self, SessionError> {
+        let store_dir = tenant_home.join(vak_config::paths::TENANT_STORE_DIR);
         let keys = tenant_home.join("keys");
         std::fs::create_dir_all(&keys)?;
         let lock = File::create(keys.join("LOCK"))?;
@@ -144,12 +157,7 @@ impl TenantObjects {
         let authority: Arc<dyn vak_storage::keys::KeyAuthority> = Arc::new(authority);
         let scopes = vak_storage::scopes::ScopeKeys::open(&keys.join("scopes"), authority.clone())
             .map_err(objects_error)?;
-        let store = LocalStore::open(
-            &tenant_home.join(vak_config::paths::TENANT_STORE_DIR),
-            id_key,
-            authority,
-        )
-        .map_err(objects_error)?;
+        let store = LocalStore::open(&store_dir, id_key, authority).map_err(objects_error)?;
         let writer_epoch = crate::fence::WriterEpoch(store.epoch().map_err(objects_error)?);
         Ok(Self {
             store: Arc::new(store),
@@ -478,5 +486,80 @@ impl Objects for MemoryObjects {
 
     fn collect(&self) -> Result<usize, SessionError> {
         Ok(0)
+    }
+}
+
+/// The data home a tenant home is in: `<data>/tenants/<tenant>`.
+fn data_home_of(tenant_home: &Path) -> Option<&Path> {
+    let tenants = tenant_home.parent()?;
+    (tenants.file_name()? == vak_config::paths::TENANTS_DIR).then_some(())?;
+    tenants.parent()
+}
+
+/// Names this build as the creator of a data home that has no
+/// `home-version` yet (`vak_config::paths::HOME_VERSION_FILE`); an
+/// existing file is never rewritten. The one writer of that file: Core
+/// calls it for an empty home it opens, and a tenant's first store calls
+/// it where the home's records begin.
+pub fn stamp_home_version(data: &Path) -> std::io::Result<()> {
+    let path = data.join(vak_config::paths::HOME_VERSION_FILE);
+    if path.exists() {
+        return Ok(());
+    }
+    crate::fence::check().map_err(std::io::Error::other)?;
+    std::fs::create_dir_all(data)?;
+    // Staged under a name of its own and linked into place, so two
+    // processes opening an empty home at once never share a staging file
+    // and the first to link is the one that named it.
+    let staged = data.join(format!(
+        ".{}.{}",
+        vak_config::paths::HOME_VERSION_FILE,
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::write(&staged, env!("CARGO_PKG_VERSION"))?;
+    let linked = std::fs::hard_link(&staged, &path);
+    let _ = std::fs::remove_file(&staged);
+    match linked {
+        Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => Err(error),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod home_version_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    fn tenant(data: &Path) -> PathBuf {
+        data.join(vak_config::paths::TENANTS_DIR).join("local")
+    }
+
+    #[test]
+    fn a_homes_first_store_names_the_version_that_made_it() {
+        vak_config::paths::isolate_home_for_tests();
+        let data = tempfile::tempdir().unwrap();
+        TenantObjects::for_tenant(&tenant(data.path())).unwrap();
+        let stamp = data.path().join(vak_config::paths::HOME_VERSION_FILE);
+        assert_eq!(
+            std::fs::read_to_string(stamp).unwrap(),
+            env!("CARGO_PKG_VERSION")
+        );
+    }
+
+    #[test]
+    fn a_store_that_already_existed_is_never_stamped() {
+        vak_config::paths::isolate_home_for_tests();
+        let data = tempfile::tempdir().unwrap();
+        let home = tenant(data.path());
+        std::fs::create_dir_all(home.join(vak_config::paths::TENANT_STORE_DIR)).unwrap();
+        let _ = TenantObjects::for_tenant(&home);
+        assert!(
+            !data
+                .path()
+                .join(vak_config::paths::HOME_VERSION_FILE)
+                .exists(),
+            "an unstamped home with records stays refused"
+        );
     }
 }
