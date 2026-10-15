@@ -39,6 +39,11 @@ const REFUSED: i32 = 2;
 /// The folder of a runnable skill's test cases, one JSON file each.
 pub const TESTS_DIR: &str = "tests";
 
+/// What a failed call tells the model after the finding: how its own
+/// program is fixed. A test report keeps the finding alone.
+pub const OWN_FAILURE: &str = "\n\nThis is the program's own failure. If it is wrong, fix it and \
+     propose it again under its name; a fix that fails as well is turned off.";
+
 /// The argument the runtime fills with the call's time limit
 /// (`Tool::time_limit_argument`); a program never receives it.
 const TIME_LIMIT_ARGUMENT: &str = "timeout_ms";
@@ -91,24 +96,28 @@ impl TestCase {
     /// `drafts` says the answer wraps the program's result with the
     /// drafts it wrote.
     pub fn judge(&self, output: &ToolOutput, drafts: bool) -> Result<(), String> {
+        let found = output
+            .content
+            .strip_suffix(OWN_FAILURE)
+            .unwrap_or(&output.content);
         if self.fails {
             return match output.fault {
                 Some(Fault::Target) => Ok(()),
                 Some(_) => Err(format!(
                     "the program was to refuse these arguments (exit status 2); it failed: {}",
-                    output.content
+                    found
                 )),
                 None => Err(format!(
                     "the program was to refuse these arguments (exit status 2); it answered {}",
-                    output.content
+                    found
                 )),
             };
         }
         if output.is_error() {
-            return Err(format!("the program failed: {}", output.content));
+            return Err(format!("the program failed: {}", found));
         }
-        let answer: Value = serde_json::from_str(&output.content)
-            .map_err(|_| format!("the answer is not JSON: {}", output.content))?;
+        let answer: Value = serde_json::from_str(found)
+            .map_err(|_| format!("the answer is not JSON: {}", found))?;
         let result = if drafts {
             answer.get("result").cloned().unwrap_or(Value::Null)
         } else {
@@ -592,18 +601,48 @@ fn digest(dir: &Path) -> Result<String, String> {
             }
         }
     }
-    files.sort();
-    let mut hasher = Sha256::new();
+    let mut read = Vec::new();
     for file in files {
-        let relative = file.strip_prefix(dir).unwrap_or(&file);
-        hasher.update(relative.to_string_lossy().as_bytes());
-        hasher.update([0]);
+        let relative = file.strip_prefix(dir).unwrap_or(&file).to_path_buf();
         let bytes =
             std::fs::read(&file).map_err(|error| format!("cannot read the skill: {error}"))?;
+        read.push((relative, bytes));
+    }
+    Ok(digest_of(read))
+}
+
+/// The digest of files given by relative path, in path order.
+fn digest_of(mut files: Vec<(PathBuf, Vec<u8>)>) -> String {
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut hasher = Sha256::new();
+    for (relative, bytes) in files {
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update([0]);
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(&bytes);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    format!("{:x}", hasher.finalize())
+}
+
+/// A [`bundle`]'s files by relative path.
+pub fn bundle_files(bytes: &[u8]) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let value: Value =
+        serde_json::from_slice(bytes).map_err(|_| "not a skill bundle".to_string())?;
+    value
+        .get("files")
+        .and_then(|files| serde_json::from_value(files.clone()).ok())
+        .ok_or_else(|| "not a skill bundle".to_string())
+}
+
+/// The program digest a [`bundle`] has once installed: the same value
+/// [`Program::load`] gives its folder.
+pub fn bundle_digest(bytes: &[u8]) -> Result<String, String> {
+    Ok(digest_of(
+        bundle_files(bytes)?
+            .into_iter()
+            .map(|(path, text)| (PathBuf::from(path), text.into_bytes()))
+            .collect(),
+    ))
 }
 
 /// The interpreter's absolute path on the PATH a scrubbed command gets.
@@ -1132,8 +1171,7 @@ impl Runner {
                     } else {
                         format!("\n\n[output]\n{}", finished.out.trim())
                     }
-                ) + "\n\nThis is the program's own failure. If it is wrong, fix it and \
-                     propose it again under its name; a fix that fails as well is turned off.",
+                ) + OWN_FAILURE,
             )
             .ran(status.code(), finished.duration_ms),
         };
@@ -1558,5 +1596,16 @@ mod tests {
         .unwrap();
         let after = Program::load(dir.path()).unwrap().unwrap().digest;
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn a_bundle_has_the_digest_of_its_installed_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a/b.txt"), "inner").unwrap();
+        std::fs::write(dir.path().join("a.txt"), "outer").unwrap();
+        let bytes = bundle(dir.path()).unwrap();
+        assert_eq!(bundle_digest(&bytes).unwrap(), digest(dir.path()).unwrap());
+        assert_eq!(bundle_files(&bytes).unwrap().len(), 2);
     }
 }

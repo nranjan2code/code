@@ -262,6 +262,7 @@ mod tests {
             tool_use_id: None,
             trace: None,
             actor: None,
+            ability: None,
         }
     }
 

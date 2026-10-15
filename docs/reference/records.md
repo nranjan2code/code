@@ -209,6 +209,7 @@ Type `Entry` in `crates/vak-core/src/inbox.rs`. Class: ledger. Stored in: `inbox
 | `tool_use_id` | `Option<String>` | no | The tool call this entry is about, when it is an approval forwarded |
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
+| `ability` | `Option<String>` | no | The learned ability this entry is about, whose sheet it opens |
 
 ## incident_record
 

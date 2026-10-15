@@ -869,3 +869,84 @@ async fn a_turn_that_learns_or_improves_an_ability_says_so() {
     );
     assert!(words("call-other").is_empty());
 }
+
+#[tokio::test]
+async fn an_abilitys_sheet_shows_its_versions_and_the_owner_chooses_one() {
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(workspace.path()).unwrap();
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).unwrap();
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let tool = vak_core::learning::ProposeSkillTool {
+        sessions_home: core.scope().into_root(),
+        cwd: workspace.path().to_path_buf(),
+        session_id: "sess-sheet".into(),
+        core: Some(core.clone()),
+    };
+    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_agent_id("vak");
+    let propose = |source: &str| {
+        json!({"name": "sheet-splitter", "description": "Split a bill evenly",
+               "instructions": "Call the tool.", "source": source})
+    };
+    prepared(workspace.path(), "first", "args['people']", 30);
+    assert!(!tool.execute(&propose("first"), &ctx).await.is_error());
+    prepared(workspace.path(), "second", "max(args['people'], 1)", 30);
+    assert!(!tool.execute(&propose("second"), &ctx).await.is_error());
+
+    let sheet = core.ability_sheet("sheet-splitter").expect("a sheet");
+    let states: Vec<_> = sheet.history.iter().map(|v| (v.number, v.state)).collect();
+    assert_eq!(states, [(2, "in_use"), (1, "earlier")]);
+    assert_eq!(sheet.uses_since, Some(2));
+    let newest = &sheet.history[0];
+    assert_eq!(newest.changes.len(), 1, "{:?}", newest.changes);
+    assert_eq!(
+        (newest.changes[0].path.as_str(), newest.changes[0].change),
+        ("run.py", "changed")
+    );
+    let tests = newest.tests.as_ref().expect("its tests");
+    assert!(tests.passed && tests.cases.len() == 1 && tests.cases[0].passed);
+    assert!(!newest.can_use && sheet.history[1].can_use);
+    assert!(sheet.declaration.is_some());
+
+    let first = sheet.history[1].version.clone();
+    assert_eq!(
+        core.use_ability_version("sheet-splitter", &first, None),
+        Ok(3)
+    );
+    let sheet = core.ability_sheet("sheet-splitter").unwrap();
+    let states: Vec<_> = sheet
+        .history
+        .iter()
+        .map(|v| (v.number, v.state, v.by_you, v.can_use))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            (3, "in_use", true, false),
+            (2, "earlier", false, true),
+            (1, "earlier", false, false)
+        ]
+    );
+    assert!(
+        core.use_ability_version("sheet-splitter", &first, None)
+            .is_err(),
+        "the bytes in use are not chosen again"
+    );
+
+    core.turn_off_ability("sheet-splitter").unwrap();
+    assert!(!core.scope().skills().join("sheet-splitter").exists());
+    let sheet = core.ability_sheet("sheet-splitter").unwrap();
+    assert_eq!(sheet.ability.state, "turned_off");
+    assert_eq!(sheet.ability.description, "Split a bill evenly");
+    assert!(!sheet.ability.reaches.is_empty());
+    assert!(sheet.history.iter().all(|v| v.state != "in_use"));
+    let second = sheet.history[1].version.clone();
+    assert_eq!(
+        core.use_ability_version("sheet-splitter", &second, None),
+        Ok(4)
+    );
+    assert_eq!(
+        core.ability_sheet("sheet-splitter").unwrap().ability.state,
+        "working"
+    );
+}

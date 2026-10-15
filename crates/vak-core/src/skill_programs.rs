@@ -483,7 +483,24 @@ impl Core {
             .and_then(|text| serde_json::from_str(&text).ok())
     }
 
-    fn record_ability_version(&self, skill: &str, version: VersionRecord) -> Result<(), String> {
+    /// Marks the Agent's learned ability `skill` withdrawn in its record.
+    pub(crate) fn mark_withdrawn(&self, skill: &str) -> Result<(), String> {
+        vak_session::documents::update(&self.ability_path(skill), |current| {
+            let mut record: AbilityRecord = current
+                .and_then(|text| serde_json::from_str(text).ok())
+                .unwrap_or_default();
+            record.withdrawn = true;
+            let text = serde_json::to_string(&record).map_err(|error| error.to_string())?;
+            Ok(Some((text, ())))
+        })?;
+        Ok(())
+    }
+
+    pub(crate) fn record_ability_version(
+        &self,
+        skill: &str,
+        version: VersionRecord,
+    ) -> Result<(), String> {
         vak_session::documents::update(&self.ability_path(skill), |current| {
             let mut record: AbilityRecord = current
                 .and_then(|text| serde_json::from_str(text).ok())
@@ -568,15 +585,14 @@ impl Core {
                 }
                 Ok(Some(Some(vak_judge::ability::AbilityVerdict::Offer))) => {
                     events.push(AbilityEvent::new("offered", &found.skill, None));
-                    let _ = crate::inbox::record_with_result_and_key(
+                    let _ = crate::inbox::record_about_ability(
                         &self.shared_scope().as_agent(),
                         crate::inbox::Kind::AbilityOffered,
                         &format!("{} works: offer it to every Agent?", found.skill),
                         "It passed its tests, worked in a later conversation and has not failed since it was made.",
                         None,
-                        None,
-                        None,
-                        Some(&offered_key(&found.skill, &found.digest)),
+                        &found.skill,
+                        &offered_key(&found.skill, &found.digest),
                         None,
                     );
                 }
@@ -618,14 +634,26 @@ impl Core {
             let Some(record) = self.ability_record(&skill) else {
                 continue;
             };
+            let library = self.skill_artifact(&skill);
             for (at, version) in record.versions.iter().enumerate() {
                 if version
                     .built_by
                     .as_ref()
                     .is_some_and(|call| turn.calls.contains(call))
                 {
-                    let number = u32::try_from(at + 1).unwrap_or(u32::MAX);
-                    events.push(if at == 0 {
+                    // The Library's number, as the ability's sheet shows it.
+                    let place = library
+                        .as_ref()
+                        .and_then(|artifact| {
+                            artifact
+                                .versions
+                                .iter()
+                                .position(|known| known.id.to_string() == version.version)
+                        })
+                        .unwrap_or(at);
+                    let number = u32::try_from(place + 1).unwrap_or(u32::MAX);
+                    // Learned when it replaced nothing the Agent had.
+                    events.push(if version.parent.is_none() {
                         AbilityEvent::new("learned", &skill, Some(number))
                     } else {
                         AbilityEvent::new("improved", &skill, Some(number))
@@ -653,15 +681,14 @@ impl Core {
         if std::fs::remove_dir_all(&installed).is_err() {
             tracing::warn!("a withdrawn ability's folder could not be removed");
         }
-        let _ = crate::inbox::record_with_result_and_key(
+        let _ = crate::inbox::record_about_ability(
             &self.shared_scope().as_agent(),
             crate::inbox::Kind::AbilityWithdrawn,
             &format!("{skill} was turned off"),
             "It failed, and the fix proposed for it failed too. Its versions stay in the Library.",
             None,
-            None,
-            None,
-            Some(&format!("ability-withdrawn|{skill}")),
+            skill,
+            &format!("ability-withdrawn|{skill}"),
             None,
         );
     }
@@ -757,9 +784,15 @@ impl Core {
                 continue;
             }
             let (artifact, versions) = artifact_of(&name).unzip();
+            // Installed nowhere: what it does is its Library summary.
+            let description = library
+                .iter()
+                .find(|known| Some(known.id.to_string()) == artifact)
+                .and_then(|known| known.summary.clone())
+                .unwrap_or_default();
             rows.push(AbilityView {
                 name,
-                description: String::new(),
+                description,
                 state: "turned_off",
                 reaches: Vec::new(),
                 why: None,
@@ -963,7 +996,7 @@ impl Core {
                 review.trailer()
             );
             vak_session::documents::create(&dir.join(format!("{id}.md")), &body)?;
-            let _ = crate::inbox::record_with_result_and_key(
+            let _ = crate::inbox::record_about_ability(
                 &self.shared_scope().as_agent(),
                 crate::inbox::Kind::ProposalOpened,
                 &format!("{name} is waiting for your review"),
@@ -978,9 +1011,8 @@ impl Core {
                         .join("\n")
                 ),
                 Some(proposal.session),
-                None,
-                None,
-                Some(&waiting_key(&id)),
+                name,
+                &waiting_key(&id),
                 Some(&trace),
             );
             Standing::Review { id, why }

@@ -28,12 +28,13 @@ this handover's prompt and 'Where things stand' before the session's
 limit, telling the maintainer when the session is near it. The maintainer is the only user and there are no others: rewrite
 a wrong design or screen rather than patch it.
 
-Self-evolving capabilities (doc 93) stand at E6c: E1 to E5, the
-Library's Learned abilities view, Approve for this Agent, the inbox and
-Settings links, and the ability line under answers are built and checked. Next is the rest of E6
-(open-items "E6 rest": the capability sheet, Review beside file
-candidates, ability filters, Settings > Capabilities rewritten), then E7, E8 and E9 as doc
-93 §11 orders them.
+Self-evolving capabilities (doc 93) stand at E6 done: E1 to E6 are
+built and checked (E6d: the capability sheet, Review in it, Library
+filters and Needs you, Settings > Capabilities as Learned / Installed /
+Connections / Discover, inbox entries open their ability). Next is E7
+(admin #/capabilities with revoke, the per-version table in
+#/measurements, `vak skills` verbs replacing `skills-review`), then E8
+and E9 as doc 93 §11 orders them.
 Build each as a
 design, never spot fixes or tuned numbers.
 
@@ -79,9 +80,25 @@ route pin); a scheduled run's cards are drawn as cards in the home turn
 model still reads their text). Left on the dev home: the "morning line"
 automation and its test conversation.
 
-**Self-evolving capabilities (doc 93) stand at E6c** (2026-10-15, full
-gate green, pushed): the rest of E6 and E7 to E9 not started (tracker lines in open-items
-"Self-evolving capabilities").
+**Self-evolving capabilities (doc 93) stand at E6 done** (2026-10-15,
+full gate green, pushed): E7 to E9 not started (tracker lines in
+open-items "Self-evolving capabilities").
+
+**E6d is built** (checked in the running app on the installed home,
+1440 × 900 and 390 × 844, light and dark): `Core::ability_sheet`
+(`vak-core/src/ability_sheet.rs`, `GET /skills/abilities/{name}`),
+Use this version and Turn off routes, `Catalog::calls_of` with call
+status (catalog schema 5, rebuilt once on first open), the sheet
+(`AbilitySheet.tsx`, mounted in App, `openAbilitySheet`), the Library's
+filters and Needs you, the Settings rewrite (`LearnedByAgents`),
+`inbox::Entry::ability`, `.modal-back` z-index above Settings. E7
+design noted: CLI verbs list/show/use/approve/decline/promote/turn-off
+on the same Core functions, removing `skills-review` (AGENTS.md layout
+and docs 26, 29 name it); admin inventory over
+`agent_definitions::effective` with each Agent's scoped Core; revoke
+only Agent-made abilities; per-version calls by time window from
+`calls_of`. Left on the installed home: temperature-converter versions
+1 (tests failed) and 2 (in use), its test conversation.
 
 **E6a is built** (checked in the running app on the installed home):
 the Library's Learned abilities chip over `GET /skills/abilities`

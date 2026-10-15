@@ -29,7 +29,7 @@ import {
   health,
   sessions,
   openInLibrary,
-  openLearnedAbilities,
+  openAbilitySheet,
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
@@ -113,7 +113,7 @@ function AssistantMessage(props: { children: JSX.Element; text?: string; session
 }
 
 /** What an Agent's learned ability did in this turn, as one quiet line
- * under the answer (docs/design/93 §9.1); it opens Learned abilities. */
+ * under the answer (docs/design/93 §9.1); it opens the ability's sheet. */
 function AbilityLine(props: { content: Extract<OutputContent, { type: "ability" }> }) {
   const words = () => {
     const name = <strong>{props.content.skill}</strong>;
@@ -128,7 +128,7 @@ function AbilityLine(props: { content: Extract<OutputContent, { type: "ability" 
     }
   };
   return (
-    <button type="button" class="ability-line" onClick={() => openLearnedAbilities()}>
+    <button type="button" class="ability-line" onClick={() => openAbilitySheet(props.content.skill)}>
       <Icon name="spark" size={13} /><span>{words()}</span>
     </button>
   );

@@ -884,18 +884,55 @@ export interface Ability {
   versions: number;
 }
 
-export function listAbilities(): Promise<{ abilities: Ability[] }> {
-  return req("/skills/abilities");
+const agentQuery = (agent?: string) => (agent ? `?agent=${encodeURIComponent(agent)}` : "");
+
+export function listAbilities(agent?: string): Promise<{ abilities: Ability[] }> {
+  return req(`/skills/abilities${agentQuery(agent)}`);
+}
+
+/** One version of a learned ability, as its sheet shows it. */
+export interface AbilityVersion {
+  number: number;
+  version: string;
+  at: string;
+  state: "in_use" | "waiting" | "failed_tests" | "failed_in_use" | "earlier" | "not_used";
+  by_you: boolean;
+  changes: { path: string; change: "added" | "changed" | "removed"; part: "instructions" | "declaration" | "tests" | "presentation" | "program" }[];
+  tests?: { passed: boolean; run: string; cases: { name: string; passed: boolean; detail?: string | null }[] } | null;
+  can_use: boolean;
+  digest: string;
+}
+
+/** A learned ability's sheet (docs/design/93 §9.1). */
+export interface AbilitySheet extends Ability {
+  history: AbilityVersion[];
+  uses: { at?: string | null; conversation?: string | null; title?: string | null; outcome?: "done" | "failed" | null }[];
+  uses_since?: number | null;
+  proposed_in?: string | null;
+  declaration?: string | null;
+}
+
+export function abilitySheet(name: string, agent?: string): Promise<AbilitySheet> {
+  return req(`/skills/abilities/${encodeURIComponent(name)}${agentQuery(agent)}`);
+}
+
+/** Puts a version of a learned ability in use; the Library keeps it as a new version. */
+export function useAbilityVersion(name: string, version: string, agent?: string): Promise<{ in_use: number }> {
+  return req(`/skills/abilities/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/use${agentQuery(agent)}`, { method: "POST", body: "{}" });
+}
+
+export function turnOffAbility(name: string, agent?: string): Promise<{ turned_off: string }> {
+  return req(`/skills/abilities/${encodeURIComponent(name)}/turn-off${agentQuery(agent)}`, { method: "POST", body: "{}" });
 }
 
 /** Approves a proposed ability for its Agent alone. */
-export function approveProposal(id: string): Promise<{ approved: string }> {
-  return req(`/skills/proposals/${encodeURIComponent(id)}/approve`, { method: "POST", body: "{}" });
+export function approveProposal(id: string, agent?: string): Promise<{ approved: string }> {
+  return req(`/skills/proposals/${encodeURIComponent(id)}/approve${agentQuery(agent)}`, { method: "POST", body: "{}" });
 }
 
 /** Gives an Agent's ability that has shown it works to every Agent. */
-export function promoteAbility(name: string): Promise<{ promoted: string }> {
-  return req(`/skills/abilities/${encodeURIComponent(name)}/promote`, { method: "POST", body: "{}" });
+export function promoteAbility(name: string, agent?: string): Promise<{ promoted: string }> {
+  return req(`/skills/abilities/${encodeURIComponent(name)}/promote${agentQuery(agent)}`, { method: "POST", body: "{}" });
 }
 
 export function rejectProposal(id: string, agent?: string): Promise<{ rejected: string }> {
@@ -2478,6 +2515,8 @@ export interface InboxEntry {
   body: string;
   session_id?: string | null;
   task_id?: string | null;
+  /** The learned ability the entry is about (docs/design/93 §9.5). */
+  ability?: string | null;
   result_id?: string | null;
   origin_state?: "available" | "unavailable";
 }

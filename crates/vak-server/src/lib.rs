@@ -1568,6 +1568,12 @@ fn router_with_state(state: AppState) -> Router {
             post(approve_proposal_for_agent),
         )
         .route("/skills/abilities/{name}/promote", post(promote_ability))
+        .route("/skills/abilities/{name}", get(ability_sheet))
+        .route("/skills/abilities/{name}/turn-off", post(turn_off_ability))
+        .route(
+            "/skills/abilities/{name}/versions/{version}/use",
+            post(use_ability_version),
+        )
         .merge(gateway::routes())
         .merge(intake::routes())
         .merge(library::routes())
@@ -3020,6 +3026,62 @@ async fn promote_ability(
     let core = scoped_core!(&state, None, q.agent.as_deref());
     match core.promote_ability(&name) {
         Ok(()) => Json(serde_json::json!({ "promoted": name })).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+/// One learned ability's sheet: its versions, tests and uses
+/// (docs/design/93-self-evolving-capabilities.md §9.1).
+async fn ability_sheet(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = scoped_core!(&state, None, q.agent.as_deref());
+    match tokio::task::spawn_blocking(move || core.ability_sheet(&name)).await {
+        Ok(Some(sheet)) => Json(sheet).into_response(),
+        _ => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no such learned ability" })),
+        )
+            .into_response(),
+    }
+}
+
+/// The owner turns a learned ability off for its Agent.
+async fn turn_off_ability(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = scoped_core!(&state, None, q.agent.as_deref());
+    match core.turn_off_ability(&name) {
+        Ok(()) => Json(serde_json::json!({ "turned_off": name })).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+/// The owner puts a version of a learned ability in use for its Agent; the
+/// Library records it as a new version (doc 93 §9.3).
+async fn use_ability_version(
+    State(state): State<AppState>,
+    axum::extract::Path((name, version)): axum::extract::Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = scoped_core!(&state, None, q.agent.as_deref());
+    match core.use_ability_version(&name, &version, Some(request_actor(&state))) {
+        Ok(number) => Json(serde_json::json!({ "in_use": number })).into_response(),
         Err(error) => (
             StatusCode::CONFLICT,
             Json(serde_json::json!({ "error": error })),

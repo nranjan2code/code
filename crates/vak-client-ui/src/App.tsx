@@ -143,6 +143,7 @@ import InboxPage from "./components/InboxPage";
 import AgentPickerModal from "./components/AgentPickerModal";
 import AgentCreateWizard from "./components/AgentCreateWizard";
 import ConnectSheet from "./components/ConnectSheet";
+import AbilitySheet from "./components/AbilitySheet";
 import { closeOpenMenus, dismissMenusOnPressOutside } from "./menus";
 import { titleBarGestures } from "./titleBar";
 import Skeleton from "./components/Skeleton";
@@ -1649,6 +1650,7 @@ export default function App() {
           <AgentPickerModal />
           <AgentCreateWizard />
           <ConnectSheet />
+          <AbilitySheet />
           <Suspense><ArtifactCanvas /></Suspense>
           <Show when={settingsOpen()}>
             <Suspense fallback={<Skeleton kind="blocks" class="modal-loading" label="Loading settings" />}><Settings /></Suspense>

@@ -1,8 +1,8 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, on, Show } from "solid-js";
 import * as api from "../api";
 import type { ArtifactDetail, ArtifactShare, ArtifactSummary, ArtifactVersion, FileNeeds, ReadInput, ShareRole, VersionCompare } from "../api";
 import { host } from "../host";
-import { libraryAbilities, libraryFocus, setLibraryAbilities, setLibraryFocus, setLibraryOpen, technicalDetails } from "../store";
+import { abilitySheetOpen, libraryAbilities, libraryFocus, openAbilitySheet, setLibraryAbilities, setLibraryFocus, setLibraryOpen, technicalDetails } from "../store";
 import { relAgo } from "../time";
 import { activate, openAgentChat } from "../App";
 import { attachArtifact } from "../attachFiles";
@@ -11,6 +11,7 @@ import Icon, { type IconName } from "./Icon";
 import OfficeView from "./OfficeView";
 import OfficeChangeList from "./OfficeChangeList";
 import { Pill, stateOf } from "./fileState";
+import { ABILITY_STATE } from "./AbilitySheet";
 
 /** Plain words for an artifact's kind (doc 75 §7). */
 const KIND: Record<ArtifactSummary["kind"], string> = {
@@ -648,81 +649,74 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
   );
 }
 
-/** Every deliverable an Agent made, across conversations (docs/design/82-library.md §4). */
-const ABILITY_STATE: Record<api.Ability["state"], { word: string; mark: string }> = {
-  working: { word: "Working", mark: "accepted" },
-  failing: { word: "Failing", mark: "changed" },
-  offered: { word: "Ready for every Agent", mark: "current" },
-  waiting: { word: "Waiting for you", mark: "waiting" },
-  turned_off: { word: "Turned off", mark: "undone" },
-};
+/** One learned ability as a card; it opens the ability's sheet, where
+ *  everything about it is decided (docs/design/93 §9.1-§9.3). */
+function AbilityCard(props: { ability: api.Ability; agent?: string; agentName?: string }) {
+  const a = () => props.ability;
+  return (
+    <button type="button" class="library-card library-ability" onClick={() => openAbilitySheet(a().name, props.agent)}>
+      <span class="library-card-top">
+        <span class="artifact-kind sm" aria-hidden="true"><Icon name="spark" size={16} /></span>
+        <span class="library-card-kind">Ability</span>
+        <Pill mark={ABILITY_STATE[a().state].mark}>{ABILITY_STATE[a().state].word}</Pill>
+      </span>
+      <strong>{a().name}</strong>
+      <Show when={a().description}><span class="library-card-summary">{a().description}</span></Show>
+      <Show when={a().why}><span class="library-card-summary">Waiting because {a().why}.</span></Show>
+      <Show when={a().reaches.length > 0}>
+        <ul class="library-ability-reaches" aria-label="What it can do">
+          <For each={a().reaches}>{(line) => <li>{line}</li>}</For>
+        </ul>
+      </Show>
+      <span class="library-card-meta">
+        {[props.agentName ? `Learned by ${props.agentName}` : "", a().versions > 1 ? `${a().versions} versions` : ""].filter(Boolean).join(" · ")}
+      </span>
+    </button>
+  );
+}
 
-/** What the Agents learned (docs/design/93 §9.3): each ability's state,
- * what it reaches, and what the owner can do about it. */
-function AbilitiesView(props: { onOpen: (artifact: string) => void }) {
-  const [abilities, { refetch }] = createResource(() => api.listAbilities().then((res) => res.abilities));
-  const [notice, setNotice] = createSignal<string | null>(null);
-  const act = async (work: Promise<unknown>, done: string) => {
-    try {
-      await work;
-      setNotice(done);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
-    }
-    void refetch();
-  };
+const ABILITY_FILTERS: { value: "any" | api.Ability["state"]; label: string }[] = [
+  { value: "any", label: "Every state" },
+  { value: "working", label: "Working" },
+  { value: "failing", label: "Failing" },
+  { value: "waiting", label: "Waiting for you" },
+  { value: "offered", label: "Ready for every Agent" },
+  { value: "turned_off", label: "Turned off" },
+];
+
+/** What the Agents learned (docs/design/93 §9.3): one card per ability,
+ *  found by name, Agent and state. */
+function AbilitiesView(props: { abilities: api.Ability[] | undefined; loading: boolean; error: unknown; agent: string; onAgent: (agent: string) => void; agents: api.Agent[] }) {
+  const [query, setQuery] = createSignal("");
+  const [state, setState] = createSignal<"any" | api.Ability["state"]>("any");
+  const shown = createMemo(() => {
+    const words = query().trim().toLowerCase();
+    return (props.abilities ?? []).filter((ability) =>
+      (state() === "any" || ability.state === state())
+      && (!words || `${ability.name} ${ability.description}`.toLowerCase().includes(words)));
+  });
+  const agentName = () => props.agents.find((agent) => agent.id === props.agent)?.name;
   return (
     <>
-      <Show when={notice()}><p class="library-note" role="status">{notice()}</p></Show>
-      <Show when={!abilities.error} fallback={<div class="worker-error">{String(abilities.error)}</div>}>
+      <div class="library-filters" role="group" aria-label="Ability filters">
+        <input class="search-input" placeholder="Find by name…" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} aria-label="Find by name" />
+        <Show when={props.agents.length > 1}>
+          <select value={props.agent} onChange={(e) => props.onAgent(e.currentTarget.value)} aria-label="Agent">
+            <option value="">This Agent</option>
+            <For each={props.agents}>{(agent) => <option value={agent.id}>{agent.name}</option>}</For>
+          </select>
+        </Show>
+        <select value={state()} onChange={(e) => setState(e.currentTarget.value as "any" | api.Ability["state"])} aria-label="State">
+          <For each={ABILITY_FILTERS}>{(entry) => <option value={entry.value}>{entry.label}</option>}</For>
+        </select>
+      </div>
+      <Show when={!props.error} fallback={<div class="worker-error">{String(props.error)}</div>}>
         <Show
-          when={(abilities() ?? []).length > 0}
-          fallback={<div class="dock-empty">{abilities.loading ? "Loading…" : "Nothing learned yet. When an Agent makes itself an ability, it appears here."}</div>}
+          when={shown().length > 0}
+          fallback={<div class="dock-empty">{props.loading ? "Loading…" : (props.abilities ?? []).length > 0 ? "No ability matches." : "Nothing learned yet. When an Agent makes itself an ability, it appears here."}</div>}
         >
           <div class="library-list">
-            <For each={abilities()}>
-              {(ability) => (
-                <article class="library-card library-ability">
-                  <span class="library-card-top">
-                    <span class="artifact-kind sm" aria-hidden="true"><Icon name="spark" size={16} /></span>
-                    <Pill mark={ABILITY_STATE[ability.state].mark}>{ABILITY_STATE[ability.state].word}</Pill>
-                  </span>
-                  <strong>{ability.name}</strong>
-                  <Show when={ability.description}><span class="library-card-summary">{ability.description}</span></Show>
-                  <Show when={ability.why}><span class="library-card-summary">Waiting because {ability.why}.</span></Show>
-                  <Show when={ability.reaches.length > 0}>
-                    <ul class="library-ability-reaches" aria-label="What it can do">
-                      <For each={ability.reaches}>{(line) => <li>{line}</li>}</For>
-                    </ul>
-                  </Show>
-                  <Show when={(ability.state === "waiting" && ability.proposal) || ability.state === "offered" || ability.artifact}>
-                  <div class="library-actions">
-                    <Show when={ability.state === "waiting" && ability.proposal}>
-                      {(id) => (
-                        <>
-                          <Show when={ability.reaches.length > 0}>
-                            <button type="button" class="settings-button" onClick={() => void act(api.approveProposal(id()), `${ability.name} is now this Agent's.`)}>Approve for this Agent</button>
-                          </Show>
-                          <button type="button" class="settings-button" onClick={() => void act(api.promoteProposal(id()), `${ability.name} is now available to every Agent.`)}>Approve for every Agent</button>
-                          <button type="button" class="settings-button danger" onClick={() => void act(api.rejectProposal(id()), `${ability.name} was declined.`)}>Decline</button>
-                        </>
-                      )}
-                    </Show>
-                    <Show when={ability.state === "offered"}>
-                      <button type="button" class="settings-button" onClick={() => void act(api.promoteAbility(ability.name), `${ability.name} is now available to every Agent.`)}>Give to every Agent</button>
-                    </Show>
-                    <Show when={ability.artifact}>
-                      {(artifact) => (
-                        <button type="button" class="settings-button" onClick={() => props.onOpen(artifact())}>
-                          {ability.versions > 1 ? `${ability.versions} versions` : "Its versions"}
-                        </button>
-                      )}
-                    </Show>
-                  </div>
-                  </Show>
-                </article>
-              )}
-            </For>
+            <For each={shown()}>{(ability) => <AbilityCard ability={ability} agent={props.agent || undefined} agentName={agentName()} />}</For>
           </div>
         </Show>
       </Show>
@@ -743,6 +737,14 @@ export default function LibraryPage() {
   const archived = () => state() === "archived";
   const needsYou = (artifact: ArtifactSummary) => !!artifact.needs && (artifact.needs.waiting > 0 || artifact.needs.missing);
   const [query, setQuery] = createSignal("");
+  // The learned abilities of the chosen Agent ("" is the one this
+  // conversation is with); refreshed when an ability's sheet closes.
+  const [abilityAgent, setAbilityAgent] = createSignal("");
+  const [abilities, { refetch: refetchAbilities }] = createResource(abilityAgent, (agent) => api.listAbilities(agent || undefined).then((res) => res.abilities));
+  const [agents] = createResource(() => api.listAgents().then((res) => res.agents).catch(() => [] as api.Agent[]));
+  createEffect(on(abilitySheetOpen, (now, before) => { if (before && !now) void refetchAbilities(); }, { defer: true }));
+  const abilityNeedsYou = (ability: api.Ability) => ability.state === "waiting" || ability.state === "offered";
+  const waitingAbilities = () => (abilities() ?? []).filter(abilityNeedsYou);
 
   const shown = createMemo(() => {
     const days = CHANGED.find((entry) => entry.value === changed())?.days ?? Infinity;
@@ -772,7 +774,7 @@ export default function LibraryPage() {
             <div class="library-states" role="tablist" aria-label="Show">
               <For each={[
                 { value: "all", label: "All" },
-                { value: "needs", label: "Needs you", count: (all() ?? []).filter(needsYou).length },
+                { value: "needs", label: "Needs you", count: (all() ?? []).filter(needsYou).length + waitingAbilities().length },
                 { value: "changed", label: "Changed outside Vak", count: (all() ?? []).filter((a) => a.needs?.changed_outside).length },
                 { value: "starred", label: "Starred" },
                 { value: "archived", label: "Archived" },
@@ -787,7 +789,14 @@ export default function LibraryPage() {
               </For>
             </div>
             <Show when={state() === "abilities"}>
-              <AbilitiesView onOpen={setOpen} />
+              <AbilitiesView abilities={abilities()} loading={abilities.loading} error={abilities.error} agent={abilityAgent()} onAgent={setAbilityAgent} agents={agents() ?? []} />
+            </Show>
+            <Show when={state() === "needs" && waitingAbilities().length > 0}>
+              <h3 class="library-section-title">Abilities</h3>
+              <div class="library-list">
+                <For each={waitingAbilities()}>{(ability) => <AbilityCard ability={ability} agent={abilityAgent() || undefined} />}</For>
+              </div>
+              <h3 class="library-section-title">Files</h3>
             </Show>
             <Show when={state() !== "abilities"}>
             <div class="library-filters" role="group" aria-label="Library filters">

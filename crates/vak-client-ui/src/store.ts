@@ -739,6 +739,12 @@ export const [libraryOpen, setLibraryOpen] = createSignal(false);
 export const [libraryFocus, setLibraryFocus] = createSignal<string | null>(null);
 /** Opens the Library on what the Agents learned (docs/design/93 §9.3). */
 export const [libraryAbilities, setLibraryAbilities] = createSignal(false);
+/** The learned ability whose sheet is open (docs/design/93 §9.1), and the
+ *  Agent it belongs to when not the current one. */
+export const [abilitySheetOpen, setAbilitySheetOpen] = createSignal<{ name: string; agent?: string } | null>(null);
+export function openAbilitySheet(name: string, agent?: string) {
+  setAbilitySheetOpen({ name, agent });
+}
 export function openLearnedAbilities() {
   setLibraryAbilities(true);
   setLibraryOpen(true);

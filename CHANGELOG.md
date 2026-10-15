@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Every learned ability has a sheet, opened from the line under an
+  answer, the Library, Settings and the inbox: what it can do, why it
+  waits, each version with what it changed and how its tests went, its
+  recent uses, and Use this version, Turn off and Review. Settings →
+  Capabilities is now Learned, Installed, Connections and Discover, and
+  the Library finds abilities by name, Agent and state, with waiting
+  ones under Needs you.
 - Under an answer, a quiet line says when an Agent used, learned or
   improved one of its abilities, or that one waits for you; it opens
   Learned abilities.

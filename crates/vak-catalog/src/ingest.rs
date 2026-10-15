@@ -414,6 +414,10 @@ fn session_entry(
                         is_error,
                     } => {
                         let node = call(tx, tool_use_id, None)?;
+                        tx.execute(
+                            "UPDATE nodes SET status = ?2 WHERE id = ?1",
+                            params![node, if *is_error { "failed" } else { "done" }],
+                        )?;
                         let (tool, input): (String, String) = tx
                             .query_row(
                                 "SELECT tool, input FROM calls WHERE node = ?1",

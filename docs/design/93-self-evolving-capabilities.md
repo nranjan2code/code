@@ -20,9 +20,13 @@ status 2); E6a built 2026-10-15 (the Library's Learned abilities view
 over `Core::abilities`, proposals listed across folders, every ability
 version kept); E6b built 2026-10-15 (Approve for this Agent, inbox
 entries and Settings open the Learned abilities view); E6c built
-2026-10-15 (the ability line under an answer); the capability sheet,
-Review beside candidates, ability filters and the Settings rewrite of E6
-and E7 to E9 not built. Agreed with the
+2026-10-15 (the ability line under an answer); E6 built 2026-10-15
+(E6d: the capability sheet with versions, tests, uses, Use this
+version and Turn off; Review in the sheet and waiting abilities in the
+Library's Needs you; filters by name, Agent and state; Settings →
+Capabilities as Learned, Installed, Connections and Discover; inbox
+entries open their ability; checked in the running app); E7 to E9 not
+built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -493,6 +497,27 @@ details is on. Each screen is done when it holds in the running app at
   the change from the last one, tests and their results, recent uses,
   and actions (Use the earlier version, Review, Turn off). With technical
   details on, the sheet shows the program, the declaration and run ids.
+  As built in E6d: `GET /skills/abilities/{name}` (`Core::ability_sheet`,
+  `vak-core/src/ability_sheet.rs`) answers what the ability reaches and
+  why it waits, each Library version newest first with its state (in
+  use, waiting, its tests failed, failed when used, used before, never
+  used), the parts it changed from the version before (instructions,
+  declaration, tests, presentation, program; file names only with
+  technical details), its tests as the runtime ran them, and the calls
+  since the version in use, found through the catalog
+  (`Catalog::calls_of`; a call node's status is now `done` or `failed`,
+  catalog schema 5). Use this version (`POST
+  /skills/abilities/{name}/versions/{version}/use`,
+  `Core::use_ability_version`) installs a version whose tests passed as
+  the owner's choice, recorded as a new Library version made by the
+  person whose parent is the newest (the newest's own bytes record
+  nothing new); Turn off (`POST /skills/abilities/{name}/turn-off`)
+  removes the Agent's installed copy and marks its record withdrawn, so
+  a version is put back by Use this version. A test report keeps the
+  finding alone: the guidance a failed call gives the model
+  (`capability::OWN_FAILURE`) is not part of it. The line's version
+  number is the Library's, and "learned" against "improved" is whether
+  the version replaced one the Agent had.
 - A call to a capability shows in the Workbench like any execution
   (invariant 35): live output, status, files it wrote.
 - A channel, webhook or inbox summary carries the same line in its text
@@ -512,6 +537,15 @@ Capability candidates join Review beside file candidates (doc 54,
 - Approve (goes live for that Agent), Approve for all Agents (promotes
   to Shared, offered only when R2 holds), Decline (the proposal is kept
   as declined history), Ask for changes (a message to the Agent).
+
+As built in E6d, an ability is reviewed in its sheet: what it reaches
+first and largest, why it waits, the waiting version's changes and
+tests, and Approve (for its Agent when it has a program; a skill with
+no program has only the Shared path), Ask for changes (opens the
+conversation that proposed it, where the owner writes to the Agent) and
+Decline. The Library's Needs you lists waiting and offered abilities
+above files with drafts waiting, and counts both; Give to every Agent
+stays the offer's own action (R2), never a choice at review.
 
 ### 9.3 Library
 
@@ -546,6 +580,10 @@ version it improves, with its record started); the inbox's proposal and
 ability entries and Settings > Capabilities open the Learned abilities
 view.
 
+Built in E6d: each card opens the ability's sheet, where its actions
+now are; the view finds abilities by name (a filter over the listed
+rows), Agent (`?agent=`) and state.
+
 ### 9.4 Settings
 
 Settings → Capabilities (`Settings.tsx`, today a list of skills, plugins
@@ -561,12 +599,23 @@ and connections) is rewritten around three sections:
 An Agent's own settings show its abilities and its review switch, so
 "what did this Agent learn" is answered where the Agent is.
 
+As built in E6d: the page's views are Learned (the Agent's abilities,
+counted by state, each opening its sheet; the Library link; the owner's
+switch), Installed (which Shared capabilities the Agent inherits, then
+skills, hooks and add-ons), Connections (MCP servers) and Discover. The
+earlier Suggested skills list is gone: a waiting proposal is an ability
+row reviewed in its sheet. The per-Agent "Look at failures" switch
+comes with E8. A sheet opens above Settings (`.modal-back` sits above
+page surfaces).
+
 ### 9.5 Inbox
 
 New entry kinds, each opening its sheet or Review: an ability waiting
 for review, an ability improved by the review automation, an ability
 withdrawn after failing, and an offer to promote one to all Agents.
-`NeedsYou` counts the review entries.
+`NeedsYou` counts the review entries. As built in E6d an entry names its
+ability (`inbox::Entry::ability`, written by `record_about_ability`)
+and opens its sheet.
 
 ### 9.6 Admin console
 

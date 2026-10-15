@@ -45,10 +45,10 @@ pub const DIR_NAME: &str = "catalog";
 /// The catalog's file name in that directory.
 pub const FILE_NAME: &str = "catalog.db";
 
-/// The schema this build writes, and what it derives from the records (4:
-/// fetched pages). A catalog stamped with another is dropped and rebuilt,
+/// The schema this build writes, and what it derives from the records (5:
+/// a call's outcome as its status, `done` or `failed`). A catalog stamped with another is dropped and rebuilt,
 /// never adapted: it is derived.
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
@@ -369,6 +369,33 @@ impl Catalog {
             limit.clamp(1, 10_000)
         );
         let mut values: Vec<rusqlite::types::Value> = vec![kind.to_string().into()];
+        values.extend(args);
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(values), row_node)?;
+        Ok(rows.filter_map(Result::ok).collect())
+    }
+
+    /// The calls of `tool` the audience may see, made at or after `since`
+    /// (RFC 3339) when given, newest first: where a tool's uses are found.
+    pub fn calls_of(
+        &self,
+        tool: &str,
+        since: Option<&str>,
+        audience: &Audience,
+    ) -> Result<Vec<Node>, CatalogError> {
+        let conn = self.conn();
+        let (filter, args) = audience_filter(audience, 3);
+        let sql = format!(
+            "SELECT {NODE_COLUMNS} FROM nodes n WHERE n.kind = 'call' AND n.title = ?1
+             AND (?2 IS NULL OR n.created_at >= ?2) AND {filter}
+             ORDER BY n.created_at DESC"
+        );
+        let mut values: Vec<rusqlite::types::Value> = vec![
+            tool.to_string().into(),
+            since.map_or(rusqlite::types::Value::Null, |since| {
+                since.to_string().into()
+            }),
+        ];
         values.extend(args);
         let mut statement = conn.prepare(&sql)?;
         let rows = statement.query_map(rusqlite::params_from_iter(values), row_node)?;

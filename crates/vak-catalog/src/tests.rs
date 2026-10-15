@@ -513,3 +513,40 @@ fn documents_and_commitments_are_searchable_and_follow_new_versions() {
     assert!(kinds("marmalade").is_empty());
     assert_eq!(kinds("apricot"), ["memory"]);
 }
+
+#[test]
+fn a_tools_calls_are_listed_with_how_each_ended() {
+    let (_lock, cwd, data, folder) = home();
+    let catalog = catalog(&cwd, &data, "calls.db");
+    let (_, session, _, _) = run_with_turn(&data, &folder, "vak", "local", "a call to list");
+    catalog.catch_up().unwrap();
+    let audience = Audience::default();
+    let calls = catalog.calls_of("write", None, &audience).unwrap();
+    let ours: Vec<_> = calls
+        .iter()
+        .filter(|node| {
+            node.session
+                .as_deref()
+                .is_some_and(|id| id.ends_with(&session))
+        })
+        .collect();
+    assert_eq!(ours.len(), 1, "{calls:?}");
+    assert_eq!(ours[0].status.as_deref(), Some("done"));
+    let later = chrono::Utc::now() + chrono::Duration::hours(1);
+    assert!(
+        catalog
+            .calls_of("write", Some(&later.to_rfc3339()), &audience)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        catalog
+            .calls_of("read", None, &audience)
+            .unwrap()
+            .iter()
+            .all(|node| !node
+                .session
+                .as_deref()
+                .is_some_and(|id| id.ends_with(&session)))
+    );
+}

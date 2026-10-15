@@ -262,10 +262,15 @@ live.
   and $28.39 × 3, and showed "Used restaurant-bill-splitter" (1440 × 900
   light; 390 × 844 dark checked through the DOM). Learned and improved
   covered by the integration test.
-- [ ] E6 rest: the capability sheet the line opens (§9.1, today it opens
-  the Learned abilities view); Review beside file candidates (§9.2);
-  ability filters and search; Settings → Capabilities rewritten around
-  the three sections (§9.4).
+- [x] E6 rest (E6d, 2026-10-15): the capability sheet the line, the
+  Library, Settings and the inbox open (versions, tests, uses, Use this
+  version, Turn off, Review); waiting abilities in the Library's Needs
+  you; filters by name, Agent and state; Settings → Capabilities as
+  Learned, Installed, Connections and Discover. Checked in the running
+  app on the installed home.
+- [ ] A conversation in the catalog has no title, so the sheet names a
+  use by the sidebar's title or its Agent; give session nodes their
+  title.
 - [ ] E7: admin `#/capabilities` and `#/measurements`; `vak skills` verbs.
 - [ ] E8: the opt-in review of failures as a trigger per Agent.
 - [ ] E9: card data from a capability call (R5), generalising

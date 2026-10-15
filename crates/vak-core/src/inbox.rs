@@ -86,9 +86,24 @@ pub struct Entry {
     pub trace: Option<vak_session::trace::TraceKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<vak_session::ids::PrincipalId>,
+    /// The learned ability this entry is about, whose sheet it opens
+    /// (docs/design/93 §9.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ability: Option<String>,
 }
 
 vak_session::impl_traced!(Entry, "inbox_entry");
+
+/// What an entry links to besides its words.
+#[derive(Default)]
+struct Links<'a> {
+    session_id: Option<&'a str>,
+    task_id: Option<&'a str>,
+    result_id: Option<&'a str>,
+    dedupe_key: Option<&'a str>,
+    tool_use_id: Option<&'a str>,
+    ability: Option<&'a str>,
+}
 
 #[derive(Serialize, Deserialize)]
 struct AckLine {
@@ -182,7 +197,46 @@ pub fn record_with_result_and_key(
     trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
     insert(
-        scope, kind, title, body, session_id, task_id, result_id, dedupe_key, None, trace,
+        scope,
+        kind,
+        title,
+        body,
+        Links {
+            session_id,
+            task_id,
+            result_id,
+            dedupe_key,
+            ..Links::default()
+        },
+        trace,
+    )
+}
+
+/// Records, once for `dedupe_key`, an entry about the learned ability
+/// `ability`: it opens that ability's sheet.
+#[allow(clippy::too_many_arguments)]
+pub fn record_about_ability(
+    scope: &vak_config::scope::AgentScope,
+    kind: Kind,
+    title: &str,
+    body: &str,
+    session_id: Option<&str>,
+    ability: &str,
+    dedupe_key: &str,
+    trace: Option<&vak_session::trace::TraceKey>,
+) -> Result<Entry, InboxError> {
+    insert(
+        scope,
+        kind,
+        title,
+        body,
+        Links {
+            session_id,
+            dedupe_key: Some(dedupe_key),
+            ability: Some(ability),
+            ..Links::default()
+        },
+        trace,
     )
 }
 
@@ -203,11 +257,11 @@ pub fn record_for_call(
         kind,
         title,
         body,
-        session_id,
-        None,
-        None,
-        None,
-        tool_use_id,
+        Links {
+            session_id,
+            tool_use_id,
+            ..Links::default()
+        },
         trace,
     )
 }
@@ -219,19 +273,22 @@ pub fn has_dedupe_key(scope: &vak_config::scope::AgentScope, key: &str) -> bool 
         .any(|entry| entry.dedupe_key.as_deref() == Some(key))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn insert(
     scope: &vak_config::scope::AgentScope,
     kind: Kind,
     title: &str,
     body: &str,
-    session_id: Option<&str>,
-    task_id: Option<&str>,
-    result_id: Option<&str>,
-    dedupe_key: Option<&str>,
-    tool_use_id: Option<&str>,
+    links: Links<'_>,
     trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
+    let Links {
+        session_id,
+        task_id,
+        result_id,
+        dedupe_key,
+        tool_use_id,
+        ability,
+    } = links;
     let _dedupe_lock = if dedupe_key.is_some() {
         Some(acquire_dedupe_lock(scope)?)
     } else {
@@ -259,6 +316,7 @@ fn insert(
         tool_use_id: tool_use_id.map(str::to_string),
         actor: trace.and_then(|t| t.actor),
         trace: trace.cloned(),
+        ability: ability.map(str::to_string),
     };
     let mut row = serde_json::to_value(&entry).map_err(|e| InboxError::Serialize(e.to_string()))?;
     // What the entry says belongs to its conversation (plan M7a-b).

@@ -6,6 +6,7 @@ import {
   setAutomationsOpen,
   setAutomationFocusId,
   setReplyTarget,
+  openAbilitySheet,
   openLearnedAbilities,
 } from "../store";
 import * as api from "../api";
@@ -276,8 +277,8 @@ export default function InboxPage() {
                             </button>
                           </Show>
                           <Show when={entry.kind === "proposal_opened" || entry.kind === "ability_offered" || entry.kind === "ability_withdrawn"}>
-                            <button class="btn sm primary" onClick={() => { setInboxOpen(false); openLearnedAbilities(); }}>
-                              See learned abilities
+                            <button class="btn sm primary" onClick={() => { if (entry.ability) openAbilitySheet(entry.ability); else { setInboxOpen(false); openLearnedAbilities(); } }}>
+                              {entry.ability ? (entry.kind === "proposal_opened" ? "Review it" : "Open the ability") : "See learned abilities"}
                             </button>
                           </Show>
                           <Show when={!entry.session_id && !entry.task_id && !entry.kind.startsWith("ability_") && entry.kind !== "proposal_opened"}>
