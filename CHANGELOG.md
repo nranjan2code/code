@@ -1,3 +1,5 @@
+## Unreleased
+
 ## 8.2.0 — 2026-10-15
 
 Agents learn abilities they can keep (docs/design/93-self-evolving-capabilities.md,
