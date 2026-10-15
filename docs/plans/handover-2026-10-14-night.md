@@ -124,6 +124,15 @@ still on 8.0.0 (its home predates the stamp too: purge with its next
 install). `scripts/bump-version.sh` stopped at its `cargo clean` (no
 `CACHEDIR.TAG` in target/); the badge and lockfile were finished by hand.
 
+**After 8.1.0** (2026-10-15, unreleased, gate green): setup saves the
+route and access level to the Shared layer from any folder (`f438f0f36`,
+checked in the running admin); a terminal shows warnings and errors only
+unless `VAK_LOG` is set; a second server leaves the gateway's agent
+network broker alone (`Served::Elsewhere`); and a home names its version
+before its first tenant store exists (`2e3790db2`, the one writer is
+`vak_session::objects::stamp_home_version`). The maintainer ran setup:
+the installed Shared route is ollama `qwen3.5:0.8b-mlx`, full access.
+
 Earlier: **8.0.0 released** (`db1dc61db`, tag
 `v8.0.0`) and installed fresh on this Mac; AWS on `fe131988f` (8.0.0
 plus the web sign-in fix), fresh and set up. The data baseline is 8.0
