@@ -1403,6 +1403,82 @@ impl SessionLog {
         found
     }
 
+    /// What the latest call in this conversation to the tool `tool`
+    /// answered, when it succeeded: the whole body when the result was
+    /// windowed for the model. `None` when no call to it succeeded.
+    pub fn answer_of(&self, tool: &str) -> Option<String> {
+        let chain = self.chain_to_root();
+        let mut bodies: HashMap<String, String> = HashMap::new();
+        for entry in &chain {
+            if let EntryPayload::EvidenceBody(record) = &entry.payload
+                && let Some(text) = self.object_text(&record.body)
+            {
+                bodies.insert(record.tool_use_id.clone(), text);
+            }
+        }
+        let mut named: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut found = None;
+        for entry in &chain {
+            let EntryPayload::Message(record) = &entry.payload else {
+                continue;
+            };
+            for block in &record.message.content {
+                match block {
+                    vak_llm::ContentBlock::ToolUse { id, name, .. } if name == tool => {
+                        named.insert(id.clone());
+                    }
+                    vak_llm::ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error: false,
+                    } if named.contains(tool_use_id) => {
+                        found = Some(
+                            bodies
+                                .get(tool_use_id)
+                                .cloned()
+                                .unwrap_or_else(|| content.clone()),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        found
+    }
+
+    /// The tools `wanted` accepts whose calls in this conversation
+    /// succeeded, oldest first, each once: what a card refused for naming
+    /// an ability that never answered is told it may name.
+    pub fn tools_answered(&self, wanted: impl Fn(&str) -> bool) -> Vec<String> {
+        let mut names: HashMap<String, String> = HashMap::new();
+        let mut answered: Vec<String> = Vec::new();
+        for entry in &self.chain_to_root() {
+            let EntryPayload::Message(record) = &entry.payload else {
+                continue;
+            };
+            for block in &record.message.content {
+                match block {
+                    vak_llm::ContentBlock::ToolUse { id, name, .. } if wanted(name) => {
+                        names.insert(id.clone(), name.clone());
+                    }
+                    vak_llm::ContentBlock::ToolResult {
+                        tool_use_id,
+                        is_error: false,
+                        ..
+                    } => {
+                        if let Some(name) = names.get(tool_use_id)
+                            && !answered.contains(name)
+                        {
+                            answered.push(name.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        answered
+    }
+
     /// The commands calls in the open turn ran (a process ran,
     /// `CallEffect::Ran`), oldest first, each once: what a card refused for
     /// naming a command no call ran is told it may name.

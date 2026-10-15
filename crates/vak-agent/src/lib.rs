@@ -6074,6 +6074,62 @@ impl Agent {
         Ok(input)
     }
 
+    /// A card that shows what an ability answered (`Tool::data_of_call`,
+    /// docs/design/93 R5) with its rows or points filled from that
+    /// ability's latest answer in this conversation, never from values the
+    /// model copied; refused with what to fix when no call to it answered
+    /// or its answer holds no list where the card said. Any other card as
+    /// it came.
+    async fn with_call_data(&self, tool: &dyn Tool, mut input: Value) -> Result<Value, String> {
+        let Some(spec) = tool.data_of_call() else {
+            return Ok(input);
+        };
+        let argument = |name: &str| {
+            input
+                .get(name)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let ability = argument(spec.from);
+        let list = argument(spec.list);
+        let answers_data = |name: &str| {
+            self.tool_named(name)
+                .is_some_and(|tool| tool.answers_data())
+        };
+        let session = self.session.lock().await;
+        let answer = answers_data(&ability)
+            .then(|| session.answer_of(&ability))
+            .flatten();
+        let Some(answer) = answer else {
+            let answered = session.tools_answered(answers_data);
+            return Err(vak_control::card_ability_not_answered(&ability, &answered));
+        };
+        drop(session);
+        let keys_of = |value: &Value| -> Vec<String> {
+            value
+                .as_object()
+                .map(|object| object.keys().cloned().collect())
+                .unwrap_or_default()
+        };
+        let answer: Value =
+            serde_json::from_str(vak_intent::control::clean_scaffolding(&answer).trim())
+                .map_err(|_| vak_control::card_data_not_found(&ability, &list, &[]))?;
+        let mut at = &answer;
+        for key in list.split('.').filter(|key| !key.is_empty()) {
+            at = at
+                .get(key)
+                .ok_or_else(|| vak_control::card_data_not_found(&ability, &list, &keys_of(at)))?;
+        }
+        let records = at
+            .as_array()
+            .ok_or_else(|| vak_control::card_data_not_found(&ability, &list, &keys_of(at)))?
+            .clone();
+        tool.fill_from_data(&mut input, &records)?;
+        Ok(input)
+    }
+
     async fn show_card(&self, call: &PendingToolCall) -> (ToolRunOutput, vak_control::CallVerdict) {
         use vak_control::{CallVerdict, Refusal};
         let Some(tool) = self.tool_named(&call.name).cloned() else {
@@ -6106,6 +6162,15 @@ impl Agent {
             );
         }
         let input = match self.with_command_output(tool.as_ref(), &call.input).await {
+            Ok(input) => input,
+            Err(message) => {
+                return (
+                    ToolRunOutput::Err(Fault::Target, message),
+                    CallVerdict::Refused(Refusal::Tool),
+                );
+            }
+        };
+        let input = match self.with_call_data(tool.as_ref(), input).await {
             Ok(input) => input,
             Err(message) => {
                 return (

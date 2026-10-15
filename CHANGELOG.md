@@ -1,5 +1,9 @@
 ## Unreleased
 
+- A table or chart of what one of your Agent's abilities answered now
+  shows exactly the values it answered, filled by Vakyartha from that
+  answer rather than copied by the model, however many rows there are.
+  Two ability lines under one answer no longer run together.
 - An Agent can look at its abilities that failed each night and propose
   fixes, every one waiting for your review. Turn it on in Settings,
   Capabilities, Learned, or from the inbox the first time an ability

@@ -215,6 +215,44 @@ pub fn card_file_missing(path: &str) -> String {
 
 /// What a card is told when it shows the output of a command no call in
 /// the conversation ran.
+/// A card that takes its data from an ability named one no call in the
+/// conversation answered (docs/design/93 R5).
+pub fn card_ability_not_answered(ability: &str, answered: &[String]) -> String {
+    let named = if answered.is_empty() {
+        "No ability has answered in this conversation yet: call it first.".to_string()
+    } else {
+        let list: Vec<String> = answered.iter().map(|name| format!("`{name}`")).collect();
+        format!(
+            "The abilities that answered are {}: name one of them exactly, or call this one first.",
+            list.join(", ")
+        )
+    };
+    format!(
+        "Not shown: no call in this conversation to `{ability}` answered. This card takes its \
+         data from the latest answer of the ability it names. {named}"
+    )
+}
+
+/// A card that takes its data from an ability's answer named a place in
+/// it that holds no list of records.
+pub fn card_data_not_found(ability: &str, list: &str, keys: &[String]) -> String {
+    let at = if list.is_empty() {
+        "the answer itself".to_string()
+    } else {
+        format!("`{list}`")
+    };
+    let keys = if keys.is_empty() {
+        String::new()
+    } else {
+        let list: Vec<String> = keys.iter().map(|key| format!("`{key}`")).collect();
+        format!(" Its answer's keys are {}.", list.join(", "))
+    };
+    format!(
+        "Not shown: {at} in `{ability}`'s latest answer is not a list of records. Name where \
+         the list is with `list` (a key, or keys joined by dots).{keys}"
+    )
+}
+
 pub fn card_command_not_run(command: &str, ran: &[String]) -> String {
     let named = if ran.is_empty() {
         "No command has run in this turn yet: run it first.".to_string()

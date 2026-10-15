@@ -219,10 +219,10 @@ live.
 - [ ] Seen live (E4): before proposing a new version of a live ability the
   model asked for confirmation once ("Confirmation before activating
   version" in its plan). Nothing in Vak asks it to; left as observed.
-- [ ] Seen live (E1a, dev route): a card the model drew after the
+- [x] Seen live (E1a, dev route): a card the model drew after the
   program answered showed one per-person figure and dropped the extra
-  cent the program gave one person. E9 (card data from the call) is the
-  designed fix; until then the card is the model's words.
+  cent the program gave one person. Closed by E9: a table or chart of an
+  ability's answer is filled from that answer.
 - [x] E5 (2026-10-15): `AbilityRecord` per skill
   (`agents/{agent}/ability-standing`), settled at each turn's end from
   that turn's program calls; `vak_judge::ability::verdict` offers a
@@ -277,8 +277,11 @@ live.
 - [x] E8 (2026-10-15): the opt-in nightly review of failures, one
   `ability_review` automation per Agent; checked live (failure, offer,
   review run, fix waiting, approved).
-- [ ] E9: card data from a capability call (R5), generalising
-  `Tool::output_of_command`.
+- [x] E9 (2026-10-15): `emit_ability_table_card` and
+  `emit_ability_chart_card` fill their rows or points from the named
+  ability's latest answer (`Tool::data_of_call`); checked live: a
+  300-row table from `powers-table`, every value equal to its answer,
+  chosen by the model unasked.
 
 ## Scheduled work (docs/design/94)
 

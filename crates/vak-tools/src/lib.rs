@@ -247,6 +247,18 @@ pub struct CommandOutput {
     pub duration_ms: &'static str,
 }
 
+/// For a card tool that shows what one of the Agent's abilities answered
+/// (docs/design/93 R5): the argument naming the ability, the argument
+/// saying where the records are in its answer, and the arguments the loop
+/// fills from them (`Tool::fill_from_data`), so a card's rows or points are
+/// the answer's own, never values the model copied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallData {
+    pub from: &'static str,
+    pub list: &'static str,
+    pub filled: &'static [&'static str],
+}
+
 impl CommandOutput {
     /// Every argument the loop fills.
     pub fn filled(&self) -> Vec<&'static str> {
@@ -350,6 +362,30 @@ pub trait Tool: Send + Sync {
     /// naming a command no call in the conversation ran is refused.
     fn output_of_command(&self) -> Option<CommandOutput> {
         None
+    }
+
+    /// For a card tool that shows what an ability answered: which
+    /// arguments name it and where its records are, and which the loop
+    /// fills (`CallData`). A card naming an ability no call in the
+    /// conversation answered is refused.
+    fn data_of_call(&self) -> Option<CallData> {
+        None
+    }
+
+    /// Fills this card's arguments from `records`, the list an ability's
+    /// answer holds where the card said; a refusal says what to fix.
+    fn fill_from_data(
+        &self,
+        _args: &mut serde_json::Value,
+        _records: &[serde_json::Value],
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Whether this tool's answer is data a card may take its rows or
+    /// points from (`data_of_call`): an ability's program answers JSON.
+    fn answers_data(&self) -> bool {
+        false
     }
 
     /// The code-owned prompt contract this tool's use needs, shown only

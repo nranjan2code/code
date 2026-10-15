@@ -160,6 +160,69 @@ impl Tool for FakeTerminalCard {
     }
 }
 
+/// An ability whose program answers 300 records.
+struct FakeAbility;
+
+#[async_trait::async_trait]
+impl Tool for FakeAbility {
+    fn name(&self) -> &str {
+        "census"
+    }
+    fn description(&self) -> &str {
+        "people per city"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn answers_data(&self) -> bool {
+        true
+    }
+    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        let rows: Vec<serde_json::Value> = (0..300)
+            .map(|at| serde_json::json!({"city": format!("City {at}"), "people": at * 7}))
+            .collect();
+        ToolOutput::ok(serde_json::json!({"rows": rows}).to_string())
+    }
+}
+
+/// A table card filled from an ability's answer: it reports the rows the
+/// loop gave it.
+struct FakeAbilityTable;
+
+#[async_trait::async_trait]
+impl Tool for FakeAbilityTable {
+    fn name(&self) -> &str {
+        "emit_ability_table_card"
+    }
+    fn description(&self) -> &str {
+        "a table of an ability's answer"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    fn data_of_call(&self) -> Option<vak_tools::CallData> {
+        Some(vak_tools::CallData {
+            from: "from",
+            list: "list",
+            filled: &["rows"],
+        })
+    }
+    fn fill_from_data(
+        &self,
+        args: &mut serde_json::Value,
+        records: &[serde_json::Value],
+    ) -> Result<(), String> {
+        args["rows"] = serde_json::Value::Array(records.to_vec());
+        Ok(())
+    }
+    async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok(args["rows"].to_string())
+    }
+}
+
 struct FakeEmitChartCard;
 
 #[async_trait]
@@ -302,6 +365,8 @@ async fn build_agent(
                 Arc::new(FailingFetch),
                 Arc::new(FakeShell),
                 Arc::new(FakeTerminalCard),
+                Arc::new(FakeAbility),
+                Arc::new(FakeAbilityTable),
             ];
             // As in production: a card tool the request did not predict is
             // deferred, so it is not declared until something loads it.
@@ -330,6 +395,16 @@ async fn build_agent(
                 ),
                 vak_llm::ToolDefinition::new(
                     "emit_terminal_card",
+                    "test stand-in",
+                    serde_json::json!({"type": "object"}),
+                ),
+                vak_llm::ToolDefinition::new(
+                    "census",
+                    "test stand-in",
+                    serde_json::json!({"type": "object"}),
+                ),
+                vak_llm::ToolDefinition::new(
+                    "emit_ability_table_card",
                     "test stand-in",
                     serde_json::json!({"type": "object"}),
                 ),
@@ -507,4 +582,72 @@ async fn a_retired_name_is_told_what_replaced_it() {
     assert!(told.contains(r#""name":"python_eval""#), "{told}");
     assert!(told.contains(r#""use_instead":"bash"#), "{told}");
     assert!(told.contains(r#""available_tools""#), "{told}");
+}
+
+/// A card filled from an ability's answer shows every record the call
+/// answered, whatever the model wrote; one naming an ability no call
+/// answered is refused with the abilities that did (docs/design/93 R5).
+#[tokio::test]
+async fn an_ability_card_shows_every_record_its_call_answered() {
+    let dir = tempdir().unwrap();
+    let (mut agent, _) = build_agent(
+        &dir,
+        "pc-ability-card",
+        vec![
+            tool_call_msg("u0", "emit_ability_table_card", serde_json::json!({"from": "census", "list": "rows"})),
+            tool_call_msg("a1", "census", serde_json::json!({})),
+            tool_call_msg(
+                "u1",
+                "emit_ability_table_card",
+                serde_json::json!({"from": "census", "list": "rows", "rows": [{"city": "Made up", "people": 1}]}),
+            ),
+            tool_call_msg("u2", "emit_ability_table_card", serde_json::json!({"from": "weather", "list": "rows"})),
+            tool_call_msg("u3", "emit_ability_table_card", serde_json::json!({"from": "census", "list": "towns"})),
+            text_msg("Here are the cities."),
+        ],
+    )
+    .await;
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let result = |id: &str| {
+        session
+            .message_chain()
+            .iter()
+            .flat_map(|(_, message)| message.content.iter())
+            .find_map(|block| match block {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } if tool_use_id == id => Some((content.clone(), *is_error)),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let (refused, failed) = result("u0");
+    assert!(
+        failed && refused.contains("No ability has answered"),
+        "{refused}"
+    );
+    let (shown, failed) = result("u1");
+    assert!(!failed, "{shown}");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&shown).unwrap();
+    assert_eq!(rows.len(), 300);
+    assert_eq!(rows[0]["city"], "City 0");
+    assert_eq!(rows[299]["people"], 299 * 7);
+    let (refused, failed) = result("u2");
+    assert!(failed, "{refused}");
+    assert!(
+        refused.contains("`weather`") && refused.contains("`census`"),
+        "{refused}"
+    );
+    let (refused, failed) = result("u3");
+    assert!(
+        failed && refused.contains("`towns`") && refused.contains("`rows`"),
+        "{refused}"
+    );
 }

@@ -861,6 +861,12 @@ struct Scratch {
 
 #[async_trait]
 impl Tool for CapabilityTool {
+    /// Its program answers one JSON value: data a card may take its rows
+    /// or points from (docs/design/93 R5).
+    fn answers_data(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> &str {
         &self.name
     }

@@ -50,11 +50,16 @@ pub(crate) fn plan_forms(
     call
 }
 
-/// The card tool of this kind among `tools`, when exactly one owns it.
+/// The card tool of this kind among `tools`, when exactly one owns it. A
+/// tool that fills its card from an ability's answer (`Tool::data_of_call`)
+/// presents the kind but does not own it: the owner takes its data in its
+/// own arguments.
 pub(crate) fn owner<'a>(kind: &str, tools: &'a [Arc<dyn Tool>]) -> Option<&'a Arc<dyn Tool>> {
-    let mut owners = tools
-        .iter()
-        .filter(|tool| tool.presents_cards() && tool.card_kinds().iter().any(|own| own == kind));
+    let mut owners = tools.iter().filter(|tool| {
+        tool.presents_cards()
+            && tool.data_of_call().is_none()
+            && tool.card_kinds().iter().any(|own| own == kind)
+    });
     match (owners.next(), owners.next()) {
         (Some(tool), None) => Some(tool),
         _ => None,

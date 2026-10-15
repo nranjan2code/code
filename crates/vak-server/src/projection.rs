@@ -4634,6 +4634,13 @@ mod tests {
         let emitters = vak_core::presentation_tools::EmitCardTool::all();
         for emitter in &emitters {
             let name = vak_tools::Tool::name(emitter);
+            // A card filled from an ability's answer (docs/design/93 R5) has
+            // no arguments that show it alone: it is recorded from the
+            // arguments the loop filled, and vak-agent's card_gates test
+            // follows it from the ability's call.
+            if vak_tools::Tool::data_of_call(emitter).is_some() {
+                continue;
+            }
             assert!(
                 cases.iter().any(|(tool, _, _)| *tool == name),
                 "no case for block {name}"

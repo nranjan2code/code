@@ -37,6 +37,9 @@ struct CardShape {
     fill: fn(&mut Map<String, Value>),
     /// A card that shows what a command printed (`Tool::output_of_command`).
     output_of_command: Option<vak_tools::CommandOutput>,
+    /// A card that shows what an ability answered (`Tool::data_of_call`)
+    /// and how its records become the filled arguments.
+    data_of_call: Option<(vak_tools::CallData, FillFromData)>,
     /// The arguments, as `{"properties": {...}, "required": [...]}`.
     fields: fn() -> Value,
     /// The stored card for validated arguments, or a refusal the model can
@@ -45,6 +48,9 @@ struct CardShape {
 }
 
 type Map<K, V> = serde_json::Map<K, V>;
+
+/// How an ability's records become a card's filled arguments.
+type FillFromData = fn(&mut Map<String, Value>, &[Value]) -> Result<(), String>;
 
 fn string(description: &str) -> Value {
     serde_json::json!({"type": "string", "description": description})
@@ -1330,9 +1336,181 @@ const fn shape(
         description,
         fill,
         output_of_command: None,
+        data_of_call: None,
         fields,
         build,
     }
+}
+
+const FROM: &str = "Your ability whose latest answer in this conversation holds the records, by its name. Vak fills the card from that answer, so you never copy its values.";
+const LIST: &str = "Optional. Where the records are in its answer: a key, or keys joined by dots (rows, result.items). Leave it out when the answer is the list itself.";
+
+/// A record's value as a table cell: text as written, numbers and truth
+/// values as they read, nothing for a missing value, anything else as its
+/// JSON. A line break reads as a space, since a cell is one line.
+fn cell_of(value: Option<&Value>) -> String {
+    match value {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(text)) => text.replace(['\n', '\r'], " "),
+        Some(other @ (Value::Number(_) | Value::Bool(_))) => other.to_string(),
+        Some(other) => other.to_string(),
+    }
+}
+
+fn records_as_objects(records: &[Value]) -> Result<Vec<&Map<String, Value>>, String> {
+    if records.is_empty() {
+        return Err("the list in the ability's answer is empty: there is nothing to show".into());
+    }
+    records
+        .iter()
+        .enumerate()
+        .map(|(at, record)| {
+            record.as_object().ok_or_else(|| {
+                format!("record {at} of the ability's answer is not an object with keys")
+            })
+        })
+        .collect()
+}
+
+fn ability_table_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "title": string(TITLE),
+            "from": string(FROM),
+            "list": string(LIST),
+            "columns": texts("Optional. The keys of a record to show as columns, in order. Every key of the first record when left out.")
+        }),
+        &["from"],
+    )
+}
+
+/// The table's rows from an ability's records: the header first, then one
+/// row of cells per record, every value the record's own.
+fn fill_table_from(args: &mut Map<String, Value>, records: &[Value]) -> Result<(), String> {
+    let objects = records_as_objects(records)?;
+    let named: Vec<String> = args
+        .get("columns")
+        .and_then(Value::as_array)
+        .map(|columns| {
+            columns
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|column| !column.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let columns = if named.is_empty() {
+        objects[0].keys().cloned().collect()
+    } else {
+        named
+    };
+    if let Some(missing) = columns.iter().find(|column| {
+        !objects
+            .iter()
+            .any(|record| record.contains_key(column.as_str()))
+    }) {
+        let keys: Vec<String> = objects[0].keys().map(|key| format!("`{key}`")).collect();
+        return Err(format!(
+            "no record has the key `{missing}`; a record's keys are {}",
+            keys.join(", ")
+        ));
+    }
+    let mut rows = vec![Value::Array(
+        columns
+            .iter()
+            .map(|column| Value::String(column.clone()))
+            .collect(),
+    )];
+    rows.extend(objects.iter().map(|record| {
+        Value::Array(
+            columns
+                .iter()
+                .map(|column| Value::String(cell_of(record.get(column))))
+                .collect(),
+        )
+    }));
+    args.insert("rows".into(), Value::Array(rows));
+    Ok(())
+}
+
+fn build_ability_table(args: &Map<String, Value>) -> Result<Value, String> {
+    if !args.contains_key("rows") {
+        return Err(
+            "this card is filled from an ability's answer: name the ability in `from`".into(),
+        );
+    }
+    build_table(args)
+}
+
+fn ability_chart_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "title": string(TITLE),
+            "chart_type": one_of(&["line", "bar", "area"], "How to draw it: line or area for a value over an ordered x, bar for values across categories."),
+            "from": string(FROM),
+            "list": string(LIST),
+            "x": string("The key of a record that holds its x value: a category or a number."),
+            "y": string("The key of a record that holds the value to plot, a number. One chart shows one measure."),
+            "series": string("Optional. The key of a record that holds the name of its series; one series named after `y` when left out."),
+            "x_label": string("Optional. What the x axis measures."),
+            "y_label": string("Optional. What the y axis measures, with its unit (Share (%))."),
+            "accessible_summary": string("Optional. One sentence saying what the chart shows.")
+        }),
+        &["chart_type", "from", "x", "y"],
+    )
+}
+
+/// The chart's points from an ability's records: each record's x, y and
+/// series, every value the record's own.
+fn fill_chart_from(args: &mut Map<String, Value>, records: &[Value]) -> Result<(), String> {
+    let objects = records_as_objects(records)?;
+    let key = |name: &str| {
+        args.get(name)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(str::to_string)
+    };
+    let (Some(x), Some(y)) = (key("x"), key("y")) else {
+        return Err("name the record keys for `x` and `y`".into());
+    };
+    let series = key("series");
+    let mut data = Vec::new();
+    for (at, record) in objects.iter().enumerate() {
+        let value = match record.get(&y) {
+            Some(number @ Value::Number(_)) => number.clone(),
+            _ => {
+                return Err(format!(
+                    "record {at} has no number at `{y}`; a chart's `y` names a key holding a number"
+                ));
+            }
+        };
+        let Some(x_value) = record.get(&x) else {
+            return Err(format!("record {at} has no key `{x}`"));
+        };
+        let name = match &series {
+            Some(series) => cell_of(record.get(series)),
+            None => y.clone(),
+        };
+        data.push(serde_json::json!({"series": name, "x": cell_of(Some(x_value)), "y": value}));
+    }
+    args.insert("data".into(), Value::Array(data));
+    Ok(())
+}
+
+fn build_ability_chart(args: &Map<String, Value>) -> Result<Value, String> {
+    if !args.contains_key("data") {
+        return Err(
+            "this card is filled from an ability's answer: name the ability in `from`".into(),
+        );
+    }
+    let mut chart = args.clone();
+    for filled_from in ["from", "list", "x", "y", "series"] {
+        chart.remove(filled_from);
+    }
+    build_chart(&chart)
 }
 
 const SHAPES: &[CardShape] = &[
@@ -1496,6 +1674,42 @@ const SHAPES: &[CardShape] = &[
             fill_nothing,
         )
     },
+    CardShape {
+        data_of_call: Some((
+            vak_tools::CallData {
+                from: "from",
+                list: "list",
+                filled: &["rows"],
+            },
+            fill_table_from,
+        )),
+        ..shape(
+            "table",
+            "emit_ability_table_card",
+            "A table of the records one of your abilities answered: name the ability and where its list is, and Vak fills every row from its answer. Use it for an ability's results rather than copying them into emit_table_card.",
+            ability_table_fields,
+            build_ability_table,
+            fill_nothing,
+        )
+    },
+    CardShape {
+        data_of_call: Some((
+            vak_tools::CallData {
+                from: "from",
+                list: "list",
+                filled: &["data"],
+            },
+            fill_chart_from,
+        )),
+        ..shape(
+            "chart",
+            "emit_ability_chart_card",
+            "A chart of the records one of your abilities answered: name the ability, where its list is and the keys for x and y, and Vak fills every point from its answer.",
+            ability_chart_fields,
+            build_ability_chart,
+            fill_nothing,
+        )
+    },
 ];
 
 fn shape_of_form(form: &str) -> Option<&'static CardShape> {
@@ -1512,8 +1726,11 @@ pub fn emit_tool_for(kind: &str) -> Option<&'static str> {
 /// follows the full call → ledger → projection path.
 #[doc(hidden)]
 pub fn conformance_cases() -> Vec<(&'static str, &'static str, Value)> {
+    // A card filled from an ability's answer has no arguments alone that
+    // show it; its own tests call an ability first.
     SHAPES
         .iter()
+        .filter(|shape| shape.data_of_call.is_none())
         .map(|shape| (shape.name, shape.form, fixture_for(shape.form)))
         .collect()
 }
@@ -1763,6 +1980,20 @@ impl Tool for EmitCardTool {
         self.shape.output_of_command
     }
 
+    fn data_of_call(&self) -> Option<vak_tools::CallData> {
+        self.shape.data_of_call.map(|(spec, _)| spec)
+    }
+
+    fn fill_from_data(&self, args: &mut Value, records: &[Value]) -> Result<(), String> {
+        let Some((_, fill)) = self.shape.data_of_call else {
+            return Ok(());
+        };
+        let Some(args) = args.as_object_mut() else {
+            return Err("the card's arguments are not an object".into());
+        };
+        fill(args, records)
+    }
+
     fn card_kinds(&self) -> Vec<String> {
         self.kinds().into_iter().map(str::to_string).collect()
     }
@@ -1844,10 +2075,13 @@ fn validate_call(
         .as_object()
         .cloned()
         .unwrap_or_default();
-    let filled = shape
+    let mut filled = shape
         .output_of_command
         .map(|spec| spec.filled())
         .unwrap_or_default();
+    if let Some((spec, _)) = shape.data_of_call {
+        filled.extend(spec.filled);
+    }
     let unknown: Vec<String> = own
         .keys()
         .filter(|key| !known.contains_key(key.as_str()) && !filled.contains(&key.as_str()))
@@ -2077,11 +2311,55 @@ mod tests {
 
     #[test]
     fn the_forms_are_exactly_the_delivery_forms_in_order() {
-        let forms: Vec<&str> = SHAPES.iter().map(|shape| shape.form).collect();
+        let (own, from_call): (Vec<&CardShape>, Vec<&CardShape>) = SHAPES
+            .iter()
+            .partition(|shape| shape.data_of_call.is_none());
+        let forms: Vec<&str> = own.iter().map(|shape| shape.form).collect();
         assert_eq!(forms, vak_delivery::FORMS);
-        for shape in SHAPES {
+        for shape in own {
             assert_eq!(shape.name, format!("emit_{}_card", shape.form));
         }
+        // A card filled from an ability's answer presents a form already
+        // listed, by a tool of its own.
+        for shape in from_call {
+            assert!(vak_delivery::FORMS.contains(&shape.form));
+            assert_eq!(shape.name, format!("emit_ability_{}_card", shape.form));
+        }
+    }
+
+    #[test]
+    fn an_abilitys_records_fill_a_table_and_a_chart_with_their_own_values() {
+        let records: Vec<Value> = (0..300)
+            .map(|at| serde_json::json!({"city": format!("City {at}"), "people": at * 1000, "note": "a | b\nc"}))
+            .collect();
+        let mut table = serde_json::json!({"from": "census", "list": "rows", "columns": ["city", "people", "note"]});
+        let table_tool = tool("emit_ability_table_card");
+        table_tool.fill_from_data(&mut table, &records).unwrap();
+        let card = built("emit_ability_table_card", table).unwrap();
+        let rows = card["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 300);
+        for (at, row) in rows.iter().enumerate() {
+            assert_eq!(row[0], format!("City {at}"));
+            assert_eq!(row[1], serde_json::json!(at * 1000));
+            assert_eq!(row[2], "a | b c");
+        }
+
+        let mut chart =
+            serde_json::json!({"from": "census", "chart_type": "bar", "x": "city", "y": "people"});
+        tool("emit_ability_chart_card")
+            .fill_from_data(&mut chart, &records[..3])
+            .unwrap();
+        let card = built("emit_ability_chart_card", chart).unwrap();
+        assert_eq!(card["series"][0]["name"], "people");
+        assert_eq!(card["series"][0]["points"][2]["y"], 2000);
+
+        let mut missing = serde_json::json!({"from": "census", "columns": ["town"]});
+        let refused = table_tool
+            .fill_from_data(&mut missing, &records)
+            .unwrap_err();
+        assert!(refused.contains("`town`"), "{refused}");
+        let mut empty = serde_json::json!({"from": "census"});
+        assert!(table_tool.fill_from_data(&mut empty, &[]).is_err());
     }
 
     #[test]

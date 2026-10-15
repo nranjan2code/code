@@ -10,42 +10,37 @@ history keeps them); every note of theirs that is still true is under
 AGENTS.md first (especially 'The data rules', 'No word lists, no tuned
 limits', 'A tool's permission is what it declares', 'Investigating a
 failure' and 'Verification before every commit'), then
-docs/plans/handover-2026-10-14-night.md whole, then
-docs/design/93-self-evolving-capabilities.md §2, §5, §7, §9 and §11 (the
-current work).
+docs/plans/handover-2026-10-14-night.md whole.
 
-Run `git status` and `git log --oneline -8`. Stage only your own paths;
-keep only `main`; check `git show --stat` before every push. We are on
-a Claude Code Pro plan, so keep token use to what the task needs: read
-with grep and line ranges, never whole large files; never re-read a file
-you just edited; batch independent commands in one call; filter command
-output (grep, tail, cut) instead of printing it whole; run the full gate
-(about 12 minutes) once per finished step, in the background, using
-`scripts/gate.sh --changed` while working; prefer one live check per
-stage, on the local route unless the stage needs a stronger model;
-commit each verified step; tick docs/plans/open-items.md; and rewrite
-this handover's prompt and 'Where things stand' before the session's
-limit, telling the maintainer when the session is near it. The maintainer is the only user and there are no others: rewrite
-a wrong design or screen rather than patch it.
+Run `git status` and `git log --oneline -8`. If the newest commit is not
+'Doc 93 E9: …', the E9 work is in the working tree uncommitted: run
+`scripts/gate.sh` (about 13 minutes, in the background), fix what it
+finds, and commit it with the message in the handover's 'Where things
+stand'. Stage only your own paths; keep only `main`; check `git show
+--stat` before every push. We are on a Claude Code Pro plan, so keep
+token use to what the task needs: read with grep and line ranges, never
+whole large files; batch independent commands; filter command output;
+run the full gate once per finished step, in the background, using
+`scripts/gate.sh --changed` while working; commit each verified step;
+tick docs/plans/open-items.md; and rewrite this handover's prompt and
+'Where things stand' before the session's limit. The maintainer is the
+only user: rewrite a wrong design or screen rather than patch it.
 
-Self-evolving capabilities (doc 93) stand at E6 done: E1 to E6 are
-built and checked (E6d: the capability sheet, Review in it, Library
-filters and Needs you, Settings > Capabilities as Learned / Installed /
-Connections / Discover, inbox entries open their ability), and E7 (admin
-Learned abilities with revoke, the per-version table, `vak skills`
-verbs), and E8 (the nightly review of failures). Next is E9 (card data
-from a capability call, doc 93 R5 and §11).
-Build each as a
-design, never spot fixes or tuned numbers.
+Self-evolving capabilities (doc 93) are implemented, E1 to E9. What is
+left is in docs/plans/open-items.md 'Self-evolving capabilities' (the
+open lines: an Agent asking before proposing a new version, ability
+history lost before E6a on the installed home, conversations without a
+title in the catalog) and the release questions under 'Next', which are
+the maintainer's to decide; ask before cutting a release.
 
 Live runs: the installed home (8.1.0, OpenAI key, gpt-6-luna) may be
 used sparingly: launch entry `vak-e3-live` (a dev server on port 8907 in
 /tmp/vak-live/e3 against the real home; token in
-/tmp/vak-live/test-gateway-token; /tmp/vak-live/turn.sh with PORT=8907).
-The installed gateway is on 8901 (its token is in the URL `vak setup`
-prints; /tmp/vak-live/turn-gw.sh uses it). For the local model, launch
-entry `vak-e1-live` (port 8905, throwaway VAK_HOME, PATCH /config to
-ollama qwen3.5:4b-mlx). Short progress lines."
+/tmp/vak-live/test-gateway-token; /tmp/vak-live/turn.sh with PORT=8907
+for a new conversation, /tmp/vak-live/turn-same.sh <session> for a
+follow-up). For the local model, launch entry `vak-e1-live` (port 8905,
+throwaway VAK_HOME, PATCH /config to ollama qwen3.5:4b-mlx). Short
+progress lines."
 
 ## Where things stand
 
@@ -80,8 +75,10 @@ route pin); a scheduled run's cards are drawn as cards in the home turn
 model still reads their text). Left on the dev home: the "morning line"
 automation and its test conversation.
 
-**Self-evolving capabilities (doc 93) stand at E8 done** (2026-10-15,
-full gate green, pushed): E9 not started (tracker lines in
+**Self-evolving capabilities (doc 93) are implemented** (E1 to E9,
+2026-10-15), each pushed with the full gate green; E9 is the newest
+commit. One server test now skips a card tool that declares
+`data_of_call` (it required rendering from a call's arguments alone). (tracker lines in
 open-items "Self-evolving capabilities").
 
 **E6d is built** (checked in the running app on the installed home,
@@ -100,6 +97,16 @@ only Agent-made abilities; per-version calls by time window from
 `calls_of`. Left on the installed home: temperature-converter versions
 1 (tests failed) and 2 (in use), its test conversation; its record has
 three entries for version 2 from before re-use stopped adding one.
+
+**E9 is built** (checked live on the installed home with gpt-6-luna):
+`emit_ability_table_card` and `emit_ability_chart_card`
+(`vak-core/src/presentation_tools.rs`), `Tool::data_of_call`,
+`fill_from_data`, `answers_data`, `with_call_data` in `vak-agent`,
+`SessionLog::answer_of` and `tools_answered`. A fresh conversation
+asking for powers 1 to 300 as a table called `powers-table` and chose
+the ability table card unasked; all 300 stored rows equal the answer.
+Left on the installed home: `powers-table` (offered to every Agent) and
+its conversations.
 
 **E8 is built** (checked live on the installed home with gpt-6-luna):
 `vak-core/src/ability_review.rs`, `TriggerAction::AbilityReview`, the

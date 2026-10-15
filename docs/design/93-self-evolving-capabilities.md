@@ -1,7 +1,8 @@
 Self-Evolving Capabilities
 ==========================
 
-Status: in progress: E1 built (E1a 2026-10-14: a skill's program runs as
+Status: implemented: E1 to E9 built and checked live (2026-10-14 to
+2026-10-15). E1 built (E1a 2026-10-14: a skill's program runs as
 a tool under its own sandbox; E1b 2026-10-15: declared hosts through the
 egress proxy, pinned Python requirements installed by their own run); E2
 built 2026-10-15 (a program's own tests run by the runtime in a run of
@@ -29,8 +30,9 @@ entries open their ability; checked in the running app); E7 built
 2026-10-15 (admin Learned abilities with revoke, the per-version table
 in How the models did, `vak skills` verbs replacing `skills-review`);
 E8 built 2026-10-15 (an Agent's nightly review of its failing abilities,
-off until the owner turns it on; checked live end to end); E9 not
-built. Agreed with the
+off until the owner turns it on; checked live end to end); E9 built
+2026-10-15 (a table or chart filled from an ability's answer; checked
+live with 300 rows). Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -139,6 +141,26 @@ decisions"); the maintainer may reopen any of them:
   its data, and the loop fills the card from that call, the way
   `Tool::output_of_command` fills a terminal card. The model still
   decides whether and where a card is shown (stage E9).
+  As built in E9: two card tools present the table and chart forms from
+  an ability's answer, `emit_ability_table_card` (`from`, `list`,
+  optional `columns`) and `emit_ability_chart_card` (`from`, `list`,
+  `x`, `y`, optional `series`). A tool declares it takes its data from a
+  call (`Tool::data_of_call`, `vak_tools::CallData`) and how records
+  become its filled arguments (`Tool::fill_from_data`); a tool whose
+  answer is data declares it (`Tool::answers_data`, an ability's
+  program). The loop (`with_call_data` in `vak-agent`) reads the named
+  ability's latest successful answer in the conversation from the
+  ledger, whole when it was windowed (`SessionLog::answer_of`), takes
+  the list where `list` points and lets the tool fill `rows` or `data`
+  before its checks; a card naming an ability no call answered, or a
+  place holding no list, is refused with the abilities that answered or
+  the answer's keys (`vak_control::card_ability_not_answered`,
+  `card_data_not_found`). The shape rule (one field required, so two
+  cards) is why these are tools of their own rather than an optional
+  argument on `emit_table_card`; being filled from a call, they present
+  the form without owning its kind (`cards::owner` skips a tool that
+  declares `data_of_call`), so a planned table is still asked of
+  `emit_table_card`.
 - **R6 Office files and PDFs only through `office_apply`.** A capability
   never delivers an Office file or a PDF (detected by content, invariant
   39): such a file in its drafts is refused with "return the data and

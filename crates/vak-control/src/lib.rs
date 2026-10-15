@@ -13,9 +13,10 @@ pub mod provenance;
 pub use provenance::{Held, Provenance};
 
 pub use correct::{
-    Finding, Ladder, RECOVERY_NOTE, ShownTool, card_command_not_run, card_file_missing,
-    card_kind_elsewhere, card_replaces_unknown, card_unnamed, card_unplanned, limit_reached,
-    regenerate_arguments, render, skill_not_tool, uncited_source, unknown_tool,
+    Finding, Ladder, RECOVERY_NOTE, ShownTool, card_ability_not_answered, card_command_not_run,
+    card_data_not_found, card_file_missing, card_kind_elsewhere, card_replaces_unknown,
+    card_unnamed, card_unplanned, limit_reached, regenerate_arguments, render, skill_not_tool,
+    uncited_source, unknown_tool,
 };
 
 /// Who made a decision.

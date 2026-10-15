@@ -200,6 +200,22 @@ impl Tool for ScopedWriteTool {
         self.inner.output_of_command()
     }
 
+    fn data_of_call(&self) -> Option<vak_tools::CallData> {
+        self.inner.data_of_call()
+    }
+
+    fn fill_from_data(
+        &self,
+        args: &mut serde_json::Value,
+        records: &[serde_json::Value],
+    ) -> Result<(), String> {
+        self.inner.fill_from_data(args, records)
+    }
+
+    fn answers_data(&self) -> bool {
+        self.inner.answers_data()
+    }
+
     fn time_limit_argument(&self) -> Option<&'static str> {
         self.inner.time_limit_argument()
     }
