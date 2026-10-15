@@ -147,16 +147,21 @@ live.
   Python `requirements` installed by their own worker run into a
   content-addressed environment (checked live: `six` from PyPI, first call
   asked, the next ran offline).
-- [ ] The install is a worker dispatch inside the call, not a run record
-  of its own (`Core::runs()`): it gets one when verification does (E2).
+- [x] The install's run: it happens inside the call that needs it, so it
+  belongs to that call's run (a turn's, or a verification's since E2),
+  under its span; it needs no run of its own.
 - [ ] Dependencies for Node programs (a lockfile and `npm ci`): an ES
   module ignores `NODE_PATH`, so the environment has to sit where the
   module resolves from; designed when a Node capability needs it.
 - [ ] The approval a first install asks reads "'<name>' needs approval:
   <name>": it should say it installs packages from the declared hosts.
   Part of the Review screen (E6).
-- [ ] E2: verification (`tests/`, the `VerifyCapability` worker task as a
-  run, per-case results on the version).
+- [x] E2: verification (2026-10-15): `tests/<name>.json` cases, run by
+  `Core::verify_skill_program` (`vak skills verify <name>`) in a run of
+  their own through the call path, per-case verdicts kept per program
+  digest; a program with no tests is refused with what to add. Checked
+  live on the installed home (one case passed, one reported where it
+  differed, exit 1, run id printed).
 - [ ] E3: proposal and tiers (`propose_skill` with program, tests,
   presentation packs and `parent`; Library versions; the tier gate; registry epoch; the AGENTS.md
   outcome-runtime paragraph on review of tools).

@@ -4,7 +4,8 @@ Self-Evolving Capabilities
 Status: in progress: E1 built (E1a 2026-10-14: a skill's program runs as
 a tool under its own sandbox; E1b 2026-10-15: declared hosts through the
 egress proxy, pinned Python requirements installed by their own run); E2
-to E9 not built. Agreed with the
+built 2026-10-15 (a program's own tests run by the runtime in a run of
+their own, kept per digest); E3 to E9 not built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -267,13 +268,20 @@ build: propose_skill with no parent                 ┘
    recorded: the plan's deliverable names it, and the `propose_skill`
    call names the parent when it extends. Nothing reads the request's
    words to decide it.
-3. **Verify.** The runtime runs `tests/` in the broker worker, in a
-   `VerifyCapability` worker task, under a sandbox narrower than the
-   session's: read-only on the capability directory and a scratch
-   directory, network only for the declared `hosts` through the egress
-   proxy (doc 09), within the operator's time limit (`[control.limits]`).
-   Each case's result is `Observed` evidence on the version. A capability
-   with a program and no tests is refused at proposal time.
+3. **Verify.** The runtime runs `tests/` (`Core::verify_skill_program`,
+   `vak skills verify <name>`) in a run of its own, each case through
+   the very path a call takes (`CapabilityTool`, its declared sandbox and
+   proxies, any first install inside that run), within the operator's
+   command limit (`[control.limits]`). A case is `tests/<name>.json`:
+   the `arguments` a call sends and either the result it must `expect`
+   (every key of an object, every item of an array in order, equal
+   scalars) or `"fails": true`. Each case's verdict, and where its
+   answer differed, is what the runtime observed; the report is kept as
+   a Document per program digest (`AgentScope::capability_checks`,
+   `Core::skill_program_verification`) and the run settles completed or
+   failed as its cases did. A program with no tests, or a case with
+   neither `expect` nor `fails`, is refused when the program loads, with
+   what to add. E3 attaches the report to the Library version.
 4. **Admit.** The tier (§5) decides whether the version goes live at
    once or waits in Review. Going live publishes a registry epoch; the
    next turn boundary of every live session of that Agent sees it
@@ -524,7 +532,7 @@ both sizes and themes). The tracker is `docs/plans/open-items.md`
 |---|---|---|
 | **E0** | This design agreed; doc 43 superseded | decisions logged; tracker has E1–E8 |
 | **E1** | Executable skill: `run` frontmatter, the declaration → `Tool` declarations, `WorkerTask::Capability`, JSON in/out, pinned dependencies in the execution cache | a hand-written capability in the Shared layer is found by `find_tools`, called through the broker, refused the network it did not declare (tested on Seatbelt) |
-| **E2** | Verification: `tests/`, `VerifyCapability` worker task as a run, results as Library rows | a failing test case is reported per case with the run id; a capability with a program and no tests is refused with what to add |
+| **E2** | Verification: `tests/` run through the call path in a run of its own, results kept per program digest (Library rows in E3) | a failing test case is reported per case with the run id; a capability with a program and no tests is refused with what to add |
 | **E3** | Proposal and tiers: `propose_skill` takes a program, tests and `parent`; versions as Library artifacts; the tier gate; the Agent-live Document; registry epoch; AGENTS.md paragraph updated | a live turn builds a capability, it goes live and the next turn calls it; a turn that fetched a page first lands its proposal in Review |
 | **E4** | Catalog source and the prompt index; `find_tools` ranking | a later conversation finds and reuses a capability built in an earlier one, and extends it with `parent` set |
 | **E5** | Measurement and R2: per-version measure, promotion offer, fix-then-withdraw ladder | a capability that fails is withdrawn for the Agent after its proposed fix fails again; one that meets R2 is offered for all Agents |

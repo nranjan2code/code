@@ -1,5 +1,10 @@
 ## Unreleased
 
+- `vak skills verify <name>` runs a skill's program against its own tests
+  (`tests/<name>.json`: the arguments a call sends and the result it must
+  give, or that it must fail) and says, case by case, what passed and
+  where an answer differed. A skill's program now needs at least one
+  test; without one it is refused with what to add.
 - Setup saves the model and the access level for the whole install,
   whatever folder it was started from. Started from a project folder, it
   used to write them into that folder's own settings and leave the

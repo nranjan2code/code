@@ -149,6 +149,14 @@ impl AgentScope {
         self.skill_proposals_root().join(crate::spaces::key(cwd))
     }
 
+    /// What a skill program's tests found, per program digest
+    /// (docs/design/93-self-evolving-capabilities.md, E2).
+    pub fn capability_checks(&self, cwd: &Path) -> PathBuf {
+        self.root
+            .join("capability-checks")
+            .join(crate::spaces::key(cwd))
+    }
+
     pub fn skills(&self) -> PathBuf {
         self.root.join("skills")
     }

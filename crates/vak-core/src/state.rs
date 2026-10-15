@@ -383,6 +383,13 @@ pub const REGISTRY: &[StateEntry] = &[
     // One Canvas per conversation, rewritten as its tabs change; the newest
     // revision is all there is (docs/design/66 §0a).
     agent_entry("agents/{agent}/canvas", "vak-server", Class::Document),
+    // What a skill program's own tests found, one Document per program
+    // digest (docs/design/93-self-evolving-capabilities.md, E2).
+    agent_entry(
+        "agents/{agent}/capability-checks",
+        "vak-core",
+        Class::Document,
+    ),
     StateEntry {
         path: "security-events",
         root: Root::Data,

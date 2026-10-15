@@ -419,6 +419,12 @@ pub(crate) enum SkillsAction {
         #[arg(long)]
         json: bool,
     },
+    /// Run a skill's program against its own tests, in a run of its own
+    Verify {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]

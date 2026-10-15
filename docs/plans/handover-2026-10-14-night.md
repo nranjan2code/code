@@ -18,10 +18,11 @@ Run `git status` and `git log --oneline -8`. Stage only your own paths;
 keep only `main`. We are on a Claude Code Pro plan: read lean (grep and
 line ranges, not whole files), commit each verified step, keep the
 tracker ticked, and rewrite this handover's prompt and 'Where things
-stand' before the session's limit. Next: build stage E2 (doc 93 §11:
-tests/ run by the runtime as a VerifyCapability worker task with a run
-record, per-case results on the version; E1 is built; decisions D1 to D8
-and R1 to R7 are settled) as a design, never spot fixes or tuned numbers;
+stand' before the session's limit. Next: build stage E3 (doc 93 §11:
+propose_skill takes a program, tests, packs and a parent; versions as
+Library artifacts with E2's report on the version thread; the tier gate
+of §5; the registry epoch; the AGENTS.md paragraph on tool review; E1 and
+E2 are built; decisions D1 to D8 and R1 to R7 are settled) as a design, never spot fixes or tuned numbers;
 UI that gets in the way is rewritten, not patched (no users yet). After the maintainer's setup, live runs may use the installed home (its
 OpenAI key, luna) for bigger tests; otherwise live runs use launch entry
 `vak-e1-live` (port 8905, a throwaway
@@ -31,6 +32,19 @@ is then /tmp/vak-live/e1-home/vak-home/.vak). The installed data home was purged
 and set up fresh on 8.1.0 on 2026-10-15. Short progress lines."
 
 ## Where things stand
+
+**E2 is built** (2026-10-15, gate green, checked live): a program's
+tests are `tests/<name>.json` (`arguments` plus `expect` or `"fails":
+true`; `vak_tools::capability::TestCase::judge` names where an answer
+differs); `Core::verify_skill_program` (`vak-core/src/skill_programs.rs`,
+CLI `vak skills verify <name>`) runs each case through `CapabilityTool`
+in a run of its own under `runs::span`, settles it completed or failed,
+and keeps the report as a Document per digest
+(`AgentScope::capability_checks`, registry `agents/{agent}/capability-
+checks`). A program with no tests is refused at load. Live on the
+installed home: one case passed, one failed with "$.each is 33.33,
+expected 33.34", exit 1, run id printed. The dev build can now open the
+installed home (8.1.0, stamped).
 
 **E1b is built** (2026-10-15, gate green, checked live): a program's
 declared `hosts` are reached through an egress proxy of its own (the MCP
@@ -151,7 +165,7 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Build E2, then E3, each step with the full gate and a live
+1. Build E3, then E4, each step with the full gate and a live
    turn; tick `docs/plans/open-items.md` and doc 93's Status as stages
    land.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are

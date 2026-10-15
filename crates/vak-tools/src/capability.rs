@@ -27,6 +27,9 @@ use crate::{Fault, Tool, ToolContext, ToolOutput};
 /// The file beside `SKILL.md` that makes a skill runnable.
 pub const DECLARATION: &str = "capability.json";
 
+/// The folder of a runnable skill's test cases, one JSON file each.
+pub const TESTS_DIR: &str = "tests";
+
 /// The argument the runtime fills with the call's time limit
 /// (`Tool::time_limit_argument`); a program never receives it.
 const TIME_LIMIT_ARGUMENT: &str = "timeout_ms";
@@ -57,6 +60,131 @@ pub struct Requirements {
     pub file: String,
     /// The package index hosts the install may reach, and nothing else.
     pub hosts: Vec<String>,
+}
+
+/// One of a program's own tests (`tests/<name>.json`): the arguments a call
+/// sends, and either the result it must answer with or that it must fail.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TestCase {
+    pub arguments: Value,
+    /// What the result must contain: every key of an object, with its value
+    /// contained in turn; every item of an array, in order; a number or
+    /// any other value, equal.
+    #[serde(default)]
+    pub expect: Option<Value>,
+    /// The call must fail rather than answer.
+    #[serde(default)]
+    pub fails: bool,
+}
+
+impl TestCase {
+    /// Whether `output`, the call's answer, is what this case asks for.
+    /// `drafts` says the answer wraps the program's result with the
+    /// drafts it wrote.
+    pub fn judge(&self, output: &ToolOutput, drafts: bool) -> Result<(), String> {
+        if self.fails {
+            return if output.is_error() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "the program was to fail; it answered {}",
+                    output.content
+                ))
+            };
+        }
+        if output.is_error() {
+            return Err(format!("the program failed: {}", output.content));
+        }
+        let answer: Value = serde_json::from_str(&output.content)
+            .map_err(|_| format!("the answer is not JSON: {}", output.content))?;
+        let result = if drafts {
+            answer.get("result").cloned().unwrap_or(Value::Null)
+        } else {
+            answer
+        };
+        let expect = self.expect.as_ref().unwrap_or(&Value::Null);
+        contained(expect, &result, "$")
+    }
+}
+
+/// `expect` within `actual`, naming where the first difference is.
+fn contained(expect: &Value, actual: &Value, at: &str) -> Result<(), String> {
+    match (expect, actual) {
+        (Value::Object(expect), Value::Object(actual)) => {
+            for (key, value) in expect {
+                let here = format!("{at}.{key}");
+                match actual.get(key) {
+                    Some(found) => contained(value, found, &here)?,
+                    None => return Err(format!("{here} is missing")),
+                }
+            }
+            Ok(())
+        }
+        (Value::Array(expect), Value::Array(actual)) => {
+            if expect.len() != actual.len() {
+                return Err(format!(
+                    "{at} has {} items, expected {}",
+                    actual.len(),
+                    expect.len()
+                ));
+            }
+            for (index, (value, found)) in expect.iter().zip(actual).enumerate() {
+                contained(value, found, &format!("{at}[{index}]"))?;
+            }
+            Ok(())
+        }
+        (Value::Number(expect), Value::Number(actual)) if expect.as_f64() == actual.as_f64() => {
+            Ok(())
+        }
+        (expect, actual) if expect == actual => Ok(()),
+        (expect, actual) => Err(format!("{at} is {actual}, expected {expect}")),
+    }
+}
+
+/// The skill's test cases, by name, in order; a program has at least one.
+fn load_tests(dir: &Path) -> Result<Vec<(String, TestCase)>, String> {
+    let missing = || {
+        format!(
+            "a runnable skill needs tests: add {TESTS_DIR}/<name>.json with the \"arguments\" a call sends and the result it must \"expect\" (or \"fails\": true)"
+        )
+    };
+    let entries = match std::fs::read_dir(dir.join(TESTS_DIR)) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(missing()),
+        Err(error) => return Err(format!("{TESTS_DIR} cannot be read: {error}")),
+    };
+    let mut cases = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("test '{name}' cannot be read: {error}"))?;
+        let case: TestCase = serde_json::from_str(&text)
+            .map_err(|error| format!("test '{name}' is not a test case: {error}"))?;
+        if !case.arguments.is_object() {
+            return Err(format!(
+                "test '{name}' must give its arguments as an object"
+            ));
+        }
+        if case.fails == case.expect.is_some() {
+            return Err(format!(
+                "test '{name}' must have either \"expect\" or \"fails\": true"
+            ));
+        }
+        cases.push((name, case));
+    }
+    if cases.is_empty() {
+        return Err(missing());
+    }
+    cases.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(cases)
 }
 
 /// Where a program may write besides its own temporary directory.
@@ -125,6 +253,7 @@ pub struct Program {
     pub hosts: Vec<String>,
     pub writes: Writes,
     pub requirements: Option<Dependencies>,
+    pub tests: Vec<(String, TestCase)>,
     /// Over every file in the skill directory, so a change to the script,
     /// its tests or its declaration is a different program.
     pub digest: String,
@@ -150,6 +279,7 @@ impl Program {
         })?;
         check_arguments(&declaration.arguments)?;
         check_hosts("hosts", &declaration.hosts)?;
+        let tests = load_tests(dir)?;
         let requirements = match &declaration.requirements {
             None => None,
             Some(requirements) => {
@@ -184,6 +314,7 @@ impl Program {
             hosts: declaration.hosts,
             writes: declaration.writes,
             requirements,
+            tests,
             digest: digest(dir)?,
         }))
     }
@@ -447,6 +578,10 @@ pub struct CapabilityTool {
 }
 
 impl CapabilityTool {
+    pub fn program(&self) -> &Program {
+        &self.program
+    }
+
     pub fn new(name: String, description: String, program: Program, worker_exe: PathBuf) -> Self {
         Self {
             name,
@@ -1048,6 +1183,12 @@ mod tests {
     fn skill(declaration: Value) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("run.py"), "print('{}')\n").unwrap();
+        std::fs::create_dir(dir.path().join(TESTS_DIR)).unwrap();
+        std::fs::write(
+            dir.path().join(TESTS_DIR).join("case.json"),
+            r#"{"arguments": {}, "expect": {}}"#,
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join(DECLARATION),
             serde_json::to_vec(&declaration).unwrap(),
@@ -1167,11 +1308,86 @@ mod tests {
     }
 
     #[test]
+    fn a_program_without_tests_is_refused_with_what_to_add() {
+        let dir = skill(json!({"entry": "run.py", "arguments": arguments()}));
+        std::fs::remove_dir_all(dir.path().join(TESTS_DIR)).unwrap();
+        let refused = Program::load(dir.path()).unwrap_err();
+        assert!(refused.contains("tests/<name>.json"), "{refused}");
+        std::fs::create_dir(dir.path().join(TESTS_DIR)).unwrap();
+        std::fs::write(dir.path().join("tests/bad.json"), r#"{"arguments": {}}"#).unwrap();
+        assert!(Program::load(dir.path()).unwrap_err().contains("either"));
+    }
+
+    #[test]
+    fn a_case_names_where_the_answer_differs() {
+        let case = TestCase {
+            arguments: json!({}),
+            expect: Some(json!({"total": "292.05", "shares": ["73.02", "73.01"]})),
+            fails: false,
+        };
+        let answer = |value: Value| ToolOutput::ok(value.to_string());
+        assert!(
+            case.judge(
+                &answer(json!({"total": "292.05", "shares": ["73.02", "73.01"], "extra": 1})),
+                false
+            )
+            .is_ok()
+        );
+        let differs = case
+            .judge(
+                &answer(json!({"total": "292.05", "shares": ["73.01", "73.01"]})),
+                false,
+            )
+            .unwrap_err();
+        assert!(differs.contains("$.shares[0]"), "{differs}");
+        assert!(
+            case.judge(&answer(json!({"shares": ["73.02", "73.01"]})), false)
+                .unwrap_err()
+                .contains("$.total is missing")
+        );
+        assert!(
+            case.judge(&ToolOutput::error(Fault::Tool, "boom"), false)
+                .unwrap_err()
+                .contains("failed")
+        );
+        let numbers = TestCase {
+            arguments: json!({}),
+            expect: Some(json!({"each": 30})),
+            fails: false,
+        };
+        assert!(numbers.judge(&answer(json!({"each": 30.0})), false).is_ok());
+        let drafts = TestCase {
+            arguments: json!({}),
+            expect: Some(json!({"ok": true})),
+            fails: false,
+        };
+        assert!(
+            drafts
+                .judge(&answer(json!({"result": {"ok": true}, "drafts": []})), true)
+                .is_ok()
+        );
+        let fails = TestCase {
+            arguments: json!({}),
+            expect: None,
+            fails: true,
+        };
+        assert!(
+            fails
+                .judge(&ToolOutput::error(Fault::Tool, "no"), false)
+                .is_ok()
+        );
+        assert!(fails.judge(&answer(json!({})), false).is_err());
+    }
+
+    #[test]
     fn any_file_changing_changes_the_program() {
         let dir = skill(json!({"entry": "run.py", "arguments": arguments()}));
         let before = Program::load(dir.path()).unwrap().unwrap().digest;
-        std::fs::create_dir(dir.path().join("tests")).unwrap();
-        std::fs::write(dir.path().join("tests/case.json"), "{}").unwrap();
+        std::fs::write(
+            dir.path().join("tests/other.json"),
+            r#"{"arguments": {}, "fails": true}"#,
+        )
+        .unwrap();
         let after = Program::load(dir.path()).unwrap().unwrap().digest;
         assert_ne!(before, after);
     }

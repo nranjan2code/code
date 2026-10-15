@@ -22,6 +22,15 @@ fn tool(skill: &Path, program: &str, extra: Value) -> CapabilityTool {
         declaration[key] = value.clone();
     }
     std::fs::write(skill.join(DECLARATION), declaration.to_string()).unwrap();
+    let tests = skill.join(vak_tools::capability::TESTS_DIR);
+    if !tests.exists() {
+        std::fs::create_dir(&tests).unwrap();
+        std::fs::write(
+            tests.join("runs.json"),
+            r#"{"arguments": {}, "expect": {}}"#,
+        )
+        .unwrap();
+    }
     let program = Program::load(skill).unwrap().unwrap();
     CapabilityTool::new(
         "split-bill".into(),
@@ -255,5 +264,77 @@ async fn requirements_are_installed_once_into_their_own_environment() {
     assert!(
         !again.leaves_machine(),
         "installed: later calls stay on the machine"
+    );
+}
+
+#[tokio::test]
+async fn verification_runs_each_case_in_a_run_of_its_own_and_keeps_what_it_found() {
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(workspace.path()).unwrap();
+    let skill = tempfile::tempdir().unwrap();
+    std::fs::write(
+        skill.path().join("run.py"),
+        "import json, sys\nargs = json.load(sys.stdin)\nprint(json.dumps({'each': args['amount'] / args['people']}))\n",
+    )
+    .unwrap();
+    std::fs::write(
+        skill.path().join(DECLARATION),
+        json!({"entry": "run.py", "arguments": {"type": "object", "properties": {
+            "amount": {"type": "number", "description": "The bill"},
+            "people": {"type": "integer", "description": "How many share it"}
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    let tests = skill.path().join(vak_tools::capability::TESTS_DIR);
+    std::fs::create_dir(&tests).unwrap();
+    std::fs::write(
+        tests.join("even.json"),
+        r#"{"arguments": {"amount": 90, "people": 3}, "expect": {"each": 30}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tests.join("wrong.json"),
+        r#"{"arguments": {"amount": 90, "people": 3}, "expect": {"each": 31}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tests.join("nobody.json"),
+        r#"{"arguments": {"amount": 90, "people": 0}, "fails": true}"#,
+    )
+    .unwrap();
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).unwrap();
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+
+    let verification = core
+        .verify_skill_program("split", skill.path())
+        .await
+        .unwrap();
+    let found: Vec<(&str, bool)> = verification
+        .cases
+        .iter()
+        .map(|case| (case.name.as_str(), case.passed))
+        .collect();
+    assert_eq!(
+        found,
+        vec![("even", true), ("nobody", true), ("wrong", false)]
+    );
+    let wrong = &verification.cases[2];
+    assert!(
+        wrong.detail.as_deref().unwrap().contains("$.each is 30"),
+        "{wrong:?}"
+    );
+    assert!(!verification.passed());
+
+    let kept = core
+        .skill_program_verification(&verification.digest)
+        .unwrap();
+    assert_eq!(kept, verification, "kept under the program's digest");
+    let run = core.runs().get(verification.run).unwrap().unwrap();
+    assert_eq!(
+        run.status,
+        vak_session::runs::RunStatus::Failed,
+        "the run settled as its tests did"
     );
 }

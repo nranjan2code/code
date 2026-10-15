@@ -125,8 +125,55 @@ fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
     }
 }
 
-fn run_skills(cwd: PathBuf, action: SkillsAction) -> i32 {
+async fn run_skills(cwd: PathBuf, action: SkillsAction) -> i32 {
     match action {
+        SkillsAction::Verify { name, json } => {
+            let trusted = vak_core::trust::is_trusted(&cwd);
+            let core = match Core::new_with_trust(cwd, trusted) {
+                Ok(core) => with_cli_surface(core, false),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 2;
+                }
+            };
+            let Some(dir) = core
+                .skills()
+                .into_iter()
+                .find(|skill| skill.name == name)
+                .and_then(|skill| skill.path.parent().map(std::path::Path::to_path_buf))
+            else {
+                eprintln!("no skill named '{name}' here");
+                return 1;
+            };
+            match core.verify_skill_program(&name, &dir).await {
+                Ok(verification) => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string(&verification).unwrap_or_default()
+                        );
+                    } else {
+                        for case in &verification.cases {
+                            match &case.detail {
+                                None => println!("✓ {}", case.name),
+                                Some(detail) => println!("✗ {}: {detail}", case.name),
+                            }
+                        }
+                        let passed = verification.cases.iter().filter(|case| case.passed).count();
+                        println!(
+                            "{passed} of {} passed · run {}",
+                            verification.cases.len(),
+                            verification.run
+                        );
+                    }
+                    i32::from(!verification.passed())
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            }
+        }
         SkillsAction::Validate { path, json } => {
             let mut files = Vec::new();
             let roots = path.map_or_else(
@@ -537,7 +584,7 @@ async fn main() {
             out,
         }) => run_export(cwd, session_id, html, out),
         Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
-        Some(Command::Skills { action }) => run_skills(cwd, action),
+        Some(Command::Skills { action }) => run_skills(cwd, action).await,
         Some(Command::Plugins { action }) => plugins::run_plugins(cwd, action),
         Some(Command::Intent { action }) => intent::run_intent(cwd, action),
         Some(Command::Office { action }) => office::run_office(action).await,
