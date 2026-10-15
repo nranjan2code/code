@@ -497,17 +497,51 @@ pub(crate) async fn run_trigger(State(state): State<AppState>, Path(id): Path<St
         Ok(trigger) => trigger,
         Err(response) => return *response,
     };
+    match run_now(&state, trigger).await {
+        Ok(()) => StatusCode::ACCEPTED.into_response(),
+        Err((NotFired::Refused, reason)) => {
+            error_response(StatusCode::UNPROCESSABLE_ENTITY, reason)
+        }
+        Err((NotFired::Busy, reason)) => error_response(StatusCode::CONFLICT, reason),
+    }
+}
+
+/// Runs `trigger` now, as someone asked: one event slot through its claim.
+async fn run_now(state: &AppState, trigger: Trigger) -> Result<(), (NotFired, &'static str)> {
     let event = uuid::Uuid::now_v7().to_string();
-    match claim_and_fire(&state, trigger, Utc::now(), Some(event)).await {
-        Ok(_) => StatusCode::ACCEPTED.into_response(),
-        Err(NotFired::Refused) => error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "It could not run; the inbox says why.",
-        ),
-        Err(NotFired::Busy) => error_response(
-            StatusCode::CONFLICT,
+    match claim_and_fire(state, trigger, Utc::now(), Some(event)).await {
+        Ok(_) => Ok(()),
+        Err(NotFired::Refused) => Err((
+            NotFired::Refused,
+            "It could not run; its conversation and the inbox say why.",
+        )),
+        Err(NotFired::Busy) => Err((
+            NotFired::Busy,
             "It is already running, so this run was skipped.",
-        ),
+        )),
+    }
+}
+
+/// What the Agent's tool runs an automation now through
+/// (`vak_core::triggers::Runner`).
+pub(crate) struct ServerRunner(pub(crate) AppState);
+
+impl triggers::Runner for ServerRunner {
+    fn run_now(
+        &self,
+        trigger: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>> {
+        let state = self.0.clone();
+        Box::pin(async move {
+            let trigger = match triggers::get(&shared(&state), &trigger) {
+                Ok(Some(trigger)) => trigger,
+                Ok(None) => return Err(format!("no automation {trigger}")),
+                Err(error) => return Err(error.to_string()),
+            };
+            run_now(&state, trigger)
+                .await
+                .map_err(|(_, reason)| reason.to_string())
+        })
     }
 }
 

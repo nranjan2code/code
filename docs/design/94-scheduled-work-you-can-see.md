@@ -5,7 +5,8 @@ Status: in progress: S0 built 2026-10-15 (the owner's time zone, set in
 Settings, `at` in local time, a cron always names its zone, the gap
 rule, with fixed-clock tests); S1 built 2026-10-15 (`home`, `made_by`,
 delivery into the conversation); S2 built 2026-10-15 (`describe`,
-`Repeat`; the picker screen with S5); S3 to S5 not built.
+`Repeat`; the picker screen with S5); S3 built 2026-10-15 (the tool's
+change, pause, resume, run_now by name); S4 and S5 not built.
 Agreed with the maintainer on 2026-10-15. Paths below describe targets and may not exist yet. Rewrites the
 experience of automations; the engine stays `vak_core::triggers`
 (doc 73 §8, invariant 38).
@@ -113,7 +114,7 @@ delivers), pause, resume, run now, delete, and history (its run
 records). The server routes, the CLI (`vak triggers`), the Agent's tool
 and the client all call these.
 
-**The Agent's tool** gains `update` (any field) and `run_now`, accepts
+**The Agent's tool** gains `change` (any field) and `run_now`, accepts
 an automation by name as well as id (a name that matches two is refused
 with both), and answers with `describe`'s words and the next run.
 

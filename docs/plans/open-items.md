@@ -229,7 +229,14 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   vocabulary (once, daily, weekdays, weekly, every N minutes or hours,
   custom cron), accepted as `repeat` by the server's create and change.
   The picker screen itself comes with S5.
-- [ ] S3: one set of operations; the tool's `update`, `run_now`, by name.
+- [x] S3 (2026-10-15): the automations tool is list, add, change,
+  pause, resume, run_now and remove, naming one by name or id
+  (`automation`; a name two share is refused with both ids) and
+  answering in `describe`'s words; `change` takes any field and records
+  `made_by`. `run_now` goes through `triggers::Runner`, which the server
+  installs in `start_scheduler` (pooled and Agent Cores adopt it), so it
+  takes the same claim as `POST /triggers/{id}/run`. `vak triggers`
+  says pause and resume too.
 - [ ] S4: the automation card in chat.
 - [ ] S5: the Automations page (replaces `AutomationsModal`).
 

@@ -119,8 +119,8 @@ pub fn run_triggers(cwd: std::path::PathBuf, action: crate::cli::TriggersAction)
                 }
             }
         }
-        crate::cli::TriggersAction::Enable { id } => set_enabled(&shared, &id, true),
-        crate::cli::TriggersAction::Disable { id } => set_enabled(&shared, &id, false),
+        crate::cli::TriggersAction::Resume { id } => set_enabled(&shared, &id, true),
+        crate::cli::TriggersAction::Pause { id } => set_enabled(&shared, &id, false),
     }
 }
 
@@ -132,7 +132,7 @@ fn set_enabled(shared: &vak_config::scope::SharedScope, id: &str, enable: bool) 
         Ok(_) => {
             println!(
                 "{} automation {id}",
-                if enable { "enabled" } else { "disabled" }
+                if enable { "resumed" } else { "paused" }
             );
             0
         }

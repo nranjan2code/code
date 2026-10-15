@@ -924,10 +924,10 @@ pub(crate) enum TriggersAction {
     Add(Box<TriggerAdd>),
     /// Remove an automation by id
     Remove { id: String },
-    /// Enable an automation
-    Enable { id: String },
-    /// Disable an automation without deleting it
-    Disable { id: String },
+    /// Resume a paused automation
+    Resume { id: String },
+    /// Pause an automation without deleting it
+    Pause { id: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1390,17 +1390,17 @@ mod tests {
     }
 
     #[test]
-    fn triggers_enable_disable_remove_take_ids() {
+    fn triggers_resume_pause_remove_take_ids() {
         assert!(matches!(
-            parse(&["triggers", "enable", "abc"]),
+            parse(&["triggers", "resume", "abc"]),
             Command::Triggers {
-                action: TriggersAction::Enable { .. }
+                action: TriggersAction::Resume { .. }
             }
         ));
         assert!(matches!(
-            parse(&["triggers", "disable", "abc"]),
+            parse(&["triggers", "pause", "abc"]),
             Command::Triggers {
-                action: TriggersAction::Disable { .. }
+                action: TriggersAction::Pause { .. }
             }
         ));
         match parse(&["triggers", "remove", "abc"]) {

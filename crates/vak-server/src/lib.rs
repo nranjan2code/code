@@ -20701,6 +20701,9 @@ pub fn start_scheduler(state: &AppState) {
     // Holds the writer epoch from start, so a restore while this server
     // runs fences it.
     background_work_allowed(state);
+    state
+        .core
+        .set_trigger_runner(Arc::new(automations::ServerRunner(state.clone())));
     let st = state.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(20));

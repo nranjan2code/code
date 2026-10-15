@@ -374,6 +374,16 @@ impl MadeBy {
     }
 }
 
+/// Starts an automation's run now: what a process running the scheduler
+/// installs (`Core::set_trigger_runner`), so the Agent's tool and a screen
+/// run one through the same claim (`claim_due` with an event).
+pub trait Runner: Send + Sync {
+    fn run_now(
+        &self,
+        trigger: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>;
+}
+
 /// A conversation an automation belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Home {

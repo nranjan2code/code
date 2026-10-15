@@ -556,6 +556,8 @@ struct CoreInner {
     control_override: std::sync::Mutex<Option<vak_config::ControlSettings>>,
     /// `[owner] timezone` as last read from disk (`Some(None)`: none set).
     owner_timezone_override: std::sync::Mutex<Option<Option<String>>>,
+    /// Runs an automation now; set by the process that runs the scheduler.
+    trigger_runner: std::sync::RwLock<Option<Arc<dyn triggers::Runner>>>,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
     mode_runtime_pinned: std::sync::atomic::AtomicBool,
     permission_lease: std::sync::Mutex<CancellationToken>,
@@ -1479,6 +1481,7 @@ impl Core {
             evidence_max_age_override: std::sync::Mutex::new(None),
             control_override: std::sync::Mutex::new(None),
             owner_timezone_override: std::sync::Mutex::new(None),
+            trigger_runner: std::sync::RwLock::new(None),
             mode_override: std::sync::Mutex::new(None),
             permission_lease: std::sync::Mutex::new(CancellationToken::new()),
             mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
@@ -1678,6 +1681,31 @@ impl Core {
         self.owner_timezone_set()
             .filter(|zone| zone.parse::<chrono_tz::Tz>().is_ok())
             .unwrap_or_else(crate::triggers::host_timezone)
+    }
+
+    /// Installs what runs an automation now (`triggers::Runner`).
+    pub fn set_trigger_runner(&self, runner: Arc<dyn triggers::Runner>) {
+        *self
+            .inner
+            .trigger_runner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(runner);
+    }
+
+    /// Takes `other`'s runner: a Core made for another workspace or Agent
+    /// in the same process runs automations through the same scheduler.
+    pub fn adopt_trigger_runner(&self, other: &Core) {
+        if let Some(runner) = other.trigger_runner() {
+            self.set_trigger_runner(runner);
+        }
+    }
+
+    fn trigger_runner(&self) -> Option<Arc<dyn triggers::Runner>> {
+        self.inner
+            .trigger_runner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// `[owner] timezone` as the layers say now, `None` when unset.
@@ -4112,6 +4140,7 @@ impl Core {
                 .map_or_else(|| "vak".to_string(), |agent| agent.id.clone()),
             default_deliver_to: self.default_deliver_to.clone(),
             owner_zone: self.owner_timezone(),
+            runner: self.trigger_runner(),
         }));
         if self.effective_commitment() {
             tools.push(Arc::new(tools_commitments::CommitmentsTool {

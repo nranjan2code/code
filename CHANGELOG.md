@@ -10,6 +10,9 @@
   it, as the Agent's reply marked "Scheduled" with its name and time, and
   you can answer it there ("make it shorter"). A run that could not start
   says why in the same place. The Inbox still lists each one.
+- Ask the Agent to change an automation by its name: "move my morning
+  line to 9", "pause it", "run it now". `vak triggers` says `pause` and
+  `resume` in place of `disable` and `enable`.
 - Schedules read in plain words everywhere ("Weekdays at 8:00 AM",
   "Every 2 hours"), in the Agent's answers and in `vak triggers list`.
 - `vak inbox` shows what automations and the gateway deliver. It read a

@@ -30,6 +30,8 @@ pub struct AutomationsTool {
     /// model gives means, and the zone of a repeating schedule made
     /// without one.
     pub owner_zone: String,
+    /// Starts a run now where a scheduler runs (`Core::set_trigger_runner`).
+    pub runner: Option<std::sync::Arc<dyn triggers::Runner>>,
 }
 
 fn render(trigger: &Trigger, runs: &vak_session::runs::Runs, zone: &str) -> Value {
@@ -37,20 +39,37 @@ fn render(trigger: &Trigger, runs: &vak_session::runs::Runs, zone: &str) -> Valu
     serde_json::json!({
         "id": trigger.id.to_string(),
         "name": trigger.name,
-        "enabled": trigger.enabled,
+        "paused": !trigger.enabled,
         "agent": trigger.agent,
         "when": trigger.when_words(zone),
         "does": trigger.action,
         "deliver_to": trigger.deliver_to,
         "next_run": trigger
             .next_slot_after(chrono::Utc::now())
+            .filter(|_| trigger.enabled)
             .map(|at| triggers::local_words(at, zone)),
         "last_run": last.map(|run| serde_json::json!({
             "status": run.status,
-            "started_at": run.opened_at,
+            "started_at": triggers::local_words(run.opened_at, zone),
             "reason": run.reason,
         })),
     })
+}
+
+/// One line saying what an automation is now, in the words every surface
+/// uses.
+fn summary(trigger: &Trigger, zone: &str) -> String {
+    let next = match trigger.next_slot_after(chrono::Utc::now()) {
+        _ if !trigger.enabled => "paused".to_string(),
+        Some(at) => format!("next run {}", triggers::local_words(at, zone)),
+        None => "no run left".to_string(),
+    };
+    format!(
+        "'{}' ({}): {}; {next}",
+        trigger.name,
+        trigger.id,
+        trigger.when_words(zone)
+    )
 }
 
 /// The revision of the saved Agent named `name` (id or name), when there is
@@ -72,6 +91,272 @@ fn agent_revision(cwd: &std::path::Path, name: &str) -> Option<(String, u64)> {
     ))
 }
 
+type Args<'a> = &'a Value;
+
+fn str_arg(args: Args<'_>, key: &str) -> Option<String> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+type Refusal = (Fault, String);
+
+fn no(fault: Fault, text: impl Into<String>) -> Refusal {
+    (fault, text.into())
+}
+
+fn refuse(fault: Fault, text: impl Into<String>) -> vak_tools::ToolOutput {
+    vak_tools::ToolOutput::error(fault, text.into())
+}
+
+impl AutomationsTool {
+    /// What it does, when the call says: `prompt` or `script`, never both.
+    fn work(args: Args<'_>) -> Result<Option<TriggerAction>, Refusal> {
+        match (str_arg(args, "prompt"), str_arg(args, "script")) {
+            (Some(text), None) => Ok(Some(TriggerAction::Prompt {
+                text,
+                model_pin: str_arg(args, "model_pin"),
+            })),
+            (None, Some(command)) => Ok(Some(TriggerAction::Script { command })),
+            (None, None) => Ok(None),
+            (Some(_), Some(_)) => Err(no(Fault::Shape, "give 'prompt' or 'script', not both")),
+        }
+    }
+
+    /// When it runs, when the call says: one of `at`, `cron`, `every_secs`.
+    fn when(&self, args: Args<'_>) -> Result<Option<Schedule>, Refusal> {
+        let now = chrono::Utc::now();
+        let once = match str_arg(args, "at") {
+            Some(raw) => Some(
+                triggers::local_instant(&raw, &self.owner_zone, now)
+                    .map_err(|reason| (Fault::Shape, reason))?,
+            ),
+            None => None,
+        };
+        let every_secs = args.get("every_secs").and_then(Value::as_u64);
+        match (str_arg(args, "cron"), every_secs, once) {
+            (Some(expr), None, None) => Ok(Some(Schedule::Cron {
+                expr,
+                timezone: str_arg(args, "timezone"),
+            })),
+            (None, Some(every_secs), None) => Ok(Some(Schedule::Interval {
+                every_secs,
+                anchor: now,
+            })),
+            (None, None, Some(at)) => Ok(Some(Schedule::Once { at })),
+            (None, None, None) => Ok(None),
+            _ => Err(no(
+                Fault::Shape,
+                "give only one of 'cron', 'every_secs' or 'at'",
+            )),
+        }
+    }
+
+    fn deliver_to(args: Args<'_>) -> Result<Option<String>, Refusal> {
+        match str_arg(args, "deliver_to") {
+            Some(target) if !target.contains(':') => Err(no(
+                Fault::Shape,
+                "'deliver_to' must be '<surface>:<chat>', e.g. 'telegram:12345'",
+            )),
+            target => Ok(target),
+        }
+    }
+
+    /// The automation `automation` names, by id or by name; a name that
+    /// two share is refused with both.
+    fn find<'t>(all: &'t [Trigger], args: Args<'_>) -> Result<&'t Trigger, Refusal> {
+        let Some(key) = str_arg(args, "automation") else {
+            return Err(no(
+                Fault::Shape,
+                "'automation' (its name or id) is required for this action",
+            ));
+        };
+        if let Some(trigger) = all.iter().find(|trigger| trigger.id.to_string() == key) {
+            return Ok(trigger);
+        }
+        let named: Vec<&Trigger> = all
+            .iter()
+            .filter(|trigger| trigger.name.trim().eq_ignore_ascii_case(&key))
+            .collect();
+        match named.as_slice() {
+            [one] => Ok(one),
+            [] => Err(no(
+                Fault::Target,
+                format!(
+                    "no automation '{key}' in this workspace; there are: {}",
+                    all.iter()
+                        .map(|trigger| format!("'{}'", trigger.name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )),
+            many => Err(no(
+                Fault::Target,
+                format!(
+                    "{} automations are named '{key}'; name one by id: {}",
+                    many.len(),
+                    many.iter()
+                        .map(|trigger| trigger.id.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )),
+        }
+    }
+
+    fn add(&self, args: Args<'_>, ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+        let Some(name) = str_arg(args, "name") else {
+            return refuse(Fault::Shape, "'name' is required for action 'add'");
+        };
+        let action = match Self::work(args) {
+            Ok(Some(action)) => action,
+            Ok(None) => {
+                return refuse(
+                    Fault::Shape,
+                    "exactly one of 'prompt' or 'script' is required",
+                );
+            }
+            Err((fault, text)) => return refuse(fault, text),
+        };
+        let schedule = match self.when(args) {
+            Ok(Some(schedule)) => schedule,
+            Ok(None) => return refuse(Fault::Shape, "give one of 'cron', 'every_secs' or 'at'"),
+            Err((fault, text)) => return refuse(fault, text),
+        };
+        let deliver_to = match Self::deliver_to(args) {
+            Ok(target) => target.or_else(|| self.default_deliver_to.clone()),
+            Err((fault, text)) => return refuse(fault, text),
+        };
+        let (agent, agent_revision) = match str_arg(args, "agent") {
+            Some(named) => match agent_revision(&self.cwd, &named) {
+                Some((id, revision)) => (id, Some(revision)),
+                None => {
+                    return refuse(
+                        Fault::Target,
+                        format!("no saved Agent '{named}' in this workspace"),
+                    );
+                }
+            },
+            None => (self.agent.clone(), None),
+        };
+        let mut trigger = Trigger {
+            id: vak_session::ids::TriggerId::new(),
+            name,
+            agent,
+            agent_revision,
+            space: vak_config::spaces::key(&self.cwd),
+            enabled: true,
+            kind: TriggerKind::Schedule { schedule },
+            action,
+            deliver_to,
+            on_crash: triggers::OnCrash::Skip,
+            scope: None,
+            created_at: chrono::Utc::now(),
+            created_by: None,
+            home: ctx
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.session_id())
+                .map(|session| triggers::Home {
+                    agent: self.agent.clone(),
+                    session,
+                }),
+            made_by: triggers::MadeBy::of_call(ctx.trace.as_ref()),
+        };
+        trigger.in_zone(&self.owner_zone);
+        if let Err(e) = triggers::create(&self.shared, &trigger) {
+            return refuse(Fault::Tool, e.to_string());
+        }
+        vak_tools::ToolOutput::ok(format!("created {}", summary(&trigger, &self.owner_zone)))
+    }
+
+    fn change(
+        &self,
+        trigger: &Trigger,
+        args: Args<'_>,
+        ctx: &vak_tools::ToolContext,
+    ) -> vak_tools::ToolOutput {
+        let (action, schedule, deliver_to) =
+            match (Self::work(args), self.when(args), Self::deliver_to(args)) {
+                (Ok(action), Ok(schedule), Ok(deliver_to)) => (action, schedule, deliver_to),
+                (Err((fault, text)), _, _)
+                | (_, Err((fault, text)), _)
+                | (_, _, Err((fault, text))) => {
+                    return refuse(fault, text);
+                }
+            };
+        let name = str_arg(args, "name");
+        if action.is_none() && schedule.is_none() && deliver_to.is_none() && name.is_none() {
+            return refuse(
+                Fault::Shape,
+                "say what changes: 'name', 'prompt' or 'script', a schedule ('at', 'cron' or 'every_secs'), or 'deliver_to'",
+            );
+        }
+        if trigger.source().is_some() || trigger.scope.is_some() {
+            return refuse(
+                Fault::Refused,
+                format!(
+                    "'{}' belongs to a source or an email routine; change it there",
+                    trigger.name
+                ),
+            );
+        }
+        let made_by = triggers::MadeBy::of_call(ctx.trace.as_ref());
+        let zone = self.owner_zone.clone();
+        let changed = triggers::update(&self.shared, &trigger.id.to_string(), |stored| {
+            if let Some(name) = &name {
+                stored.name = name.clone();
+            }
+            if let Some(action) = &action {
+                stored.action = action.clone();
+            }
+            if let Some(schedule) = &schedule {
+                stored.kind = TriggerKind::Schedule {
+                    schedule: schedule.clone(),
+                };
+                // A changed schedule runs again, even one that ran once.
+                stored.enabled = true;
+            }
+            if let Some(target) = &deliver_to {
+                stored.deliver_to = Some(target.clone());
+            }
+            stored.made_by = made_by.clone();
+            stored.in_zone(&zone);
+            Ok(())
+        });
+        match changed {
+            Ok(trigger) => vak_tools::ToolOutput::ok(format!(
+                "changed {}",
+                summary(&trigger, &self.owner_zone)
+            )),
+            Err(e) => refuse(Fault::Shape, e.to_string()),
+        }
+    }
+
+    fn pause(
+        &self,
+        trigger: &Trigger,
+        enabled: bool,
+        ctx: &vak_tools::ToolContext,
+    ) -> vak_tools::ToolOutput {
+        let made_by = triggers::MadeBy::of_call(ctx.trace.as_ref());
+        match triggers::update(&self.shared, &trigger.id.to_string(), |stored| {
+            stored.enabled = enabled;
+            stored.made_by = made_by.clone();
+            Ok(())
+        }) {
+            Ok(trigger) => vak_tools::ToolOutput::ok(format!(
+                "{} {}",
+                if enabled { "resumed" } else { "paused" },
+                summary(&trigger, &self.owner_zone)
+            )),
+            Err(e) => refuse(Fault::Tool, e.to_string()),
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl vak_tools::Tool for AutomationsTool {
     fn name(&self) -> &str {
@@ -89,27 +374,24 @@ impl vak_tools::Tool for AutomationsTool {
     }
 
     fn description(&self) -> &str {
-        "Manage this workspace's automations: prompts or shell checks that \
-         run on their own later, without you being asked again. Use for any \
-         request to be reminded, checked in on, or have something run on a \
-         schedule ('remind me on Friday at 9', 'every weekday at 8 send me \
-         the headlines', 'check disk space hourly and tell me if it's low'). \
-         `action: \"add\"` creates one. For a single future moment give \
-         `at`, the person's local date and time as they said it \
-         ('2026-10-17 09:00'), read in the owner's time zone. For a \
-         repeating schedule give `cron` (5-field: min hour dom mon dow, e.g. \
-         '0 9 * * 1-5' for weekdays at 9am), read in the owner's time zone \
-         unless `timezone` names another, or `every_secs` for a plain \
-         interval: exactly one of the three. When \
-         the day or time is ambiguous and it matters, confirm the \
-         interpreted date and time before adding. Give exactly one of \
-         `prompt` (a task for you, running as a fresh turn later) or \
-         `script` (a one-line shell check; only its output is reported, so a \
-         silent zero-exit check costs nothing). Omit `deliver_to` to have \
-         results come back to this conversation when one is bound; pass it \
-         explicitly ('<surface>:<chat>') to route elsewhere. `list` shows \
-         every automation with its id, next run and last run; \
-         `enable`/`disable`/`remove` take that id."
+        "Manage the owner's automations: prompts or shell checks that run on \
+         their own later. Use for any request to be reminded, checked in on, \
+         or have something run on a schedule, and to change, pause, resume, \
+         run now or remove one ('remind me on Friday at 9', 'every weekday \
+         at 8 send me the headlines', 'move my morning line to 9', 'pause \
+         it', 'run it now'). `add` creates one; its result comes back in \
+         this conversation. For a single moment give `at`, the person's \
+         local date and time ('2026-10-17 09:00'); for a repeating schedule \
+         give `cron` (5 fields: min hour dom mon dow, e.g. '0 9 * * 1-5' for \
+         weekdays at 9am) or `every_secs`; times are the owner's time zone \
+         unless `timezone` names another. Give `prompt` (a task for you, \
+         run as a fresh turn later) or `script` (a one-line shell check; \
+         only its output is reported). When the day or time is ambiguous \
+         and it matters, confirm before adding. `change` takes any of name, \
+         prompt or script, a schedule, or deliver_to; `pause`, `resume`, \
+         `run_now`, `change` and `remove` name the automation by its name \
+         or id in `automation`. `list` shows each one in plain words with \
+         its next and last run."
     }
 
     fn schema(&self) -> Value {
@@ -118,52 +400,52 @@ impl vak_tools::Tool for AutomationsTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "add", "enable", "disable", "remove"],
+                    "enum": ["list", "add", "change", "pause", "resume", "run_now", "remove"],
                     "description": "What to do"
                 },
-                "id": {
+                "automation": {
                     "type": "string",
-                    "description": "Automation id, required for enable/disable/remove, from a prior 'list' or 'add'"
+                    "description": "The automation's name or id, required for change, pause, resume, run_now and remove"
                 },
                 "name": {
                     "type": "string",
-                    "description": "Short label for the automation (required for add)"
+                    "description": "Short label: required for add; for change, its new name"
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "What you should do when it runs, in your own words (XOR with 'script')"
+                    "description": "What you should do when it runs, in your own words (not with 'script')"
                 },
                 "script": {
                     "type": "string",
-                    "description": "A one-line shell command to run instead of a prompt turn (XOR with 'prompt')"
+                    "description": "A one-line shell command to run instead of a prompt turn (not with 'prompt')"
                 },
                 "cron": {
                     "type": "string",
-                    "description": "5-field cron expression for a repeating schedule, read in the owner's time zone unless `timezone` names another (XOR with 'every_secs' and 'at')"
+                    "description": "5-field cron expression for a repeating schedule, read in the owner's time zone unless `timezone` names another (not with 'every_secs' or 'at')"
                 },
                 "every_secs": {
                     "type": "integer",
-                    "description": "Plain interval in seconds, from now (XOR with 'cron' and 'at'; at least 60)"
+                    "description": "Plain interval in seconds, from now, at least 60 (not with 'cron' or 'at')"
                 },
                 "timezone": {
                     "type": "string",
-                    "description": "IANA timezone name the cron is read in, such as America/New_York, only when it is not the owner's own"
+                    "description": "IANA time zone the cron is read in, such as America/New_York, only when it is not the owner's own"
                 },
                 "at": {
                     "type": "string",
-                    "description": "A single future date and time for a one-time reminder or run, as the person's local time like '2026-10-17 09:00' (read in the owner's time zone); cannot be combined with cron or every_secs"
+                    "description": "A single future date and time as the person's local time, like '2026-10-17 09:00' (not with 'cron' or 'every_secs')"
                 },
                 "deliver_to": {
                     "type": "string",
-                    "description": "Where to send the result, as '<surface>:<chat>'. Omit to use the current conversation, when one is bound."
+                    "description": "Also send each result to '<surface>:<chat>'"
                 },
                 "model_pin": {
                     "type": "string",
-                    "description": "Optional: pin a prompt automation to one model id instead of the workspace default"
+                    "description": "Pin a prompt automation to one model id instead of the default"
                 },
                 "agent": {
                     "type": "string",
-                    "description": "Optional saved Agent name or id to run it as; defaults to you"
+                    "description": "For add: a saved Agent name or id to run it as; defaults to you"
                 }
             },
             "required": ["action"]
@@ -172,193 +454,67 @@ impl vak_tools::Tool for AutomationsTool {
 
     async fn execute(&self, args: &Value, ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let action = args.get("action").and_then(Value::as_str).unwrap_or("");
-        let str_arg = |key: &str| -> Option<String> {
-            args.get(key)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-        };
         let all = match triggers::list(&self.shared) {
             Ok(all) => triggers::for_workspace(all, &self.cwd),
-            Err(e) => return vak_tools::ToolOutput::error(Fault::Tool, e.to_string()),
+            Err(e) => return refuse(Fault::Tool, e.to_string()),
         };
-        let mine = |id: &str| all.iter().any(|trigger| trigger.id.to_string() == id);
-
         match action {
-            "list" => {
-                if all.is_empty() {
-                    return vak_tools::ToolOutput::ok(
-                        "no automations in this workspace yet".to_string(),
-                    );
-                }
-                let rendered: Vec<Value> = all
-                    .iter()
-                    .map(|trigger| render(trigger, &self.runs, &self.owner_zone))
-                    .collect();
-                vak_tools::ToolOutput::ok(
-                    serde_json::to_string_pretty(&rendered).unwrap_or_default(),
+            "list" if all.is_empty() => {
+                vak_tools::ToolOutput::ok("no automations in this workspace yet".to_string())
+            }
+            "list" => vak_tools::ToolOutput::ok(
+                serde_json::to_string_pretty(
+                    &all.iter()
+                        .map(|trigger| render(trigger, &self.runs, &self.owner_zone))
+                        .collect::<Vec<_>>(),
                 )
-            }
-            "add" => {
-                let Some(name) = str_arg("name") else {
-                    return vak_tools::ToolOutput::error(
-                        Fault::Shape,
-                        "'name' is required for action 'add'",
-                    );
+                .unwrap_or_default(),
+            ),
+            "add" => self.add(args, ctx),
+            "change" | "pause" | "resume" | "run_now" | "remove" => {
+                let trigger = match Self::find(&all, args) {
+                    Ok(trigger) => trigger,
+                    Err((fault, text)) => return refuse(fault, text),
                 };
-                let action = match (str_arg("prompt"), str_arg("script")) {
-                    (Some(text), None) => TriggerAction::Prompt {
-                        text,
-                        model_pin: str_arg("model_pin"),
-                    },
-                    (None, Some(command)) => TriggerAction::Script { command },
-                    (None, None) => {
-                        return vak_tools::ToolOutput::error(
-                            Fault::Shape,
-                            "exactly one of 'prompt' or 'script' is required",
-                        );
-                    }
-                    (Some(_), Some(_)) => {
-                        return vak_tools::ToolOutput::error(
-                            Fault::Shape,
-                            "give 'prompt' or 'script', not both",
-                        );
-                    }
-                };
-                let now = chrono::Utc::now();
-                let once = match str_arg("at") {
-                    Some(raw) => match triggers::local_instant(&raw, &self.owner_zone, now) {
-                        Ok(at) => Some(at),
-                        Err(reason) => return vak_tools::ToolOutput::error(Fault::Shape, reason),
-                    },
-                    None => None,
-                };
-                let every_secs = args.get("every_secs").and_then(Value::as_u64);
-                let schedule = match (str_arg("cron"), every_secs, once) {
-                    (Some(expr), None, None) => Schedule::Cron {
-                        expr,
-                        timezone: str_arg("timezone"),
-                    },
-                    (None, Some(every_secs), None) => Schedule::Interval {
-                        every_secs,
-                        anchor: now,
-                    },
-                    (None, None, Some(at)) => Schedule::Once { at },
-                    (None, None, None) => {
-                        return vak_tools::ToolOutput::error(
-                            Fault::Shape,
-                            "give one of 'cron', 'every_secs' or 'at'",
-                        );
-                    }
-                    _ => {
-                        return vak_tools::ToolOutput::error(
-                            Fault::Shape,
-                            "give only one of 'cron', 'every_secs' or 'at'",
-                        );
-                    }
-                };
-                let deliver_to = str_arg("deliver_to").or_else(|| self.default_deliver_to.clone());
-                if let Some(d) = &deliver_to
-                    && !d.contains(':')
-                {
-                    return vak_tools::ToolOutput::error(
-                        Fault::Shape,
-                        "'deliver_to' must be '<surface>:<chat>', e.g. 'telegram:12345'",
-                    );
-                }
-                let (agent, agent_revision) = match str_arg("agent") {
-                    Some(named) => match agent_revision(&self.cwd, &named) {
-                        Some((id, revision)) => (id, Some(revision)),
-                        None => {
-                            return vak_tools::ToolOutput::error(
-                                Fault::Target,
-                                format!("no saved Agent '{named}' in this workspace"),
-                            );
-                        }
-                    },
-                    None => (self.agent.clone(), None),
-                };
-                let mut trigger =
-                    Trigger {
-                        id: vak_session::ids::TriggerId::new(),
-                        name,
-                        agent,
-                        agent_revision,
-                        space: vak_config::spaces::key(&self.cwd),
-                        enabled: true,
-                        kind: TriggerKind::Schedule { schedule },
-                        action,
-                        deliver_to,
-                        on_crash: triggers::OnCrash::Skip,
-                        scope: None,
-                        created_at: now,
-                        created_by: None,
-                        home: ctx.trace.as_ref().and_then(|trace| trace.session_id()).map(
-                            |session| triggers::Home {
-                                agent: self.agent.clone(),
-                                session,
-                            },
-                        ),
-                        made_by: triggers::MadeBy::of_call(ctx.trace.as_ref()),
-                    };
-                trigger.in_zone(&self.owner_zone);
-                if let Err(e) = triggers::create(&self.shared, &trigger) {
-                    return vak_tools::ToolOutput::error(Fault::Tool, e.to_string());
-                }
-                vak_tools::ToolOutput::ok(format!(
-                    "created automation {}\n{}",
-                    trigger.id,
-                    serde_json::to_string_pretty(&render(&trigger, &self.runs, &self.owner_zone))
-                        .unwrap_or_default()
-                ))
-            }
-            "enable" | "disable" | "remove" => {
-                let Some(id) = str_arg("id") else {
-                    return vak_tools::ToolOutput::error(
-                        Fault::Shape,
-                        format!("'id' is required for action '{action}'"),
-                    );
-                };
-                if !mine(&id) {
-                    return vak_tools::ToolOutput::error(
-                        Fault::Target,
-                        format!("no automation '{id}' in this workspace"),
-                    );
-                }
-                if action == "remove" {
-                    if triggers::get(&self.shared, &id)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|trigger| trigger.source().is_some())
-                    {
-                        return vak_tools::ToolOutput::error(
+                match action {
+                    "change" => self.change(trigger, args, ctx),
+                    "pause" => self.pause(trigger, false, ctx),
+                    "resume" => self.pause(trigger, true, ctx),
+                    "run_now" => match &self.runner {
+                        None => refuse(
                             Fault::Refused,
-                            format!(
-                                "automation {id} polls an intake source; remove the source instead"
-                            ),
-                        );
+                            "automations run only where Vakyartha's scheduler runs, and it is not running here",
+                        ),
+                        Some(runner) => match runner.run_now(trigger.id.to_string()).await {
+                            Ok(()) => vak_tools::ToolOutput::ok(format!(
+                                "started '{}'; its result comes back in its conversation",
+                                trigger.name
+                            )),
+                            Err(reason) => refuse(Fault::Refused, reason),
+                        },
+                    },
+                    _ if trigger.source().is_some() => refuse(
+                        Fault::Refused,
+                        format!(
+                            "'{}' polls an intake source; remove the source instead",
+                            trigger.name
+                        ),
+                    ),
+                    _ => {
+                        match triggers::delete(&self.shared, &self.runs, &trigger.id.to_string()) {
+                            Ok(_) => {
+                                vak_tools::ToolOutput::ok(format!("removed '{}'", trigger.name))
+                            }
+                            Err(e) => refuse(Fault::Tool, e.to_string()),
+                        }
                     }
-                    return match triggers::delete(&self.shared, &self.runs, &id) {
-                        Ok(_) => vak_tools::ToolOutput::ok(format!("removed automation {id}")),
-                        Err(e) => vak_tools::ToolOutput::error(Fault::Tool, e.to_string()),
-                    };
-                }
-                let enabled = action == "enable";
-                match triggers::update(&self.shared, &id, |trigger| {
-                    trigger.enabled = enabled;
-                    Ok(())
-                }) {
-                    Ok(_) => vak_tools::ToolOutput::ok(format!(
-                        "{} automation {id}",
-                        if enabled { "enabled" } else { "disabled" }
-                    )),
-                    Err(e) => vak_tools::ToolOutput::error(Fault::Tool, e.to_string()),
                 }
             }
-            other => vak_tools::ToolOutput::error(
+            other => refuse(
                 Fault::Shape,
-                format!("unknown action '{other}'; expected list, add, enable, disable, or remove"),
+                format!(
+                    "unknown action '{other}'; expected list, add, change, pause, resume, run_now or remove"
+                ),
             ),
         }
     }
@@ -381,6 +537,7 @@ mod tests {
             agent: "vak".into(),
             default_deliver_to: Some("telegram:42".into()),
             owner_zone: "Asia/Kolkata".into(),
+            runner: None,
         }
     }
 
@@ -416,16 +573,90 @@ mod tests {
             .execute(&serde_json::json!({"action": "list"}), &ctx())
             .await;
         assert!(listed.content.contains(&id), "{}", listed.content);
-        let disabled = tool
-            .execute(&serde_json::json!({"action": "disable", "id": id}), &ctx())
+        assert!(
+            listed
+                .content
+                .contains("Weekdays at 9:00 AM, Europe/London time"),
+            "{}",
+            listed.content
+        );
+        let paused = tool
+            .execute(
+                &serde_json::json!({"action": "pause", "automation": "Standup"}),
+                &ctx(),
+            )
             .await;
-        assert!(!disabled.is_error(), "{}", disabled.content);
+        assert!(!paused.is_error(), "{}", paused.content);
         assert!(!triggers::get(&tool.shared, &id).unwrap().unwrap().enabled);
+        let moved = tool
+            .execute(
+                &serde_json::json!({"action": "change", "automation": "standup", "cron": "30 10 * * 1-5"}),
+                &ctx(),
+            )
+            .await;
+        assert!(
+            moved.content.contains("Weekdays at 10:30 AM"),
+            "{}",
+            moved.content
+        );
+        let stored = triggers::get(&tool.shared, &id).unwrap().unwrap();
+        assert!(stored.enabled, "a changed schedule runs again");
+        assert_eq!(
+            stored.schedule(),
+            Some(&Schedule::Cron {
+                expr: "30 10 * * 1-5".into(),
+                timezone: Some("Asia/Kolkata".into())
+            }),
+            "a changed cron is made in the owner's zone"
+        );
+        let not_here = tool
+            .execute(
+                &serde_json::json!({"action": "run_now", "automation": id}),
+                &ctx(),
+            )
+            .await;
+        assert!(not_here.is_error(), "{}", not_here.content);
         let removed = tool
-            .execute(&serde_json::json!({"action": "remove", "id": id}), &ctx())
+            .execute(
+                &serde_json::json!({"action": "remove", "automation": id}),
+                &ctx(),
+            )
             .await;
         assert!(!removed.is_error(), "{}", removed.content);
         assert!(triggers::list(&tool.shared).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_name_two_automations_share_is_refused_with_both() {
+        vak_config::paths::isolate_home_for_tests();
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        vak_config::spaces::bind(cwd.path()).unwrap();
+        let tool = tool(home.path(), cwd.path());
+        for _ in 0..2 {
+            let added = tool
+                .execute(
+                    &serde_json::json!({"action": "add", "name": "line", "prompt": "p", "every_secs": 600}),
+                    &ctx(),
+                )
+                .await;
+            assert!(!added.is_error(), "{}", added.content);
+        }
+        let out = tool
+            .execute(
+                &serde_json::json!({"action": "pause", "automation": "line"}),
+                &ctx(),
+            )
+            .await;
+        assert!(out.is_error());
+        for trigger in triggers::list(&tool.shared).unwrap() {
+            assert!(
+                out.content.contains(&trigger.id.to_string()),
+                "{}",
+                out.content
+            );
+            assert!(trigger.enabled);
+        }
     }
 
     #[tokio::test]
@@ -449,7 +680,7 @@ mod tests {
         assert!(triggers::list(&tool.shared).unwrap().is_empty());
         let unknown = tool
             .execute(
-                &serde_json::json!({"action": "remove", "id": "trg_x"}),
+                &serde_json::json!({"action": "remove", "automation": "trg_x"}),
                 &ctx(),
             )
             .await;

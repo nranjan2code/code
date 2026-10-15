@@ -226,6 +226,14 @@ impl CorePool {
             .map_err(|e| e.to_string())?;
         core.set_agent_network_broker(self.agent_network.clone());
         core.share_model_catalogues(self.catalogues.clone());
+        if let Some(default) = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(self.default_workspace.clone(), None, String::new()))
+        {
+            core.adopt_trigger_runner(&default.core);
+        }
         if policy != vak_config::ChannelPolicy::default() {
             core.apply_channel_policy(policy);
         }
