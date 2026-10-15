@@ -694,6 +694,10 @@ async fn a_learned_ability_defers_by_what_it_serves_and_is_improved_from_its_fil
         .into_iter()
         .find(|artifact| artifact.title.as_deref() == Some("bill-splitter"))
         .expect("recorded in the Library");
+    assert!(
+        artifact.keeps_every_version(),
+        "an ability's versions never fade as drafts"
+    );
     assert_eq!(artifact.versions.len(), 2);
     assert_eq!(artifact.versions[1].parent, Some(artifact.versions[0].id));
 }
@@ -790,4 +794,7 @@ async fn an_ability_is_offered_when_it_works_and_withdrawn_when_its_fix_fails() 
     assert!(core.ability_record("r2-splitter").unwrap().withdrawn);
     assert!(!core.scope().skills().join("r2-splitter").exists());
     assert!(entry("r2-splitter was turned off"));
+    let rows = core.abilities();
+    let row = rows.iter().find(|row| row.name == "r2-splitter").unwrap();
+    assert_eq!(row.state, "turned_off");
 }

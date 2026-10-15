@@ -530,13 +530,15 @@ fn list_proposals_in_dir(dir: &Path, cwd: &Path) -> Vec<SkillProposal> {
     out
 }
 
-/// Pending drafts, newest first. When a proposal screens as a near copy of
+/// Pending drafts from every folder the Agent worked in, newest first:
+/// a proposal is filed under the folder its turn ran in, and the owner
+/// reviews them all in one place. When a proposal screens as a near copy of
 /// an accepted skill, the returned `description` carries a
 /// `[duplicate-of: <name>]` suffix (every review surface renders the
 /// description) and the flag persists as a `duplicate-of:` frontmatter line
 /// so hand edits and later listings agree.
 pub fn list_proposals(scope: &vak_config::scope::AgentScope, cwd: &Path) -> Vec<SkillProposal> {
-    let mut proposals = list_proposals_in_dir(&proposals_dir(scope, cwd), cwd);
+    let mut proposals = list_proposals_in_dir(&scope.skill_proposals_root(), cwd);
     if proposals.is_empty() {
         let agents_dir = scope.agents_dir();
         if let Ok(entries) = std::fs::read_dir(&agents_dir) {
@@ -544,7 +546,7 @@ pub fn list_proposals(scope: &vak_config::scope::AgentScope, cwd: &Path) -> Vec<
                 let p = entry.path();
                 if p.is_dir() {
                     let agent_props = list_proposals_in_dir(
-                        &proposals_dir(&vak_config::scope::AgentScope::new(&p), cwd),
+                        &vak_config::scope::AgentScope::new(&p).skill_proposals_root(),
                         cwd,
                     );
                     proposals.extend(agent_props);

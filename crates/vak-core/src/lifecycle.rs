@@ -796,7 +796,7 @@ impl Core {
                     held.iter()
                         .any(|held| held.status(now) == crate::grants::GrantStatus::Active)
                 });
-            let kept = artifact.starred || shared;
+            let kept = artifact.starred || shared || artifact.keeps_every_version();
             // A hold outranks everything: a held artifact's drafts stay
             // where they are.
             let held = self.artifact_held(&artifact.id.to_string());

@@ -16,7 +16,9 @@ listed in the prompt's catalogue; loading the skill shows its files and
 how to improve it; checked live across conversations); E5 built 2026-10-15
 (each installed version's record, R2 by `vak_judge::ability::verdict`,
 the offer and the withdrawal with their inbox entries, refusal by exit
-status 2); E6 to E9 not built. Agreed with the
+status 2); E6a built 2026-10-15 (the Library's Learned abilities view
+over `Core::abilities`, proposals listed across folders, every ability
+version kept); the rest of E6 and E7 to E9 not built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -517,6 +519,20 @@ canonical place a person sees what their Agents have learned:
 
 If the current Library page cannot carry a second kind of item cleanly,
 its layout is redone for both, not given a separate page.
+
+As built in E6a: the Library's "Learned abilities" chip shows
+`GET /skills/abilities` (`Core::abilities`, `AbilityView`): one card per
+ability installed for the Agent, turned off, or waiting for review in any
+folder, with its state in plain words (Working, Failing, Ready for every
+Agent, Waiting for you, Turned off), what it reaches, why it waits, and
+its actions (Approve for every Agent and Decline for one waiting, Give to
+every Agent for one offered, its versions in the Library). An ability's
+artifact keeps every version (`Artifact::keeps_every_version`), as a
+starred one does, so its history never fades as drafts. Still to come in
+E6: the projection line and the capability sheet (§9.1), Review beside
+file candidates (§9.2), filters and search over abilities, Settings
+rewritten (§9.4), inbox entries that open their card (§9.5), and Approve
+for this Agent only.
 
 ### 9.4 Settings
 

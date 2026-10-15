@@ -649,6 +649,84 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
 }
 
 /** Every deliverable an Agent made, across conversations (docs/design/82-library.md §4). */
+const ABILITY_STATE: Record<api.Ability["state"], { word: string; mark: string }> = {
+  working: { word: "Working", mark: "accepted" },
+  failing: { word: "Failing", mark: "changed" },
+  offered: { word: "Ready for every Agent", mark: "current" },
+  waiting: { word: "Waiting for you", mark: "waiting" },
+  turned_off: { word: "Turned off", mark: "undone" },
+};
+
+/** What the Agents learned (docs/design/93 §9.3): each ability's state,
+ * what it reaches, and what the owner can do about it. */
+function AbilitiesView(props: { onOpen: (artifact: string) => void }) {
+  const [abilities, { refetch }] = createResource(() => api.listAbilities().then((res) => res.abilities));
+  const [notice, setNotice] = createSignal<string | null>(null);
+  const act = async (work: Promise<unknown>, done: string) => {
+    try {
+      await work;
+      setNotice(done);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+    void refetch();
+  };
+  return (
+    <>
+      <Show when={notice()}><p class="library-note" role="status">{notice()}</p></Show>
+      <Show when={!abilities.error} fallback={<div class="worker-error">{String(abilities.error)}</div>}>
+        <Show
+          when={(abilities() ?? []).length > 0}
+          fallback={<div class="dock-empty">{abilities.loading ? "Loading…" : "Nothing learned yet. When an Agent makes itself an ability, it appears here."}</div>}
+        >
+          <div class="library-list">
+            <For each={abilities()}>
+              {(ability) => (
+                <article class="library-card library-ability">
+                  <span class="library-card-top">
+                    <span class="artifact-kind sm" aria-hidden="true"><Icon name="spark" size={16} /></span>
+                    <Pill mark={ABILITY_STATE[ability.state].mark}>{ABILITY_STATE[ability.state].word}</Pill>
+                  </span>
+                  <strong>{ability.name}</strong>
+                  <Show when={ability.description}><span class="library-card-summary">{ability.description}</span></Show>
+                  <Show when={ability.why}><span class="library-card-summary">Waiting because {ability.why}.</span></Show>
+                  <Show when={ability.reaches.length > 0}>
+                    <ul class="library-ability-reaches" aria-label="What it can do">
+                      <For each={ability.reaches}>{(line) => <li>{line}</li>}</For>
+                    </ul>
+                  </Show>
+                  <Show when={(ability.state === "waiting" && ability.proposal) || ability.state === "offered" || ability.artifact}>
+                  <div class="library-actions">
+                    <Show when={ability.state === "waiting" && ability.proposal}>
+                      {(id) => (
+                        <>
+                          <button type="button" class="settings-button" onClick={() => void act(api.promoteProposal(id()), `${ability.name} is now available to every Agent.`)}>Approve for every Agent</button>
+                          <button type="button" class="settings-button danger" onClick={() => void act(api.rejectProposal(id()), `${ability.name} was declined.`)}>Decline</button>
+                        </>
+                      )}
+                    </Show>
+                    <Show when={ability.state === "offered"}>
+                      <button type="button" class="settings-button" onClick={() => void act(api.promoteAbility(ability.name), `${ability.name} is now available to every Agent.`)}>Give to every Agent</button>
+                    </Show>
+                    <Show when={ability.artifact}>
+                      {(artifact) => (
+                        <button type="button" class="settings-button" onClick={() => props.onOpen(artifact())}>
+                          {ability.versions > 1 ? `${ability.versions} versions` : "Its versions"}
+                        </button>
+                      )}
+                    </Show>
+                  </div>
+                  </Show>
+                </article>
+              )}
+            </For>
+          </div>
+        </Show>
+      </Show>
+    </>
+  );
+}
+
 export default function LibraryPage() {
   const [all, { refetch }] = createResource(() => api.library().then((res) => res.artifacts));
   const [open, setOpen] = createSignal<string | null>(libraryFocus());
@@ -656,7 +734,7 @@ export default function LibraryPage() {
   const [kind, setKind] = createSignal("all");
   const [changed, setChanged] = createSignal("any");
   /** Which files to show by their state (doc 90 §5). */
-  const [state, setState] = createSignal<"all" | "needs" | "changed" | "starred" | "archived">("all");
+  const [state, setState] = createSignal<"all" | "needs" | "changed" | "starred" | "archived" | "abilities">("all");
   const starred = () => state() === "starred";
   const archived = () => state() === "archived";
   const needsYou = (artifact: ArtifactSummary) => !!artifact.needs && (artifact.needs.waiting > 0 || artifact.needs.missing);
@@ -694,6 +772,7 @@ export default function LibraryPage() {
                 { value: "changed", label: "Changed outside Vak", count: (all() ?? []).filter((a) => a.needs?.changed_outside).length },
                 { value: "starred", label: "Starred" },
                 { value: "archived", label: "Archived" },
+                { value: "abilities", label: "Learned abilities" },
               ] as const}>
                 {(chip) => (
                   <button type="button" role="tab" class="library-chip" aria-selected={state() === chip.value} onClick={() => setState(chip.value)}>
@@ -703,6 +782,10 @@ export default function LibraryPage() {
                 )}
               </For>
             </div>
+            <Show when={state() === "abilities"}>
+              <AbilitiesView onOpen={setOpen} />
+            </Show>
+            <Show when={state() !== "abilities"}>
             <div class="library-filters" role="group" aria-label="Library filters">
               <input class="search-input" placeholder="Find by name…" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} aria-label="Find by name" />
               <select value={kind()} onChange={(e) => setKind(e.currentTarget.value)} aria-label="Kind">
@@ -739,6 +822,7 @@ export default function LibraryPage() {
                   </For>
                 </div>
               </Show>
+            </Show>
             </Show>
           </>
         }

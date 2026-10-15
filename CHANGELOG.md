@@ -1,5 +1,10 @@
 ## Unreleased
 
+- The Library has "Learned abilities": what your Agents taught
+  themselves, whether each works, what it can reach, and what waits for
+  you, with Approve, Decline and Give to every Agent. Abilities proposed
+  while working in any folder show there, and an ability's versions are
+  kept rather than fading like drafts.
 - An ability an Agent made is offered to all your Agents once it has
   passed its tests, worked in a later conversation and never failed; an
   ability that keeps failing after a fix is turned off for that Agent.

@@ -1191,7 +1191,10 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
             let mut value = summary(&artifact);
             value["held"] = serde_json::json!(state.core.artifact_held(&artifact.id.to_string()));
             // A draft nobody keeps says the day it goes to the trash.
-            let kept = artifact.starred || shared || value["held"] == true;
+            let kept = artifact.starred
+                || shared
+                || value["held"] == true
+                || artifact.keeps_every_version();
             let window = vak_core::lifecycle::draft_window();
             let history: Vec<serde_json::Value> = artifact
                 .versions

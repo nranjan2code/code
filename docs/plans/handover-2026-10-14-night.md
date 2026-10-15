@@ -28,13 +28,12 @@ this handover's prompt and 'Where things stand' before the session's
 limit, telling the maintainer when the session is near it. The maintainer is the only user and there are no others: rewrite
 a wrong design or screen rather than patch it.
 
-Self-evolving capabilities (doc 93) stand at E5: E1 to E5 are built and
-checked live. Next is E6 (the client experience: projection line,
-capability sheet, Review drawn from the Library's waiting versions, which
-also fixes Settings listing only the Agent's own folder's proposals,
-Library Abilities, Settings > Capabilities rewritten, inbox entries that
-open their sheet, and a button for the AbilityOffered promotion), then
-E7, E8 and E9 as doc 93 §11 orders them.
+Self-evolving capabilities (doc 93) stand at E6a: E1 to E5 and the
+Library's Learned abilities view are built and checked. Next is the rest
+of E6 (open-items "E6 rest": projection line and capability sheet,
+Review beside file candidates, Settings > Capabilities rewritten, inbox
+entries that open their card, Approve for this Agent only), then E7, E8
+and E9 as doc 93 §11 orders them.
 Build each as a
 design, never spot fixes or tuned numbers.
 
@@ -80,9 +79,16 @@ route pin); a scheduled run's cards are drawn as cards in the home turn
 model still reads their text). Left on the dev home: the "morning line"
 automation and its test conversation.
 
-**Self-evolving capabilities (doc 93) stand at E5** (2026-10-15, full
-gate green, pushed): E6 to E9 not started (tracker lines in open-items
+**Self-evolving capabilities (doc 93) stand at E6a** (2026-10-15, full
+gate green, pushed): the rest of E6 and E7 to E9 not started (tracker lines in open-items
 "Self-evolving capabilities").
+
+**E6a is built** (checked in the running app on the installed home):
+the Library's Learned abilities chip over `GET /skills/abilities`
+(`Core::abilities`), proposals across folders, and
+`Artifact::keeps_every_version` (ability versions were drafts and the
+lifecycle trashed their history; the installed home lost the 2026-10-15
+abilities' history that way).
 
 **E5 is built** (checked live with gpt-6-luna): one `AbilityRecord`
 Document per learned skill (`agents/{agent}/ability-standing`), settled
@@ -275,7 +281,7 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Doc 93 E6, then E7 to E9 (doc 93 §11), each with the full gate and a
+1. Doc 93 E6 rest, then E7 to E9 (doc 93 §11), each with the full gate and a
    live turn; tick `docs/plans/open-items.md` and the doc's Status.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are
    the maintainer's; ask before cutting.

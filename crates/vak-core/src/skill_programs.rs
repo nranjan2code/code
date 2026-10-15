@@ -366,6 +366,25 @@ pub fn uses_in_turn(
     TurnUses { uses, calls: all }
 }
 
+/// One of an Agent's learned abilities as a person sees it (doc 93 §9.3).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AbilityView {
+    pub name: String,
+    pub description: String,
+    /// `working`, `failing`, `offered` (ready for every Agent), `waiting`
+    /// (for the owner's review) or `turned_off`.
+    pub state: &'static str,
+    /// What it reaches, in the owner's words (`Program::reaches`).
+    pub reaches: Vec<String>,
+    /// Why it waits, for one waiting for review.
+    pub why: Option<String>,
+    /// The proposal to approve or decline, for one waiting.
+    pub proposal: Option<String>,
+    /// Its Library artifact, where its versions are.
+    pub artifact: Option<String>,
+    pub versions: usize,
+}
+
 fn offered_key(skill: &str, digest: &str) -> String {
     format!("ability-offered|{skill}|{digest}")
 }
@@ -546,6 +565,113 @@ impl Core {
             &offered_key(skill, &current.digest),
         );
         Ok(())
+    }
+
+    /// The Agent's learned abilities: installed, turned off, and waiting
+    /// for review in any folder, one row each.
+    pub fn abilities(&self) -> Vec<AbilityView> {
+        let library = self.artifacts().list();
+        let artifact_of = |name: &str| {
+            library
+                .iter()
+                .find(|artifact| {
+                    artifact.kind == crate::artifacts::ArtifactKind::Skill
+                        && artifact.title.as_deref() == Some(name)
+                })
+                .map(|artifact| (artifact.id.to_string(), artifact.versions.len()))
+        };
+        let mut rows = Vec::new();
+        let installed = self.scope().skills();
+        let mut names: Vec<_> = std::fs::read_dir(&installed)
+            .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+            .unwrap_or_default();
+        names.sort();
+        for dir in names {
+            let skill_md = dir.join("SKILL.md");
+            let Some(skill) = std::fs::read_to_string(&skill_md)
+                .ok()
+                .and_then(|text| crate::skills::parse_text(&text, &skill_md))
+            else {
+                continue;
+            };
+            let record = self.ability_record(&skill.name);
+            let current = record.as_ref().and_then(|record| record.versions.last());
+            let state = match current {
+                Some(version) if version.failed.is_some() => "failing",
+                Some(version) if version.offered => "offered",
+                _ => "working",
+            };
+            let (artifact, versions) = artifact_of(&skill.name).unzip();
+            rows.push(AbilityView {
+                reaches: Program::load(&dir)
+                    .ok()
+                    .flatten()
+                    .map(|program| program.reaches())
+                    .unwrap_or_default(),
+                name: skill.name,
+                description: skill.description,
+                state,
+                why: None,
+                proposal: None,
+                artifact,
+                versions: versions.unwrap_or(1),
+            });
+        }
+        for path in vak_session::documents::under(&self.scope().ability_standing()) {
+            let Some(name) = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+            else {
+                continue;
+            };
+            if rows.iter().any(|row| row.name == name)
+                || !self
+                    .ability_record(&name)
+                    .is_some_and(|record| record.withdrawn)
+            {
+                continue;
+            }
+            let (artifact, versions) = artifact_of(&name).unzip();
+            rows.push(AbilityView {
+                name,
+                description: String::new(),
+                state: "turned_off",
+                reaches: Vec::new(),
+                why: None,
+                proposal: None,
+                artifact,
+                versions: versions.unwrap_or(0),
+            });
+        }
+        for proposal in crate::learning::list_proposals(&self.scope(), self.cwd()) {
+            let review = proposal.program;
+            let (artifact, versions) = review
+                .as_ref()
+                .map(|review| review.artifact.clone())
+                .or_else(|| artifact_of(&proposal.name).map(|(id, _)| id))
+                .map(|id| {
+                    let versions = library
+                        .iter()
+                        .find(|artifact| artifact.id.to_string() == id)
+                        .map_or(0, |artifact| artifact.versions.len());
+                    (Some(id), versions)
+                })
+                .unwrap_or((None, 0));
+            rows.push(AbilityView {
+                name: proposal.name,
+                description: proposal.description,
+                state: "waiting",
+                reaches: review
+                    .as_ref()
+                    .map(|review| review.reaches.clone())
+                    .unwrap_or_default(),
+                why: review.map(|review| review.why),
+                proposal: Some(proposal.id),
+                artifact,
+                versions,
+            });
+        }
+        rows
     }
 
     /// The owner approved or declined proposal `id`: the inbox no longer

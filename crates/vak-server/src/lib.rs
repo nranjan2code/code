@@ -1562,6 +1562,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/skills/proposals", get(list_proposals_route))
         .route("/skills/proposals/{id}/promote", post(promote_proposal))
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
+        .route("/skills/abilities", get(list_abilities))
         .route("/skills/abilities/{name}/promote", post(promote_ability))
         .merge(gateway::routes())
         .merge(intake::routes())
@@ -2973,6 +2974,17 @@ fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
             })
         })
         .collect()
+}
+
+/// The Agent's learned abilities, each with its state in plain terms
+/// (docs/design/93-self-evolving-capabilities.md §9.3).
+async fn list_abilities(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = scoped_core!(&state, None, q.agent.as_deref());
+    Json(serde_json::json!({ "abilities": core.abilities() })).into_response()
 }
 
 /// Installs an Agent's learned ability for every Agent once its record

@@ -235,8 +235,22 @@ live.
   in another ($90 weighted 1:2:2 gave 18, 36, 36 dollars), and the inbox
   offered it to every Agent. The withdrawal ladder is covered by the
   integration test, not seen live; the offer was left for the owner.
-- [ ] E6: client experience (projection line, capability sheet, Review,
-  Library Abilities, Settings → Capabilities rewritten, inbox).
+- [x] E6a (2026-10-15): the Library's Learned abilities view
+  (`GET /skills/abilities`, `Core::abilities`), proposals listed and acted
+  on across folders (fixes the E3b finding), and an ability's versions
+  kept like a starred artifact's. Checked in the running app on the
+  installed home at 1440 × 900 light and 390 × 844 dark: three abilities,
+  Working and Ready for every Agent, with what they reach.
+- [ ] Found (E6a): every ability version was a draft (nobody "saved" it),
+  so the lifecycle pass trashed an ability's Library history after the
+  drafts' window; fixed by `Artifact::keeps_every_version`. On the
+  installed home the history of the abilities made on 2026-10-15 was
+  already trashed (their cards show no versions link); the installed
+  copies themselves are untouched.
+- [ ] E6 rest: projection line and capability sheet (§9.1), Review beside
+  file candidates (§9.2), ability filters and search, Settings →
+  Capabilities rewritten (§9.4), inbox entries that open their card
+  (§9.5), Approve for this Agent only.
 - [ ] E7: admin `#/capabilities` and `#/measurements`; `vak skills` verbs.
 - [ ] E8: the opt-in review of failures as a trigger per Agent.
 - [ ] E9: card data from a capability call (R5), generalising

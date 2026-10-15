@@ -366,6 +366,13 @@ pub struct Artifact {
 }
 
 impl Artifact {
+    /// Every version stays, as a starred one's does: an ability's versions
+    /// are its history, which its parents and records name
+    /// (docs/design/93-self-evolving-capabilities.md §6).
+    pub fn keeps_every_version(&self) -> bool {
+        self.kind == ArtifactKind::Skill
+    }
+
     /// The versions no other version was made from: one, unless edits made
     /// from the same version are waiting to be reconciled. A version in the
     /// trash or erased is not counted, so the version it was made from is

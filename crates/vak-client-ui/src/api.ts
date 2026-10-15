@@ -872,6 +872,27 @@ export function promoteProposal(id: string, agent?: string): Promise<{ promoted:
   });
 }
 
+/** One of an Agent's learned abilities (docs/design/93 §9.3). */
+export interface Ability {
+  name: string;
+  description: string;
+  state: "working" | "failing" | "offered" | "waiting" | "turned_off";
+  reaches: string[];
+  why?: string | null;
+  proposal?: string | null;
+  artifact?: string | null;
+  versions: number;
+}
+
+export function listAbilities(): Promise<{ abilities: Ability[] }> {
+  return req("/skills/abilities");
+}
+
+/** Gives an Agent's ability that has shown it works to every Agent. */
+export function promoteAbility(name: string): Promise<{ promoted: string }> {
+  return req(`/skills/abilities/${encodeURIComponent(name)}/promote`, { method: "POST", body: "{}" });
+}
+
 export function rejectProposal(id: string, agent?: string): Promise<{ rejected: string }> {
   const suffix = agent ? `?agent=${encodeURIComponent(agent)}` : "";
   return req(`/skills/proposals/${encodeURIComponent(id)}/reject${suffix}`, {
