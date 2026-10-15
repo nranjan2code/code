@@ -28,16 +28,33 @@ this handover's prompt and 'Where things stand' before the session's
 limit, telling the maintainer when the session is near it. The maintainer is the only user and there are no others: rewrite
 a wrong design or screen rather than patch it.
 
-Next: doc 94 is built (S0 to S5, 2026-10-15). First its three
-follow-ups in docs/plans/open-items.md 'Scheduled work': the set of
-loaded tools a session carries lives in process memory
-(`Core::inner.loaded_tools`), so a restart defers a tool a turn already
-found (derive it from the ledger); a run in a copy of a folder reads its
-configuration from the copy, which has no `.vak` (give it the folder's
-project layer; the route is already taken from the folder); and a
-delivered run's cards arrive as text in the home conversation (draw them
-as cards). Then doc 93's E3b and E4. Build each as a design, never spot
-fixes or tuned numbers.
+First, check the last step landed: `git log --oneline -3` should show a
+commit "Doc 94 follow-ups: tools stay loaded across restarts; a copy is
+configured as its folder; scheduled cards as cards". If it is not there,
+the work is uncommitted in the tree (`git status`): run the full
+`scripts/gate.sh` once (in the background), and if it is green commit
+those paths (crates/vak-config/src/scope.rs, crates/vak-core/src/lib.rs
+and scheduled.rs, crates/vak-core/tests/it/loaded_tools.rs and main.rs,
+crates/vak-session/src/log.rs, types.rs and turns.rs,
+crates/vak-server/src/automations.rs, lib.rs and projection.rs,
+crates/vak-server/tests/it/scheduled_runs.rs, CHANGELOG.md, docs/) and
+push. Then one live check on the dev route (launch entry `vak-e1-live`,
+/tmp/vak-live/say.sh and items.sh, conversation id in
+/tmp/vak-live/s94): restart the server, say "Pause my morning line." and
+see that the automations tool is called (it is now loaded from the
+ledger); run the morning line now and see its answer delivered, with any
+card drawn as a card.
+
+Then return to self-evolving capabilities (doc 93), which doc 94
+interrupted: E1a, E1b, E2 and E3a are built; next is E3b (the owner's
+switch "Let Agents switch on new abilities that only work with your
+files", on by default, off sends every proposal to Review; an inbox
+entry for a program waiting for review; approval and Review wording that
+says what it reaches; presentation packs in a skill's `presentation/`
+activated from an Agent's own skills), then E4 (catalog source, prompt
+index, `find_tools` ranking; the tool carries the skill's `serves:` so
+it defers), then E5 to E9 as doc 93 §11 orders them. Build each as a
+design, never spot fixes or tuned numbers.
 
 Live runs: the installed home (8.1.0, OpenAI key, gpt-6-luna) may be
 used sparingly: launch entry `vak-e3-live` (a dev server on port 8907 in
@@ -70,8 +87,20 @@ longer asks; a `script` is judged as that command. The card in chat
 replacing the modal) share one set of buttons and the `SchedulePicker`.
 Found live and fixed: a copy run had no route; a failed dispatch was
 reported "completed" (`begin_turn` now reports the outcome); the claims
-restart test was timing-dependent. Left on the dev home: the "morning
-line" automation and its test conversation.
+restart test was timing-dependent. Its three follow-ups were built on
+2026-10-15 (last step's gate was running at the session's end): the
+tools a conversation keeps loaded are `SessionLog::called_tools`, read
+from the ledger (they lived in process memory and a restart lost them);
+a run's working copy gets the folder's configuration layer
+(`WorkspaceScope::give_layer_to`, never control state; replaces the
+route pin); a scheduled run's cards are drawn as cards in the home turn
+(`PresentationSource::Scheduled`, `ScheduledMeta::narration`, the
+model still reads their text). Left on the dev home: the "morning line"
+automation and its test conversation.
+
+**Self-evolving capabilities (doc 93) stand at E3a**: E1a, E1b, E2 and
+E3a built and live-checked; E3b to E9 not started (tracker lines in
+open-items "Self-evolving capabilities").
 
 **E3a is built** (2026-10-15, gate green, checked live with gpt-6-luna on
 the installed home): `propose_skill` takes `source`, a folder the Agent
@@ -221,9 +250,10 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Doc 94's three follow-ups (the prompt's order), then doc 93's E3b,
-   then E4, each step with the full gate and a live turn; tick
-   `docs/plans/open-items.md` and the docs' Status as stages land.
+1. Confirm the doc 94 follow-ups commit landed (the prompt says how),
+   then doc 93's E3b, then E4, each step with the full gate and a live
+   turn; tick `docs/plans/open-items.md` and the docs' Status as stages
+   land.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are
    the maintainer's; ask before cutting.
 
