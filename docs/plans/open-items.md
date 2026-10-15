@@ -15,6 +15,50 @@ item says what is missing and what closes it. A design doc's own Status
 line says what of that doc is built; this file lists only what is open
 across them. Nothing here is started unless it says so.
 
+## Installed route failures (qwen3.5:0.8b-mlx, 2026-10-15)
+
+Read from the installed home's ledger through its API, then replayed on a
+dev server behind the Ollama capture proxy. Each cause was in Vak's
+contract:
+
+- [x] "remember that" never called `remember`: the tool was deferred
+  (declared no `always_loaded`), so the request sent 34 tools, 20 of them
+  cards, and `remember` only as a "More tools" line "about this workspace
+  for FUTURE sessions", one `find_tools` call away. It is loaded now and
+  says it keeps what the person asks it to remember.
+- [x] "whats my name?" ran 23 steps until stopped: a card refused for a
+  `Target` fault (a file preview of a file that does not exist) never moved
+  along the repair ladder (`vak_judge::call::repairable` took shape faults
+  only), so it was told the same thing at every step. A card tool's target
+  faults now move it on (`keeps_failing`); other tools' do not, so a few
+  dead pages never withdraw `webfetch` (docs/design/15-reliability.md).
+- [x] The same turn's `recall` missed the turn holding the name: a stop-word
+  list in `history_query_terms` and a "half the query's terms" rule in both
+  `TurnIndex::search` and the catalog's `covers_recall_query` hid it (the
+  query had a misspelling and an id the record lacked). Both removed;
+  ranking decides order.
+- [x] One-cell table rows refused three times: the ladder ran as built
+  (told, schema, withdrawn), but the refusal quoted the model's own first
+  row as "the header" and the schema's "separate strings, the header first"
+  read as one column name per string; the next calls copied both. Both
+  rewritten; the refusal names the list and details cards by shape.
+- [x] The step decision recorded deferred tools as offered, so the audit
+  showed `remember` as callable; `StepContract::deferred` now lists them.
+- [ ] Still in the recall path: the catalog's 64-candidate cap, its 250 ms
+  wait in code and `limit.clamp(1, 20)` are numbers picked in code
+  (AGENTS.md "No word lists, no tuned limits"; doc 88 §5a).
+- [ ] `mail_calendar` is loaded, and its long guardrail paragraph is in the
+  seed, on every turn with no account connected.
+- [ ] `remember` writes a workspace note; a fact about the person (a name)
+  is a profile fact, and the tool cannot write the profile. Found from
+  another workspace only through `session_search` of that space.
+- [ ] Inside one conversation, `session_search` leaves the conversation
+  out because "its content is already in context" (doc 23), but the
+  planner carries only the previous turn's card; older turns are reached
+  only through `recall`. The doc's reason is no longer true.
+- [ ] Not checked live after the fix on the installed route: needs a
+  release, or a dev build against the installed home.
+
 ## Before the next release
 
 8.3.0 (2026-10-15), additive within 8.x, no purge (the shipped skills):

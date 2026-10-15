@@ -236,7 +236,7 @@ fn a_closed_record_drops_the_assistants_narration_between_calls() {
 }
 
 #[test]
-fn search_needs_half_of_the_subject_and_weighs_rare_words() {
+fn search_weighs_rare_words_and_ignores_words_no_turn_has() {
     let dir = tempdir().unwrap();
     let mut log = open(dir.path());
     let weather = turn(&mut log, "Noida weather forecast for the week", "sunny");
@@ -254,12 +254,17 @@ fn search_needs_half_of_the_subject_and_weighs_rare_words() {
         Some(&weather),
         "the rare word leads: {hits:?}"
     );
-    assert!(
-        index.search("noida budget quarterly migration").is_empty(),
-        "one word of four is not relevance"
+    let hits: Vec<String> = index
+        .search("quarterly sales remeber 01a13fee assistant")
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(
+        hits.first(),
+        Some(&report),
+        "words no turn has do not hide the turn that has the rest: {hits:?}"
     );
     assert!(!index.search("report").iter().any(|(id, _)| id == &weather));
-    let _ = report;
 }
 
 #[test]

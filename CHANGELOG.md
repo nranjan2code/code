@@ -1,3 +1,22 @@
+## Unreleased
+
+- Asking Vakyartha to remember something works on the first step: the
+  remember tool is loaded on every turn (it was one tool-discovery call
+  away, described as a note "about this workspace"), and it says it keeps
+  what you ask it to remember, your name included.
+- Finding something said earlier in a conversation no longer misses it
+  when the search has words the turn lacks: the word list and the "half
+  the words must match" rule are gone, and the best match comes first.
+- A card refused for something that is not there (a preview of a file
+  that does not exist) is taken out of the turn after it keeps failing,
+  as a wrongly shaped call already was, so a turn no longer repeats it
+  until it is stopped.
+- A table written as one value per line is refused with the right shape
+  and the cards for one-value items and for labelled values, instead of
+  wording that led to the same mistake again.
+- A step's record says which of its tools were sent without their
+  schema.
+
 ## 8.3.0 — 2026-10-15
 
 The skills Vakyartha ships are real procedures, and two of them are

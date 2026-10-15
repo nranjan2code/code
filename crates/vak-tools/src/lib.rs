@@ -396,7 +396,9 @@ pub trait Tool: Send + Sync {
 
     /// Loaded into every turn's schemas: the tools a model works with on
     /// most turns (reading, searching and changing files, running commands,
-    /// fetching a page, planning, discovery). Every other tool that declares
+    /// fetching a page, planning, discovery), and the ones a request in
+    /// plain conversation names (remembering what the person says, finding
+    /// it again). Every other tool that declares
     /// a domain is one `find_tools` call away until a turn loads it, and then
     /// stays loaded for the session (docs/design/88-control-plane.md §12.1).
     fn always_loaded(&self) -> bool {

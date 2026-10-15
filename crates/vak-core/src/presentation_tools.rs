@@ -421,9 +421,9 @@ fn table_fields() -> Value {
                 "type": "array",
                 "items": {
                     "type": "string",
-                    "description": "One row: one cell for each header, in the same order, separated by |."
+                    "description": "One line of the table with its cells separated by |: the first line names every column, each later line gives one row's cells in the same order."
                 },
-                "description": "The table as separate strings in display order: the header first, then one string for each row. Example: [\"Item | Amount\", \"Rice | 2 kg\"]."
+                "description": "The table, one string per line: first the column names in one string, then one string for each row. Example: [\"Item | Amount\", \"Rice | 2 kg\", \"Oil | 1 l\"]."
             }
         }),
         &["rows"],
@@ -437,10 +437,13 @@ fn build_table(args: &Map<String, Value>) -> Result<Value, String> {
     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
     let (labels, rows) = table_rows(&lines)?;
     if labels.len() < 2 {
-        return Err(format!(
-            "every row is one cell, so this is a list, not a table: use emit_list_card, or put a row's cells in one string separated by |, the header first (\"{} | …\")",
-            labels.first().map_or("Column", String::as_str)
-        ));
+        return Err(
+            "every line has one cell, so this is not a table: a table's first string \
+             names two or more columns separated by | (\"Item | Amount\"), and each later string \
+             gives one row's cells the same way (\"Rice | 2 kg\"). For one value per item use \
+             emit_list_card; for labels with their values use emit_details_card."
+                .into(),
+        );
     }
     let numeric: Vec<bool> = (0..labels.len())
         .map(|column| {

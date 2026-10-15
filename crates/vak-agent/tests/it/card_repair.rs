@@ -600,3 +600,167 @@ async fn a_blind_call_to_a_deferred_tool_is_regenerated_at_once() {
     let text = SessionLog::text(&ledger);
     assert!(text.contains("arguments-regenerated"), "{text}");
 }
+
+/// A card refused for what is not there, and a tool that is not a card
+/// failing on its target, side by side (2026-10-15, the installed route: a
+/// file preview of a file that did not exist was refused at every step
+/// until the turn was stopped).
+struct MissingFilePreview;
+
+#[async_trait]
+impl Tool for MissingFilePreview {
+    fn name(&self) -> &str {
+        "emit_file_preview_card"
+    }
+    fn description(&self) -> &str {
+        "A preview of a file."
+    }
+    fn schema(&self) -> Value {
+        json!({"type": "object", "properties": {
+            "artifact_path": {"type": "string", "description": "The file."}
+        }, "required": ["artifact_path"]})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    fn card_kinds(&self) -> Vec<String> {
+        vec!["file_preview".into()]
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::error(
+            vak_control::Fault::Target,
+            "Not shown: that file does not exist.",
+        )
+    }
+}
+
+struct GonePage;
+
+#[async_trait]
+impl Tool for GonePage {
+    fn name(&self) -> &str {
+        "fetch"
+    }
+    fn description(&self) -> &str {
+        "Fetch a page."
+    }
+    fn schema(&self) -> Value {
+        json!({"type": "object", "properties": {
+            "url": {"type": "string", "description": "The page."}
+        }, "required": ["url"]})
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::error(vak_control::Fault::Target, "404 Not Found")
+    }
+}
+
+async fn run_with(tools: Vec<Arc<dyn Tool>>, script: Vec<AssistantMessage>) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
+        agent: None,
+        session_id: "target-repair".into(),
+        created_at: chrono::Utc::now(),
+        cwd: dir.path().to_path_buf(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: FrozenContract {
+            app_version: "0".into(),
+            provider: "scripted".into(),
+            model: "test-model".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: "sys".into(),
+            permission_mode: "full-access".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    };
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let ledger = SessionPath::new_session_file(&home, dir.path(), "target-repair");
+    let log = SessionLog::create(ledger.clone(), header).unwrap();
+    let mut agent = Agent::new(
+        Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
+            responses: Mutex::new(VecDeque::from(script)),
+            seen: Arc::new(Mutex::new(Vec::new())),
+        }),
+        log,
+        {
+            let mut cfg = AgentConfig::new("sys");
+            cfg.model = "test-model".into();
+            cfg.tools = tools;
+            cfg.mode = vak_permission::Mode::FullAccess;
+            cfg.permission = Some(Arc::new(PermissionEngine::default()));
+            cfg.stop_policy = None;
+            cfg
+        },
+    );
+    let outcome = agent
+        .run(
+            "whats my name?",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    SessionLog::text(&ledger)
+}
+
+#[tokio::test]
+async fn a_card_refused_for_a_missing_file_is_withdrawn_and_a_gone_page_is_not() {
+    let preview = |id: &str| {
+        call(
+            id,
+            "emit_file_preview_card",
+            json!({"artifact_path": format!("/workspace/placeholder-{id}")}),
+        )
+    };
+    let written = run_with(
+        vec![Arc::new(MissingFilePreview)],
+        vec![
+            preview("a1"),
+            preview("a2"),
+            preview("a3"),
+            text("Your name is Nisheeth Ranjan."),
+        ],
+    )
+    .await;
+    assert!(
+        written.contains("`emit_file_preview_card` is withdrawn for the rest of this turn"),
+        "{written}"
+    );
+
+    let fetch = |id: &str| {
+        call(
+            id,
+            "fetch",
+            json!({"url": format!("https://example.invalid/{id}")}),
+        )
+    };
+    let written = run_with(
+        vec![Arc::new(GonePage)],
+        vec![
+            fetch("f1"),
+            fetch("f2"),
+            fetch("f3"),
+            text("Those pages are gone."),
+        ],
+    )
+    .await;
+    assert!(!written.contains("is withdrawn for the rest"), "{written}");
+    assert!(
+        !written.contains("The same tool call failed twice"),
+        "{written}"
+    );
+}

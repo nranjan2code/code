@@ -1422,6 +1422,12 @@ impl Agent {
             &self.config.steps,
             request.tools.iter().map(|tool| tool.name.clone()).collect(),
         );
+        asked.deferred = request
+            .tools
+            .iter()
+            .filter(|tool| tool.defer)
+            .map(|tool| tool.name.clone())
+            .collect();
         if let Some(name) = &request.must_call {
             asked.output = vak_control::OutputForm::Tool { name: name.clone() };
         }
@@ -3008,7 +3014,16 @@ impl Agent {
                     // context the model cannot repair by repeating it; a
                     // malformed one is repaired like any other call.
                     ToolRunOutput::Err(fault, error)
-                        if vak_judge::call::repairable(*fault) && !history_misses.contains(id) =>
+                        if !history_misses.contains(id)
+                            && vak_judge::call::keeps_failing(
+                                *fault,
+                                call_names.get(id).is_some_and(|name| {
+                                    self.config
+                                        .tools
+                                        .iter()
+                                        .any(|tool| tool.name() == name && tool.presents_cards())
+                                }),
+                            ) =>
                     {
                         Some((
                             call_names.get(id).cloned().unwrap_or_else(|| id.clone()),

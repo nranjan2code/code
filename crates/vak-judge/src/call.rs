@@ -97,6 +97,17 @@ pub fn repairable(fault: Fault) -> bool {
     fault == Fault::Shape
 }
 
+/// Whether a failed call moves its tool along the repair sequence (its
+/// result names the fault, then its schema is shown, then it is withdrawn
+/// for the turn). A call whose shape was wrong always does. A card refused
+/// for what is not there (a preview of a file that does not exist) does
+/// too: calling again cannot make it true, and the answer can still be
+/// written. Any other tool's target fault (a page that is gone, text that
+/// does not match) is ordinary work, and a later call of it may succeed.
+pub fn keeps_failing(fault: Fault, shows_card: bool) -> bool {
+    fault == Fault::Shape || (shows_card && fault == Fault::Target)
+}
+
 /// Whether a failed call is something the turn's answer must account for.
 /// A call whose shape was wrong never ran and changed nothing, and a
 /// cancelled one was stopped by the person; neither is a failure of the
@@ -280,6 +291,12 @@ mod tests {
         failures.failed("a", Fault::Refused);
         assert!(failures.has_unrecovered());
         assert!(repairable(Fault::Shape) && !repairable(Fault::Tool));
+        assert!(keeps_failing(Fault::Shape, false) && keeps_failing(Fault::Target, true));
+        assert!(
+            !keeps_failing(Fault::Target, false),
+            "a dead page never withdraws a fetch"
+        );
+        assert!(!keeps_failing(Fault::Tool, true) && !keeps_failing(Fault::Refused, true));
         assert_eq!(fault_of(Refusal::Unknown), Fault::Shape);
         assert_eq!(fault_of(Refusal::Person), Fault::Refused);
     }

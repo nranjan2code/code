@@ -18,8 +18,8 @@ use vak_llm::{ContentBlock, Message, Role};
 use crate::log::SessionLog;
 use crate::types::{Entry, EntryPayload, PresentationRecord, PresentationSource};
 
-/// Subject words shared by disk and in-memory history retrieval. Function
-/// words and temporal qualifiers do not establish topical relevance.
+/// The words disk and in-memory history retrieval match on. Which of them
+/// matter is the ranking's to say (how rare each is), never a list.
 pub fn history_query_terms(query: &str) -> Vec<String> {
     let mut terms = std::collections::BTreeSet::new();
     // Keep full Unicode words, including combining marks. The intent kernel's
@@ -36,47 +36,7 @@ pub fn history_query_terms(query: &str) -> Vec<String> {
             }
         }
     }
-    terms
-        .into_iter()
-        .filter(|word| {
-            !matches!(
-                word.as_str(),
-                "what"
-                    | "which"
-                    | "who"
-                    | "when"
-                    | "where"
-                    | "how"
-                    | "current"
-                    | "latest"
-                    | "today"
-                    | "yesterday"
-                    | "tomorrow"
-                    | "number"
-                    | "numbers"
-                    | "times"
-                    | "reply"
-                    | "define"
-                    | "explain"
-                    | "calculate"
-                    | "compute"
-                    | "describe"
-                    | "summarize"
-                    | "tell"
-                    | "show"
-                    | "give"
-                    | "make"
-                    | "create"
-                    | "good"
-                    | "detailed"
-                    | "sentence"
-                    | "sentences"
-                    | "one"
-                    | "word"
-                    | "words"
-            )
-        })
-        .collect()
+    terms.into_iter().collect()
 }
 
 /// One assistant step within a turn: the assistant message (text and/or
@@ -777,9 +737,7 @@ impl TurnIndex {
     /// Ranks closed turns by how much of the query's subject their card
     /// carries. A term counts by how rare it is across the conversation's own
     /// cards (inverse document frequency), so a word every card shares says
-    /// nothing, and a turn must carry at least half of the query's subject
-    /// terms to be a candidate at all: one coincidental word out of several is
-    /// not topical relevance. Highest score first; ties break by turn id.
+    /// nothing. Highest score first; ties break by turn id.
     pub fn search(&self, query: &str) -> Vec<(String, f64)> {
         let terms = history_query_terms(query);
         let phrase = crate::text::normalize_impl(query);
@@ -808,7 +766,7 @@ impl TurnIndex {
             .filter_map(|(turn, text, words)| {
                 let matched: Vec<&String> =
                     terms.iter().filter(|term| words.contains(*term)).collect();
-                if matched.is_empty() || matched.len() * 2 < terms.len() {
+                if matched.is_empty() {
                     return None;
                 }
                 let mut score: f64 = matched.iter().map(|term| idf(term)).sum();
@@ -1739,22 +1697,33 @@ mod tests {
 
     #[test]
     fn history_query_terms_keep_subjects_and_unicode_combining_marks() {
-        assert_eq!(
-            history_query_terms("what is the current weather in Noida"),
-            vec!["noida", "weather"]
-        );
+        let terms = history_query_terms("what is the current weather in Noida");
+        assert!(terms.contains(&"noida".to_string()) && terms.contains(&"weather".to_string()));
         assert_eq!(
             history_query_terms("दिल्ली का मौसम"),
             vec!["का", "दिल्ली", "मौसम"]
         );
         assert_eq!(history_query_terms("北京 天气"), vec!["北京", "天气"]);
-        assert_eq!(history_query_terms("CAFÉ latest"), vec!["café"]);
-        assert!(history_query_terms("what is the current").is_empty());
-        assert!(history_query_terms("What is 17 times 23? Reply with just the number.").is_empty());
-        assert_eq!(
-            history_query_terms("Define photosynthesis in one sentence."),
-            vec!["photosynthesis"]
+        assert!(history_query_terms("CAFÉ latest").contains(&"café".to_string()));
+    }
+
+    #[test]
+    fn a_turn_is_found_by_the_words_it_shares_whatever_else_the_query_says() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut log, _, _, _) = two_closed_one_open(dir.path());
+        log.append_message(user_text(
+            "my Name is \u{201c}Nisheeth Ranjan\u{201d} remeber that",
+        ))
+        .unwrap();
+        log.append_message(assistant_text("Hello Nisheeth Ranjan!"))
+            .unwrap();
+        let mut index = TurnIndex::from_log(&log);
+        index.ensure_cards(&|_| 1);
+        let wanted = index.turns.last().unwrap().id.clone();
+        let hits = index.search(
+            "Nisheeth Ranjan remember that 01a13fee-7d7a-7171-8d05-67a241a8b0f0 assistant vakyartha",
         );
+        assert_eq!(hits[0].0, wanted, "{hits:?}");
     }
 
     #[test]

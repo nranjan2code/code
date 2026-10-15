@@ -482,9 +482,9 @@ pub fn render(finding: &Finding, marker: &str) -> String {
             offered,
         } => {
             let mut parts = vec![format!(
-                "{marker} The same tool call failed twice. Do not repeat the failing call shape; \
-                 send exactly the arguments the schema below asks for, or deliver this part \
-                 another way."
+                "{marker} The same tool call failed twice. Do not repeat the failing call; send \
+                 exactly the arguments the schema below asks for, naming only what exists, or \
+                 deliver this part another way."
             )];
             for tool in tools {
                 parts.push(format!(

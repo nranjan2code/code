@@ -37,13 +37,22 @@ it cannot spin indefinitely.
 
 A recovery hint alone is a nudge to the model; it is not a backstop. The loop
 moves a tool whose calls keep failing with a fault of shape
-(`vak_control::Fault::Shape`, named where the call failed and never read
-from the error's wording; `vak_judge::call::repairable`) one stage on at each
-failing step (`reconcile_repair`). There is no repair count to tune and no
-turn is ended for it:
+(`vak_control::Fault::Shape`: not a tool, or not its arguments), and a card
+tool whose calls keep failing with a fault of target (`Fault::Target`: a
+preview of a file that does not exist, a source nothing retrieved), named
+where the call failed and never read from the error's wording
+(`vak_judge::call::keeps_failing`, from the tool's own `presents_cards`),
+one stage on at each failing step (`reconcile_repair`). There is no repair
+count to tune and no turn is ended for it. Card target faults joined on
+2026-10-15: before, a card refused for a missing file was told the same
+thing at every step and a turn ran until it was stopped. Another tool's
+target fault (a page that is gone, text that does not match) stays ordinary
+work, since a later call of it may succeed and withdrawing it would take a
+working tool out of the turn:
 
-1. **The failed call** carries the per-call `[recovery]` hint in its result
-   (as above; the model still produces the next call).
+1. **The failed call** carries the fault in its result: a shape fault the
+   per-call `[recovery]` hint (as above), a target fault the tool's own
+   account of what is missing (the model still produces the next call).
 2. **A second failing step** for the same tool, with no call of it having
    succeeded in between: the loop appends a
    tagged `ControlKind::RepairDirective` message (`[repair-directive] …`)

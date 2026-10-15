@@ -52,10 +52,13 @@ tag `v8.3.0`): the shipped skills are real procedures in the packages
 `qwen3.5:0.8b-mlx` with no OpenAI key, by the maintainer's choice:
 Vakyartha must work with the smallest model, so failures seen there are
 Vak's contract to investigate, never a reason to change the route.
-Seen on that route before 8.3.0 (not yet investigated): "remember that"
-never called `remember`; "whats my name?" looped over made-up file
-previews and shell searches until stopped; one-cell table rows were
-refused three times in a turn.
+Seen on that route before 8.3.0 and investigated on 2026-10-15 (open-items
+"Installed route failures"): `remember` was deferred behind `find_tools`;
+target faults never moved the repair ladder, so a refused file preview
+repeated until the turn was stopped; recall's word list and "half the
+terms" rule hid the turn holding the name; the table refusal's wording led
+to the same mistake. Each is fixed in Vak's contract (unreleased); the
+open lines there are what the investigation found and did not fix.
 
 **8.2.0 released 2026-10-15** (`6957c0dd5`, tag `v8.2.0`, artifacts in
 `dist/8.2.0`, feed at the local 127.0.0.1:8899 URL like 8.1.0): doc 93

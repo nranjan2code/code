@@ -208,14 +208,18 @@ impl vak_tools::Tool for RememberTool {
         vec!["memory"]
     }
 
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
-        "Persist a durable note about this workspace for FUTURE sessions \
-         (decisions, facts, preferences, pointers). Use sparingly for things \
-         worth remembering after this conversation ends — not transient \
-         details. Notes are recalled via session_search and are visible to \
-         the user, who can edit or forget them. When asked to forget a note, \
-         find its exact source id with session_search, then call forget_memory; \
-         do not replace it with a note saying not to remember it."
+        "Keep a note for later conversations: whatever the person asks you to \
+         remember (their name, a preference, a fact about them or their work), \
+         and decisions worth knowing next time. Later conversations find it \
+         with session_search; the person can see, edit or forget it. When asked \
+         to forget a note, find its exact source id with session_search, then \
+         call forget_memory; do not replace it with a note saying not to \
+         remember it."
     }
 
     fn schema(&self) -> Value {

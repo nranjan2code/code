@@ -606,6 +606,7 @@ pub fn frame(purpose: Purpose, defaults: &StepDefaults, tools: Vec<String>) -> S
         reasoning: settings.reasoning,
         sampling: settings.sampling,
         tools,
+        deferred: Vec::new(),
         output: OutputForm::Free,
     }
 }
@@ -634,6 +635,11 @@ pub struct StepContract {
     pub sampling: Sampling,
     /// The tools the request offers, by name, in request order.
     pub tools: Vec<String>,
+    /// Those of `tools` sent without their schema (reached with
+    /// `find_tools`, or deferred on the wire), so the record says what the
+    /// model could call at once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deferred: Vec<String>,
     pub output: OutputForm,
 }
 
@@ -944,7 +950,8 @@ mod tests {
                 purpose: Purpose::Repair,
                 reasoning: Reasoning::Depth(Depth::Low),
                 sampling: Sampling::default(),
-                tools: vec!["read".into()],
+                tools: vec!["read".into(), "remember".into()],
+                deferred: vec!["remember".into()],
                 output: OutputForm::Free,
             },
         }));
