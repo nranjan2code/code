@@ -437,8 +437,11 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   refresh: doc 75 to shipped with evidence) follows V4.3 and V4.6.
 - Brand media: listen and choose a sound family, hero image and theme
   take, and fill the "Chosen" table in `docs/brand/media/README.md`
-  (Pip's and Tavi's tuned sounds first). The generation subscription
-  ends around 2026-10-16.
+  (Pip's and Tavi's tuned sounds first). Batch 5 (2026-10-15) added each
+  companion's own spoken lines and completed every sound family, two takes
+  each, to choose from too; nothing in it is wired into the app yet. The
+  generation subscription ends on 2026-10-16, so nothing can be generated
+  again in a companion's voice after that.
 - Sync: moving one conversation alone, and whether provider keys may
   travel (today no secret is ever written to the remote).
 - Mail and calendar: live provider accounts for conformance and for

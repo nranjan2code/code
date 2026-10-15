@@ -1,7 +1,7 @@
 # Vakyartha media: sound, image and film
 
-Status: in progress (2026-10-13). Batches 1 and 2 generated in ElevenLabs;
-choices and downloads pending.
+Status: in progress (2026-10-15). Batches 1 to 5 generated in ElevenLabs and
+downloaded; the owner's listening choices are pending.
 
 This folder records how Vakyartha's media is made, so anyone can make the
 next piece in the same voice: the creative direction, the exact prompts, the
@@ -382,6 +382,49 @@ connector's run status with every signed link and workspace code removed;
 nothing in this folder grants access to the account. About 22,770 credits
 were spent on these 118, plus the voice designs, which reported no cost.
 
+## Batch 5: every companion speaks, the sound families complete (2026-10-15)
+
+The generation subscription ends on 2026-10-16, and a designed voice lives
+only in the ElevenLabs workspace: after that, a companion can no longer say
+anything new in its own voice. So each of the seven companions now speaks
+the same twelve moments Vakyartha's voice already speaks (batch 4), in
+English, two takes each, from its saved voice (`eleven_v4`).
+
+**Each line is the companion's own.** The facts stay the same as
+Vakyartha's (what happened, and what the person controls; nothing personal
+baked into audio), and the wording carries the casting sheet's temperament:
+Mira warm and a step ahead ("this one's your call"), Moss slow with pauses
+("No hurry"), Nori curious and encouraging ("Ooh"), Pip short and springy
+("Task done!"), Lumi soft and dreamy ("floated in"), Tavi measured and
+formal with no contractions ("Consider what has changed."), Beni steady and
+reassuring ("Everything's in order"). A bracketed direction such as
+`[softly]` or `[slowly]` shapes the delivery and is not spoken. The exact
+words are `companion-lines.json`; every line, voice and take is in
+`manifest.json` (batch 5), with each take's length and peak level.
+
+Files: `speech/en/<character>/<moment>-<take>.mp3`, the moments being
+`greeting`, `approval-needed`, `done`, `error`, `heres-what-changed`,
+`ready-when-you-are` and the six `announce-*` ones.
+
+**The sound families are complete.** Brass, Wood and Pure now have the four
+announcement sounds Glass and Santoor had (`new-email`, `reminder`,
+`meeting-soon`, `scheduled-finished`), with the same shapes in their own
+instrument. Every family gains two moments from the list below:
+`message-received` (a single high soft tap, for a message from a channel)
+and `listening-stop` (the falling answer to `listening`). Wood's
+`listening`, whose one take was silence, has two new takes; Glass's
+`message-received` came back silent twice and was made again in the Glass
+notification's own words (the manifest has the prompt that worked). All are
+`eleven_text_to_sound_v2` with a set length (1.5 s for announcements,
+1 s for taps) and prompt influence 0.5, two takes each:
+`sounds/system/<family>/<moment>-<take>.mp3`. They are raw: choose a take,
+then trim and level it with `tools/export_app_assets.py` as before.
+
+Spent about 8,540 credits on speech (1 credit per character, tags
+included) and about 200 on sounds. `tools/batch5_sessions.txt` maps every
+generation session to its file, and `tools/fetch_flow_results.py` reads it;
+`tools/record_batch5.py` writes the manifest entries from the downloads.
+
 ## Files in this folder
 
 - `manifest.json`: every asset, its prompt (or voice description and line),
@@ -395,7 +438,9 @@ were spent on these 118, plus the voice designs, which reported no cost.
 - `music/theme-<take>.mp3`: two 30 s takes of the theme.
 - `images/hero-<take>.webp`: four 1024 × 576 hero illustrations.
 - `video/vakyartha-idle.mp4`: the 5 s idle loop.
-- `speech/en/`, `speech/hi/`: spoken lines and announcements.
+- `speech/en/`, `speech/hi/`: spoken lines and announcements in
+  Vakyartha's voice; `speech/en/<character>/`: the same moments in each
+  companion's own voice (batch 5).
 - `loops/<id>-idle-<size>.webp`: transparent idle loops for the app.
 - `elevenlabs/generations.json`: every generation's record.
 - `tools/fetch_flow_results.py`, `tools/make_loops.py`, `tools/export_app_assets.py`,
@@ -453,8 +498,6 @@ product's promise and is true of what it does) · "Heard, then done." ·
 
 ## Next batches
 
-- Sounds: *error* (one low soft note, falling), *message received from a
-  channel* (a single high celesta tap), *voice listening start/stop*.
 - Images: Open Graph card (1200 × 630) with the lockup placed from the
   master; three feature illustrations (Review, Library, Automations) in the
   hero's style.

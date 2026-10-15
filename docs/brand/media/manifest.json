@@ -787,7 +787,7 @@
       "variations": 1,
       "prompt": "Soft wooden tap, single very short high click, close-mic, dry",
       "status": "silent",
-      "note": "The one take is silence (peak -54.7 dB). The app plays wood/notification in its place until a new take is made.",
+      "note": "The one take is silence (peak -54.7 dB). The app plays wood/notification in its place until a new take is made. Batch 5 made two new takes (listening-1, listening-2). Batch 5 made two new takes (listening-1, listening-2). Batch 5 made two new takes (listening-1, listening-2).",
       "takes": [
         {
           "file": "sounds/system/wood/listening.mp3",
@@ -1769,6 +1769,2513 @@
         }
       ],
       "status": "made, verified within 20 cents"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "mira",
+      "moment": "greeting",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[warmly] Hi, I'm Mira. Tell me what's on your mind, however it comes out. I'll show you what I'm doing as I go, and nothing leaves without your OK.",
+      "takes": [
+        {
+          "file": "speech/en/mira/greeting-1.mp3",
+          "seconds": 9.2,
+          "peak_db": -4.3
+        },
+        {
+          "file": "speech/en/mira/greeting-2.mp3",
+          "seconds": 9.1,
+          "peak_db": -5.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "mira",
+      "moment": "approval-needed",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "I'm ready to go ahead, but this one's your call. Shall I?",
+      "takes": [
+        {
+          "file": "speech/en/mira/approval-needed-1.mp3",
+          "seconds": 4.1,
+          "peak_db": -5.4
+        },
+        {
+          "file": "speech/en/mira/approval-needed-2.mp3",
+          "seconds": 4.2,
+          "peak_db": -5.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "mira",
+      "moment": "done",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[warmly] All done. It's waiting in your Library, and you can undo it whenever you like.",
+      "takes": [
+        {
+          "file": "speech/en/mira/done-1.mp3",
+          "seconds": 5.6,
+          "peak_db": -5.5
+        },
+        {
+          "file": "speech/en/mira/done-2.mp3",
+          "seconds": 5.0,
+          "peak_db": -5.8
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "mira",
+      "moment": "error",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "That didn't quite work. Here's what I tried, and what I'd try next.",
+      "takes": [
+        {
+          "file": "speech/en/mira/error-1.mp3",
+          "seconds": 4.8,
+          "peak_db": -5.3
+        },
+        {
+          "file": "speech/en/mira/error-2.mp3",
+          "seconds": 4.8,
+          "peak_db": -5.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "mira",
+      "moment": "heres-what-changed",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "So, here's what changed.",
+      "takes": [
+        {
+          "file": "speech/en/mira/heres-what-changed-1.mp3",
+          "seconds": 2.0,
+          "peak_db": -5.3
+        },
+        {
+          "file": "speech/en/mira/heres-what-changed-2.mp3",
+          "seconds": 2.1,
+          "peak_db": -5.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "mira",
+      "moment": "ready-when-you-are",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[warmly] Whenever you're ready.",
+      "takes": [
+        {
+          "file": "speech/en/mira/ready-when-you-are-1.mp3",
+          "seconds": 1.6,
+          "peak_db": -4.8
+        },
+        {
+          "file": "speech/en/mira/ready-when-you-are-2.mp3",
+          "seconds": 1.8,
+          "peak_db": -5.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "mira",
+      "moment": "announce-new-email",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "A new email just came in.",
+      "takes": [
+        {
+          "file": "speech/en/mira/announce-new-email-1.mp3",
+          "seconds": 2.0,
+          "peak_db": -5.2
+        },
+        {
+          "file": "speech/en/mira/announce-new-email-2.mp3",
+          "seconds": 2.0,
+          "peak_db": -5.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "mira",
+      "moment": "announce-reminder",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Here's the reminder you asked for.",
+      "takes": [
+        {
+          "file": "speech/en/mira/announce-reminder-1.mp3",
+          "seconds": 2.0,
+          "peak_db": -5.1
+        },
+        {
+          "file": "speech/en/mira/announce-reminder-2.mp3",
+          "seconds": 2.0,
+          "peak_db": -5.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "mira",
+      "moment": "announce-meeting-soon",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your next meeting starts soon. Everything you need is on screen.",
+      "takes": [
+        {
+          "file": "speech/en/mira/announce-meeting-soon-1.mp3",
+          "seconds": 4.4,
+          "peak_db": -5.2
+        },
+        {
+          "file": "speech/en/mira/announce-meeting-soon-2.mp3",
+          "seconds": 4.3,
+          "peak_db": -5.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "mira",
+      "moment": "announce-task-done",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "That task is done.",
+      "takes": [
+        {
+          "file": "speech/en/mira/announce-task-done-1.mp3",
+          "seconds": 1.6,
+          "peak_db": -4.0
+        },
+        {
+          "file": "speech/en/mira/announce-task-done-2.mp3",
+          "seconds": 1.6,
+          "peak_db": -5.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "mira",
+      "moment": "announce-scheduled-finished",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your scheduled work has finished. The results are ready when you are.",
+      "takes": [
+        {
+          "file": "speech/en/mira/announce-scheduled-finished-1.mp3",
+          "seconds": 4.5,
+          "peak_db": -5.5
+        },
+        {
+          "file": "speech/en/mira/announce-scheduled-finished-2.mp3",
+          "seconds": 4.4,
+          "peak_db": -5.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "mira",
+      "moment": "announce-good-morning",
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[warmly] Good morning. I've laid out your day.",
+      "takes": [
+        {
+          "file": "speech/en/mira/announce-good-morning-1.mp3",
+          "seconds": 2.6,
+          "peak_db": -5.2
+        },
+        {
+          "file": "speech/en/mira/announce-good-morning-2.mp3",
+          "seconds": 2.8,
+          "peak_db": -5.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "moss",
+      "moment": "greeting",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[slowly] Hello. I'm Moss. Tell me what you need... in your own words, in your own time. I'll show you each step as I take it, and nothing leaves without your OK.",
+      "takes": [
+        {
+          "file": "speech/en/moss/greeting-1.mp3",
+          "seconds": 13.2,
+          "peak_db": -1.1
+        },
+        {
+          "file": "speech/en/moss/greeting-2.mp3",
+          "seconds": 13.1,
+          "peak_db": -1.5
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "moss",
+      "moment": "approval-needed",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[slowly] Before I go further... this one needs your OK.",
+      "takes": [
+        {
+          "file": "speech/en/moss/approval-needed-1.mp3",
+          "seconds": 4.6,
+          "peak_db": -4.8
+        },
+        {
+          "file": "speech/en/moss/approval-needed-2.mp3",
+          "seconds": 4.6,
+          "peak_db": -5.6
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "moss",
+      "moment": "done",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "There. It's done. It's resting in your Library, and you can undo it any time.",
+      "takes": [
+        {
+          "file": "speech/en/moss/done-1.mp3",
+          "seconds": 5.8,
+          "peak_db": -1.2
+        },
+        {
+          "file": "speech/en/moss/done-2.mp3",
+          "seconds": 5.8,
+          "peak_db": -0.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "moss",
+      "moment": "error",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[calmly] That didn't take. No matter. Here's what I tried... and what I'd try next.",
+      "takes": [
+        {
+          "file": "speech/en/moss/error-1.mp3",
+          "seconds": 6.2,
+          "peak_db": -2.1
+        },
+        {
+          "file": "speech/en/moss/error-2.mp3",
+          "seconds": 6.2,
+          "peak_db": -1.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "moss",
+      "moment": "heres-what-changed",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[slowly] Now... here's what changed.",
+      "takes": [
+        {
+          "file": "speech/en/moss/heres-what-changed-1.mp3",
+          "seconds": 3.4,
+          "peak_db": -4.2
+        },
+        {
+          "file": "speech/en/moss/heres-what-changed-2.mp3",
+          "seconds": 3.6,
+          "peak_db": -4.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "moss",
+      "moment": "ready-when-you-are",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "No hurry. Ready when you are.",
+      "takes": [
+        {
+          "file": "speech/en/moss/ready-when-you-are-1.mp3",
+          "seconds": 2.3,
+          "peak_db": -2.0
+        },
+        {
+          "file": "speech/en/moss/ready-when-you-are-2.mp3",
+          "seconds": 2.4,
+          "peak_db": -1.5
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "moss",
+      "moment": "announce-new-email",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "A new email has arrived.",
+      "takes": [
+        {
+          "file": "speech/en/moss/announce-new-email-1.mp3",
+          "seconds": 1.9,
+          "peak_db": -1.6
+        },
+        {
+          "file": "speech/en/moss/announce-new-email-2.mp3",
+          "seconds": 2.0,
+          "peak_db": -3.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "moss",
+      "moment": "announce-reminder",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[slowly] A gentle reminder for you.",
+      "takes": [
+        {
+          "file": "speech/en/moss/announce-reminder-1.mp3",
+          "seconds": 2.6,
+          "peak_db": -2.4
+        },
+        {
+          "file": "speech/en/moss/announce-reminder-2.mp3",
+          "seconds": 2.7,
+          "peak_db": -2.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "moss",
+      "moment": "announce-meeting-soon",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your next meeting begins soon. There's still a moment to breathe.",
+      "takes": [
+        {
+          "file": "speech/en/moss/announce-meeting-soon-1.mp3",
+          "seconds": 4.3,
+          "peak_db": -2.0
+        },
+        {
+          "file": "speech/en/moss/announce-meeting-soon-2.mp3",
+          "seconds": 4.2,
+          "peak_db": -1.6
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "moss",
+      "moment": "announce-task-done",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your task is done.",
+      "takes": [
+        {
+          "file": "speech/en/moss/announce-task-done-1.mp3",
+          "seconds": 1.7,
+          "peak_db": -4.6
+        },
+        {
+          "file": "speech/en/moss/announce-task-done-2.mp3",
+          "seconds": 1.7,
+          "peak_db": -3.6
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "moss",
+      "moment": "announce-scheduled-finished",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "The work you scheduled has finished. The results are ready.",
+      "takes": [
+        {
+          "file": "speech/en/moss/announce-scheduled-finished-1.mp3",
+          "seconds": 4.0,
+          "peak_db": -1.2
+        },
+        {
+          "file": "speech/en/moss/announce-scheduled-finished-2.mp3",
+          "seconds": 4.0,
+          "peak_db": -1.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "moss",
+      "moment": "announce-good-morning",
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[warmly] Good morning. Let's see what today holds.",
+      "takes": [
+        {
+          "file": "speech/en/moss/announce-good-morning-1.mp3",
+          "seconds": 3.1,
+          "peak_db": -1.5
+        },
+        {
+          "file": "speech/en/moss/announce-good-morning-2.mp3",
+          "seconds": 3.2,
+          "peak_db": -1.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "nori",
+      "moment": "greeting",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[happy] Hi! I'm Nori. Tell me what you need, any way you like. I'll show you what I'm doing as I go, and nothing leaves without your OK.",
+      "takes": [
+        {
+          "file": "speech/en/nori/greeting-1.mp3",
+          "seconds": 8.5,
+          "peak_db": -2.7
+        },
+        {
+          "file": "speech/en/nori/greeting-2.mp3",
+          "seconds": 8.6,
+          "peak_db": -4.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "nori",
+      "moment": "approval-needed",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[curious] Quick check before I go ahead: this one needs your OK.",
+      "takes": [
+        {
+          "file": "speech/en/nori/approval-needed-1.mp3",
+          "seconds": 3.9,
+          "peak_db": -4.7
+        },
+        {
+          "file": "speech/en/nori/approval-needed-2.mp3",
+          "seconds": 3.8,
+          "peak_db": -4.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "nori",
+      "moment": "done",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[happy] Done! It's in your Library, and you can undo it anytime.",
+      "takes": [
+        {
+          "file": "speech/en/nori/done-1.mp3",
+          "seconds": 4.2,
+          "peak_db": -3.8
+        },
+        {
+          "file": "speech/en/nori/done-2.mp3",
+          "seconds": 4.2,
+          "peak_db": -2.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "nori",
+      "moment": "error",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Hmm, that didn't work. Here's what I tried, and here's my next idea.",
+      "takes": [
+        {
+          "file": "speech/en/nori/error-1.mp3",
+          "seconds": 5.2,
+          "peak_db": -3.9
+        },
+        {
+          "file": "speech/en/nori/error-2.mp3",
+          "seconds": 5.4,
+          "peak_db": -3.5
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "nori",
+      "moment": "heres-what-changed",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[curious] Okay, here's what changed.",
+      "takes": [
+        {
+          "file": "speech/en/nori/heres-what-changed-1.mp3",
+          "seconds": 2.4,
+          "peak_db": -5.4
+        },
+        {
+          "file": "speech/en/nori/heres-what-changed-2.mp3",
+          "seconds": 2.3,
+          "peak_db": -5.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "nori",
+      "moment": "announce-new-email",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Ooh, you've got a new email.",
+      "takes": [
+        {
+          "file": "speech/en/nori/announce-new-email-1.mp3",
+          "seconds": 2.1,
+          "peak_db": -2.9
+        },
+        {
+          "file": "speech/en/nori/announce-new-email-2.mp3",
+          "seconds": 2.1,
+          "peak_db": -2.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "nori",
+      "moment": "ready-when-you-are",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[happy] Ready when you are!",
+      "takes": [
+        {
+          "file": "speech/en/nori/ready-when-you-are-1.mp3",
+          "seconds": 1.6,
+          "peak_db": -5.3
+        },
+        {
+          "file": "speech/en/nori/ready-when-you-are-2.mp3",
+          "seconds": 1.6,
+          "peak_db": -5.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "nori",
+      "moment": "announce-reminder",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Here's your reminder!",
+      "takes": [
+        {
+          "file": "speech/en/nori/announce-reminder-1.mp3",
+          "seconds": 1.4,
+          "peak_db": -3.2
+        },
+        {
+          "file": "speech/en/nori/announce-reminder-2.mp3",
+          "seconds": 1.4,
+          "peak_db": -3.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "nori",
+      "moment": "announce-meeting-soon",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Heads up: your next meeting starts soon.",
+      "takes": [
+        {
+          "file": "speech/en/nori/announce-meeting-soon-1.mp3",
+          "seconds": 2.9,
+          "peak_db": -2.3
+        },
+        {
+          "file": "speech/en/nori/announce-meeting-soon-2.mp3",
+          "seconds": 2.9,
+          "peak_db": -3.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "nori",
+      "moment": "announce-task-done",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[happy] Your task is done!",
+      "takes": [
+        {
+          "file": "speech/en/nori/announce-task-done-1.mp3",
+          "seconds": 1.7,
+          "peak_db": -3.6
+        },
+        {
+          "file": "speech/en/nori/announce-task-done-2.mp3",
+          "seconds": 1.7,
+          "peak_db": -4.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "nori",
+      "moment": "announce-scheduled-finished",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your scheduled work just finished. The results are ready to look at.",
+      "takes": [
+        {
+          "file": "speech/en/nori/announce-scheduled-finished-1.mp3",
+          "seconds": 4.4,
+          "peak_db": -3.5
+        },
+        {
+          "file": "speech/en/nori/announce-scheduled-finished-2.mp3",
+          "seconds": 4.3,
+          "peak_db": -3.8
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "nori",
+      "moment": "announce-good-morning",
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[happy] Good morning! Here's your day.",
+      "takes": [
+        {
+          "file": "speech/en/nori/announce-good-morning-1.mp3",
+          "seconds": 2.5,
+          "peak_db": -3.2
+        },
+        {
+          "file": "speech/en/nori/announce-good-morning-2.mp3",
+          "seconds": 2.3,
+          "peak_db": -4.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "pip",
+      "moment": "greeting",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[excited] Hi, I'm Pip! Tell me what you need. I'll show you every step, and nothing leaves without your OK.",
+      "takes": [
+        {
+          "file": "speech/en/pip/greeting-1.mp3",
+          "seconds": 6.5,
+          "peak_db": -1.4
+        },
+        {
+          "file": "speech/en/pip/greeting-2.mp3",
+          "seconds": 6.7,
+          "peak_db": -1.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "pip",
+      "moment": "approval-needed",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "One thing first: this needs your OK.",
+      "takes": [
+        {
+          "file": "speech/en/pip/approval-needed-1.mp3",
+          "seconds": 2.8,
+          "peak_db": -4.2
+        },
+        {
+          "file": "speech/en/pip/approval-needed-2.mp3",
+          "seconds": 3.0,
+          "peak_db": -1.6
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "pip",
+      "moment": "done",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[excited] Done! It's in your Library. Want it back? Undo, anytime.",
+      "takes": [
+        {
+          "file": "speech/en/pip/done-1.mp3",
+          "seconds": 4.6,
+          "peak_db": -0.6
+        },
+        {
+          "file": "speech/en/pip/done-2.mp3",
+          "seconds": 4.6,
+          "peak_db": -0.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "pip",
+      "moment": "error",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Oops, that didn't work. Here's what I tried. Here's what's next.",
+      "takes": [
+        {
+          "file": "speech/en/pip/error-1.mp3",
+          "seconds": 4.5,
+          "peak_db": -3.6
+        },
+        {
+          "file": "speech/en/pip/error-2.mp3",
+          "seconds": 4.6,
+          "peak_db": -1.8
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "pip",
+      "moment": "heres-what-changed",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Here's what changed!",
+      "takes": [
+        {
+          "file": "speech/en/pip/heres-what-changed-1.mp3",
+          "seconds": 1.4,
+          "peak_db": -2.0
+        },
+        {
+          "file": "speech/en/pip/heres-what-changed-2.mp3",
+          "seconds": 1.4,
+          "peak_db": -1.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "pip",
+      "moment": "ready-when-you-are",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Ready when you are!",
+      "takes": [
+        {
+          "file": "speech/en/pip/ready-when-you-are-1.mp3",
+          "seconds": 1.4,
+          "peak_db": -1.6
+        },
+        {
+          "file": "speech/en/pip/ready-when-you-are-2.mp3",
+          "seconds": 1.3,
+          "peak_db": -1.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "pip",
+      "moment": "announce-new-email",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "New email!",
+      "takes": [
+        {
+          "file": "speech/en/pip/announce-new-email-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -3.2
+        },
+        {
+          "file": "speech/en/pip/announce-new-email-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -3.6
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "pip",
+      "moment": "announce-reminder",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Reminder time!",
+      "takes": [
+        {
+          "file": "speech/en/pip/announce-reminder-1.mp3",
+          "seconds": 1.2,
+          "peak_db": -1.2
+        },
+        {
+          "file": "speech/en/pip/announce-reminder-2.mp3",
+          "seconds": 1.2,
+          "peak_db": -1.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "pip",
+      "moment": "announce-meeting-soon",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Meeting soon! You're all set.",
+      "takes": [
+        {
+          "file": "speech/en/pip/announce-meeting-soon-1.mp3",
+          "seconds": 2.2,
+          "peak_db": -1.6
+        },
+        {
+          "file": "speech/en/pip/announce-meeting-soon-2.mp3",
+          "seconds": 2.2,
+          "peak_db": -1.6
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "pip",
+      "moment": "announce-task-done",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[excited] Task done!",
+      "takes": [
+        {
+          "file": "speech/en/pip/announce-task-done-1.mp3",
+          "seconds": 1.4,
+          "peak_db": -2.0
+        },
+        {
+          "file": "speech/en/pip/announce-task-done-2.mp3",
+          "seconds": 1.4,
+          "peak_db": -1.5
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "pip",
+      "moment": "announce-scheduled-finished",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Scheduled work's finished. Results are ready!",
+      "takes": [
+        {
+          "file": "speech/en/pip/announce-scheduled-finished-1.mp3",
+          "seconds": 2.9,
+          "peak_db": -1.3
+        },
+        {
+          "file": "speech/en/pip/announce-scheduled-finished-2.mp3",
+          "seconds": 2.9,
+          "peak_db": -1.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "pip",
+      "moment": "announce-good-morning",
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[excited] Good morning! Here's your day.",
+      "takes": [
+        {
+          "file": "speech/en/pip/announce-good-morning-1.mp3",
+          "seconds": 2.2,
+          "peak_db": -1.9
+        },
+        {
+          "file": "speech/en/pip/announce-good-morning-2.mp3",
+          "seconds": 2.2,
+          "peak_db": -2.5
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "lumi",
+      "moment": "greeting",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] Hello... I'm Lumi. Tell me what you're dreaming up, in your own words. I'll show you everything as I go, and nothing leaves without your OK.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/greeting-1.mp3",
+          "seconds": 10.4,
+          "peak_db": -7.1
+        },
+        {
+          "file": "speech/en/lumi/greeting-2.mp3",
+          "seconds": 10.2,
+          "peak_db": -6.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "lumi",
+      "moment": "approval-needed",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] Before I drift any further... this one needs your OK.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/approval-needed-1.mp3",
+          "seconds": 4.6,
+          "peak_db": -8.1
+        },
+        {
+          "file": "speech/en/lumi/approval-needed-2.mp3",
+          "seconds": 4.4,
+          "peak_db": -7.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "lumi",
+      "moment": "done",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] It's done. It's waiting in your Library, and you can always undo it.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/done-1.mp3",
+          "seconds": 4.9,
+          "peak_db": -7.4
+        },
+        {
+          "file": "speech/en/lumi/done-2.mp3",
+          "seconds": 4.9,
+          "peak_db": -6.8
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "lumi",
+      "moment": "error",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] That one didn't quite come together. Here's what I tried... and what we could try next.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/error-1.mp3",
+          "seconds": 6.3,
+          "peak_db": -5.1
+        },
+        {
+          "file": "speech/en/lumi/error-2.mp3",
+          "seconds": 6.2,
+          "peak_db": -5.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "lumi",
+      "moment": "heres-what-changed",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] Here's what changed.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/heres-what-changed-1.mp3",
+          "seconds": 1.8,
+          "peak_db": -9.0
+        },
+        {
+          "file": "speech/en/lumi/heres-what-changed-2.mp3",
+          "seconds": 1.8,
+          "peak_db": -7.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "lumi",
+      "moment": "ready-when-you-are",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] Ready when you are.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/ready-when-you-are-1.mp3",
+          "seconds": 1.6,
+          "peak_db": -6.2
+        },
+        {
+          "file": "speech/en/lumi/ready-when-you-are-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -6.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "lumi",
+      "moment": "announce-new-email",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] A new email has floated in.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/announce-new-email-1.mp3",
+          "seconds": 2.3,
+          "peak_db": -6.3
+        },
+        {
+          "file": "speech/en/lumi/announce-new-email-2.mp3",
+          "seconds": 2.3,
+          "peak_db": -8.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "lumi",
+      "moment": "announce-reminder",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] A little reminder, for you.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/announce-reminder-1.mp3",
+          "seconds": 2.5,
+          "peak_db": -5.1
+        },
+        {
+          "file": "speech/en/lumi/announce-reminder-2.mp3",
+          "seconds": 2.3,
+          "peak_db": -8.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "lumi",
+      "moment": "announce-meeting-soon",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] Your next meeting starts soon.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/announce-meeting-soon-1.mp3",
+          "seconds": 2.3,
+          "peak_db": -9.2
+        },
+        {
+          "file": "speech/en/lumi/announce-meeting-soon-2.mp3",
+          "seconds": 2.2,
+          "peak_db": -5.5
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "lumi",
+      "moment": "announce-task-done",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] Your task is done.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/announce-task-done-1.mp3",
+          "seconds": 1.7,
+          "peak_db": -4.9
+        },
+        {
+          "file": "speech/en/lumi/announce-task-done-2.mp3",
+          "seconds": 1.8,
+          "peak_db": -3.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "lumi",
+      "moment": "announce-scheduled-finished",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] Your scheduled work has finished. The results are ready.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/announce-scheduled-finished-1.mp3",
+          "seconds": 3.7,
+          "peak_db": -7.8
+        },
+        {
+          "file": "speech/en/lumi/announce-scheduled-finished-2.mp3",
+          "seconds": 3.6,
+          "peak_db": -10.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "lumi",
+      "moment": "announce-good-morning",
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "[softly] Good morning... here's your day.",
+      "takes": [
+        {
+          "file": "speech/en/lumi/announce-good-morning-1.mp3",
+          "seconds": 2.6,
+          "peak_db": -6.4
+        },
+        {
+          "file": "speech/en/lumi/announce-good-morning-2.mp3",
+          "seconds": 2.6,
+          "peak_db": -7.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "tavi",
+      "moment": "greeting",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Good day. I am Tavi. Tell me what you need, in your own words. I will show you each step as I take it, and nothing leaves without your consent.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/greeting-1.mp3",
+          "seconds": 11.1,
+          "peak_db": -0.5
+        },
+        {
+          "file": "speech/en/tavi/greeting-2.mp3",
+          "seconds": 11.2,
+          "peak_db": -1.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "tavi",
+      "moment": "approval-needed",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Before I proceed, this one requires your approval.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/approval-needed-1.mp3",
+          "seconds": 3.9,
+          "peak_db": -1.2
+        },
+        {
+          "file": "speech/en/tavi/approval-needed-2.mp3",
+          "seconds": 4.0,
+          "peak_db": -1.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "tavi",
+      "moment": "done",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "It is done. You will find it in your Library, and you may undo it at any time.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/done-1.mp3",
+          "seconds": 5.8,
+          "peak_db": -1.2
+        },
+        {
+          "file": "speech/en/tavi/done-2.mp3",
+          "seconds": 5.9,
+          "peak_db": -1.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "tavi",
+      "moment": "error",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "That did not succeed. Here is what I tried... and what I would do next.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/error-1.mp3",
+          "seconds": 6.3,
+          "peak_db": -1.0
+        },
+        {
+          "file": "speech/en/tavi/error-2.mp3",
+          "seconds": 6.2,
+          "peak_db": -0.8
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "tavi",
+      "moment": "heres-what-changed",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Consider what has changed.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/heres-what-changed-1.mp3",
+          "seconds": 2.2,
+          "peak_db": -1.7
+        },
+        {
+          "file": "speech/en/tavi/heres-what-changed-2.mp3",
+          "seconds": 2.2,
+          "peak_db": -2.8
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "tavi",
+      "moment": "ready-when-you-are",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "I am ready when you are.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/ready-when-you-are-1.mp3",
+          "seconds": 1.9,
+          "peak_db": -1.2
+        },
+        {
+          "file": "speech/en/tavi/ready-when-you-are-2.mp3",
+          "seconds": 2.1,
+          "peak_db": -1.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "tavi",
+      "moment": "announce-new-email",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "A new email has arrived.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/announce-new-email-1.mp3",
+          "seconds": 2.0,
+          "peak_db": -1.3
+        },
+        {
+          "file": "speech/en/tavi/announce-new-email-2.mp3",
+          "seconds": 2.1,
+          "peak_db": -1.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "tavi",
+      "moment": "announce-reminder",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "A reminder, as you asked.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/announce-reminder-1.mp3",
+          "seconds": 2.3,
+          "peak_db": -1.1
+        },
+        {
+          "file": "speech/en/tavi/announce-reminder-2.mp3",
+          "seconds": 2.3,
+          "peak_db": -1.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "tavi",
+      "moment": "announce-meeting-soon",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your next meeting begins shortly.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/announce-meeting-soon-1.mp3",
+          "seconds": 2.4,
+          "peak_db": -0.7
+        },
+        {
+          "file": "speech/en/tavi/announce-meeting-soon-2.mp3",
+          "seconds": 2.4,
+          "peak_db": -1.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "tavi",
+      "moment": "announce-task-done",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your task is complete.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/announce-task-done-1.mp3",
+          "seconds": 2.2,
+          "peak_db": -2.9
+        },
+        {
+          "file": "speech/en/tavi/announce-task-done-2.mp3",
+          "seconds": 2.2,
+          "peak_db": -1.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "tavi",
+      "moment": "announce-scheduled-finished",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your scheduled work has finished. The results are ready for review.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/announce-scheduled-finished-1.mp3",
+          "seconds": 4.6,
+          "peak_db": -1.2
+        },
+        {
+          "file": "speech/en/tavi/announce-scheduled-finished-2.mp3",
+          "seconds": 4.5,
+          "peak_db": -1.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "tavi",
+      "moment": "announce-good-morning",
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Good morning. Here is your day.",
+      "takes": [
+        {
+          "file": "speech/en/tavi/announce-good-morning-1.mp3",
+          "seconds": 2.6,
+          "peak_db": -1.0
+        },
+        {
+          "file": "speech/en/tavi/announce-good-morning-2.mp3",
+          "seconds": 2.7,
+          "peak_db": -1.6
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "beni",
+      "moment": "greeting",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Hello, I'm Beni. Tell me what you need, in your own words. I'll keep you posted as I go, and nothing leaves without your OK.",
+      "takes": [
+        {
+          "file": "speech/en/beni/greeting-1.mp3",
+          "seconds": 8.5,
+          "peak_db": -3.0
+        },
+        {
+          "file": "speech/en/beni/greeting-2.mp3",
+          "seconds": 8.5,
+          "peak_db": -2.5
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "beni",
+      "moment": "approval-needed",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "This one needs your OK before I go ahead.",
+      "takes": [
+        {
+          "file": "speech/en/beni/approval-needed-1.mp3",
+          "seconds": 3.1,
+          "peak_db": -4.1
+        },
+        {
+          "file": "speech/en/beni/approval-needed-2.mp3",
+          "seconds": 3.1,
+          "peak_db": -3.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "beni",
+      "moment": "done",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "That's done. It's in your Library, and you can undo it anytime.",
+      "takes": [
+        {
+          "file": "speech/en/beni/done-1.mp3",
+          "seconds": 4.3,
+          "peak_db": -2.9
+        },
+        {
+          "file": "speech/en/beni/done-2.mp3",
+          "seconds": 4.3,
+          "peak_db": -2.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "beni",
+      "moment": "error",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "That didn't work. Here's what I tried, and what I'll do next.",
+      "takes": [
+        {
+          "file": "speech/en/beni/error-1.mp3",
+          "seconds": 4.2,
+          "peak_db": -4.3
+        },
+        {
+          "file": "speech/en/beni/error-2.mp3",
+          "seconds": 4.3,
+          "peak_db": -3.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "beni",
+      "moment": "heres-what-changed",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Here's what changed.",
+      "takes": [
+        {
+          "file": "speech/en/beni/heres-what-changed-1.mp3",
+          "seconds": 1.4,
+          "peak_db": -4.4
+        },
+        {
+          "file": "speech/en/beni/heres-what-changed-2.mp3",
+          "seconds": 1.4,
+          "peak_db": -2.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "speech",
+      "character": "beni",
+      "moment": "ready-when-you-are",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "I'm ready when you are.",
+      "takes": [
+        {
+          "file": "speech/en/beni/ready-when-you-are-1.mp3",
+          "seconds": 1.6,
+          "peak_db": -4.7
+        },
+        {
+          "file": "speech/en/beni/ready-when-you-are-2.mp3",
+          "seconds": 1.6,
+          "peak_db": -3.8
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "beni",
+      "moment": "announce-new-email",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "You have a new email.",
+      "takes": [
+        {
+          "file": "speech/en/beni/announce-new-email-1.mp3",
+          "seconds": 1.6,
+          "peak_db": -4.0
+        },
+        {
+          "file": "speech/en/beni/announce-new-email-2.mp3",
+          "seconds": 1.7,
+          "peak_db": -3.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "beni",
+      "moment": "announce-reminder",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Here's your reminder.",
+      "takes": [
+        {
+          "file": "speech/en/beni/announce-reminder-1.mp3",
+          "seconds": 1.4,
+          "peak_db": -4.1
+        },
+        {
+          "file": "speech/en/beni/announce-reminder-2.mp3",
+          "seconds": 1.4,
+          "peak_db": -4.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "beni",
+      "moment": "announce-meeting-soon",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your next meeting starts soon.",
+      "takes": [
+        {
+          "file": "speech/en/beni/announce-meeting-soon-1.mp3",
+          "seconds": 2.0,
+          "peak_db": -4.0
+        },
+        {
+          "file": "speech/en/beni/announce-meeting-soon-2.mp3",
+          "seconds": 1.9,
+          "peak_db": -4.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "beni",
+      "moment": "announce-task-done",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your task is done. Everything's in order.",
+      "takes": [
+        {
+          "file": "speech/en/beni/announce-task-done-1.mp3",
+          "seconds": 2.8,
+          "peak_db": -3.6
+        },
+        {
+          "file": "speech/en/beni/announce-task-done-2.mp3",
+          "seconds": 2.8,
+          "peak_db": -3.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "beni",
+      "moment": "announce-scheduled-finished",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your scheduled work has finished. The results are ready.",
+      "takes": [
+        {
+          "file": "speech/en/beni/announce-scheduled-finished-1.mp3",
+          "seconds": 3.7,
+          "peak_db": -4.3
+        },
+        {
+          "file": "speech/en/beni/announce-scheduled-finished-2.mp3",
+          "seconds": 3.6,
+          "peak_db": -3.8
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "announcement",
+      "character": "beni",
+      "moment": "announce-good-morning",
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Good morning. Here's your day, all in order.",
+      "takes": [
+        {
+          "file": "speech/en/beni/announce-good-morning-1.mp3",
+          "seconds": 3.3,
+          "peak_db": -3.4
+        },
+        {
+          "file": "speech/en/beni/announce-good-morning-2.mp3",
+          "seconds": 3.1,
+          "peak_db": -3.8
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "brass",
+      "event": "new-email",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Small brass temple bell, two light quick strikes, same pitch, soft, close-mic",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/brass/new-email-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -17.4
+        },
+        {
+          "file": "sounds/system/brass/new-email-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -18.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "brass",
+      "event": "reminder",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Small brass bell, three gentle repeating soft strikes, patient, close-mic",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/brass/reminder-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -14.9
+        },
+        {
+          "file": "sounds/system/brass/reminder-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -21.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "brass",
+      "event": "meeting-soon",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Small brass bells, rising four-note phrase of soft strikes, warm, brief ring, close-mic",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/brass/meeting-soon-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -21.4
+        },
+        {
+          "file": "sounds/system/brass/meeting-soon-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -20.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "brass",
+      "event": "scheduled-finished",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Brass bell, soft low strike then high strike, settled and complete, close-mic",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/brass/scheduled-finished-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -3.5
+        },
+        {
+          "file": "sounds/system/brass/scheduled-finished-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -17.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "wood",
+      "event": "new-email",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Kalimba, two light quick plucked notes, same pitch, soft, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/wood/new-email-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -28.8
+        },
+        {
+          "file": "sounds/system/wood/new-email-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -24.6
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "wood",
+      "event": "reminder",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Kalimba, three gentle repeating plucked notes, soft and patient, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/wood/reminder-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -24.5
+        },
+        {
+          "file": "sounds/system/wood/reminder-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -31.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "wood",
+      "event": "meeting-soon",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Kalimba, rising four-note plucked phrase, warm, brief ring, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/wood/meeting-soon-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -29.1
+        },
+        {
+          "file": "sounds/system/wood/meeting-soon-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -21.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "wood",
+      "event": "scheduled-finished",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Kalimba, soft low plucked note then high note, settled and complete, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/wood/scheduled-finished-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -35.1
+        },
+        {
+          "file": "sounds/system/wood/scheduled-finished-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -27.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "pure",
+      "event": "new-email",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Two soft sine tones, same pitch, quick and light, rounded attack, clean digital",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/pure/new-email-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -0.4
+        },
+        {
+          "file": "sounds/system/pure/new-email-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -1.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "pure",
+      "event": "reminder",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Three gentle repeating soft sine tones, patient, rounded, clean digital",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/pure/reminder-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -7.3
+        },
+        {
+          "file": "sounds/system/pure/reminder-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -12.5
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "pure",
+      "event": "meeting-soon",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Rising four-note phrase of soft sine tones, warm, brief, rounded, clean digital",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/pure/meeting-soon-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -2.1
+        },
+        {
+          "file": "sounds/system/pure/meeting-soon-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -4.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "pure",
+      "event": "scheduled-finished",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Soft low sine tone then high sine tone, settled and complete, rounded, clean digital",
+      "settings": {
+        "duration_seconds": 1.5,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/pure/scheduled-finished-1.mp3",
+          "seconds": 1.5,
+          "peak_db": -0.0
+        },
+        {
+          "file": "sounds/system/pure/scheduled-finished-2.mp3",
+          "seconds": 1.5,
+          "peak_db": -0.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "wood",
+      "event": "listening",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Kalimba, single very short soft rising plucked tap, clearly audible, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/wood/listening-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -8.3
+        },
+        {
+          "file": "sounds/system/wood/listening-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -4.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "glass",
+      "event": "message-received",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Glass marimba, single bright high note, quick light tap, short clean decay, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/glass/message-received-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -6.4
+        },
+        {
+          "file": "sounds/system/glass/message-received-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -15.6
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "santoor",
+      "event": "message-received",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Santoor, single very short high soft struck note, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/santoor/message-received-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -15.4
+        },
+        {
+          "file": "sounds/system/santoor/message-received-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -22.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "brass",
+      "event": "message-received",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Tiny brass bell, single very short high soft tick, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/brass/message-received-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -1.1
+        },
+        {
+          "file": "sounds/system/brass/message-received-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -5.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "wood",
+      "event": "message-received",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Kalimba, single very short high soft plucked tine, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/wood/message-received-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -26.3
+        },
+        {
+          "file": "sounds/system/wood/message-received-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -32.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "pure",
+      "event": "message-received",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Single very short high soft sine tick, rounded, clean digital",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/pure/message-received-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -8.9
+        },
+        {
+          "file": "sounds/system/pure/message-received-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -6.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "glass",
+      "event": "listening-stop",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Glass marimba, single soft falling tap, very short, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/glass/listening-stop-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -18.0
+        },
+        {
+          "file": "sounds/system/glass/listening-stop-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -15.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "santoor",
+      "event": "listening-stop",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Santoor, single very short soft falling struck note, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/santoor/listening-stop-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -20.9
+        },
+        {
+          "file": "sounds/system/santoor/listening-stop-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -10.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "brass",
+      "event": "listening-stop",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Tiny brass bell, single very short soft low tap, damped, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/brass/listening-stop-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -4.4
+        },
+        {
+          "file": "sounds/system/brass/listening-stop-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -4.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "wood",
+      "event": "listening-stop",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Kalimba, single very short soft low plucked note, damped, close-mic, dry",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/wood/listening-stop-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -28.8
+        },
+        {
+          "file": "sounds/system/wood/listening-stop-2.mp3",
+          "seconds": 1.0,
+          "peak_db": -35.3
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 5,
+      "kind": "system sound",
+      "family": "pure",
+      "event": "listening-stop",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Very short soft sine blip, falling pitch, rounded, clean digital",
+      "settings": {
+        "duration_seconds": 1.0,
+        "prompt_influence": 0.5
+      },
+      "takes": [
+        {
+          "file": "sounds/system/pure/listening-stop-1.mp3",
+          "seconds": 1.0,
+          "peak_db": -6.3
+        },
+        {
+          "file": "sounds/system/pure/listening-stop-2.mp3",
+          "seconds": 1.0,
+          "peak_db": 0.0
+        }
+      ],
+      "status": "downloaded"
     }
   ]
 }

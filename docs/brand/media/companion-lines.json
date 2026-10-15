@@ -1,0 +1,125 @@
+{
+  "note": "Batch 5: each companion speaks the app's twelve moments in its own saved voice and temperament (eleven_v4, English, two takes). Same facts as Vakyartha's lines: what happened and what the person controls, nothing personal baked in. Tags in brackets direct delivery and are not spoken.",
+  "moments": ["greeting", "approval-needed", "done", "error", "heres-what-changed", "ready-when-you-are", "announce-new-email", "announce-reminder", "announce-meeting-soon", "announce-task-done", "announce-scheduled-finished", "announce-good-morning"],
+  "companions": {
+    "mira": {
+      "voice_id": "CwhHeaJVU9ZN4RMoaabk",
+      "lines": {
+        "greeting": "[warmly] Hi, I'm Mira. Tell me what's on your mind, however it comes out. I'll show you what I'm doing as I go, and nothing leaves without your OK.",
+        "approval-needed": "I'm ready to go ahead, but this one's your call. Shall I?",
+        "done": "[warmly] All done. It's waiting in your Library, and you can undo it whenever you like.",
+        "error": "That didn't quite work. Here's what I tried, and what I'd try next.",
+        "heres-what-changed": "So, here's what changed.",
+        "ready-when-you-are": "[warmly] Whenever you're ready.",
+        "announce-new-email": "A new email just came in.",
+        "announce-reminder": "Here's the reminder you asked for.",
+        "announce-meeting-soon": "Your next meeting starts soon. Everything you need is on screen.",
+        "announce-task-done": "That task is done.",
+        "announce-scheduled-finished": "Your scheduled work has finished. The results are ready when you are.",
+        "announce-good-morning": "[warmly] Good morning. I've laid out your day."
+      }
+    },
+    "moss": {
+      "voice_id": "sRPGZSnzBPol5Pjt6JFD",
+      "lines": {
+        "greeting": "[slowly] Hello. I'm Moss. Tell me what you need... in your own words, in your own time. I'll show you each step as I take it, and nothing leaves without your OK.",
+        "approval-needed": "[slowly] Before I go further... this one needs your OK.",
+        "done": "There. It's done. It's resting in your Library, and you can undo it any time.",
+        "error": "[calmly] That didn't take. No matter. Here's what I tried... and what I'd try next.",
+        "heres-what-changed": "[slowly] Now... here's what changed.",
+        "ready-when-you-are": "No hurry. Ready when you are.",
+        "announce-new-email": "A new email has arrived.",
+        "announce-reminder": "[slowly] A gentle reminder for you.",
+        "announce-meeting-soon": "Your next meeting begins soon. There's still a moment to breathe.",
+        "announce-task-done": "Your task is done.",
+        "announce-scheduled-finished": "The work you scheduled has finished. The results are ready.",
+        "announce-good-morning": "[warmly] Good morning. Let's see what today holds."
+      }
+    },
+    "nori": {
+      "voice_id": "wUQmDsGn7RMvveESnUd8",
+      "lines": {
+        "greeting": "[happy] Hi! I'm Nori. Tell me what you need, any way you like. I'll show you what I'm doing as I go, and nothing leaves without your OK.",
+        "approval-needed": "[curious] Quick check before I go ahead: this one needs your OK.",
+        "done": "[happy] Done! It's in your Library, and you can undo it anytime.",
+        "error": "Hmm, that didn't work. Here's what I tried, and here's my next idea.",
+        "heres-what-changed": "[curious] Okay, here's what changed.",
+        "ready-when-you-are": "[happy] Ready when you are!",
+        "announce-new-email": "Ooh, you've got a new email.",
+        "announce-reminder": "Here's your reminder!",
+        "announce-meeting-soon": "Heads up: your next meeting starts soon.",
+        "announce-task-done": "[happy] Your task is done!",
+        "announce-scheduled-finished": "Your scheduled work just finished. The results are ready to look at.",
+        "announce-good-morning": "[happy] Good morning! Here's your day."
+      }
+    },
+    "pip": {
+      "voice_id": "IORPyjxKm2m9lE40qnBG",
+      "lines": {
+        "greeting": "[excited] Hi, I'm Pip! Tell me what you need. I'll show you every step, and nothing leaves without your OK.",
+        "approval-needed": "One thing first: this needs your OK.",
+        "done": "[excited] Done! It's in your Library. Want it back? Undo, anytime.",
+        "error": "Oops, that didn't work. Here's what I tried. Here's what's next.",
+        "heres-what-changed": "Here's what changed!",
+        "ready-when-you-are": "Ready when you are!",
+        "announce-new-email": "New email!",
+        "announce-reminder": "Reminder time!",
+        "announce-meeting-soon": "Meeting soon! You're all set.",
+        "announce-task-done": "[excited] Task done!",
+        "announce-scheduled-finished": "Scheduled work's finished. Results are ready!",
+        "announce-good-morning": "[excited] Good morning! Here's your day."
+      }
+    },
+    "lumi": {
+      "voice_id": "fyGNdOr9n4ggf2kF4hNa",
+      "lines": {
+        "greeting": "[softly] Hello... I'm Lumi. Tell me what you're dreaming up, in your own words. I'll show you everything as I go, and nothing leaves without your OK.",
+        "approval-needed": "[softly] Before I drift any further... this one needs your OK.",
+        "done": "[softly] It's done. It's waiting in your Library, and you can always undo it.",
+        "error": "[softly] That one didn't quite come together. Here's what I tried... and what we could try next.",
+        "heres-what-changed": "[softly] Here's what changed.",
+        "ready-when-you-are": "[softly] Ready when you are.",
+        "announce-new-email": "[softly] A new email has floated in.",
+        "announce-reminder": "[softly] A little reminder, for you.",
+        "announce-meeting-soon": "[softly] Your next meeting starts soon.",
+        "announce-task-done": "[softly] Your task is done.",
+        "announce-scheduled-finished": "[softly] Your scheduled work has finished. The results are ready.",
+        "announce-good-morning": "[softly] Good morning... here's your day."
+      }
+    },
+    "tavi": {
+      "voice_id": "BBfXBXyyyYUJQ4q3gTUP",
+      "lines": {
+        "greeting": "Good day. I am Tavi. Tell me what you need, in your own words. I will show you each step as I take it, and nothing leaves without your consent.",
+        "approval-needed": "Before I proceed, this one requires your approval.",
+        "done": "It is done. You will find it in your Library, and you may undo it at any time.",
+        "error": "That did not succeed. Here is what I tried... and what I would do next.",
+        "heres-what-changed": "Consider what has changed.",
+        "ready-when-you-are": "I am ready when you are.",
+        "announce-new-email": "A new email has arrived.",
+        "announce-reminder": "A reminder, as you asked.",
+        "announce-meeting-soon": "Your next meeting begins shortly.",
+        "announce-task-done": "Your task is complete.",
+        "announce-scheduled-finished": "Your scheduled work has finished. The results are ready for review.",
+        "announce-good-morning": "Good morning. Here is your day."
+      }
+    },
+    "beni": {
+      "voice_id": "w9t4Ig8oukL09KRjPaIW",
+      "lines": {
+        "greeting": "Hello, I'm Beni. Tell me what you need, in your own words. I'll keep you posted as I go, and nothing leaves without your OK.",
+        "approval-needed": "This one needs your OK before I go ahead.",
+        "done": "That's done. It's in your Library, and you can undo it anytime.",
+        "error": "That didn't work. Here's what I tried, and what I'll do next.",
+        "heres-what-changed": "Here's what changed.",
+        "ready-when-you-are": "I'm ready when you are.",
+        "announce-new-email": "You have a new email.",
+        "announce-reminder": "Here's your reminder.",
+        "announce-meeting-soon": "Your next meeting starts soon.",
+        "announce-task-done": "Your task is done. Everything's in order.",
+        "announce-scheduled-finished": "Your scheduled work has finished. The results are ready.",
+        "announce-good-morning": "Good morning. Here's your day, all in order."
+      }
+    }
+  }
+}

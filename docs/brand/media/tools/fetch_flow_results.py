@@ -28,6 +28,10 @@ for c,sid in {"mira":"czwMEFXV2d4QTkpzfeLQ","moss":"SOoIVPK19tQb6njgc9t8","nori"
 for f,ids in {"glass":"6MIKxltrVCJTrq3xCNLM 7EqXsv4TShuinMrfL5U7 xlsQYIyhRcj1uuWmSHRI aNvmHJ49LXI4UW5LS2gz","santoor":"x3JfXTeQq9Nba9OgU9Ur P2MHLyLzVx3Rsx9feGIk yNaTEdubiWRGhYJ6ysoO s6OvdLSma6o4clswzqnC"}.items():
     for e,sid in zip(["new-email","reminder","meeting-soon","scheduled-finished"],ids.split()): MAP[sid]=(f"sounds/system/{f}/{e}",1,1)
 for c,ids in {"mira":"cm8OPdUKv8MohwcGI9Cg iw6iDhcBuKgz1hgaenDY","moss":"f1WqxYH20HyAU5CHJza6 SmGjrOYXQ5mBKI6XxXtw","nori":"HmRgRvHPytijL95WwXx9 sUvy8fSTQAglvZzfNBcG","pip":"qKcsKJseTOaeVHVKamws tbZwKkGVR9VaOJoA84uY","lumi":"UJNg3kOJ7Ts25zfj17lC hAzLGPHJXjgUZbSafetd","tavi":"IKAKq25ECIWWfepCczLb XuSgrQYqmwpWazOt8jyD","beni":"a0n4a3xap40P5aZ4a2ak yucaOGayCEJugRgdwGMP"}.items(): add(f"sounds/companions/source/{c}",ids.split())
+for line in open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"batch5_sessions.txt")):
+    if line.startswith("#") or not line.strip(): continue
+    kind,who,moment,*ids=line.split()
+    add(f"speech/en/{who}/{moment}" if kind=="speech" else f"sounds/system/{who}/{moment}",ids)
 if sys.argv[1]=="ids":
     print(json.dumps([s for s in MAP if MAP[s][0].startswith(sys.argv[2])])); sys.exit()
 root=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
