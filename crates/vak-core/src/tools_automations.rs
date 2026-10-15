@@ -168,7 +168,7 @@ impl vak_tools::Tool for AutomationsTool {
         })
     }
 
-    async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+    async fn execute(&self, args: &Value, ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let action = args.get("action").and_then(Value::as_str).unwrap_or("");
         let str_arg = |key: &str| -> Option<String> {
             args.get(key)
@@ -277,21 +277,29 @@ impl vak_tools::Tool for AutomationsTool {
                     },
                     None => (self.agent.clone(), None),
                 };
-                let mut trigger = Trigger {
-                    id: vak_session::ids::TriggerId::new(),
-                    name,
-                    agent,
-                    agent_revision,
-                    space: vak_config::spaces::key(&self.cwd),
-                    enabled: true,
-                    kind: TriggerKind::Schedule { schedule },
-                    action,
-                    deliver_to,
-                    on_crash: triggers::OnCrash::Skip,
-                    scope: None,
-                    created_at: now,
-                    created_by: None,
-                };
+                let mut trigger =
+                    Trigger {
+                        id: vak_session::ids::TriggerId::new(),
+                        name,
+                        agent,
+                        agent_revision,
+                        space: vak_config::spaces::key(&self.cwd),
+                        enabled: true,
+                        kind: TriggerKind::Schedule { schedule },
+                        action,
+                        deliver_to,
+                        on_crash: triggers::OnCrash::Skip,
+                        scope: None,
+                        created_at: now,
+                        created_by: None,
+                        home: ctx.trace.as_ref().and_then(|trace| trace.session_id()).map(
+                            |session| triggers::Home {
+                                agent: self.agent.clone(),
+                                session,
+                            },
+                        ),
+                        made_by: triggers::MadeBy::of_call(ctx.trace.as_ref()),
+                    };
                 trigger.in_zone(&self.owner_zone);
                 if let Err(e) = triggers::create(&self.shared, &trigger) {
                     return vak_tools::ToolOutput::error(Fault::Tool, e.to_string());

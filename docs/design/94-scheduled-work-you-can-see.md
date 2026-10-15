@@ -3,7 +3,8 @@ Scheduled Work You Can See
 
 Status: in progress: S0 built 2026-10-15 (the owner's time zone, set in
 Settings, `at` in local time, a cron always names its zone, the gap
-rule, with fixed-clock tests); S1 to S5 not built.
+rule, with fixed-clock tests); S1 built 2026-10-15 (`home`, `made_by`,
+delivery into the conversation); S2 to S5 not built.
 Agreed with the maintainer on 2026-10-15. Paths below describe targets and may not exist yet. Rewrites the
 experience of automations; the engine stays `vak_core::triggers`
 (doc 73 §8, invariant 38).
@@ -62,9 +63,10 @@ fields and gains, additively (invariant 29):
   means the Inbox".
 - **`deliver_to`** stays the one way to send it elsewhere too (a
   channel target such as `telegram:12345`), never a second field.
-- **`made_by`**: the call or the person that last created or changed it
-  (`{session, call}` or the owner), so the chat can show the card for
-  the change a turn made without reading any tool's name.
+- **`made_by`**: the turn or the person that last created or changed it
+  (`{session, turn}` from the call's trace key, or the owner), so the
+  chat can show the card under the turn that made the change without
+  reading any tool's name.
 
 How a schedule is said is one function, `triggers::describe(&Schedule,
 now) -> String` ("Weekdays at 8:00 AM", "Every 2 hours", "Once, on
@@ -74,19 +76,28 @@ the card and the page, so every surface says the same words.
 ## 4. Delivery into the conversation (D1)
 
 When a prompt run settles, its result is appended to the home
-conversation as a new ledger entry, `EntryPayload::ScheduledResult`
-(invariant 1: model-visible input is a new entry type): the trigger,
-its run id, the run's own conversation (for "see how it got there"), the
-final text and the presentation ids of its cards. It is model-visible
-as the Agent's message, so "make it shorter" in reply works; it is
-written by the run's own trace (actor: the Agent, on behalf of the
-owner), and appending waits at the conversation's turn boundary so it
-never lands inside a turn the person is in. The projection draws it as
-an assistant turn with a "Scheduled · <name> · <time>" header and the
-run's cards; the client notifies (doc 29 P6). A script automation
-delivers only when it prints, the same way. A failed run delivers its
-failure, never silence (invariant 38's `RoutineFailed`). The Inbox keeps
-a note linking the turn.
+conversation as a turn of its own (`vak_core::scheduled::deliver`): the
+automation's own words as the directive and the run's answer as the
+Agent's message, both marked with `MessageMeta::scheduled` (the trigger,
+its name, its run id, the run's own conversation for "see how it got
+there", and whether it failed). Two ordinary messages, typed rather than
+a new entry type, so every ledger path (derivation, the turn index,
+recall, search, export) treats it as the turn it is (invariant 1: it is
+reconstructed from the ledger), and a turn card closes it so the next
+request follows it like any turn: "make it shorter" in reply works. The
+directive is the owner's words from when they made the automation,
+never words attributed to them now. What the run's turns held is
+recorded on the delivered turn (`CallEffect::Provenance`, invariant 43).
+Appending waits at the conversation's turn boundary
+(`automations::deliver_home`), so it never lands inside a turn the
+person is in. The projection marks both items (`scheduled_*` metadata);
+the client draws a "Scheduled · <name> · <time>" head in place of the
+person's bubble, then the answer; the turn's end notifies like any turn
+(doc 29 P6). The run's cards arrive in their deterministic text form,
+as channels get them (`text_with_run_cards`); drawing them as cards in
+the home conversation is open. A script automation delivers only when
+it prints or fails. A run refused before it starts delivers its reason,
+never silence (invariant 38's `RoutineFailed`). The Inbox keeps its note.
 
 The run itself still works in a copy (invariant 38), and anything it
 changed still comes back for Review; delivery is the answer, not the

@@ -41,6 +41,8 @@ fn trigger(cwd: &Path, anchor: DateTime<Utc>, on_crash: OnCrash) -> Trigger {
         scope: None,
         created_at: anchor,
         created_by: None,
+        home: None,
+        made_by: None,
     };
     triggers::create(&shared(), &trigger).unwrap();
     trigger
@@ -166,11 +168,14 @@ fn schedule_slot_at_most_once_under_restart() {
 
                 // This process restarts the scheduler once the first is gone,
                 // and ticks a few times.
+                // The first process's lease was last renewed after `now`;
+                // its hold counts from then, however long that took.
+                let restart = Utc::now() + hold;
                 let me = setup.runs();
                 let mut held = Vec::new();
                 for tick in 0..restarts {
                     if let Claimed::Started(started) =
-                        setup.claim(&me, &trigger, now + hold + Duration::seconds(tick))
+                        setup.claim(&me, &trigger, restart + Duration::seconds(tick))
                     {
                         held.push(*started);
                     }

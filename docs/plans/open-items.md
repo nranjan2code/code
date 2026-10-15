@@ -214,8 +214,15 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   pinned (`triggers.rs` tests, `vak-core/tests/it/claims.rs`,
   `scheduler_personal_os.rs`); intake makes intervals and mail routines go
   through the automations route, so no maker leaves a cron without a zone.
-- [ ] S1: `home`, `made_by`, `ScheduledResult` delivery into the
-  conversation.
+- [x] S1 (2026-10-15): `Trigger::home` (set from the call's conversation,
+  or `home` on the server's create and change) and `made_by` (the turn,
+  or the owner); `vak_core::scheduled::deliver` appends a prompt run's
+  answer, a refusal's reason or a script's output to the home
+  conversation as a turn marked `MessageMeta::scheduled`, at a turn
+  boundary, with the run's provenance; the client draws a "Scheduled"
+  head. Tests in `vak-server/tests/it/scheduled_runs.rs`.
+- [ ] Draw a delivered run's cards as cards in the home conversation
+  (they arrive in their text form today).
 - [ ] S2: `triggers::describe` and the schedule picker's vocabulary.
 - [ ] S3: one set of operations; the tool's `update`, `run_now`, by name.
 - [ ] S4: the automation card in chat.

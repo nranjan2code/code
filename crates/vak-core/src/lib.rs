@@ -69,6 +69,7 @@ pub mod sync;
 pub mod trash;
 
 pub mod gateway_token;
+pub mod scheduled;
 pub mod tools_automations;
 pub mod tools_commitments;
 pub mod transcript_md;

@@ -372,6 +372,8 @@ fn last_run_is_a_query() {
         scope: None,
         created_at: chrono::Utc::now(),
         created_by: None,
+        home: None,
+        made_by: None,
     };
     vak_core::triggers::create(&shared, &trigger).unwrap();
     assert!(

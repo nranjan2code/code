@@ -268,6 +268,8 @@ fn stale_script(
         scope: None,
         created_at: chrono::Utc::now() - chrono::Duration::hours(2),
         created_by: None,
+        home: None,
+        made_by: None,
     }
 }
 

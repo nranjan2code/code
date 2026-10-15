@@ -207,6 +207,17 @@ fn first_existing<Tz: TimeZone>(tz: &Tz, local: chrono::NaiveDateTime) -> Option
     })
 }
 
+/// `at` as the owner reads it in `zone`: `2026-10-15 08:00 IST`.
+pub fn local_words(at: DateTime<Utc>, zone: &str) -> String {
+    match zone.parse::<chrono_tz::Tz>() {
+        Ok(tz) => at
+            .with_timezone(&tz)
+            .format("%Y-%m-%d %H:%M %Z")
+            .to_string(),
+        Err(_) => at.format("%Y-%m-%d %H:%M UTC").to_string(),
+    }
+}
+
 /// Whether `zone` names an IANA time zone this build knows.
 pub fn is_zone(zone: &str) -> bool {
     zone.parse::<chrono_tz::Tz>().is_ok()
@@ -343,6 +354,40 @@ pub struct Trigger {
     pub created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<vak_session::ids::PrincipalId>,
+    /// The conversation it belongs to: a prompt run's result is delivered
+    /// there as a turn (docs/design/94 §4). `deliver_to` sends it on too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<Home>,
+    /// Who last made or changed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_by: Option<MadeBy>,
+}
+
+impl MadeBy {
+    /// The turn a call with this key runs in, when it has one.
+    pub fn of_call(trace: Option<&vak_session::trace::TraceKey>) -> Option<Self> {
+        let trace = trace?;
+        Some(MadeBy::Turn {
+            session: trace.session_id()?,
+            turn: trace.turn?.uuid().hyphenated().to_string(),
+        })
+    }
+}
+
+/// A conversation an automation belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Home {
+    pub agent: String,
+    pub session: String,
+}
+
+/// What last made or changed an automation: a conversation's turn (the
+/// Agent's call in it), or the owner on a screen or the command line.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MadeBy {
+    Turn { session: String, turn: String },
+    Owner,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1064,6 +1109,8 @@ mod tests {
             scope: None,
             created_at: Utc::now(),
             created_by: None,
+            home: None,
+            made_by: None,
         };
         assert!(trigger.validate().is_err(), "a cron names its zone");
         trigger.in_zone("Asia/Kolkata");
@@ -1353,6 +1400,8 @@ mod tests {
             scope: None,
             created_at: Utc::now(),
             created_by: None,
+            home: None,
+            made_by: None,
         }
     }
 

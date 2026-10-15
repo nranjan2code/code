@@ -108,6 +108,22 @@ function AssistantMessage(props: { children: JSX.Element; text?: string; session
   );
 }
 
+/** The head of a turn an automation delivered (docs/design/94 §4): its
+ * name and when it ran, in place of the person's bubble, because the
+ * person did not write it now. */
+function ScheduledHead(props: { document: PresentationDocument; timestamp: string }) {
+  const at = () => {
+    const time = Date.parse(props.timestamp);
+    return Number.isNaN(time) ? "" : new Date(time).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  };
+  return <div class="scheduled-turn-head" title={props.document.source_markdown}>
+    <span class="turn-author-chip">Scheduled</span>
+    <span>{props.document.metadata.scheduled_name}</span>
+    <Show when={at()}><span>· {at()}</span></Show>
+    <Show when={props.document.metadata.scheduled_failed === "true"}><span class="scheduled-turn-failed">· did not finish</span></Show>
+  </div>;
+}
+
 function UserMessage(props: { document: PresentationDocument; text: string }) {
   return <div class="msg user"><div class="msg-bubble-wrap">
     <div class="user-turn-head"><span class="turn-author-chip">You</span></div>
@@ -1272,6 +1288,9 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
     });
   };
   const OrderedItem = (item: OutputItem): JSX.Element | null => {
+    if (item.role === "user" && item.content.type === "document" && item.content.document.metadata.scheduled_name) {
+      return <ScheduledHead document={item.content.document} timestamp={item.timestamp} />;
+    }
     if (item.role === "user" && item.content.type === "document") {
       return <UserMessage document={item.content.document} text={item.fallback_text} />;
     }

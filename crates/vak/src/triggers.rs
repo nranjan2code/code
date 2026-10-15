@@ -197,6 +197,8 @@ pub fn build_trigger(
         scope: None,
         created_at: now,
         created_by: Some(vak_session::trace::local::local_owner()),
+        home: None,
+        made_by: Some(vak_core::triggers::MadeBy::Owner),
     };
     trigger.validate().map_err(|e| e.to_string())?;
     Ok(trigger)

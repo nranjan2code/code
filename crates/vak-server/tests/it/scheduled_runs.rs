@@ -221,6 +221,8 @@ fn prompt_trigger(name: &str, ws: &Path, agent: &str) -> vak_core::triggers::Tri
         scope: None,
         created_at: chrono::Utc::now() - chrono::Duration::hours(2),
         created_by: None,
+        home: None,
+        made_by: None,
     }
 }
 
@@ -718,4 +720,108 @@ async fn scheduled_run_resolves_after_restart() {
         transcript.to_string().contains("routine done"),
         "{transcript}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_prompt_run_delivers_its_answer_into_its_home_conversation() {
+    let (_dir, ws, home, ids) = space(true, |ws| {
+        let mut trigger = prompt_trigger("morning-line", ws, "vak");
+        trigger.enabled = false;
+        vec![trigger]
+    });
+    let id = ids[0].as_str();
+    let server = serve(&ws, &home).await;
+    let created = server
+        .client()
+        .post(format!("{}/sessions", server.base))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let session = created["session_id"].as_str().unwrap().to_string();
+    assert!(
+        server
+            .edit(id, |trigger| trigger["home"] = serde_json::json!(session))
+            .await
+            .is_success()
+    );
+    assert_eq!(
+        server.trigger(id).await["home"]["session"],
+        serde_json::json!(session)
+    );
+    assert_eq!(server.run_now(id).await, reqwest::StatusCode::ACCEPTED);
+    let transcript = format!("/sessions/{session}/transcript");
+    assert!(
+        eventually(30, || async {
+            server
+                .get(&transcript)
+                .await
+                .1
+                .to_string()
+                .contains("routine done")
+        })
+        .await,
+        "the answer reached the conversation: {}",
+        server.get(&transcript).await.1
+    );
+    let (_, snapshot) = server
+        .get(&format!("/sessions/{session}/presentation"))
+        .await;
+    let items = snapshot["items"].as_array().cloned().unwrap_or_default();
+    let marked: Vec<_> = items
+        .iter()
+        .filter(|item| item["content"]["document"]["metadata"]["scheduled_name"] == "morning-line")
+        .collect();
+    assert!(
+        marked.iter().any(|item| item["role"] == "user")
+            && marked.iter().any(|item| item["role"] == "assistant"),
+        "both halves of the turn are marked scheduled: {snapshot}"
+    );
+    assert_eq!(
+        marked[0]["content"]["document"]["metadata"]["scheduled_run"],
+        server.trigger(id).await["last_run"]["id"]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_refused_run_delivers_its_reason_into_its_home_conversation() {
+    let (_dir, ws, home, ids) = space(true, |ws| {
+        let mut trigger = prompt_trigger("for-nobody", ws, "no-such-agent");
+        trigger.enabled = false;
+        vec![trigger]
+    });
+    let id = ids[0].as_str();
+    let server = serve(&ws, &home).await;
+    let created = server
+        .client()
+        .post(format!("{}/sessions", server.base))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let session = created["session_id"].as_str().unwrap().to_string();
+    assert!(
+        server
+            .edit(id, |trigger| trigger["home"] = serde_json::json!(session))
+            .await
+            .is_success()
+    );
+    server.run_now(id).await;
+    let transcript = format!("/sessions/{session}/transcript");
+    assert!(
+        eventually(20, || async {
+            let text = server.get(&transcript).await.1.to_string();
+            text.contains("It did not run") && text.contains("no-such-agent")
+        })
+        .await,
+        "the reason reached the conversation: {}",
+        server.get(&transcript).await.1
+    );
+    assert_eq!(server.dispatches.load(Ordering::SeqCst), 0);
 }

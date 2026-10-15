@@ -221,6 +221,9 @@ pub(crate) struct TriggerDraft {
     on_crash: Option<triggers::OnCrash>,
     #[serde(default)]
     scope: Option<vak_mail_calendar::RoutineScope>,
+    /// The conversation its results are delivered into (docs/design/94 §3).
+    #[serde(default)]
+    home: Option<String>,
 }
 
 fn check_deliver_to(deliver_to: Option<&str>) -> Result<(), Box<Response>> {
@@ -304,7 +307,13 @@ pub(crate) async fn create_trigger(
         }),
         created_at: Utc::now(),
         created_by: Some(crate::request_actor(&state)),
+        home: None,
+        made_by: Some(triggers::MadeBy::Owner),
     };
+    trigger.home = draft.home.map(|session| triggers::Home {
+        agent: trigger.agent.clone(),
+        session,
+    });
     trigger.in_zone(&state.core.owner_timezone());
     if let Err(response) = check_routine(&state, &trigger).await {
         return *response;
@@ -373,6 +382,13 @@ pub(crate) async fn put_trigger(
         scope.routine_id = current.id.uuid().to_string();
         scope
     });
+    if let Some(session) = draft.home {
+        candidate.home = Some(triggers::Home {
+            agent: candidate.agent.clone(),
+            session,
+        });
+    }
+    candidate.made_by = Some(triggers::MadeBy::Owner);
     candidate.in_zone(&state.core.owner_timezone());
     if let Err(response) = check_routine(&state, &candidate).await {
         return *response;
@@ -520,6 +536,26 @@ fn note_refusal(state: &AppState, trigger: &Trigger, run: &str, reason: &str) {
 /// which spends its slot, and the inbox says why.
 fn refuse(state: &AppState, trigger: &Trigger, run: &mut OpenRun, reason: String) -> NotFired {
     note_refusal(state, trigger, &run.id().to_string(), &reason);
+    if trigger.home.is_some() && trigger.scope.is_none() {
+        let (state, trigger, run, text) = (
+            state.clone(),
+            trigger.clone(),
+            run.id().to_string(),
+            format!("It did not run: {reason}"),
+        );
+        tokio::spawn(async move {
+            deliver_home(
+                &state,
+                &trigger,
+                &run,
+                None,
+                &text,
+                true,
+                vak_control::Provenance::NONE,
+            )
+            .await;
+        });
+    }
     run.settle_with(RunOutcome::Failed { reason }, None);
     NotFired::Refused
 }
@@ -784,6 +820,7 @@ async fn fire(
         let child_session = child_id.clone();
         let name = trigger.name.clone();
         let deliver_to = trigger.deliver_to.clone();
+        let home_trigger = trigger.clone();
         // The summary is an effect of this run.
         let run_trace = trace.clone();
         let mail_calendar_task = scope.is_some();
@@ -854,6 +891,30 @@ async fn fire(
                                     .as_ref()
                                     .map(|outcome| outcome.result_id.clone())
                             });
+                        let held = child_handle
+                            .session
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .as_ref()
+                            .map(|log| {
+                                vak_session::turns::TurnIndex::from_log(log)
+                                    .turns
+                                    .iter()
+                                    .fold(vak_control::Provenance::NONE, |held, turn| {
+                                        held.join(turn.provenance)
+                                    })
+                            })
+                            .unwrap_or(vak_control::Provenance::NONE);
+                        deliver_home(
+                            &st,
+                            &home_trigger,
+                            &run.id().to_string(),
+                            Some(&child_session),
+                            &text,
+                            is_error,
+                            held,
+                        )
+                        .await;
                         let body = format!("automation '{name}' finished:\n{text}");
                         let title = format!("automation '{name}' finished");
                         if let Some(target) = &deliver_to {
@@ -919,8 +980,21 @@ async fn fire_script(
     trace: vak_session::trace::TraceKey,
 ) {
     let id = trigger.id.to_string();
+    let run_id = run.id().to_string();
     let outcome =
         crate::execute_script(&state.core, state.core.cwd(), script, Some(trace.clone())).await;
+    if !outcome.ok || !outcome.text.is_empty() {
+        deliver_home(
+            state,
+            trigger,
+            &run_id,
+            None,
+            &outcome.text,
+            !outcome.ok,
+            vak_control::Provenance::NONE,
+        )
+        .await;
+    }
     run.settle_with(
         if outcome.ok {
             RunOutcome::Completed
@@ -1173,6 +1247,85 @@ fn routine_prompt(prompt: &str, scope: Option<&vak_mail_calendar::RoutineScope>)
         );
     }
     scheduled_prompt
+}
+
+/// Delivers a prompt run's result into the conversation the automation
+/// belongs to, as a turn of its own (docs/design/94 §4): at a turn boundary,
+/// so it never lands inside a turn someone is in. A conversation that
+/// cannot be opened (trashed, erased) gets nothing; the Inbox note stands.
+pub(crate) async fn deliver_home(
+    state: &AppState,
+    trigger: &Trigger,
+    run: &str,
+    run_session: Option<&str>,
+    text: &str,
+    failed: bool,
+    provenance: vak_control::Provenance,
+) -> Option<String> {
+    use tokio_stream::StreamExt;
+    let home = trigger.home.as_ref()?;
+    let (_, handle) = crate::ensure_session_handle(state, &home.session)
+        .await
+        .ok()?;
+    let when = triggers::local_words(Utc::now(), &state.core.owner_timezone());
+    let what = match &trigger.action {
+        TriggerAction::Prompt { text, .. } => text.clone(),
+        TriggerAction::Script { command } => format!("Run the command `{command}`."),
+        TriggerAction::SourcePoll { .. } => return None,
+    };
+    let delivery = vak_core::scheduled::Delivery {
+        meta: vak_session::types::ScheduledMeta {
+            trigger: trigger.id.to_string(),
+            name: trigger.name.clone(),
+            run: run.to_string(),
+            run_session: run_session.map(str::to_string),
+            failed,
+        },
+        prompt: &what,
+        when: &when,
+        text,
+        provenance,
+    };
+    loop {
+        let mut finished =
+            tokio_stream::wrappers::BroadcastStream::new(handle.events_tx.subscribe());
+        {
+            let mut guard = handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(log) = guard.as_mut() {
+                let turn = vak_core::scheduled::deliver(log, &delivery);
+                let session_id = handle.id.clone();
+                *handle
+                    .presentation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    crate::projection::snapshot(&session_id, log);
+                drop(guard);
+                return match turn {
+                    Ok(turn) => {
+                        let _ = handle.events_tx.send(AgentEvent::RunFinished {
+                            summary: "scheduled".into(),
+                            is_error: false,
+                        });
+                        Some(turn)
+                    }
+                    Err(error) => {
+                        tracing::warn!(trigger = %trigger.id, error_kind = %vak_telemetry::error_kind(&error), "a scheduled result was not delivered");
+                        None
+                    }
+                };
+            }
+        }
+        loop {
+            match finished.next().await {
+                None => return None,
+                Some(Ok(ev)) if matches!(ev.event, AgentEvent::RunFinished { .. }) => break,
+                Some(_) => {}
+            }
+        }
+    }
 }
 
 #[cfg(test)]

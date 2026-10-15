@@ -1092,6 +1092,26 @@ fn snapshot_inner(
                                                 );
                                             }
                                         }
+                                        if let Some(scheduled) = record
+                                            .meta
+                                            .as_ref()
+                                            .and_then(|meta| meta.scheduled.as_ref())
+                                        {
+                                            for (key, value) in [
+                                                ("scheduled_trigger", scheduled.trigger.clone()),
+                                                ("scheduled_name", scheduled.name.clone()),
+                                                ("scheduled_run", scheduled.run.clone()),
+                                                ("scheduled_failed", scheduled.failed.to_string()),
+                                            ] {
+                                                document.metadata.insert(key.into(), value);
+                                            }
+                                            if let Some(run_session) = &scheduled.run_session {
+                                                document.metadata.insert(
+                                                    "scheduled_run_session".into(),
+                                                    run_session.clone(),
+                                                );
+                                            }
+                                        }
                                         if let Some(outcome) = projected_outcome.as_ref() {
                                             document.metadata.insert(
                                                 "outcome_objective".into(),

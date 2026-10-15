@@ -27031,6 +27031,8 @@ mod scheduler_state_tests {
             scope: None,
             created_at: chrono::Utc::now() - chrono::Duration::days(2),
             created_by: None,
+            home: None,
+            made_by: None,
         }
     }
 
@@ -27220,6 +27222,8 @@ mod scheduler_state_tests {
             scope: Some(scope),
             created_at: chrono::Utc::now() - chrono::Duration::minutes(1),
             created_by: None,
+            home: None,
+            made_by: None,
         };
         task.validate().unwrap();
 

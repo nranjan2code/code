@@ -2892,6 +2892,16 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
   margin-bottom: var(--space-1);
   padding-right: 6px;
 }
+.scheduled-turn-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: var(--fs-caption);
+  color: var(--muted);
+}
+.scheduled-turn-head .turn-author-chip { color: var(--text-soft); }
+.scheduled-turn-failed { color: var(--red); }
 .turn-author-chip {
   font-size: var(--fs-caption);
   font-weight: 600;

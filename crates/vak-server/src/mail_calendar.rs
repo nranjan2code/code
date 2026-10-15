@@ -3840,6 +3840,8 @@ mod tests {
                 ),
                 created_at: Utc::now(),
                 created_by: None,
+                home: None,
+                made_by: None,
             };
             vak_core::triggers::create(&shared, &trigger).unwrap();
             id.to_string()
@@ -4087,6 +4089,8 @@ mod tests {
             ),
             created_at: Utc::now(),
             created_by: None,
+            home: None,
+            made_by: None,
         };
         vak_core::triggers::create(&state.core.shared_scope(), &routine).unwrap();
 

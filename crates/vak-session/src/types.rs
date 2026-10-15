@@ -410,6 +410,28 @@ pub struct MessageMeta {
     /// removed: its key was destroyed, and the text is the runtime's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub removed: bool,
+    /// Set on both messages of a turn an automation delivered into the
+    /// conversation it belongs to (docs/design/94 §4): the directive is the
+    /// automation's own words, the answer its run's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled: Option<ScheduledMeta>,
+}
+
+/// Which automation run a delivered turn came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduledMeta {
+    pub trigger: String,
+    /// The automation's name when it ran.
+    pub name: String,
+    /// The run record (`RunId`).
+    pub run: String,
+    /// The run's own conversation, where it worked (none for a script or
+    /// a run refused before it started).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_session: Option<String>,
+    /// The run failed; the answer says why.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub failed: bool,
 }
 
 /// What the person asked of an attached artifact.
