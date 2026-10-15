@@ -161,6 +161,12 @@ impl AgentScope {
         self.root.join("skills")
     }
 
+    /// What each learned ability's installed versions did, one Document
+    /// per skill (docs/design/93-self-evolving-capabilities.md, E5).
+    pub fn ability_standing(&self) -> PathBuf {
+        self.root.join("ability-standing")
+    }
+
     /// One conversation's Canvas, the same on every surface that shows the
     /// conversation (`vak-server/src/canvas.rs`).
     pub fn canvas(&self, session_id: &str) -> PathBuf {

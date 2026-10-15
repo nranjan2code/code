@@ -223,8 +223,18 @@ live.
   program answered showed one per-person figure and dropped the extra
   cent the program gave one person. E9 (card data from the call) is the
   designed fix; until then the card is the model's words.
-- [ ] E5: per-version measurement; promotion and withdrawal by observed
-  states (R2).
+- [x] E5 (2026-10-15): `AbilityRecord` per skill
+  (`agents/{agent}/ability-standing`), settled at each turn's end from
+  that turn's program calls; `vak_judge::ability::verdict` offers a
+  version that passed, worked in another turn and never failed
+  (`AbilityOffered`, `POST /skills/abilities/{name}/promote`) and
+  withdraws a fix that fails after its parent failed
+  (`AbilityWithdrawn`); a program refuses arguments by exit status 2
+  (`Fault::Target`), which never counts against it. Live with
+  gpt-6-luna: `weighted-bill-splitter` made in one conversation, called
+  in another ($90 weighted 1:2:2 gave 18, 36, 36 dollars), and the inbox
+  offered it to every Agent. The withdrawal ladder is covered by the
+  integration test, not seen live; the offer was left for the owner.
 - [ ] E6: client experience (projection line, capability sheet, Review,
   Library Abilities, Settings → Capabilities rewritten, inbox).
 - [ ] E7: admin `#/capabilities` and `#/measurements`; `vak skills` verbs.

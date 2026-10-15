@@ -164,6 +164,8 @@ fn kind_chip(kind: Kind) -> &'static str {
         Kind::ProposalOpened => "proposal",
         Kind::RoutineFailed => "refused",
         Kind::IntakeMatch => "intake",
+        Kind::AbilityOffered => "ability",
+        Kind::AbilityWithdrawn => "off",
     }
 }
 

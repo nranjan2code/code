@@ -43,6 +43,12 @@ pub enum Kind {
     RoutineFailed,
     /// New intake items matched one of the Agent's alerts (plan M6.5).
     IntakeMatch,
+    /// An Agent's learned ability has shown it works: it may be offered to
+    /// every Agent (docs/design/93-self-evolving-capabilities.md R2).
+    AbilityOffered,
+    /// An Agent's learned ability was withdrawn for it after its fix failed
+    /// too.
+    AbilityWithdrawn,
 }
 
 impl Kind {

@@ -239,6 +239,137 @@ pub fn serves_line(serves: &[String]) -> String {
     }
 }
 
+/// One installed version of an Agent's ability, as its calls found it
+/// (doc 93 R2).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VersionRecord {
+    /// The program's digest: which version a call ran.
+    pub digest: String,
+    /// Its Library version.
+    pub version: String,
+    /// The digest of the version it replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// The `propose_skill` call that installed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub built_by: Option<String>,
+    pub passed: bool,
+    #[serde(default)]
+    pub succeeded_elsewhere: bool,
+    /// The first call that failed by the program's own fault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
+    /// Offered to every Agent already.
+    #[serde(default)]
+    pub offered: bool,
+}
+
+impl VersionRecord {
+    fn facts(&self) -> vak_judge::ability::VersionFacts {
+        vak_judge::ability::VersionFacts {
+            passed: self.passed,
+            succeeded_elsewhere: self.succeeded_elsewhere,
+            failed: self.failed.is_some(),
+        }
+    }
+}
+
+/// An Agent's learned ability: its installed versions, newest last, and
+/// whether it was withdrawn.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AbilityRecord {
+    pub versions: Vec<VersionRecord>,
+    #[serde(default)]
+    pub withdrawn: bool,
+}
+
+/// What one call to an ability's program came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbilityUse {
+    pub skill: String,
+    pub digest: String,
+    pub call: String,
+    /// `None` when it answered; the fault when it failed.
+    pub fault: Option<vak_control::Fault>,
+}
+
+/// What one turn did with the Agent's learned abilities.
+#[derive(Debug, Clone, Default)]
+pub struct TurnUses {
+    pub uses: Vec<AbilityUse>,
+    /// Every call the turn made, so a version made in this turn is told
+    /// apart from one made earlier.
+    pub calls: std::collections::BTreeSet<String>,
+}
+
+/// The calls of `turn` to the tools named in `programs` (skill name to
+/// program digest) and how each ended, read from the turn's own entries.
+pub fn uses_in_turn(
+    session: &vak_session::SessionLog,
+    turn: &str,
+    programs: &std::collections::BTreeMap<String, String>,
+) -> TurnUses {
+    use vak_session::EntryPayload;
+    let entries: Vec<_> = session
+        .chain_to_root()
+        .into_iter()
+        .filter(|entry| entry.at_turn.as_deref() == Some(turn))
+        .collect();
+    let mut answered = std::collections::BTreeSet::new();
+    let mut faults = std::collections::BTreeMap::new();
+    let mut calls = Vec::new();
+    let mut all = std::collections::BTreeSet::new();
+    for entry in &entries {
+        match &entry.payload {
+            EntryPayload::Message(record) => {
+                for block in &record.message.content {
+                    if let vak_llm::ContentBlock::ToolUse { id, .. } = block {
+                        all.insert(id.clone());
+                    }
+                    match block {
+                        vak_llm::ContentBlock::ToolUse { id, name, .. }
+                            if programs.contains_key(name) =>
+                        {
+                            calls.push((id.clone(), name.clone()));
+                        }
+                        vak_llm::ContentBlock::ToolResult {
+                            tool_use_id,
+                            is_error: false,
+                            ..
+                        } => {
+                            answered.insert(tool_use_id.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            EntryPayload::CallEffect(record) => {
+                if let vak_session::types::CallEffect::Failed { fault } = record.effect {
+                    faults.insert(record.tool_use_id.clone(), fault);
+                }
+            }
+            _ => {}
+        }
+    }
+    let uses = calls
+        .into_iter()
+        .filter_map(|(call, skill)| {
+            let fault = faults.get(&call).copied();
+            (fault.is_some() || answered.contains(&call)).then(|| AbilityUse {
+                digest: programs.get(&skill).cloned().unwrap_or_default(),
+                skill,
+                call,
+                fault,
+            })
+        })
+        .collect();
+    TurnUses { uses, calls: all }
+}
+
+fn offered_key(skill: &str, digest: &str) -> String {
+    format!("ability-offered|{skill}|{digest}")
+}
+
 /// The inbox key of the entry that says proposal `id` is waiting.
 pub fn waiting_key(id: &str) -> String {
     format!("proposal-waiting|{id}")
@@ -247,15 +378,176 @@ pub fn waiting_key(id: &str) -> String {
 /// Marks read the entry that said proposal `id` was waiting, once the owner
 /// approved or declined it.
 fn settle_waiting(scope: &vak_config::scope::AgentScope, id: &str) {
-    let key = waiting_key(id);
+    settle_key(scope, &waiting_key(id));
+}
+
+fn settle_key(scope: &vak_config::scope::AgentScope, key: &str) {
     for entry in crate::inbox::unread(scope) {
-        if entry.dedupe_key.as_deref() == Some(key.as_str()) {
+        if entry.dedupe_key.as_deref() == Some(key) {
             let _ = crate::inbox::ack(scope, &entry.id);
         }
     }
 }
 
 impl Core {
+    fn ability_path(&self, skill: &str) -> std::path::PathBuf {
+        self.scope().ability_standing().join(skill)
+    }
+
+    /// What the Agent's learned ability `skill` has done, if it has a record.
+    pub fn ability_record(&self, skill: &str) -> Option<AbilityRecord> {
+        vak_session::documents::read(&self.ability_path(skill))
+            .ok()
+            .flatten()
+            .and_then(|text| serde_json::from_str(&text).ok())
+    }
+
+    fn record_ability_version(&self, skill: &str, version: VersionRecord) -> Result<(), String> {
+        vak_session::documents::update(&self.ability_path(skill), |current| {
+            let mut record: AbilityRecord = current
+                .and_then(|text| serde_json::from_str(text).ok())
+                .unwrap_or_default();
+            record.versions.push(version.clone());
+            record.withdrawn = false;
+            let text = serde_json::to_string(&record).map_err(|error| error.to_string())?;
+            Ok(Some((text, ())))
+        })?;
+        Ok(())
+    }
+
+    /// Takes what a turn's calls to the Agent's learned abilities came to
+    /// into their records, then acts on R2 (doc 93): a version that has
+    /// shown it works is offered to every Agent, and a fix that fails as
+    /// its parent did is withdrawn for this Agent. Only a failure by the
+    /// program's own fault counts; a refusal of the call's arguments or a
+    /// stopped call does not.
+    pub fn settle_ability_uses(&self, turn: &TurnUses) {
+        for found in &turn.uses {
+            let path = self.ability_path(&found.skill);
+            let verdict = vak_session::documents::update(&path, |current| {
+                let Some(mut record) =
+                    current.and_then(|text| serde_json::from_str::<AbilityRecord>(text).ok())
+                else {
+                    return Ok(None);
+                };
+                if record.withdrawn {
+                    return Ok(None);
+                }
+                let Some(at) = record
+                    .versions
+                    .iter()
+                    .rposition(|version| version.digest == found.digest)
+                else {
+                    return Ok(None);
+                };
+                let before = record.versions[at].clone();
+                let current_version = &mut record.versions[at];
+                match found.fault {
+                    None if !current_version
+                        .built_by
+                        .as_ref()
+                        .is_some_and(|call| turn.calls.contains(call)) =>
+                    {
+                        current_version.succeeded_elsewhere = true;
+                    }
+                    Some(vak_control::Fault::Tool) if current_version.failed.is_none() => {
+                        current_version.failed = Some(found.call.clone());
+                    }
+                    _ => {}
+                }
+                let parent = current_version.parent.clone().and_then(|digest| {
+                    record.versions[..at]
+                        .iter()
+                        .rev()
+                        .find(|version| version.digest == digest)
+                        .map(VersionRecord::facts)
+                });
+                let verdict = vak_judge::ability::verdict(record.versions[at].facts(), parent);
+                match verdict {
+                    vak_judge::ability::AbilityVerdict::Withdraw => record.withdrawn = true,
+                    vak_judge::ability::AbilityVerdict::Offer if !record.versions[at].offered => {
+                        record.versions[at].offered = true;
+                    }
+                    _ if record.versions[at] == before => return Ok(None),
+                    _ => {}
+                }
+                let acted = match verdict {
+                    vak_judge::ability::AbilityVerdict::Withdraw => Some(verdict),
+                    vak_judge::ability::AbilityVerdict::Offer if !before.offered => Some(verdict),
+                    _ => None,
+                };
+                let text = serde_json::to_string(&record).map_err(|error| error.to_string())?;
+                Ok(Some((text, acted)))
+            });
+            match verdict {
+                Ok(Some(Some(vak_judge::ability::AbilityVerdict::Withdraw))) => {
+                    self.withdraw_ability(&found.skill);
+                }
+                Ok(Some(Some(vak_judge::ability::AbilityVerdict::Offer))) => {
+                    let _ = crate::inbox::record_with_result_and_key(
+                        &self.shared_scope().as_agent(),
+                        crate::inbox::Kind::AbilityOffered,
+                        &format!("{} works: offer it to every Agent?", found.skill),
+                        "It passed its tests, worked in a later conversation and has not failed since it was made.",
+                        None,
+                        None,
+                        None,
+                        Some(&offered_key(&found.skill, &found.digest)),
+                        None,
+                    );
+                }
+                Ok(_) => {}
+                Err(_) => tracing::warn!("an ability's record could not be updated"),
+            }
+        }
+    }
+
+    fn withdraw_ability(&self, skill: &str) {
+        let installed = self.scope().skills().join(skill);
+        // The Library keeps every version; only the Agent's installed copy
+        // goes, so its next turn no longer offers it.
+        if std::fs::remove_dir_all(&installed).is_err() {
+            tracing::warn!("a withdrawn ability's folder could not be removed");
+        }
+        let _ = crate::inbox::record_with_result_and_key(
+            &self.shared_scope().as_agent(),
+            crate::inbox::Kind::AbilityWithdrawn,
+            &format!("{skill} was turned off"),
+            "It failed, and the fix proposed for it failed too. Its versions stay in the Library.",
+            None,
+            None,
+            None,
+            Some(&format!("ability-withdrawn|{skill}")),
+            None,
+        );
+    }
+
+    /// Installs the Agent's current version of `skill` for every Agent (the
+    /// Shared layer), when its record has offered it (R2).
+    pub fn promote_ability(&self, skill: &str) -> Result<(), String> {
+        let record = self
+            .ability_record(skill)
+            .ok_or_else(|| format!("no learned ability '{skill}'"))?;
+        let current = record
+            .versions
+            .last()
+            .filter(|version| version.offered && !record.withdrawn)
+            .ok_or_else(|| format!("'{skill}' has not shown yet that it works"))?;
+        let installed = self.scope().skills().join(skill);
+        let program = Program::load(&installed)?
+            .ok_or_else(|| format!("'{skill}' is not installed for this Agent"))?;
+        if program.digest != current.digest {
+            return Err(format!("'{skill}' changed since it was offered"));
+        }
+        let bytes = vak_tools::capability::bundle(&installed)?;
+        install(&bytes, &self.shared_skills_dir().join(skill))?;
+        settle_key(
+            &self.shared_scope().as_agent(),
+            &offered_key(skill, &current.digest),
+        );
+        Ok(())
+    }
+
     /// The owner approved or declined proposal `id`: the inbox no longer
     /// says it is waiting.
     pub fn proposal_settled(&self, id: &str) {
@@ -402,7 +694,20 @@ impl Core {
             );
             Standing::Review { id, why }
         } else {
-            install(&bytes, &self.scope().skills().join(name))?;
+            let target = self.scope().skills().join(name);
+            let parent = Program::load(&target).ok().flatten().map(|old| old.digest);
+            install(&bytes, &target)?;
+            self.record_ability_version(
+                name,
+                VersionRecord {
+                    digest: program.digest.clone(),
+                    version: version.to_string(),
+                    parent,
+                    built_by: Some(proposal.call.to_string()),
+                    passed: true,
+                    ..VersionRecord::default()
+                },
+            )?;
             Standing::Live
         };
         Ok(Proposed {

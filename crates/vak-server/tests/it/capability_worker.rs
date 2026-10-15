@@ -50,7 +50,7 @@ async fn a_program_answers_in_json_through_the_worker() {
     let skill = tempfile::tempdir().unwrap();
     let tool = tool(
         skill.path(),
-        "import json, sys\nargs = json.load(sys.stdin)\nprint(json.dumps({'each': args['amount'] / args['people']}))\n",
+        "import json, sys\nargs = json.load(sys.stdin)\nif args['people'] < 1:\n    sys.exit(2)\nprint(json.dumps({'each': args['amount'] / args['people']}))\n",
         json!({}),
     );
     let output = tool
@@ -275,7 +275,7 @@ async fn verification_runs_each_case_in_a_run_of_its_own_and_keeps_what_it_found
     let skill = tempfile::tempdir().unwrap();
     std::fs::write(
         skill.path().join("run.py"),
-        "import json, sys\nargs = json.load(sys.stdin)\nprint(json.dumps({'each': args['amount'] / args['people']}))\n",
+        "import json, sys\nargs = json.load(sys.stdin)\nif args['people'] < 1:\n    sys.exit(2)\nprint(json.dumps({'each': args['amount'] / args['people']}))\n",
     )
     .unwrap();
     std::fs::write(
@@ -427,7 +427,10 @@ async fn a_proposed_program_is_verified_versioned_and_admitted_by_its_tier() {
         .artifacts()
         .list()
         .into_iter()
-        .find(|artifact| artifact.kind == vak_core::artifacts::ArtifactKind::Skill)
+        .find(|artifact| {
+            artifact.kind == vak_core::artifacts::ArtifactKind::Skill
+                && artifact.title.as_deref() == Some("split-bill-e3")
+        })
         .expect("recorded in the Library");
     assert_eq!(artifact.versions.len(), 2);
     assert_eq!(artifact.versions[1].parent, Some(artifact.versions[0].id));
@@ -693,4 +696,98 @@ async fn a_learned_ability_defers_by_what_it_serves_and_is_improved_from_its_fil
         .expect("recorded in the Library");
     assert_eq!(artifact.versions.len(), 2);
     assert_eq!(artifact.versions[1].parent, Some(artifact.versions[0].id));
+}
+
+/// Doc 93 E5 (R2): a version that worked in a later turn and never failed
+/// is offered to every Agent and can be promoted; a version that fails is
+/// kept for a fix, and a fix that fails as well is withdrawn for the Agent.
+/// Only the program's own fault counts.
+#[tokio::test]
+async fn an_ability_is_offered_when_it_works_and_withdrawn_when_its_fix_fails() {
+    use vak_core::skill_programs::{AbilityUse, TurnUses};
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(workspace.path()).unwrap();
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).unwrap();
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let tool = vak_core::learning::ProposeSkillTool {
+        sessions_home: core.scope().into_root(),
+        cwd: workspace.path().to_path_buf(),
+        session_id: "sess-r2".into(),
+        core: Some(core.clone()),
+    };
+    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_agent_id("vak");
+    let propose = |source: &str| {
+        json!({"name": "r2-splitter", "description": "Split a bill evenly",
+               "instructions": "Call the tool.", "source": source})
+    };
+    let digest = || {
+        Program::load(&core.scope().skills().join("r2-splitter"))
+            .unwrap()
+            .unwrap()
+            .digest
+    };
+    let turn = |fault: Option<vak_control::Fault>, digest: String| TurnUses {
+        uses: vec![AbilityUse {
+            skill: "r2-splitter".into(),
+            digest,
+            call: format!("use-{}", uuid::Uuid::now_v7()),
+            fault,
+        }],
+        calls: Default::default(),
+    };
+    let inbox = core.shared_scope().as_agent();
+    let entry = |title: &str| {
+        vak_core::inbox::unread(&inbox)
+            .into_iter()
+            .any(|entry| entry.title == title)
+    };
+
+    prepared(workspace.path(), "r2a", "args['people']", 30);
+    assert!(
+        tool.execute(&propose("r2a"), &ctx)
+            .await
+            .content
+            .contains("yours")
+    );
+    let first = digest();
+    core.settle_ability_uses(&turn(Some(vak_control::Fault::Target), first.clone()));
+    assert!(!entry("r2-splitter works: offer it to every Agent?"));
+    core.settle_ability_uses(&turn(None, first.clone()));
+    assert!(entry("r2-splitter works: offer it to every Agent?"));
+    core.promote_ability("r2-splitter").unwrap();
+    assert!(
+        core.shared_skills_dir()
+            .join("r2-splitter/run.py")
+            .is_file()
+    );
+    assert!(
+        !entry("r2-splitter works: offer it to every Agent?"),
+        "promoting settles it"
+    );
+
+    core.settle_ability_uses(&turn(Some(vak_control::Fault::Tool), first.clone()));
+    let record = core.ability_record("r2-splitter").unwrap();
+    assert!(
+        record.versions[0].failed.is_some() && !record.withdrawn,
+        "a first failure waits for a fix"
+    );
+
+    prepared(workspace.path(), "r2b", "max(args['people'], 1)", 30);
+    assert!(
+        tool.execute(&propose("r2b"), &ctx)
+            .await
+            .content
+            .contains("yours")
+    );
+    let fix = digest();
+    assert_ne!(fix, first);
+    assert_eq!(
+        core.ability_record("r2-splitter").unwrap().versions[1].parent,
+        Some(first)
+    );
+    core.settle_ability_uses(&turn(Some(vak_control::Fault::Tool), fix));
+    assert!(core.ability_record("r2-splitter").unwrap().withdrawn);
+    assert!(!core.scope().skills().join("r2-splitter").exists());
+    assert!(entry("r2-splitter was turned off"));
 }

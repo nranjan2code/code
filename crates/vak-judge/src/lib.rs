@@ -6,6 +6,7 @@
 //! no session handle, nothing read from the wording of a request, an answer
 //! or an error.
 
+pub mod ability;
 pub mod call;
 pub mod measure;
 pub mod outcome;

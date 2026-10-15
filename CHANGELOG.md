@@ -1,5 +1,10 @@
 ## Unreleased
 
+- An ability an Agent made is offered to all your Agents once it has
+  passed its tests, worked in a later conversation and never failed; an
+  ability that keeps failing after a fix is turned off for that Agent.
+  Both show in your inbox. An ability now refuses arguments it cannot
+  use without that counting as a failure.
 - An ability an Agent made says what kind of work it serves, so it no
   longer takes room in every request: it is listed among "more tools" and
   loaded when needed. Asking an Agent to improve one shows it the

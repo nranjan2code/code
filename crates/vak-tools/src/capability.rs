@@ -30,7 +30,11 @@ pub const DECLARATION: &str = "capability.json";
 /// What a runnable skill folder holds, as the one statement of it a model
 /// is shown: in `propose_skill`'s description and with every refusal of a
 /// declaration, so a caller learns the whole shape at once.
-pub const FORMAT: &str = "capability.json: {\"entry\": \"run.py\" (or .sh, .mjs), \"arguments\": a JSON Schema {\"type\": \"object\", \"properties\": {...}} whose every property has a \"type\" and a \"description\"} and, only when needed, \"hosts\": [exact host names it connects to], \"writes\": \"drafts\", \"requirements\": {\"file\": \"requirements.txt\" with every package pinned by hash, \"hosts\": [its package index hosts]}. The program reads its arguments as one JSON object on stdin and prints one JSON value on stdout. Each test is tests/<name>.json: {\"arguments\": {...}, \"expect\": {the keys the result must have}} or {\"arguments\": {...}, \"fails\": true}.";
+pub const FORMAT: &str = "capability.json: {\"entry\": \"run.py\" (or .sh, .mjs), \"arguments\": a JSON Schema {\"type\": \"object\", \"properties\": {...}} whose every property has a \"type\" and a \"description\"} and, only when needed, \"hosts\": [exact host names it connects to], \"writes\": \"drafts\", \"requirements\": {\"file\": \"requirements.txt\" with every package pinned by hash, \"hosts\": [its package index hosts]}. The program reads its arguments as one JSON object on stdin and prints one JSON value on stdout; to refuse arguments it cannot use it exits with status 2 and says why on stderr (any other failure is the program's own). Each test is tests/<name>.json: {\"arguments\": {...}, \"expect\": {the keys the result must have}} or {\"arguments\": {...}, \"fails\": true} for arguments it must refuse.";
+
+/// The exit status a program gives to refuse its arguments: the call's
+/// fault, not the program's.
+const REFUSED: i32 = 2;
 
 /// The folder of a runnable skill's test cases, one JSON file each.
 pub const TESTS_DIR: &str = "tests";
@@ -88,13 +92,16 @@ impl TestCase {
     /// drafts it wrote.
     pub fn judge(&self, output: &ToolOutput, drafts: bool) -> Result<(), String> {
         if self.fails {
-            return if output.is_error() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "the program was to fail; it answered {}",
+            return match output.fault {
+                Some(Fault::Target) => Ok(()),
+                Some(_) => Err(format!(
+                    "the program was to refuse these arguments (exit status 2); it failed: {}",
                     output.content
-                ))
+                )),
+                None => Err(format!(
+                    "the program was to refuse these arguments (exit status 2); it answered {}",
+                    output.content
+                )),
             };
         }
         if output.is_error() {
@@ -1104,6 +1111,14 @@ impl Runner {
                 ToolOutput::error(Fault::Tool, format!("{what} was lost: {error}"))
             }
             Ended::Exited(Ok(status)) if status.success() => return None,
+            Ended::Exited(Ok(status)) if status.code() == Some(REFUSED) => ToolOutput::error(
+                Fault::Target,
+                format!(
+                    "{what} refused these arguments{}",
+                    diagnostics(&finished.err)
+                ),
+            )
+            .ran(status.code(), finished.duration_ms),
             Ended::Exited(Ok(status)) => ToolOutput::error(
                 Fault::Tool,
                 format!(
@@ -1117,7 +1132,8 @@ impl Runner {
                     } else {
                         format!("\n\n[output]\n{}", finished.out.trim())
                     }
-                ),
+                ) + "\n\nThis is the program's own failure. If it is wrong, fix it and \
+                     propose it again under its name; a fix that fails as well is turned off.",
             )
             .ran(status.code(), finished.duration_ms),
         };
@@ -1494,8 +1510,14 @@ mod tests {
         };
         assert!(
             fails
-                .judge(&ToolOutput::error(Fault::Tool, "no"), false)
+                .judge(&ToolOutput::error(Fault::Target, "no"), false)
                 .is_ok()
+        );
+        assert!(
+            fails
+                .judge(&ToolOutput::error(Fault::Tool, "crashed"), false)
+                .is_err(),
+            "a crash is not a refusal"
         );
         assert!(fails.judge(&answer(json!({})), false).is_err());
     }

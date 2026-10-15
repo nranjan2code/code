@@ -144,6 +144,20 @@ fn program_files(base: &Path, program: &vak_tools::capability::Program) -> Strin
         .collect()
 }
 
+/// Each frozen skill that carries a program, by name, with its program's
+/// digest: which version a call to it runs.
+pub fn program_digests(skills: &[FrozenSkill]) -> std::collections::BTreeMap<String, String> {
+    skills
+        .iter()
+        .filter_map(|skill| {
+            let program = vak_tools::capability::Program::load(skill.path.parent()?)
+                .ok()
+                .flatten()?;
+            Some((skill.name.clone(), program.digest))
+        })
+        .collect()
+}
+
 /// The tool of each frozen skill that carries a program
 /// (`vak_tools::capability`), named as the skill. One whose program does
 /// not load says why when the skill is read (`FrozenSkill::load`).

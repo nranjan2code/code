@@ -13,8 +13,10 @@ the waiting proposal's inbox entry and review record, what a program
 reaches in approvals, packs from an Agent's own skills); E4 built
 2026-10-15 (a program's tool carries its skill's `serves:` and defers,
 listed in the prompt's catalogue; loading the skill shows its files and
-how to improve it; checked live across conversations); E5 to E9 not
-built. Agreed with the
+how to improve it; checked live across conversations); E5 built 2026-10-15
+(each installed version's record, R2 by `vak_judge::ability::verdict`,
+the offer and the withdrawal with their inbox entries, refusal by exit
+status 2); E6 to E9 not built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -314,8 +316,25 @@ build: propose_skill with no parent                 ┘
    dependencies in the space's execution cache.
 6. **Measure.** Each call's verdict and fault are already decisions and
    receipts; `vak_judge::measure` grows a per-capability-version measure
-   from them.
-7. **Promote, fix or retire** by R2.
+   from them. As built in E5: when a turn ends, Core reads that turn's
+   calls to its abilities' programs (`skill_programs::uses_in_turn`, by
+   the program digest the turn froze) into one Document per skill in the
+   Agent home (`AgentScope::ability_standing`, `AbilityRecord`): each
+   installed version's digest, Library version, parent digest, the
+   proposing call, whether its tests passed, whether a call succeeded in
+   another turn, and its first failure. Only the program's own fault
+   counts (`Fault::Tool`); a program refuses arguments it cannot use by
+   exiting with status 2, which is the call's fault (`Fault::Target`), and
+   a `"fails": true` test expects that refusal.
+7. **Promote, fix or retire** by R2 (`vak_judge::ability::verdict`, pure):
+   a version that passed, worked in another turn and never failed is
+   offered (`AbilityOffered` inbox entry; `POST
+   /skills/abilities/{name}/promote`, `Core::promote_ability`, installs
+   that version in the Shared layer); a failure is told to the model in
+   the call's result (fix it and propose it again under its name); a
+   fix whose parent failed and that fails too is withdrawn for the Agent
+   (its installed copy removed, the Library keeps every version,
+   `AbilityWithdrawn` entry).
 
 The answer says what happened in plain words (§9.1). D3 means extending
 never waits for the person; the version's parent and the Library's undo

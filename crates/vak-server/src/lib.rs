@@ -1562,6 +1562,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/skills/proposals", get(list_proposals_route))
         .route("/skills/proposals/{id}/promote", post(promote_proposal))
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
+        .route("/skills/abilities/{name}/promote", post(promote_ability))
         .merge(gateway::routes())
         .merge(intake::routes())
         .merge(library::routes())
@@ -2972,6 +2973,25 @@ fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
             })
         })
         .collect()
+}
+
+/// Installs an Agent's learned ability for every Agent once its record
+/// offered it (docs/design/93-self-evolving-capabilities.md R2).
+async fn promote_ability(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = scoped_core!(&state, None, q.agent.as_deref());
+    match core.promote_ability(&name) {
+        Ok(()) => Json(serde_json::json!({ "promoted": name })).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 async fn list_proposals_route(

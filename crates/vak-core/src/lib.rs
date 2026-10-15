@@ -7045,6 +7045,9 @@ impl Core {
         let progressive =
             self.inner.config.intent.enabled && self.inner.config.intent.slice_capabilities;
         let programs = skills::programs(&turn_capabilities.frozen_skills, self.tool_worker_exe());
+        // Which version each program of this turn is, for the abilities'
+        // records once the turn is done (docs/design/93 R2).
+        let mut program_digests = skills::program_digests(&turn_capabilities.frozen_skills);
         let tool_catalogue = if progressive {
             self.tool_catalogue_for(&turn_capabilities.tool_names, &programs)
         } else {
@@ -7564,7 +7567,9 @@ impl Core {
         // A skill's program is a tool under the skill's name, unless a tool
         // of this turn already has that name.
         for program in programs {
-            if !tools.iter().any(|tool| tool.name() == program.name()) {
+            if tools.iter().any(|tool| tool.name() == program.name()) {
+                program_digests.remove(program.name());
+            } else {
                 tools.push(program);
             }
         }
@@ -8353,6 +8358,11 @@ impl Core {
                     }
                 }
             }
+        }
+
+        let ability_uses = skill_programs::uses_in_turn(&session, &turn_id, &program_digests);
+        if !ability_uses.uses.is_empty() {
+            self.settle_ability_uses(&ability_uses);
         }
 
         // The model is idle now that this turn is done: this is the only

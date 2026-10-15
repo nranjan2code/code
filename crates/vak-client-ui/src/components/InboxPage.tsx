@@ -27,6 +27,8 @@ const KIND_CLASS: Record<string, string> = {
   proposal_opened: "k-warm",
   routine_failed: "k-red",
   intake_match: "k-blue",
+  ability_offered: "k-warm",
+  ability_withdrawn: "k-warm",
 };
 
 function kindLabel(kind: string): string {
@@ -40,6 +42,8 @@ function kindLabel(kind: string): string {
     heartbeat: "Check-in",
     proposal_opened: "New suggestion",
     intake_match: "From your sources",
+    ability_offered: "Ready for every Agent",
+    ability_withdrawn: "Ability turned off",
   } as Record<string, string>)[kind] ?? "Update";
 }
 

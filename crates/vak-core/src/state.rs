@@ -390,6 +390,13 @@ pub const REGISTRY: &[StateEntry] = &[
         "vak-core",
         Class::Document,
     ),
+    // What each learned ability's installed versions did, one Document per
+    // skill (docs/design/93-self-evolving-capabilities.md, E5).
+    agent_entry(
+        "agents/{agent}/ability-standing",
+        "vak-core",
+        Class::Document,
+    ),
     StateEntry {
         path: "security-events",
         root: Root::Data,

@@ -28,12 +28,13 @@ this handover's prompt and 'Where things stand' before the session's
 limit, telling the maintainer when the session is near it. The maintainer is the only user and there are no others: rewrite
 a wrong design or screen rather than patch it.
 
-Self-evolving capabilities (doc 93) stand at E4: E1a, E1b, E2, E3a, E3b
-and E4 are built and checked live. Next is E5 (per-version measurement;
-promotion offered and withdrawal by observed states, R2: §11), then E6
-(the client experience, which also owns the found gap that Settings
-lists only the proposals of the Agent's own folder: Review drawn from the
-Library's waiting versions), E7, E8 and E9 as doc 93 §11 orders them.
+Self-evolving capabilities (doc 93) stand at E5: E1 to E5 are built and
+checked live. Next is E6 (the client experience: projection line,
+capability sheet, Review drawn from the Library's waiting versions, which
+also fixes Settings listing only the Agent's own folder's proposals,
+Library Abilities, Settings > Capabilities rewritten, inbox entries that
+open their sheet, and a button for the AbilityOffered promotion), then
+E7, E8 and E9 as doc 93 §11 orders them.
 Build each as a
 design, never spot fixes or tuned numbers.
 
@@ -79,9 +80,20 @@ route pin); a scheduled run's cards are drawn as cards in the home turn
 model still reads their text). Left on the dev home: the "morning line"
 automation and its test conversation.
 
-**Self-evolving capabilities (doc 93) stand at E4** (2026-10-15, full
-gate green, pushed): E5 to E9 not started (tracker lines in open-items
+**Self-evolving capabilities (doc 93) stand at E5** (2026-10-15, full
+gate green, pushed): E6 to E9 not started (tracker lines in open-items
 "Self-evolving capabilities").
+
+**E5 is built** (checked live with gpt-6-luna): one `AbilityRecord`
+Document per learned skill (`agents/{agent}/ability-standing`), settled
+at each turn's end from that turn's program calls;
+`vak_judge::ability::verdict` offers a version that passed, worked in
+another turn and never failed (`AbilityOffered` inbox entry, `POST
+/skills/abilities/{name}/promote`) and withdraws a fix that fails after
+its parent failed (`AbilityWithdrawn`). A program refuses arguments by
+exit status 2 (`Fault::Target`), which never counts against it; a
+`"fails": true` test now expects that refusal. Left on the installed
+home: `weighted-bill-splitter` and its unanswered offer.
 
 **E4 is built** (checked live with gpt-6-luna on the installed home):
 `Tool::serves` returns `Vec<&str>` borrowed from the tool, so a program's
@@ -263,7 +275,7 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Doc 93 E5, then E6 to E9 (doc 93 §11), each with the full gate and a
+1. Doc 93 E6, then E7 to E9 (doc 93 §11), each with the full gate and a
    live turn; tick `docs/plans/open-items.md` and the doc's Status.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are
    the maintainer's; ask before cutting.
