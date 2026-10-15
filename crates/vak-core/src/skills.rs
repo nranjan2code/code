@@ -329,27 +329,26 @@ fn strip_frontmatter(content: &str) -> &str {
 }
 
 pub fn discover(cwd: &Path, home: &Path) -> Vec<Skill> {
-    discover_with_plugins(cwd, home, &[])
+    discover_with_plugins(cwd, home, None, &[])
 }
 
-pub fn discover_with_plugins(cwd: &Path, home: &Path, plugins: &[(PathBuf, String)]) -> Vec<Skill> {
-    discover_all_with_plugins(cwd, home, plugins)
-        .into_iter()
-        .filter(|skill| !skill.shadowed)
-        .collect()
-}
-
-/// Like [`discover_with_plugins`] but also returns diagnostics for every
-/// skill candidate that was found on disk but failed validation.
-pub fn discover_with_diagnostics(
+/// The folders skills are found in, first wins for a name: the project's,
+/// the Agent's own (what it learned, `agents/<id>/skills`), the Shared
+/// layer's, every Agent folder under it, then enabled plugins'.
+fn roots(
     cwd: &Path,
     home: &Path,
+    agent: Option<&Path>,
     plugins: &[(PathBuf, String)],
-) -> (Vec<Skill>, Vec<SkillDiagnostic>) {
-    let mut roots = vec![
-        (vak_config::scope::WorkspaceScope::new(cwd).skills(), None),
-        (vak_config::scope::AgentScope::new(home).skills(), None),
-    ];
+) -> Vec<(PathBuf, Option<String>)> {
+    let mut roots = vec![(vak_config::scope::WorkspaceScope::new(cwd).skills(), None)];
+    if let Some(agent) = agent {
+        roots.push((
+            vak_config::scope::AgentScope::new(agent).skills(),
+            Some("agent".to_string()),
+        ));
+    }
+    roots.push((vak_config::scope::AgentScope::new(home).skills(), None));
     let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
     if let Ok(entries) = std::fs::read_dir(&agents_dir) {
         for entry in entries.flatten() {
@@ -365,6 +364,30 @@ pub fn discover_with_diagnostics(
             .map(|(root, provenance)| (root.join("skills"), Some(provenance.clone()))),
     );
     roots.dedup_by(|a, b| a.0 == b.0);
+    roots
+}
+
+pub fn discover_with_plugins(
+    cwd: &Path,
+    home: &Path,
+    agent: Option<&Path>,
+    plugins: &[(PathBuf, String)],
+) -> Vec<Skill> {
+    discover_all_with_plugins(cwd, home, agent, plugins)
+        .into_iter()
+        .filter(|skill| !skill.shadowed)
+        .collect()
+}
+
+/// Like [`discover_with_plugins`] but also returns diagnostics for every
+/// skill candidate that was found on disk but failed validation.
+pub fn discover_with_diagnostics(
+    cwd: &Path,
+    home: &Path,
+    agent: Option<&Path>,
+    plugins: &[(PathBuf, String)],
+) -> (Vec<Skill>, Vec<SkillDiagnostic>) {
+    let roots = roots(cwd, home, agent, plugins);
     let mut skills = Vec::new();
     let mut diagnostics = Vec::new();
     for (root, provenance) in roots {
@@ -405,27 +428,10 @@ pub fn discover_with_diagnostics(
 pub fn discover_all_with_plugins(
     cwd: &Path,
     home: &Path,
+    agent: Option<&Path>,
     plugins: &[(PathBuf, String)],
 ) -> Vec<Skill> {
-    let mut roots = vec![
-        (vak_config::scope::WorkspaceScope::new(cwd).skills(), None),
-        (vak_config::scope::AgentScope::new(home).skills(), None),
-    ];
-    let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
-    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                roots.push((vak_config::scope::AgentScope::new(&p).skills(), None));
-            }
-        }
-    }
-    roots.extend(
-        plugins
-            .iter()
-            .map(|(root, provenance)| (root.join("skills"), Some(provenance.clone()))),
-    );
-    roots.dedup_by(|a, b| a.0 == b.0);
+    let roots = roots(cwd, home, agent, plugins);
     let mut out = Vec::new();
     for (root, provenance) in roots {
         let Ok(entries) = std::fs::read_dir(&root) else {
@@ -622,7 +628,7 @@ mod tests {
         let body = "---\nname: demo\ndescription: demo skill\n---\nbody";
         std::fs::write(project.join("SKILL.md"), body)?;
         std::fs::write(home.join("SKILL.md"), body)?;
-        let all = discover_all_with_plugins(dir.path(), &dir.path().join("home"), &[]);
+        let all = discover_all_with_plugins(dir.path(), &dir.path().join("home"), None, &[]);
         assert_eq!(all.len(), 2);
         assert!(!all[0].shadowed);
         assert!(all[1].shadowed);
@@ -750,7 +756,7 @@ mod tests {
         )?;
         let home = dir.path().join("home");
         std::fs::create_dir_all(&home)?;
-        let (skills, diagnostics) = discover_with_diagnostics(dir.path(), &home, &[]);
+        let (skills, diagnostics) = discover_with_diagnostics(dir.path(), &home, None, &[]);
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "good-skill");
         assert_eq!(diagnostics.len(), 1);

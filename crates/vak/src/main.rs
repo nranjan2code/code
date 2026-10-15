@@ -99,6 +99,7 @@ fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
                 core.cwd(),
                 &id,
                 &core.shared_skills_dir(),
+                Some(&core.artifacts()),
             ) {
                 Ok(name) => {
                     println!("promoted skill '{name}'");

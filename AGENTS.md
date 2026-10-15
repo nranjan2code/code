@@ -1409,6 +1409,13 @@ environment provision) are workspace-scoped proposals until validated and
 promoted. Presentation/skill/evidence/evaluator/environment contributions may
 be auto-admitted only inside an existing envelope; hooks/tools and anything
 networked, secret-bearing, or externally effectful require human review.
+The one tool an Agent may admit itself is a skill's program
+(docs/design/93-self-evolving-capabilities.md §5), and only for itself
+(its own `agents/<id>/skills`): one whose tests the runtime ran and passed,
+that declares no host, needs no install and was not written in a turn that
+held someone else's words (`skill_programs::review_reason`). It runs only
+under the sandbox its declaration gives it, and anything else it proposes
+waits for the owner; reaching every Agent is always the owner's promotion.
 Promotion never silently activates a proposal, and revocation takes effect
 immediately without a restart.
 

@@ -18,11 +18,10 @@ Run `git status` and `git log --oneline -8`. Stage only your own paths;
 keep only `main`. We are on a Claude Code Pro plan: read lean (grep and
 line ranges, not whole files), commit each verified step, keep the
 tracker ticked, and rewrite this handover's prompt and 'Where things
-stand' before the session's limit. Next: build stage E3 (doc 93 §11:
-propose_skill takes a program, tests, packs and a parent; versions as
-Library artifacts with E2's report on the version thread; the tier gate
-of §5; the registry epoch; the AGENTS.md paragraph on tool review; E1 and
-E2 are built; decisions D1 to D8 and R1 to R7 are settled) as a design, never spot fixes or tuned numbers;
+stand' before the session's limit. Next: E3b (doc 93 §11 and the
+tracker: the owner's switch, the inbox entry, the Review wording, packs
+from an Agent's skills), then E4; E1, E2 and E3a are built; decisions D1
+to D8 and R1 to R7 are settled. Build each as a design, never spot fixes or tuned numbers;
 UI that gets in the way is rewritten, not patched (no users yet). After the maintainer's setup, live runs may use the installed home (its
 OpenAI key, luna) for bigger tests; otherwise live runs use launch entry
 `vak-e1-live` (port 8905, a throwaway
@@ -32,6 +31,22 @@ is then /tmp/vak-live/e1-home/vak-home/.vak). The installed data home was purged
 and set up fresh on 8.1.0 on 2026-10-15. Short progress lines."
 
 ## Where things stand
+
+**E3a is built** (2026-10-15, gate green, checked live with gpt-6-luna on
+the installed home): `propose_skill` takes `source`, a folder the Agent
+wrote; `Core::propose_skill_program` (`vak-core/src/skill_programs.rs`)
+bundles it (`capability::bundle`), writes its SKILL.md from the call's
+words, verifies it (E2), records a Library version (`ArtifactKind::Skill`,
+parent the latest, typed `ArtifactStep::Verified`), and admits it: Live in
+`agents/<id>/skills` (discovery reads it right after the project's,
+`skills::roots`), Review as a proposal naming the version (promotion
+installs the bundle, `learning::promote(.., library)`), or Failed with
+each case. Live: the first try failed three times on capability.json
+(nothing stated its shape; each refusal named one field); with
+`capability::FORMAT` in the description and refusals it built a skill
+first try (4 of 4 tests, live) and a fresh conversation called it. Left
+on the installed home: the Agent's live `temperature-converter` skill,
+its Library versions, and a memory note from the failed first attempt.
 
 **E2 is built** (2026-10-15, gate green, checked live): a program's
 tests are `tests/<name>.json` (`arguments` plus `expect` or `"fails":
@@ -165,7 +180,7 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Build E3, then E4, each step with the full gate and a live
+1. Build E3b, then E4, each step with the full gate and a live
    turn; tick `docs/plans/open-items.md` and doc 93's Status as stages
    land.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are

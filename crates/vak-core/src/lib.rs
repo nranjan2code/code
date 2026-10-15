@@ -4004,8 +4004,12 @@ impl Core {
     pub fn skills(&self) -> Vec<skills::Skill> {
         let shared_root = self.shared_capability_root();
         let plugin_roots = self.enabled_plugin_skill_roots();
-        let mut skills =
-            skills::discover_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots);
+        let mut skills = skills::discover_with_plugins(
+            &self.inner.cwd,
+            &shared_root,
+            Some(&self.scope().into_root()),
+            &plugin_roots,
+        );
         if !self.effective_capability_inheritance().inherit_skills {
             let shared_skills = shared_root.join("skills");
             skills.retain(|skill| !skill.path.starts_with(&shared_skills));
@@ -4024,8 +4028,12 @@ impl Core {
     pub fn skills_with_shadowed(&self) -> Vec<skills::Skill> {
         let shared_root = self.shared_capability_root();
         let plugin_roots = self.enabled_plugin_skill_roots();
-        let mut skills =
-            skills::discover_all_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots);
+        let mut skills = skills::discover_all_with_plugins(
+            &self.inner.cwd,
+            &shared_root,
+            Some(&self.scope().into_root()),
+            &plugin_roots,
+        );
         if !self.effective_capability_inheritance().inherit_skills {
             let shared_skills = shared_root.join("skills");
             skills.retain(|skill| !skill.path.starts_with(&shared_skills));
@@ -4166,6 +4174,7 @@ impl Core {
                 sessions_home: self.scope().into_root(),
                 cwd: self.inner.cwd.clone(),
                 session_id: scope.session_id.clone(),
+                core: Some(self.clone()),
             }));
         }
         tools.push(Arc::new(entities::EntityQueryTool {
@@ -4308,8 +4317,12 @@ impl Core {
         // 1. Skill parse failures.
         let shared_root = self.shared_capability_root();
         let plugin_roots = self.enabled_plugin_skill_roots();
-        let (_skills, skill_diags) =
-            skills::discover_with_diagnostics(&self.inner.cwd, &shared_root, &plugin_roots);
+        let (_skills, skill_diags) = skills::discover_with_diagnostics(
+            &self.inner.cwd,
+            &shared_root,
+            Some(&self.scope().into_root()),
+            &plugin_roots,
+        );
         for diag in skill_diags {
             out.push(CapabilityDiagnostic {
                 kind: "skill".into(),
@@ -4356,8 +4369,12 @@ impl Core {
 
         // 3. Skills filtered by channel policy.
         if let Some(policy) = self.channel_policy() {
-            let all_skills =
-                skills::discover_with_plugins(&self.inner.cwd, &shared_root, &plugin_roots);
+            let all_skills = skills::discover_with_plugins(
+                &self.inner.cwd,
+                &shared_root,
+                Some(&self.scope().into_root()),
+                &plugin_roots,
+            );
             for skill in &all_skills {
                 if !Self::allowed_by(&policy.skills_allow, &policy.skills_deny, &skill.name) {
                     out.push(CapabilityDiagnostic {

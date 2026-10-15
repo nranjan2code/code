@@ -5,7 +5,10 @@ Status: in progress: E1 built (E1a 2026-10-14: a skill's program runs as
 a tool under its own sandbox; E1b 2026-10-15: declared hosts through the
 egress proxy, pinned Python requirements installed by their own run); E2
 built 2026-10-15 (a program's own tests run by the runtime in a run of
-their own, kept per digest); E3 to E9 not built. Agreed with the
+their own, kept per digest); E3a built 2026-10-15 (propose_skill with a
+`source` folder, Library versions with their verification, the tier
+gate, the Agent's own skills discovered; checked live with gpt-6-luna);
+the rest of E3 and E4 to E9 not built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -265,9 +268,21 @@ build: propose_skill with no parent                 ┘
    with the rest of the deferred set. The catalog finds a capability by
    what it does and where it came from (a new catalog source, §6).
 2. **Decide.** Reuse, extend or build is the model's choice, and it is
-   recorded: the plan's deliverable names it, and the `propose_skill`
-   call names the parent when it extends. Nothing reads the request's
-   words to decide it.
+   recorded: the plan's deliverable names it. Extending is proposing
+   under the skill's own name: the new Library version's parent is that
+   skill's latest version, so there is no separate argument naming a
+   parent. Nothing reads the request's words to decide it.
+
+   As built (E3a): `propose_skill` takes `source`, a folder the Agent
+   wrote (in the workspace or its drafts, `drafts::existing`). The folder
+   becomes one bundle (`capability::bundle`, text files by path), its
+   `SKILL.md` is written from the call's own name, description and
+   instructions, and `Core::propose_skill_program` loads, verifies,
+   records and admits it. The tool's description carries
+   `capability::FORMAT`, the one statement of the folder's shape, and a
+   declaration that does not parse is refused with it: without it, a
+   live model wrote a command-line program and fixed one missing field
+   per refusal until the tool was withdrawn (2026-10-15).
 3. **Verify.** The runtime runs `tests/` (`Core::verify_skill_program`,
    `vak skills verify <name>`) in a run of its own, each case through
    the very path a call takes (`CapabilityTool`, its declared sandbox and
@@ -307,8 +322,9 @@ that proposed it, never from words:
 
 | Tier | When | What happens |
 |---|---|---|
-| **Live** | `hosts` empty, `writes` drafts or none, `reach` within read and command, tests passed, and the proposing turn held no untrusted content | live for the Agent at the next turn boundary |
-| **Review** | anything else: a host, a secret, an outside effect, a write outside drafts, a failed or missing test, or a turn that held untrusted content | a candidate in Review; the inbox says so |
+| **Live** | every test passed, no `hosts`, no install still to make, and the proposing turn held no untrusted content | installed in the Agent's own skills (`agents/<id>/skills`), discovered from its next turn |
+| **Review** | it passed, but declares a host, needs an install, or the proposing turn held untrusted content (`skill_programs::review_reason`) | a proposal in the review queue naming its Library version; promoting it installs that version in the Shared layer |
+| **Failed** | a test failed | not admitted; the version is kept in the Library with its failed verification, and the model is told each failing case |
 | **Live (packs)** | a presentation pack, which runs no code and reaches nothing | live with its version, whatever the program's tier |
 | **Refused** | a declaration the session itself could not use (wider than its mode), a schema that fails the portability checks, a program with no tests, an Office file or PDF in its drafts (R6) | refused with what to fix |
 
@@ -533,7 +549,7 @@ both sizes and themes). The tracker is `docs/plans/open-items.md`
 | **E0** | This design agreed; doc 43 superseded | decisions logged; tracker has E1–E8 |
 | **E1** | Executable skill: `run` frontmatter, the declaration → `Tool` declarations, `WorkerTask::Capability`, JSON in/out, pinned dependencies in the execution cache | a hand-written capability in the Shared layer is found by `find_tools`, called through the broker, refused the network it did not declare (tested on Seatbelt) |
 | **E2** | Verification: `tests/` run through the call path in a run of its own, results kept per program digest (Library rows in E3) | a failing test case is reported per case with the run id; a capability with a program and no tests is refused with what to add |
-| **E3** | Proposal and tiers: `propose_skill` takes a program, tests and `parent`; versions as Library artifacts; the tier gate; the Agent-live Document; registry epoch; AGENTS.md paragraph updated | a live turn builds a capability, it goes live and the next turn calls it; a turn that fetched a page first lands its proposal in Review |
+| **E3** | Proposal and tiers (E3a built: everything but the switch, the inbox and Review wording): `propose_skill` takes a program, tests and `parent`; versions as Library artifacts; the tier gate; the Agent-live Document; registry epoch; AGENTS.md paragraph updated | a live turn builds a capability, it goes live and the next turn calls it; a turn that fetched a page first lands its proposal in Review |
 | **E4** | Catalog source and the prompt index; `find_tools` ranking | a later conversation finds and reuses a capability built in an earlier one, and extends it with `parent` set |
 | **E5** | Measurement and R2: per-version measure, promotion offer, fix-then-withdraw ladder | a capability that fails is withdrawn for the Agent after its proposed fix fails again; one that meets R2 is offered for all Agents |
 | **E6** | Experience: §9.1–§9.5 in the client (projection line, sheet, Review, Library Abilities, Settings, inbox) | each screen's acceptance at 1440 × 900 and 390 × 844, light and dark, in the running app |

@@ -1,5 +1,11 @@
 ## Unreleased
 
+- An Agent can save a skill with a program it wrote and tested. Vakyartha
+  runs the program's tests itself; a skill whose tests pass, that reaches
+  no network and was not written after reading someone else's words is
+  the Agent's from its next turn, and any other waits for your review.
+  Each saved skill is a version in your Library, with how its tests went,
+  and saving it again under its name makes a new version.
 - `vak skills verify <name>` runs a skill's program against its own tests
   (`tests/<name>.json`: the arguments a call sends and the result it must
   give, or that it must fail) and says, case by case, what passed and

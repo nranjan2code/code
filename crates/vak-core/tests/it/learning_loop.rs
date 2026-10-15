@@ -223,6 +223,7 @@ async fn remember_propose_recall_promote_loop() {
         &cwd,
         &id,
         &skills,
+        None,
     )
     .unwrap();
     assert_eq!(promoted, "deploy-safely");
@@ -245,7 +246,8 @@ async fn remember_propose_recall_promote_loop() {
             &vak_config::scope::AgentScope::new(&home),
             &cwd,
             &id,
-            &skills
+            &skills,
+            None
         )
         .is_err()
     );

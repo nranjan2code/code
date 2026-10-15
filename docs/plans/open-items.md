@@ -162,9 +162,20 @@ live.
   digest; a program with no tests is refused with what to add. Checked
   live on the installed home (one case passed, one reported where it
   differed, exit 1, run id printed).
-- [ ] E3: proposal and tiers (`propose_skill` with program, tests,
-  presentation packs and `parent`; Library versions; the tier gate; registry epoch; the AGENTS.md
-  outcome-runtime paragraph on review of tools).
+- [x] E3a (2026-10-15): `propose_skill` with `source` (a folder the Agent
+  wrote); the skill a Library version of kind `Skill` (a bundle), parent
+  its latest version, with a typed `Verified` row; the tier gate (Live in
+  `agents/<id>/skills`, which discovery now reads after the project's;
+  Review naming the version, which promotion installs; Failed with each
+  case); `capability::FORMAT` in the description and refusals; AGENTS.md
+  paragraph. Checked live with gpt-6-luna: built, 4 of 4 tests, live, and
+  a fresh conversation used it.
+- [ ] E3b: the owner's switch "Let Agents switch on new abilities that only
+  work with your files" (on by default; off sends every proposal to
+  Review), an inbox entry for a program waiting for review, and the
+  approval and Review wording saying what it reaches. Presentation packs
+  in a skill (`presentation/`) are carried in the bundle but not yet
+  activated from an Agent's own skills.
 - [ ] E4: catalog source, prompt index, `find_tools` ranking; the tool
   carries the skill's `serves:` so it defers (E1a loads it every turn).
 - [ ] Seen live (E1a, dev route): a card the model drew after the

@@ -105,6 +105,85 @@ impl vak_tools::Tool for ForgetMemoryTool {
     }
 }
 
+impl ProposeSkillTool {
+    async fn propose_program(
+        &self,
+        name: &str,
+        description: &str,
+        instructions: &str,
+        source: &str,
+        ctx: &vak_tools::ToolContext,
+    ) -> vak_tools::ToolOutput {
+        use crate::skill_programs::{ProgramProposal, Standing};
+        let Some(core) = &self.core else {
+            return vak_tools::ToolOutput::error(
+                Fault::Refused,
+                "a skill with a program cannot be proposed here; leave out `source`",
+            );
+        };
+        let folder = match vak_tools::drafts::existing(ctx, source) {
+            Ok(folder) if folder.is_dir() => folder,
+            Ok(_) => {
+                return vak_tools::ToolOutput::error(
+                    Fault::Target,
+                    format!("{source} is not a folder"),
+                );
+            }
+            Err(error) => return vak_tools::ToolOutput::error(Fault::Target, error),
+        };
+        let call = ctx
+            .sandbox_sink
+            .as_ref()
+            .map(|sink| sink.execution_id().to_string())
+            .unwrap_or_default();
+        let proposed = match core
+            .propose_skill_program(ProgramProposal {
+                name,
+                description,
+                instructions,
+                folder: &folder,
+                session: &self.session_id,
+                call: &call,
+                held: ctx.provenance,
+            })
+            .await
+        {
+            Ok(proposed) => proposed,
+            Err(error) => return vak_tools::ToolOutput::error(Fault::Shape, error),
+        };
+        let cases = &proposed.verification.cases;
+        let passed = cases.iter().filter(|case| case.passed).count();
+        let failures: Vec<String> = cases
+            .iter()
+            .filter_map(|case| {
+                case.detail
+                    .as_ref()
+                    .map(|detail| format!("- {}: {detail}", case.name))
+            })
+            .collect();
+        match proposed.standing {
+            Standing::Live => vak_tools::ToolOutput::ok(format!(
+                "skill '{name}' passed {passed} of {} tests and is yours from your next turn \
+                 (Library version {}).",
+                cases.len(),
+                proposed.version
+            )),
+            Standing::Review { id, why } => vak_tools::ToolOutput::ok(format!(
+                "skill '{name}' passed {passed} of {} tests and waits for the person's review \
+                 as proposal {id}, because {why}. It is NOT available until they approve it.",
+                cases.len()
+            )),
+            Standing::Failed => vak_tools::ToolOutput::ok(format!(
+                "skill '{name}' was not admitted: {} of {} tests failed:\n{}\nFix the program or \
+                 its tests and propose it again.",
+                cases.len() - passed,
+                cases.len(),
+                failures.join("\n")
+            )),
+        }
+    }
+}
+
 impl RememberTool {
     /// What this tool declares to the permission engine, known before one
     /// is built.
@@ -226,6 +305,10 @@ pub struct ProposeSkillTool {
     pub sessions_home: PathBuf,
     pub cwd: PathBuf,
     pub session_id: String,
+    /// What a proposal with a program is checked, verified, recorded and
+    /// admitted through (`Core::propose_skill_program`); `None` where only
+    /// instructions can be proposed.
+    pub core: Option<crate::Core>,
 }
 
 impl ProposeSkillTool {
@@ -250,10 +333,14 @@ impl vak_tools::Tool for ProposeSkillTool {
     }
 
     fn description(&self) -> &str {
-        "Draft a reusable SKILL from something learned this session (a \
-         procedure that worked, a gotcha and its fix). Goes to a review \
-         queue — it becomes available to future runs ONLY after the user \
-         promotes it. Do not propose one-off steps."
+        "Save a reusable skill from something learned this session: a \
+         procedure that worked, or (with `source`) a program you wrote \
+         and tested. Instructions alone go to the person's review queue. \
+         With `source`, the folder's program and tests are checked and \
+         run; one that passes, reaches no network and was not written \
+         after reading someone else's words is yours from the next turn, \
+         anything else waits for the person. Proposing a skill again under \
+         its name improves it as a new version. Do not propose one-off steps."
     }
 
     fn schema(&self) -> Value {
@@ -265,13 +352,15 @@ impl vak_tools::Tool for ProposeSkillTool {
                 "description": {"type": "string",
                                 "description": "One line: what it is for and when to use it"},
                 "instructions": {"type": "string",
-                                 "description": "Markdown procedure the future agent should follow"}
+                                 "description": "Markdown procedure the future agent should follow"},
+                "source": {"type": "string",
+                           "description": format!("Optional: a folder you wrote for a skill with a program; its SKILL.md is written from name, description and instructions. {}", vak_tools::capability::FORMAT)}
             },
             "required": ["name", "description", "instructions"]
         })
     }
 
-    async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+    async fn execute(&self, args: &Value, ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let Some(name) = sanitize_name(args.get("name").and_then(Value::as_str).unwrap_or(""))
         else {
             return vak_tools::ToolOutput::error(
@@ -306,6 +395,16 @@ impl vak_tools::Tool for ProposeSkillTool {
             );
         }
 
+        if let Some(source) = args
+            .get("source")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|source| !source.is_empty())
+        {
+            return self
+                .propose_program(&name, description, instructions, source, ctx)
+                .await;
+        }
         let id = uuid::Uuid::now_v7().simple().to_string();
         let _ = vak_config::spaces::bind(&self.cwd);
         let dir = proposals_dir(
@@ -442,6 +541,7 @@ pub fn promote(
     cwd: &Path,
     id: &str,
     skills: &Path,
+    library: Option<&crate::artifacts::Artifacts>,
 ) -> Result<String, String> {
     let proposals = list_proposals(scope, cwd);
     let p = proposals
@@ -459,10 +559,44 @@ pub fn promote(
     }
     let text =
         vak_session::documents::read(&p.path)?.ok_or_else(|| format!("no proposal '{id}'"))?;
-    std::fs::create_dir_all(&target_dir).map_err(|e| format!("create skill dir: {e}"))?;
-    std::fs::write(&target, text).map_err(|e| format!("install skill: {e}"))?;
+    match library_version(&text) {
+        Some((artifact, version)) => {
+            let library = library.ok_or_else(|| {
+                format!("proposal '{id}' is a skill with a program; promote it where the Library is open")
+            })?;
+            let found = library
+                .get(&artifact)
+                .ok_or_else(|| format!("proposal '{id}' names a Library skill that is gone"))?;
+            let version = found
+                .versions
+                .iter()
+                .find(|known| known.id.to_string() == version)
+                .map(|known| known.id)
+                .ok_or_else(|| format!("proposal '{id}' names a version that is gone"))?;
+            let bytes = library
+                .bytes(&found, &version)
+                .map_err(|error| format!("proposal '{id}': {error}"))?;
+            crate::skill_programs::install(&bytes, &target_dir)?;
+        }
+        None => {
+            std::fs::create_dir_all(&target_dir).map_err(|e| format!("create skill dir: {e}"))?;
+            std::fs::write(&target, text).map_err(|e| format!("install skill: {e}"))?;
+        }
+    }
     vak_session::documents::forget(&p.path)?;
     Ok(p.name.clone())
+}
+
+/// The Library artifact and version a program proposal names, from its
+/// `library:` trailer.
+fn library_version(body: &str) -> Option<(String, String)> {
+    let line = body
+        .lines()
+        .rev()
+        .find(|line| line.contains("proposed-by:"))?;
+    let rest = line.split("library:").nth(1)?;
+    let mut parts = rest.trim().trim_end_matches("-->").split_whitespace();
+    Some((parts.next()?.to_string(), parts.next()?.to_string()))
 }
 
 pub fn reject(scope: &vak_config::scope::AgentScope, cwd: &Path, id: &str) -> Result<(), String> {
@@ -773,6 +907,7 @@ mod tests {
             sessions_home: home.clone(),
             cwd: cwd.clone(),
             session_id: "sess-a".into(),
+            core: None,
         };
         let ctx = vak_tools::ToolContext::new(cwd.clone());
         let args = serde_json::json!({
@@ -816,7 +951,8 @@ mod tests {
                 &vak_config::scope::AgentScope::new(&home),
                 &cwd,
                 &id,
-                &home.join("skills")
+                &home.join("skills"),
+                None
             )
             .unwrap(),
             "rotate-release-tags-v2"
@@ -843,6 +979,7 @@ mod tests {
             sessions_home: home.clone(),
             cwd: cwd.clone(),
             session_id: "sess-b".into(),
+            core: None,
         };
         let ctx = vak_tools::ToolContext::new(cwd.clone());
         let out = tool

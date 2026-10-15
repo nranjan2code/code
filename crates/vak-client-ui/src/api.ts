@@ -2502,7 +2502,7 @@ export interface ArtifactSummary {
   id: string;
   name: string;
   path: string;
-  kind: "file" | "document" | "changeset" | "card";
+  kind: "file" | "document" | "changeset" | "card" | "skill";
   agent: string;
   space: string;
   summary?: string | null;

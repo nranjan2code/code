@@ -18,6 +18,7 @@ const KIND: Record<ArtifactSummary["kind"], string> = {
   document: "Document",
   changeset: "Code changes",
   card: "Saved card",
+  skill: "Ability",
 };
 
 const CHANGED: { value: string; label: string; days: number }[] = [

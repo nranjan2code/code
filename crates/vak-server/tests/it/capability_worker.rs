@@ -338,3 +338,139 @@ async fn verification_runs_each_case_in_a_run_of_its_own_and_keeps_what_it_found
         "the run settled as its tests did"
     );
 }
+
+/// A folder the Agent prepared: a program splitting a bill, and its tests.
+fn prepared(workspace: &Path, folder: &str, divisor: &str, expect_each: u64) {
+    let dir = workspace.join(folder);
+    std::fs::create_dir_all(dir.join(vak_tools::capability::TESTS_DIR)).unwrap();
+    std::fs::write(
+        dir.join("run.py"),
+        format!(
+            "import json, sys\nargs = json.load(sys.stdin)\nprint(json.dumps({{'each': args['amount'] / {divisor}}}))\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join(DECLARATION),
+        json!({"entry": "run.py", "arguments": {"type": "object", "properties": {
+            "amount": {"type": "number", "description": "The bill"},
+            "people": {"type": "integer", "description": "How many share it"}
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("tests/even.json"),
+        json!({"arguments": {"amount": 90, "people": 3}, "expect": {"each": expect_each}})
+            .to_string(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_proposed_program_is_verified_versioned_and_admitted_by_its_tier() {
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(workspace.path()).unwrap();
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).unwrap();
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let tool = vak_core::learning::ProposeSkillTool {
+        sessions_home: core.scope().into_root(),
+        cwd: workspace.path().to_path_buf(),
+        session_id: "sess-propose".into(),
+        core: Some(core.clone()),
+    };
+    let propose = |source: &str| {
+        json!({"name": "split-bill-e3", "description": "Split a bill evenly",
+               "instructions": "Call the tool with the amount and people.", "source": source})
+    };
+    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_agent_id("vak");
+
+    prepared(workspace.path(), "first", "args['people']", 30);
+    let out = tool.execute(&propose("first"), &ctx).await;
+    assert!(!out.is_error(), "{}", out.content);
+    assert!(
+        out.content.contains("yours from your next turn"),
+        "{}",
+        out.content
+    );
+    let installed = core.scope().skills().join("split-bill-e3");
+    assert!(installed.join("SKILL.md").is_file() && installed.join("run.py").is_file());
+    let skill = core
+        .skills()
+        .into_iter()
+        .find(|skill| skill.name == "split-bill-e3")
+        .expect("the Agent's own skill is discovered");
+    assert_eq!(skill.provenance.as_deref(), Some("agent"));
+
+    prepared(workspace.path(), "second", "max(args['people'], 1)", 30);
+    let out = tool.execute(&propose("second"), &ctx).await;
+    assert!(
+        out.content.contains("yours from your next turn"),
+        "{}",
+        out.content
+    );
+    let artifact = core
+        .artifacts()
+        .list()
+        .into_iter()
+        .find(|artifact| artifact.kind == vak_core::artifacts::ArtifactKind::Skill)
+        .expect("recorded in the Library");
+    assert_eq!(artifact.versions.len(), 2);
+    assert_eq!(artifact.versions[1].parent, Some(artifact.versions[0].id));
+    assert!(
+        artifact
+            .versions
+            .iter()
+            .all(|version| version.verified.as_ref().is_some_and(|v| v.passed))
+    );
+    assert!(
+        std::fs::read_to_string(installed.join("run.py"))
+            .unwrap()
+            .contains("max(")
+    );
+
+    prepared(workspace.path(), "wrong", "args['people']", 31);
+    let out = tool.execute(&propose("wrong"), &ctx).await;
+    assert!(out.content.contains("not admitted"), "{}", out.content);
+    assert!(out.content.contains("$.each is 30"), "{}", out.content);
+    assert!(
+        !std::fs::read_to_string(installed.join("run.py"))
+            .unwrap()
+            .contains("31")
+    );
+
+    let mut held = ToolContext::new(workspace.path().to_path_buf()).with_agent_id("vak");
+    held.provenance = vak_control::Provenance::BOTH;
+    prepared(workspace.path(), "steered", "args['people']", 30);
+    let out = tool.execute(&json!({"name": "steered-skill", "description": "Split", "instructions": "Use it.", "source": "steered"}), &held).await;
+    assert!(
+        out.content.contains("waits for the person's review"),
+        "{}",
+        out.content
+    );
+    assert!(!core.scope().skills().join("steered-skill").exists());
+    let proposal = vak_core::learning::list_proposals(&core.scope(), workspace.path())
+        .into_iter()
+        .find(|proposal| proposal.name == "steered-skill")
+        .expect("queued for review");
+    let shared = tempfile::tempdir().unwrap();
+    let library = core.artifacts();
+    vak_core::learning::promote(
+        &core.scope(),
+        workspace.path(),
+        &proposal.id,
+        shared.path(),
+        Some(&library),
+    )
+    .unwrap();
+    assert!(
+        shared.path().join("steered-skill/run.py").is_file(),
+        "promoted with its program"
+    );
+    assert!(
+        Program::load(&shared.path().join("steered-skill"))
+            .unwrap()
+            .is_some()
+    );
+}

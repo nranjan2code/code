@@ -27,6 +27,11 @@ use crate::{Fault, Tool, ToolContext, ToolOutput};
 /// The file beside `SKILL.md` that makes a skill runnable.
 pub const DECLARATION: &str = "capability.json";
 
+/// What a runnable skill folder holds, as the one statement of it a model
+/// is shown: in `propose_skill`'s description and with every refusal of a
+/// declaration, so a caller learns the whole shape at once.
+pub const FORMAT: &str = "capability.json: {\"entry\": \"run.py\" (or .sh, .mjs), \"arguments\": a JSON Schema {\"type\": \"object\", \"properties\": {...}} whose every property has a \"type\" and a \"description\"} and, only when needed, \"hosts\": [exact host names it connects to], \"writes\": \"drafts\", \"requirements\": {\"file\": \"requirements.txt\" with every package pinned by hash, \"hosts\": [its package index hosts]}. The program reads its arguments as one JSON object on stdin and prints one JSON value on stdout. Each test is tests/<name>.json: {\"arguments\": {...}, \"expect\": {the keys the result must have}} or {\"arguments\": {...}, \"fails\": true}.";
+
 /// The folder of a runnable skill's test cases, one JSON file each.
 pub const TESTS_DIR: &str = "tests";
 
@@ -268,8 +273,9 @@ impl Program {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(format!("{DECLARATION} cannot be read: {error}")),
         };
-        let declaration: Declaration = serde_json::from_str(&text)
-            .map_err(|error| format!("{DECLARATION} is not a valid declaration: {error}"))?;
+        let declaration: Declaration = serde_json::from_str(&text).map_err(|error| {
+            format!("{DECLARATION} is not a valid declaration ({error}). Expected {FORMAT}")
+        })?;
         let entry = inside(dir, &declaration.entry)?;
         let interpreter = Interpreter::of(&entry).ok_or_else(|| {
             format!(
@@ -367,6 +373,78 @@ impl Program {
             vak_control::Provenance::BOTH
         }
     }
+}
+
+/// A skill folder as one value: every file by its relative path, text only,
+/// in path order, so the same folder is always the same bytes. A Library
+/// version of a skill holds this (docs/design/93 §6).
+pub fn bundle(dir: &Path) -> Result<Vec<u8>, String> {
+    let mut files = std::collections::BTreeMap::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        let entries =
+            std::fs::read_dir(&next).map_err(|error| format!("cannot list the skill: {error}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("cannot list the skill: {error}"))?;
+            let kind = entry
+                .file_type()
+                .map_err(|error| format!("cannot list the skill: {error}"))?;
+            if kind.is_symlink() {
+                return Err("a skill may not contain symlinks".into());
+            }
+            if kind.is_dir() {
+                pending.push(entry.path());
+                continue;
+            }
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(dir)
+                .map_err(|_| "a skill file is outside its folder".to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let bytes =
+                std::fs::read(&path).map_err(|error| format!("cannot read {relative}: {error}"))?;
+            let text = String::from_utf8(bytes)
+                .map_err(|_| format!("{relative} is not text; a skill holds text files only"))?;
+            files.insert(relative, text);
+        }
+    }
+    serde_json::to_vec(&serde_json::json!({ "files": files }))
+        .map_err(|error| format!("the skill did not encode: {error}"))
+}
+
+/// Writes a [`bundle`] out as a folder at `into`, which must not exist yet.
+/// A path that is absolute or climbs out is refused.
+pub fn unbundle(bytes: &[u8], into: &Path) -> Result<(), String> {
+    let value: Value =
+        serde_json::from_slice(bytes).map_err(|_| "not a skill bundle".to_string())?;
+    let files = value
+        .get("files")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "not a skill bundle".to_string())?;
+    if into.exists() {
+        return Err(format!("{} already exists", into.display()));
+    }
+    for (relative, text) in files {
+        let candidate = Path::new(relative);
+        if relative.is_empty()
+            || candidate
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
+        {
+            return Err(format!("'{relative}' is not a path inside a skill"));
+        }
+        let text = text
+            .as_str()
+            .ok_or_else(|| format!("'{relative}' is not text"))?;
+        let path = into.join(candidate);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot write the skill: {error}"))?;
+        }
+        std::fs::write(&path, text).map_err(|error| format!("cannot write the skill: {error}"))?;
+    }
+    Ok(())
 }
 
 /// The environment for these requirements under this interpreter.
@@ -1377,6 +1455,31 @@ mod tests {
                 .is_ok()
         );
         assert!(fails.judge(&answer(json!({})), false).is_err());
+    }
+
+    #[test]
+    fn a_bundle_is_the_folder_and_writes_back_as_it() {
+        let dir = skill(json!({"entry": "run.py", "arguments": arguments()}));
+        let bytes = bundle(dir.path()).unwrap();
+        assert_eq!(
+            bytes,
+            bundle(dir.path()).unwrap(),
+            "the same folder is the same bytes"
+        );
+        let out = tempfile::tempdir().unwrap();
+        let copy = out.path().join("copy");
+        unbundle(&bytes, &copy).unwrap();
+        assert_eq!(bundle(&copy).unwrap(), bytes);
+        assert_eq!(
+            Program::load(&copy).unwrap().unwrap().digest,
+            Program::load(dir.path()).unwrap().unwrap().digest
+        );
+        assert!(
+            unbundle(&bytes, &copy).is_err(),
+            "never over an existing folder"
+        );
+        let escape = serde_json::to_vec(&json!({"files": {"../x": "no"}})).unwrap();
+        assert!(unbundle(&escape, &out.path().join("other")).is_err());
     }
 
     #[test]

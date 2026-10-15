@@ -39,6 +39,9 @@ pub enum ArtifactKind {
     Changeset,
     /// A card a person saved out of a conversation.
     Card,
+    /// A skill folder, as one bundle (`vak_tools::capability::bundle`):
+    /// what an Agent proposed or learned (docs/design/93 §6).
+    Skill,
 }
 
 /// Where a version came from.
@@ -171,6 +174,14 @@ pub enum ArtifactStep {
     Downloaded {
         version: VersionId,
     },
+    /// The runtime ran this version's tests (a skill's program): which run,
+    /// and whether every case passed. What each case found is that run's
+    /// report (`Core::skill_program_verification`).
+    Verified {
+        version: VersionId,
+        run: String,
+        passed: bool,
+    },
     /// A comment on a version, by the owner, a guest of its conversation or
     /// through a share: the one thread a version has (plan M8.4c-b).
     Commented {
@@ -272,6 +283,16 @@ pub struct Version {
     /// What its turn read before the call that made it (doc 90 §5.1).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub derived_from: Vec<vak_tools::ReadInput>,
+    /// The last run of its tests, for a skill version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified: Option<Verified>,
+}
+
+/// A version's tests as the runtime last ran them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Verified {
+    pub run: String,
+    pub passed: bool,
 }
 
 impl Version {
@@ -538,6 +559,7 @@ fn apply(state: &mut State, event: ArtifactEvent) {
                     undone: false,
                     title,
                     derived_from,
+                    verified: None,
                 });
             }
         }
@@ -567,6 +589,7 @@ fn apply(state: &mut State, event: ArtifactEvent) {
                     undone: false,
                     title: None,
                     derived_from: Vec::new(),
+                    verified: None,
                 });
             }
         }
@@ -603,6 +626,19 @@ fn apply(state: &mut State, event: ArtifactEvent) {
             {
                 found.promoted = false;
                 found.undone = true;
+            }
+        }
+        ArtifactStep::Verified {
+            version,
+            run,
+            passed,
+        } => {
+            if let Some(found) = artifact
+                .versions
+                .iter_mut()
+                .find(|known| known.id == version)
+            {
+                found.verified = Some(Verified { run, passed });
             }
         }
         ArtifactStep::Saved { version } => {

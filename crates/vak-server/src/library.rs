@@ -753,6 +753,9 @@ pub(crate) fn attach(
         vak_core::artifacts::ArtifactKind::Document => {
             "with `office_apply` (the change is a draft the person reviews)"
         }
+        vak_core::artifacts::ArtifactKind::Skill => {
+            "by preparing its folder and calling `propose_skill` with `extends` naming it"
+        }
         _ => "with `edit`, or `write` the whole file",
     };
     let ask = match reference.mode {
@@ -774,6 +777,7 @@ pub(crate) fn attach(
         vak_core::artifacts::ArtifactKind::Document => "a document",
         vak_core::artifacts::ArtifactKind::Changeset => "code changes",
         vak_core::artifacts::ArtifactKind::Card => "a saved card",
+        vak_core::artifacts::ArtifactKind::Skill => "a skill",
         vak_core::artifacts::ArtifactKind::File => "a file",
     };
     // The digest stays in the typed attachment: shown to the model, it read
