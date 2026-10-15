@@ -10,6 +10,16 @@
   it, as the Agent's reply marked "Scheduled" with its name and time, and
   you can answer it there ("make it shorter"). A run that could not start
   says why in the same place. The Inbox still lists each one.
+- When the Agent makes or changes an automation, a card under its answer
+  shows it in plain words with its next and last run, and lets you
+  pause or resume it, run it now, change its time with a picker, or
+  delete it.
+- Managing automations no longer asks for approval each time in
+  workspace-write mode; adding or changing a shell check still asks, and
+  can be remembered as a command rule.
+- An automation in a folder that is not a git repository uses that
+  folder's model; it ran with none. A scheduled run whose model call
+  failed is reported as failed, with the reason, instead of finished.
 - Ask the Agent to change an automation by its name: "move my morning
   line to 9", "pause it", "run it now". `vak triggers` says `pause` and
   `resume` in place of `disable` and `enable`.

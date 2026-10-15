@@ -358,7 +358,9 @@ pub struct Trigger {
     /// there as a turn (docs/design/94 §4). `deliver_to` sends it on too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<Home>,
-    /// Who last made or changed it.
+    /// What made it, or the Agent's turn that last changed it: where its
+    /// card is drawn. The owner changing it on a screen leaves this alone,
+    /// so a card does not leave the turn it is under.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<MadeBy>,
 }

@@ -2229,11 +2229,15 @@ export interface TriggerDraft {
   agent?: string | null;
   agent_revision?: number | null;
   enabled?: boolean;
-  kind: import("./types").TriggerKind;
+  /** The stored schedule; a person's pick goes in `repeat` instead. */
+  kind?: import("./types").TriggerKind;
+  repeat?: import("./types").Repeat;
   action: import("./types").TriggerAction;
   deliver_to?: string | null;
   on_crash?: "skip" | "retry_once";
   scope?: import("./types").RoutineScope | null;
+  /** The conversation its results go to (a session id). */
+  home?: string | null;
 }
 
 export function createTrigger(draft: TriggerDraft): Promise<import("./types").Trigger> {

@@ -550,6 +550,16 @@ export type TriggerSchedule =
 
 export type TriggerKind = { kind: "schedule"; schedule: TriggerSchedule } | { kind: "manual" };
 
+/** How a person picks a schedule (`triggers::Repeat`, docs/design/94 §5). */
+export type Repeat =
+  | { kind: "once"; at: string }
+  | { kind: "daily"; time: string }
+  | { kind: "weekdays"; time: string }
+  | { kind: "weekly"; days: number[]; time: string }
+  | { kind: "every_minutes"; minutes: number }
+  | { kind: "every_hours"; hours: number }
+  | { kind: "custom"; cron: string };
+
 export type TriggerAction =
   | { kind: "prompt"; text: string; model_pin?: string | null }
   | { kind: "script"; command: string };
@@ -592,6 +602,12 @@ export interface Trigger {
   /** When a run last finished its work: a mail watch's last successful check. */
   last_completed_at?: string | null;
   delivery_state?: string | null;
+  /** When it runs, in the words every surface uses (`triggers::describe`). */
+  when_words?: string;
+  /** The conversation its results are delivered into. */
+  home?: { agent: string; session: string } | null;
+  /** What last made or changed it. */
+  made_by?: { kind: "turn"; session: string; turn: string } | { kind: "owner" } | null;
   /** The last run's message a person may send again, when there is one. */
   delivery_effect?: string | null;
   running?: boolean;

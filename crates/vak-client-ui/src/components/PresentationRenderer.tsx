@@ -40,6 +40,7 @@ import { artifactPreviewHtml, type ArtifactPreviewReader } from "../artifactPrev
 import { fileKind, newestWaitingDraft, statusWords } from "../resultCard";
 import { relAgo } from "../time";
 import Skeleton from "./Skeleton";
+import AutomationCard from "./AutomationCard";
 import { approvalNetworkNote, approvalSubjects, approvalTitle, mcpServerName } from "../approvalSubject";
 import { mcpServerNetwork } from "../mcpNetwork";
 import * as api from "../api";
@@ -1527,6 +1528,17 @@ export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRende
 }
 
 export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean }) {
+  // The automations a turn made or changed (docs/design/94 §5), read again
+  // whenever the conversation grows, so a card follows its record.
+  const [automations, { refetch: refetchAutomations }] = createResource(
+    () => `${props.sessionId}:${props.timeline.items.length}`,
+    () => api.listTriggers().then((list) => list.triggers.filter((trigger) => trigger.made_by?.kind === "turn" && trigger.made_by.session === props.sessionId)).catch(() => []),
+  );
+  const [ownerZone] = createResource(() => api.getConfig().then((config) => config.owner?.timezone).catch(() => undefined));
+  const automationsOf = (turn: string) => {
+    const directive = props.timeline.items.find((item) => item.turn_id === turn && item.role === "user")?.provenance?.entry_id;
+    return directive ? (automations() ?? []).filter((trigger) => trigger.made_by?.kind === "turn" && trigger.made_by.turn === directive) : [];
+  };
   const sameItems = (previous: OutputItem[], next: OutputItem[]) =>
     previous.length === next.length && previous.every((item, index) => item === next[index]);
   const turns = createMemo(() => {
@@ -1554,7 +1566,10 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
       const items = createMemo(() => props.timeline.items.filter((item) =>
         item.turn_id === id && !(props.hideUser && item.role === "user")), undefined, { equals: sameItems });
       const outline = createMemo(() => props.timeline.answers?.find((answer) => answer.turn_id === id));
-      return <Turn id={id} items={items()} outline={outline()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />;
+      return <>
+        <Turn id={id} items={items()} outline={outline()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />
+        <For each={automationsOf(id)}>{(trigger) => <AutomationCard trigger={trigger} zone={ownerZone()} onChanged={() => void refetchAutomations()} />}</For>
+      </>;
     }}</For>
   </div>;
 }

@@ -1,3 +1,11 @@
+- [ ] Live, dev route (2026-10-15): "Pause my morning line." was
+  answered "The morning line is paused" with no call. Cause: the set of
+  tools a session has loaded ("stays loaded for the session", doc 88
+  §12.1) is `Core::inner.loaded_tools`, in process memory; the dev server
+  had restarted since the turn that found `automations`, so it was
+  deferred again and the turn did not call `find_tools`. Derive the
+  carried set from the session's ledger (the tools its turns called or
+  loaded) rather than memory, so a restart changes nothing.
 # Open items
 
 Status: the one tracker of what is not done, kept current. Started
@@ -221,6 +229,19 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   conversation as a turn marked `MessageMeta::scheduled`, at a turn
   boundary, with the run's provenance; the client draws a "Scheduled"
   head. Tests in `vak-server/tests/it/scheduled_runs.rs`.
+- [x] Live on the dev route (2026-10-15): "every day at 7am … morning
+  line" made it with its home; "move my morning line to 9, then run it
+  now" changed and ran it; the answer arrived as a Scheduled turn and
+  "make it shorter" followed it. Found and fixed on the way: every
+  automations call asked and could not be remembered (it declared no
+  reach; now `Reach::Schedule`: a store write, or the command its
+  `script` schedules); a run in a copy of a folder had no route (the
+  copy holds no `.vak`; it takes the folder's live route); and a turn
+  whose dispatch failed was reported "completed" (`begin_turn` now
+  reports the outcome).
+- [ ] A run in a copy of a folder still reads the rest of its
+  configuration (permission mode, prompt layers) from the copy, which
+  has no `.vak`: give it the folder's project layer.
 - [ ] Draw a delivered run's cards as cards in the home conversation
   (they arrive in their text form today).
 - [x] S2 (2026-10-15): `triggers::describe` (`Trigger::when_words`) is the
@@ -237,7 +258,20 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   installs in `start_scheduler` (pooled and Agent Cores adopt it), so it
   takes the same claim as `POST /triggers/{id}/run`. `vak triggers`
   says pause and resume too.
-- [ ] S4: the automation card in chat.
+- [x] S4 (2026-10-15): the automation card in chat
+  (`AutomationCard.tsx`) under the turn its `made_by` names, drawn from
+  the trigger record: plain words, next run, last run, Pause or Resume,
+  Run now, Change time (`SchedulePicker.tsx`, posts `repeat`) and
+  Delete. The owner's changes from a screen leave `made_by` alone, so a
+  card stays under its turn. Checked live at 1440 × 900 light and
+  390 × 844 dark (change time, pause and resume from the card).
+- [ ] Live, dev route (2026-10-15): "Pause my morning line." was
+  answered "The morning line is paused" with no call (a callout card
+  only); `automations` is a deferred tool there (reached through
+  `find_tools`, which the turn did not call). Find what in the tool
+  surface left it out of reach (doc 68 §5: whether the More-tools
+  catalogue names it, and whether a conversation that owns automations
+  should load the tool) before calling it model behaviour.
 - [ ] S5: the Automations page (replaces `AutomationsModal`).
 
 ## Installed 7.2.0 run (docs/audits/installed-7.2.0-run-2026-10-14.md)

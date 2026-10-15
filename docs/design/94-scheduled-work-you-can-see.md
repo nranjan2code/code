@@ -6,7 +6,8 @@ Settings, `at` in local time, a cron always names its zone, the gap
 rule, with fixed-clock tests); S1 built 2026-10-15 (`home`, `made_by`,
 delivery into the conversation); S2 built 2026-10-15 (`describe`,
 `Repeat`; the picker screen with S5); S3 built 2026-10-15 (the tool's
-change, pause, resume, run_now by name); S4 and S5 not built.
+change, pause, resume, run_now by name); S4 built 2026-10-15 (the card
+in chat); S5 not built.
 Agreed with the maintainer on 2026-10-15. Paths below describe targets and may not exist yet. Rewrites the
 experience of automations; the engine stays `vak_core::triggers`
 (doc 73 §8, invariant 38).
@@ -65,10 +66,12 @@ fields and gains, additively (invariant 29):
   means the Inbox".
 - **`deliver_to`** stays the one way to send it elsewhere too (a
   channel target such as `telegram:12345`), never a second field.
-- **`made_by`**: the turn or the person that last created or changed it
-  (`{session, turn}` from the call's trace key, or the owner), so the
-  chat can show the card under the turn that made the change without
-  reading any tool's name.
+- **`made_by`**: what made it (`{session, turn}` from the call's trace
+  key, or the owner on a screen or the command line), replaced when the
+  Agent changes it in a later turn, so the chat shows the card under the
+  turn that made the change without reading any tool's name. The owner
+  changing it on a screen leaves `made_by` alone, so a card stays under
+  its turn while the person uses its buttons.
 
 How a schedule is said is one function, `triggers::describe(&Schedule,
 now) -> String` ("Weekdays at 8:00 AM", "Every 2 hours", "Once, on

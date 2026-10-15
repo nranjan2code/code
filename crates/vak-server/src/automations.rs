@@ -421,7 +421,6 @@ pub(crate) async fn put_trigger(
             session,
         });
     }
-    candidate.made_by = Some(triggers::MadeBy::Owner);
     candidate.in_zone(&state.core.owner_timezone());
     if let Err(response) = check_routine(&state, &candidate).await {
         return *response;

@@ -2892,6 +2892,29 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
   margin-bottom: var(--space-1);
   padding-right: 6px;
 }
+.automation-card {
+  margin: var(--space-2) 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  font-size: var(--fs-control);
+  max-width: 640px;
+}
+.automation-card header { display: flex; align-items: center; gap: var(--space-2); color: var(--text); }
+.automation-card .automation-state { font-size: var(--fs-caption); color: var(--muted); }
+.automation-card .automation-when { margin: var(--space-1) 0 0; color: var(--text); }
+.automation-card .automation-meta { margin: var(--space-1) 0 var(--space-3); font-size: var(--fs-caption); color: var(--muted); }
+.automation-card .automation-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.automation-card .automation-error { margin: var(--space-2) 0 0; color: var(--red); font-size: var(--fs-caption); }
+.automation-card.removed { color: var(--muted); font-size: var(--fs-caption); border-style: dashed; }
+.schedule-picker { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-3); margin-top: var(--space-3); }
+.schedule-picker label { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--fs-caption); color: var(--muted); }
+.schedule-picker label:has(.settings-number) { flex-direction: row; align-items: center; }
+.schedule-days { display: flex; gap: var(--space-1); }
+.schedule-day { padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: transparent; color: var(--text-soft); font-size: var(--fs-caption); }
+.schedule-day[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.schedule-zone { font-size: var(--fs-caption); color: var(--muted); align-self: center; }
 .scheduled-turn-head {
   display: flex;
   align-items: center;
