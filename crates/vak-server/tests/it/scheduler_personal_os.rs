@@ -248,8 +248,15 @@ fn stale_script(
         space: vak_config::spaces::bind(ws).unwrap(),
         enabled: true,
         kind: vak_core::triggers::TriggerKind::Schedule {
+            // Hourly, 30 minutes from now: slots were missed since it was
+            // made two hours ago, and no slot falls due while a test waits.
+            // Every minute raced the wall clock: a window crossing a minute
+            // saw the real next slot fire and read it as a catch-up.
             schedule: vak_core::triggers::Schedule::Cron {
-                expr: "* * * * *".into(),
+                expr: format!(
+                    "{} * * * *",
+                    (chrono::Timelike::minute(&chrono::Utc::now()) + 30) % 60
+                ),
                 timezone: None,
             },
         },
