@@ -110,7 +110,7 @@ pub fn provenance_of_reach(reach: vak_permission::Reach) -> vak_control::Provena
     use vak_control::Provenance;
     use vak_permission::Reach;
     match reach {
-        Reach::ReadPath | Reach::ReadStore | Reach::Command | Reach::Learning => {
+        Reach::ReadPath | Reach::ReadStore | Reach::Command | Reach::Learning | Reach::Schedule => {
             Provenance::PRIVATE
         }
         Reach::Network | Reach::Integration => Provenance::UNTRUSTED,

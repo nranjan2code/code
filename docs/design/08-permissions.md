@@ -69,7 +69,7 @@ text.
 The engine knows no tool by name. Each tool declares, through
 `Tool::permission`, a `vak_permission::Declared`: its **reach** (`Display`,
 `Coordination`, `ReadPath`, `ReadStore`, `WritePath`, `Learning`, `Command`,
-`Network`, `Integration`, or `Other`) and its **rule subject** (what a rule's
+`Schedule`, `Network`, `Integration`, or `Other`) and its **rule subject** (what a rule's
 pattern matches: the path in a named argument, the shell command in a named
 argument, the text of a named argument, an integration call's
 `server/tool`, or nothing). The mode defaults read the reach; rules, hook
@@ -86,6 +86,7 @@ descriptions read the subject.
 | `Command` | deny | ask | allow |
 | `Network` | ask | ask | allow |
 | `Integration` | its `list` action reads; anything else is `Other` | same | allow |
+| `Schedule` | its `list` action reads; a call that sets `script` is that `Command` (rules match the script); anything else is `Learning` | same | allow |
 | `Other` (nothing declared) | deny | ask | allow |
 
 Where the engine learns the declarations:
@@ -128,7 +129,7 @@ read from its reach unless it says otherwise (`provenance_of_reach`):
 
 | Reach | Holds |
 |---|---|
-| `ReadPath`, `ReadStore`, `Command`, `Learning` | private |
+| `ReadPath`, `ReadStore`, `Command`, `Learning`, `Schedule` | private |
 | `Network`, `Integration` | untrusted |
 | `Display`, `Coordination`, `WritePath`, `Other` | nothing |
 

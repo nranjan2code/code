@@ -143,6 +143,7 @@ impl PermissionEngine {
         mode: Mode,
         cwd: &std::path::Path,
     ) -> Decision {
+        let declared = declared.for_call(args);
         if self
             .allowed_reach
             .as_ref()
@@ -555,5 +556,42 @@ mod tests {
             denied.evaluate("ask_parent", &args, Mode::FullAccess, cwd),
             Decision::Deny { .. }
         ));
+    }
+
+    #[test]
+    fn an_automation_call_is_a_read_a_store_write_or_the_command_it_schedules() {
+        let cwd = std::path::Path::new(".");
+        let engine = PermissionEngine::new(Vec::new());
+        let schedule = Declared::reach(Reach::Schedule);
+        let decide = |args: serde_json::Value, mode| {
+            engine.evaluate_as("automations", schedule, &args, mode, cwd)
+        };
+        let prompt = serde_json::json!({"action": "add", "prompt": "a line", "cron": "0 8 * * *"});
+        let script = serde_json::json!({"action": "add", "script": "df -h", "every_secs": 3600});
+        let pause = serde_json::json!({"action": "pause", "automation": "line"});
+        let list = serde_json::json!({"action": "list"});
+        for args in [&prompt, &pause, &list] {
+            assert!(
+                matches!(decide(args.clone(), Mode::WorkspaceWrite), Decision::Allow),
+                "{args}"
+            );
+        }
+        assert!(matches!(
+            decide(script.clone(), Mode::WorkspaceWrite),
+            Decision::Ask { .. }
+        ));
+        assert!(matches!(decide(list, Mode::ReadOnly), Decision::Allow));
+        assert!(matches!(
+            decide(prompt, Mode::ReadOnly),
+            Decision::Deny { .. }
+        ));
+        let allowed = PermissionEngine::new(vec![Rule::parse("+automations(df -h)").unwrap()]);
+        assert!(
+            matches!(
+                allowed.evaluate_as("automations", schedule, &script, Mode::WorkspaceWrite, cwd),
+                Decision::Allow
+            ),
+            "a remembered command rule covers the script it schedules"
+        );
     }
 }

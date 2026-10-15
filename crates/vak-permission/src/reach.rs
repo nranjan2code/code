@@ -25,6 +25,11 @@ pub enum Reach {
     Learning,
     /// Runs a shell command.
     Command,
+    /// Manages the owner's automations: what runs later and when. Listing
+    /// reads; a call that sets a shell command (its `script` argument) is
+    /// judged as that command, because a script runs unasked when it fires;
+    /// anything else writes Vak's own store, as `Learning` does.
+    Schedule,
     /// Reaches outside the workspace and this machine.
     Network,
     /// A broker to installed integrations: listing its catalogue reads,
@@ -62,6 +67,22 @@ pub struct Declared {
 }
 
 impl Declared {
+    /// What this call reaches, where that depends on its arguments: a
+    /// `Schedule` call is a read, a command, or a store write.
+    pub fn for_call(self, args: &serde_json::Value) -> Self {
+        if self.reach != Reach::Schedule {
+            return self;
+        }
+        let arg = |key: &str| args.get(key).and_then(serde_json::Value::as_str);
+        if arg("script").is_some_and(|script| !script.trim().is_empty()) {
+            Self::new(Reach::Command, Subject::Command("script"))
+        } else if arg("action") == Some("list") {
+            Self::reach(Reach::ReadStore)
+        } else {
+            Self::reach(Reach::Learning)
+        }
+    }
+
     pub const fn new(reach: Reach, subject: Subject) -> Self {
         Self { reach, subject }
     }

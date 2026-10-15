@@ -20124,6 +20124,13 @@ async fn spawn_isolated_run(
     if let Some(pin) = model_pin.map(str::trim).filter(|p| !p.is_empty()) {
         let (pin_provider, pin_model) = split_model_pin(pin, &child_core.effective_provider());
         child_core.set_route(pin_provider, pin_model);
+    } else if wt.path != *state.core.cwd() {
+        // A copy of the folder holds none of its `.vak` layer, so the run
+        // takes the folder's live route, as it stands when the run starts.
+        let route = state.core.effective_route();
+        if !route.provider.is_empty() && !route.model.is_empty() {
+            child_core.set_route(route.provider, route.model);
+        }
     }
 
     let child_log = child_core
@@ -20207,7 +20214,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
         match outcome {
-            Ok((_, mut restored)) => {
+            Ok((outcome, mut restored)) => {
                 for activity in std::mem::take(
                     &mut *h2
                         .activity_buffer
@@ -20223,10 +20230,19 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
                 *h2.session
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
-                let _ = h2.events_tx.send(AgentEvent::RunFinished {
-                    summary: "completed".into(),
-                    is_error: false,
-                });
+                // A turn that ended without its answer says how it ended.
+                let (summary, is_error) = match outcome.run_outcome() {
+                    vak_session::runs::RunOutcome::Completed => ("completed".to_string(), false),
+                    vak_session::runs::RunOutcome::Failed { reason } => {
+                        (format!("error: {reason}"), true)
+                    }
+                    vak_session::runs::RunOutcome::Cancelled => {
+                        ("error: it was stopped".to_string(), true)
+                    }
+                };
+                let _ = h2
+                    .events_tx
+                    .send(AgentEvent::RunFinished { summary, is_error });
             }
             Err(e) => {
                 // Same leak class as side chats: restore from the durable

@@ -56,6 +56,28 @@ impl Provider for Counting {
     }
 }
 
+/// A provider that refuses every request as the caller's mistake.
+struct Refusing(crate::support::CapacityKey);
+
+#[async_trait::async_trait]
+impl Provider for Refusing {
+    fn name(&self) -> &str {
+        "refusing"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.0.0.clone()
+    }
+
+    async fn stream(
+        &self,
+        _request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        Err(LlmError::InvalidRequest("model is required".into()))
+    }
+}
+
 struct GatedProvider {
     capacity_key: crate::support::CapacityKey,
     calls: Arc<AtomicUsize>,
@@ -824,4 +846,61 @@ async fn a_refused_run_delivers_its_reason_into_its_home_conversation() {
         server.get(&transcript).await.1
     );
     assert_eq!(server.dispatches.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_run_whose_dispatch_failed_delivers_the_failure_not_a_completion() {
+    let (_dir, ws, home, ids) = space(true, |ws| {
+        let mut trigger = prompt_trigger("refused", ws, "vak");
+        trigger.enabled = false;
+        vec![trigger]
+    });
+    let id = ids[0].as_str();
+    vak_config::paths::isolate_home_for_tests();
+    let core = Core::new_with_trust(ws.clone(), true).unwrap();
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    core.set_provider_instance(Arc::new(Refusing(crate::support::CapacityKey::default())));
+    let server = serve_core(core, Arc::new(AtomicUsize::new(0))).await;
+    let created = server
+        .client()
+        .post(format!("{}/sessions", server.base))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let session = created["session_id"].as_str().unwrap().to_string();
+    assert!(
+        server
+            .edit(id, |trigger| trigger["home"] = serde_json::json!(session))
+            .await
+            .is_success()
+    );
+    server.run_now(id).await;
+    assert!(
+        eventually(30, || async {
+            server.last_run_status(id).await == "failed"
+        })
+        .await,
+        "a refused dispatch fails its run: {}",
+        server.trigger(id).await
+    );
+    let transcript = format!("/sessions/{session}/transcript");
+    assert!(
+        eventually(20, || async {
+            server
+                .get(&transcript)
+                .await
+                .1
+                .to_string()
+                .contains("\"text\":\"error: ")
+        })
+        .await,
+        "the failure reached the conversation: {}",
+        server.get(&transcript).await.1
+    );
 }

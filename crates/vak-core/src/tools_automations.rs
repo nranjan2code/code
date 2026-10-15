@@ -373,6 +373,10 @@ impl vak_tools::Tool for AutomationsTool {
         &["orchestration"]
     }
 
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::reach(vak_permission::Reach::Schedule)
+    }
+
     fn description(&self) -> &str {
         "Manage the owner's automations: prompts or shell checks that run on \
          their own later. Use for any request to be reminded, checked in on, \
