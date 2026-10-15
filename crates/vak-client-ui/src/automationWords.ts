@@ -67,5 +67,9 @@ export function nextRunWords(at: string | null | undefined): string {
 
 /** What it does, in one line. */
 export function actionText(trigger: Pick<Trigger, "action">): string {
-  return trigger.action.kind === "prompt" ? trigger.action.text : trigger.action.command;
+  switch (trigger.action.kind) {
+    case "prompt": return trigger.action.text;
+    case "script": return trigger.action.command;
+    case "ability_review": return "Looks at the abilities that failed and proposes fixes for your review";
+  }
 }

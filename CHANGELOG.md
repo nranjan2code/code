@@ -1,5 +1,10 @@
 ## Unreleased
 
+- An Agent can look at its abilities that failed each night and propose
+  fixes, every one waiting for your review. Turn it on in Settings,
+  Capabilities, Learned, or from the inbox the first time an ability
+  fails; a night with nothing failed costs nothing. Anything proposed by
+  scheduled work now always waits for your review.
 - The admin console has Learned abilities: every Agent's abilities and
   the skills every Agent finds, with Take back, which stops the next
   call at once. How the models did adds each ability version's calls,

@@ -150,7 +150,7 @@ function AbilitySheetBody(props: { name: string; agent?: string }) {
     const name = found.name;
     return (
       <>
-        <Show when={found.state === "waiting" && found.proposal}>
+        <Show when={found.proposal}>
           {(id) => (
             <>
               <Show
@@ -201,7 +201,7 @@ function AbilitySheetBody(props: { name: string; agent?: string }) {
                     <For each={found().reaches}>{(line) => <li>{line}</li>}</For>
                   </ul>
                 </Show>
-                <Show when={found().why}><p class="ability-why">It is waiting because {found().why}.</p></Show>
+                <Show when={found().why}><p class="ability-why">{found().state === "waiting" ? "It is waiting" : "A new version is waiting"} because {found().why}.</p></Show>
                 <Show when={waitingVersion()}>
                   {(waiting) => <p class="ability-muted">Version {waiting().number}: {changeWords(waiting()).toLowerCase().replace(/\.$/, "")}; {waiting().tests ? testWords(waiting().tests!).toLowerCase() : "not tested."}</p>}
                 </Show>

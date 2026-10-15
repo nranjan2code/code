@@ -33,7 +33,8 @@ built and checked (E6d: the capability sheet, Review in it, Library
 filters and Needs you, Settings > Capabilities as Learned / Installed /
 Connections / Discover, inbox entries open their ability), and E7 (admin
 Learned abilities with revoke, the per-version table, `vak skills`
-verbs). Next is E8 (the opt-in review of failures, doc 93 §8), then E9.
+verbs), and E8 (the nightly review of failures). Next is E9 (card data
+from a capability call, doc 93 R5 and §11).
 Build each as a
 design, never spot fixes or tuned numbers.
 
@@ -79,8 +80,8 @@ route pin); a scheduled run's cards are drawn as cards in the home turn
 model still reads their text). Left on the dev home: the "morning line"
 automation and its test conversation.
 
-**Self-evolving capabilities (doc 93) stand at E7 done** (2026-10-15,
-full gate green, pushed): E8 and E9 not started (tracker lines in
+**Self-evolving capabilities (doc 93) stand at E8 done** (2026-10-15,
+full gate green, pushed): E9 not started (tracker lines in
 open-items "Self-evolving capabilities").
 
 **E6d is built** (checked in the running app on the installed home,
@@ -99,6 +100,17 @@ only Agent-made abilities; per-version calls by time window from
 `calls_of`. Left on the installed home: temperature-converter versions
 1 (tests failed) and 2 (in use), its test conversation; its record has
 three entries for version 2 from before re-use stopped adding one.
+
+**E8 is built** (checked live on the installed home with gpt-6-luna):
+`vak-core/src/ability_review.rs`, `TriggerAction::AbilityReview`, the
+review branch in `automations::fire`, `/skills/review`, the inbox
+offer, and the Settings switch. Found and fixed: an ability's Library
+artifact was keyed by the proposing folder's space, so a fix made in a
+copy became a second artifact (now `Core::ability_space`, bound first:
+an unbound folder's key changes once something binds it). Left on the
+installed home: `list-average` (its fix approved; its older versions
+split across two artifacts from before the fix), the review automation
+(turned off), and the test conversations.
 
 **E7 is built** (checked on the installed home): `/admin/api/capabilities`
 and its revoke route (`vak-server/src/admin.rs`), `Core::ability_measure`

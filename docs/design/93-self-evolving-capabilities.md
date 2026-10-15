@@ -28,7 +28,9 @@ Capabilities as Learned, Installed, Connections and Discover; inbox
 entries open their ability; checked in the running app); E7 built
 2026-10-15 (admin Learned abilities with revoke, the per-version table
 in How the models did, `vak skills` verbs replacing `skills-review`);
-E8 and E9 not built. Agreed with the
+E8 built 2026-10-15 (an Agent's nightly review of its failing abilities,
+off until the owner turns it on; checked live end to end); E9 not
+built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -472,6 +474,34 @@ A built-in automation per Agent (a `Trigger`, claimed through
 Its spend is under the FinOps budget like any run. It is off for a new
 Agent until the owner turns it on in the Agent's settings (the first
 one is offered once, in the inbox, after a capability first fails).
+
+As built in E8 (`vak-core/src/ability_review.rs`): the review is a
+`Trigger` whose action is `ability_review`, one per Agent, nightly at
+03:00 in the owner's time zone (changed on the Automations page like any
+automation's); `PUT /skills/review` (Settings › Capabilities › Learned,
+"Look at failures and suggest fixes", or the inbox offer's "Turn on the
+review") makes it or resumes it, and off pauses it; the generic
+automation routes refuse to make one or turn one into other work. Its
+position is not a cursor: what it takes is each ability whose version
+in use failed by its own fault and is not yet marked `reviewed` on its
+`VersionRecord` (`Core::failing_abilities`, with the failed call's
+arguments and answer from the catalog, `Catalog::call_evidence`), which
+the run marks once its turn has started. Nothing failed: the run
+settles completed and no model is called. Otherwise the scheduler runs
+the review's turn as any scheduled prompt (a copy of the folder, its
+run record, `RoutineFailed` when it cannot start) with
+`ability_review::brief` as its prompt, and the turn's answer reaches
+the inbox. Every proposal from a turn a schedule, trigger or heartbeat
+started waits for review ("it was written while nobody watched",
+`skill_programs::unattended`, R7). The first failure of an ability of
+an Agent with no review writes `AbilityReviewOffered` once.
+
+An ability's Library versions have one home whatever folder proposed
+them: the Agent's own workspace's space (`Core::ability_space`, bound
+before use), so a review's fix, made in a copy, is a version of the
+same artifact. A version waiting for review of an ability the Agent has
+is that ability's row (`proposal` and `why` set, state unchanged), and
+its sheet offers Review.
 
 ## 9. Experience
 

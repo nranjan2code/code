@@ -1021,3 +1021,91 @@ async fn a_revoked_ability_is_refused_at_its_next_call() {
     assert!(core.shared_skills_dir().join("owners-own").exists());
     std::fs::remove_dir_all(core.shared_skills_dir().join("owners-own")).unwrap();
 }
+
+#[tokio::test]
+async fn a_failing_ability_is_offered_a_review_which_takes_it_once() {
+    use vak_core::skill_programs::{AbilityUse, TurnUses};
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(workspace.path()).unwrap();
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).unwrap();
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let propose = vak_core::learning::ProposeSkillTool {
+        sessions_home: core.scope().into_root(),
+        cwd: workspace.path().to_path_buf(),
+        session_id: "sess-review".into(),
+        core: Some(core.clone()),
+    };
+    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_agent_id("vak");
+    prepared(workspace.path(), "first", "args['people']", 30);
+    let out = propose
+        .execute(
+            &json!({"name": "review-splitter", "description": "Split a bill evenly",
+                    "instructions": "Call the tool.", "source": "first"}),
+            &ctx,
+        )
+        .await;
+    assert!(!out.is_error(), "{}", out.content);
+    // Tests in this binary share one Agent: look only at this one.
+    let ours = || {
+        core.failing_abilities()
+            .into_iter()
+            .filter(|found| found.skill == "review-splitter")
+            .collect::<Vec<_>>()
+    };
+    assert!(ours().is_empty());
+
+    let installed = core.scope().skills().join("review-splitter");
+    core.settle_ability_uses(&TurnUses {
+        uses: vec![AbilityUse {
+            skill: "review-splitter".into(),
+            digest: Program::load(&installed).unwrap().unwrap().digest,
+            call: "toolu_failed".into(),
+            fault: Some(vak_control::Fault::Tool),
+        }],
+        calls: Default::default(),
+    });
+    let offers = || {
+        vak_core::inbox::unread(&core.shared_scope().as_agent())
+            .into_iter()
+            .filter(|entry| entry.kind == vak_core::inbox::Kind::AbilityReviewOffered)
+            .count()
+    };
+    assert_eq!(offers(), 1);
+    let failing = ours();
+    assert_eq!(failing.len(), 1);
+    assert_eq!(
+        (failing[0].skill.as_str(), failing[0].version),
+        ("review-splitter", Some(1))
+    );
+    let brief = vak_core::ability_review::brief(&failing);
+    assert!(
+        brief.contains("review-splitter (version 1) failed."),
+        "{brief}"
+    );
+
+    // Once taken by a review, the same failure is not taken again.
+    core.mark_reviewed(&["review-splitter".to_string()]);
+    assert!(ours().is_empty());
+
+    // The switch is one automation of the Agent's, paused when off.
+    assert!(core.ability_review().is_none());
+    let on = core.set_ability_review(true).unwrap();
+    assert!(on.enabled && on.reviews_abilities() && on.validate().is_ok());
+    assert!(!core.set_ability_review(false).unwrap().enabled);
+    assert_eq!(core.set_ability_review(true).unwrap().id, on.id);
+    vak_core::triggers::delete(&core.shared_scope(), &core.runs(), &on.id.to_string()).unwrap();
+
+    // What a review turn proposes waits for the owner, however narrow.
+    let program = Program::load(&installed).unwrap().unwrap();
+    assert_eq!(
+        vak_core::skill_programs::review_reason(
+            &program,
+            vak_control::Provenance::PRIVATE,
+            true,
+            true
+        )
+        .as_deref(),
+        Some("it was written while nobody watched")
+    );
+}

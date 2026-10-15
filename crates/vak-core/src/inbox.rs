@@ -49,6 +49,9 @@ pub enum Kind {
     /// An Agent's learned ability was withdrawn for it after its fix failed
     /// too.
     AbilityWithdrawn,
+    /// An Agent's ability failed for the first time and nothing reviews
+    /// its failures: the owner may turn its review on (docs/design/93 §8).
+    AbilityReviewOffered,
 }
 
 impl Kind {

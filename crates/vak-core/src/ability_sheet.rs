@@ -143,9 +143,19 @@ impl Core {
     /// The Library artifact holding the versions of the learned ability
     /// `name`.
     pub fn skill_artifact(&self, name: &str) -> Option<Artifact> {
-        self.artifacts().list().into_iter().find(|artifact| {
-            artifact.kind == ArtifactKind::Skill && artifact.title.as_deref() == Some(name)
-        })
+        let home = self.ability_space();
+        let mut found: Vec<Artifact> = self
+            .artifacts()
+            .list()
+            .into_iter()
+            .filter(|artifact| {
+                artifact.kind == ArtifactKind::Skill && artifact.title.as_deref() == Some(name)
+            })
+            .collect();
+        // Its home first; one recorded elsewhere by an earlier build, the
+        // newest.
+        found.sort_by_key(|artifact| (artifact.space == home, artifact.updated_at));
+        found.pop()
     }
 
     /// The sheet of the Agent's learned ability `name`, if it has one.

@@ -49,6 +49,7 @@ pub mod presentation_tools;
 /// `(allow, ask, deny)`.
 pub type PermissionRuleLists = (Vec<String>, Vec<String>, Vec<String>);
 
+pub mod ability_review;
 pub mod ability_sheet;
 mod catalog;
 mod indexed_history;

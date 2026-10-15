@@ -306,6 +306,12 @@ pub(crate) async fn create_trigger(
             "A source's poll is made with the source (/intake/sources).",
         );
     }
+    if matches!(draft.action, triggers::TriggerAction::AbilityReview) {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "An Agent's review of failing abilities is turned on in Settings (/skills/review).",
+        );
+    }
     let kind = match draft_kind(&state, &draft) {
         Ok(kind) => kind,
         Err(response) => return *response,
@@ -376,6 +382,14 @@ pub(crate) async fn put_trigger(
         return error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
             "A source's poll is changed with the source (/intake/sources).",
+        );
+    }
+    // A review of failing abilities stays one; nothing else becomes one.
+    if current.reviews_abilities() != matches!(draft.action, triggers::TriggerAction::AbilityReview)
+    {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "An Agent's review of failing abilities is turned on in Settings (/skills/review).",
         );
     }
     let agent = draft
@@ -690,6 +704,32 @@ async fn fire(
         crate::intake::fire_poll(state, &trigger, source, run, trace).await;
         return Ok(id);
     }
+    // An Agent's review of its failing abilities (docs/design/93 §8): with
+    // nothing failed it ends here and costs nothing; otherwise its prompt
+    // is what failed, read from the Agent's records.
+    let mut reviewing = Vec::new();
+    let review_prompt = if trigger.reviews_abilities() {
+        let core = match crate::agent_chats::resolve_agent_core(state, &trigger.agent) {
+            Ok((_, core)) => core,
+            Err(_) => {
+                return Err(refuse(
+                    state,
+                    &trigger,
+                    &mut run,
+                    "its Agent could not be found".into(),
+                ));
+            }
+        };
+        let failing = core.failing_abilities();
+        if failing.is_empty() {
+            run.settle_with(RunOutcome::Completed, None);
+            return Ok(id);
+        }
+        reviewing = failing.iter().map(|found| found.skill.clone()).collect();
+        Some((core, vak_core::ability_review::brief(&failing)))
+    } else {
+        None
+    };
     if let Some(scope) = scope.as_ref()
         && let Err(error) =
             crate::mail_calendar::prepare_routine_account(state, &trigger.agent, scope, false).await
@@ -826,7 +866,10 @@ async fn fire(
             branch: String::new(),
         }
     };
-    let scheduled_prompt = routine_prompt(trigger.prompt().unwrap_or_default(), scope.as_ref());
+    let scheduled_prompt = match &review_prompt {
+        Some((_, brief)) => brief.clone(),
+        None => routine_prompt(trigger.prompt().unwrap_or_default(), scope.as_ref()),
+    };
     let child_id = crate::spawn_isolated_run(
         state,
         provider.clone(),
@@ -856,6 +899,11 @@ async fn fire(
             format!("It could not start: {error}."),
         )
     })?;
+
+    // The failures are taken: the next review looks only at new ones.
+    if let Some((core, _)) = &review_prompt {
+        core.mark_reviewed(&reviewing);
+    }
 
     // A one-shot trigger has spent its only slot.
     if matches!(
@@ -1377,7 +1425,7 @@ pub(crate) async fn deliver_home(
     let what = match &trigger.action {
         TriggerAction::Prompt { text, .. } => text.clone(),
         TriggerAction::Script { command } => format!("Run the command `{command}`."),
-        TriggerAction::SourcePoll { .. } => return None,
+        TriggerAction::SourcePoll { .. } | TriggerAction::AbilityReview => return None,
     };
     let delivery = vak_core::scheduled::Delivery {
         meta: vak_session::types::ScheduledMeta {

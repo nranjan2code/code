@@ -31,6 +31,7 @@ const KIND_CLASS: Record<string, string> = {
   intake_match: "k-blue",
   ability_offered: "k-warm",
   ability_withdrawn: "k-warm",
+  ability_review_offered: "k-warm",
 };
 
 function kindLabel(kind: string): string {
@@ -46,6 +47,7 @@ function kindLabel(kind: string): string {
     intake_match: "From your sources",
     ability_offered: "Ready for every Agent",
     ability_withdrawn: "Ability turned off",
+    ability_review_offered: "Review failures?",
   } as Record<string, string>)[kind] ?? "Update";
 }
 
@@ -276,7 +278,12 @@ export default function InboxPage() {
                               {entry.kind === "routine_failed" ? "Review the automation" : "View the automation"}
                             </button>
                           </Show>
-                          <Show when={entry.kind === "proposal_opened" || entry.kind === "ability_offered" || entry.kind === "ability_withdrawn"}>
+                          <Show when={entry.kind === "ability_review_offered"}>
+                            <button class="btn sm primary" onClick={() => void api.setAbilityReview(true).then(() => ack(entry.id), (e) => setError(e instanceof Error ? e.message : String(e)))}>
+                              Turn on the review
+                            </button>
+                          </Show>
+                          <Show when={entry.kind === "proposal_opened" || entry.kind === "ability_offered" || entry.kind === "ability_withdrawn" || entry.kind === "ability_review_offered"}>
                             <button class="btn sm primary" onClick={() => { if (entry.ability) openAbilitySheet(entry.ability); else { setInboxOpen(false); openLearnedAbilities(); } }}>
                               {entry.ability ? (entry.kind === "proposal_opened" ? "Review it" : "Open the ability") : "See learned abilities"}
                             </button>

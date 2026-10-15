@@ -569,7 +569,8 @@ export type Repeat =
 
 export type TriggerAction =
   | { kind: "prompt"; text: string; model_pin?: string | null }
-  | { kind: "script"; command: string };
+  | { kind: "script"; command: string }
+  | { kind: "ability_review" };
 
 export type RunStatus = "running" | "completed" | "failed" | "cancelled" | "abandoned" | "skipped";
 

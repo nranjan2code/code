@@ -147,6 +147,7 @@ impl ProposeSkillTool {
                 session: &self.session_id,
                 call: &call,
                 held: ctx.provenance,
+                unattended: crate::skill_programs::unattended(ctx.trace.as_ref()),
             })
             .await
         {

@@ -1569,6 +1569,10 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/skills/abilities/{name}/promote", post(promote_ability))
         .route("/skills/abilities/{name}", get(ability_sheet))
+        .route(
+            "/skills/review",
+            get(ability_review_route).put(set_ability_review_route),
+        )
         .route("/skills/abilities/{name}/turn-off", post(turn_off_ability))
         .route(
             "/skills/abilities/{name}/versions/{version}/use",
@@ -3048,6 +3052,49 @@ async fn ability_sheet(
         _ => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no such learned ability" })),
+        )
+            .into_response(),
+    }
+}
+
+/// Whether the Agent's nightly review of failing abilities is on
+/// (docs/design/93 §8), and its automation.
+async fn ability_review_route(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = scoped_core!(&state, None, q.agent.as_deref());
+    let review = core.ability_review();
+    Json(serde_json::json!({
+        "on": review.as_ref().is_some_and(|trigger| trigger.enabled),
+        "automation": review.map(|trigger| trigger.id.to_string()),
+    }))
+    .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct AbilityReviewBody {
+    on: bool,
+}
+
+/// Turns the Agent's review of failing abilities on or off.
+async fn set_ability_review_route(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+    Json(body): Json<AbilityReviewBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = scoped_core!(&state, None, q.agent.as_deref());
+    match core.set_ability_review(body.on) {
+        Ok(trigger) => Json(serde_json::json!({
+            "on": trigger.enabled,
+            "automation": trigger.id.to_string(),
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error })),
         )
             .into_response(),
     }

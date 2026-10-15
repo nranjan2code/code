@@ -402,6 +402,21 @@ impl Catalog {
         Ok(rows.filter_map(Result::ok).collect())
     }
 
+    /// A call's arguments as written and what its result said (the
+    /// evidence text the catalog keeps for it), by the call's node id.
+    pub fn call_evidence(&self, node: &str) -> Result<Option<(String, String)>, CatalogError> {
+        let conn = self.conn();
+        let found = conn
+            .query_row(
+                "SELECT c.input, IFNULL(t.body, '') FROM calls c
+                 LEFT JOIN texts t ON t.node = c.node WHERE c.node = ?1",
+                [node],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        Ok(found)
+    }
+
     /// What a session holds (its turns, calls, files, effects, notes),
     /// oldest first, without the session itself.
     pub fn in_session(&self, session: &str, limit: usize) -> Result<Vec<Node>, CatalogError> {

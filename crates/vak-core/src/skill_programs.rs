@@ -169,6 +169,21 @@ pub struct ProgramProposal<'a> {
     pub call: &'a str,
     /// What the proposing turn held (invariant 43).
     pub held: vak_control::Provenance,
+    /// The proposing turn was started by a schedule or another trigger:
+    /// nobody watched it being written (R7).
+    pub unattended: bool,
+}
+
+/// Whether work under `trace` was started with nobody watching: by a
+/// schedule, a trigger or a heartbeat.
+pub fn unattended(trace: Option<&vak_session::trace::TraceKey>) -> bool {
+    use vak_session::trace::Cause;
+    trace.is_some_and(|trace| {
+        matches!(
+            trace.cause,
+            Cause::Schedule { .. } | Cause::Trigger { .. } | Cause::Heartbeat
+        )
+    })
 }
 
 /// Why a verified program waits for the owner instead of going live, from
@@ -177,6 +192,7 @@ pub struct ProgramProposal<'a> {
 pub fn review_reason(
     program: &Program,
     held: vak_control::Provenance,
+    unattended: bool,
     go_live: bool,
 ) -> Option<String> {
     if !program.hosts.is_empty() {
@@ -192,6 +208,9 @@ pub fn review_reason(
     }
     if held.untrusted {
         return Some("it was written in a turn that read someone else's words".into());
+    }
+    if unattended {
+        return Some("it was written while nobody watched".into());
     }
     if !go_live {
         return Some("the owner reviews every new ability".into());
@@ -265,6 +284,10 @@ pub struct VersionRecord {
     /// Offered to every Agent already.
     #[serde(default)]
     pub offered: bool,
+    /// Its failure was given to the Agent's review of failures already
+    /// (doc 93 §8), so the next review does not take it again.
+    #[serde(default)]
+    pub reviewed: bool,
 }
 
 impl VersionRecord {
@@ -471,6 +494,26 @@ fn settle_key(scope: &vak_config::scope::AgentScope, key: &str) {
 }
 
 impl Core {
+    /// The space an Agent's learned abilities are recorded under in the
+    /// Library: its own workspace's, whatever folder proposed them.
+    pub fn ability_space(&self) -> String {
+        let agent = self
+            .agent_identity()
+            .map_or_else(|| crate::vak_agent_identity().id, |agent| agent.id.clone());
+        let home =
+            vak_config::paths::agent_workspace(&vak_config::paths::default_workspace(), &agent);
+        // A writer of space-keyed records binds the folder first, so the key
+        // is the same before and after anything else opens it.
+        if std::fs::create_dir_all(&home)
+            .map_err(|error| error.to_string())
+            .and_then(|()| vak_config::spaces::bind(&home))
+            .is_err()
+        {
+            tracing::warn!("the Agent's workspace could not be bound");
+        }
+        vak_session::trace::local::space(&home).to_string()
+    }
+
     fn ability_path(&self, skill: &str) -> std::path::PathBuf {
         self.scope().ability_standing().join(skill)
     }
@@ -579,6 +622,9 @@ impl Core {
                 let text = serde_json::to_string(&record).map_err(|error| error.to_string())?;
                 Ok(Some((text, acted)))
             });
+            if found.fault == Some(vak_control::Fault::Tool) {
+                self.offer_ability_review(&found.skill);
+            }
             match verdict {
                 Ok(Some(Some(vak_judge::ability::AbilityVerdict::Withdraw))) => {
                     self.withdraw_ability(&found.skill);
@@ -721,16 +767,13 @@ impl Core {
     }
 
     /// The Agent's learned abilities: installed, turned off, and waiting
-    /// for review in any folder, one row each.
+    /// for review in any folder, one row each. A version waiting for review
+    /// of an ability the Agent has is that ability's row, with the
+    /// proposal and why it waits; its state stays the installed one's.
     pub fn abilities(&self) -> Vec<AbilityView> {
         let library = self.artifacts().list();
         let artifact_of = |name: &str| {
-            library
-                .iter()
-                .find(|artifact| {
-                    artifact.kind == crate::artifacts::ArtifactKind::Skill
-                        && artifact.title.as_deref() == Some(name)
-                })
+            self.skill_artifact(name)
                 .map(|artifact| (artifact.id.to_string(), artifact.versions.len()))
         };
         let mut rows = Vec::new();
@@ -813,6 +856,11 @@ impl Core {
         }
         for proposal in crate::learning::list_proposals(&self.scope(), self.cwd()) {
             let review = proposal.program;
+            if let Some(row) = rows.iter_mut().find(|row| row.name == proposal.name) {
+                row.proposal = Some(proposal.id);
+                row.why = review.map(|review| review.why);
+                continue;
+            }
             let (artifact, versions) = review
                 .as_ref()
                 .map(|review| review.artifact.clone())
@@ -944,7 +992,10 @@ impl Core {
         let agent = self
             .agent_identity()
             .map_or_else(|| "vak".to_string(), |agent| agent.id.clone());
-        let space = vak_session::trace::local::space(self.cwd()).to_string();
+        // An ability is the Agent's wherever it was proposed (a review
+        // works in a copy of a folder): its versions have one home, the
+        // Agent's own workspace.
+        let space = self.ability_space();
         let path = format!("skills/{name}");
         let (artifact, version) = self
             .artifacts()
@@ -989,7 +1040,12 @@ impl Core {
 
         let standing = if !verification.passed() {
             Standing::Failed
-        } else if let Some(why) = review_reason(&program, proposal.held, self.abilities_go_live()) {
+        } else if let Some(why) = review_reason(
+            &program,
+            proposal.held,
+            proposal.unattended,
+            self.abilities_go_live(),
+        ) {
             let id = uuid::Uuid::now_v7().simple().to_string();
             let dir = self.scope().skill_proposals(self.cwd());
             let review = ProgramReview {

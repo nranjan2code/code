@@ -921,6 +921,15 @@ export function useAbilityVersion(name: string, version: string, agent?: string)
   return req(`/skills/abilities/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/use${agentQuery(agent)}`, { method: "POST", body: "{}" });
 }
 
+/** Whether an Agent's nightly review of its failing abilities is on (docs/design/93 §8). */
+export function abilityReview(agent?: string): Promise<{ on: boolean; automation?: string | null }> {
+  return req(`/skills/review${agentQuery(agent)}`);
+}
+
+export function setAbilityReview(on: boolean, agent?: string): Promise<{ on: boolean; automation: string }> {
+  return req(`/skills/review${agentQuery(agent)}`, { method: "PUT", body: JSON.stringify({ on }) });
+}
+
 export function turnOffAbility(name: string, agent?: string): Promise<{ turned_off: string }> {
   return req(`/skills/abilities/${encodeURIComponent(name)}/turn-off${agentQuery(agent)}`, { method: "POST", body: "{}" });
 }

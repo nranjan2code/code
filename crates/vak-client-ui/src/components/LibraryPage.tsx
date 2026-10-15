@@ -662,7 +662,7 @@ function AbilityCard(props: { ability: api.Ability; agent?: string; agentName?: 
       </span>
       <strong>{a().name}</strong>
       <Show when={a().description}><span class="library-card-summary">{a().description}</span></Show>
-      <Show when={a().why}><span class="library-card-summary">Waiting because {a().why}.</span></Show>
+      <Show when={a().why}><span class="library-card-summary">{a().state === "waiting" ? "Waiting" : "A new version waits"} because {a().why}.</span></Show>
       <Show when={a().reaches.length > 0}>
         <ul class="library-ability-reaches" aria-label="What it can do">
           <For each={a().reaches}>{(line) => <li>{line}</li>}</For>
@@ -743,7 +743,7 @@ export default function LibraryPage() {
   const [abilities, { refetch: refetchAbilities }] = createResource(abilityAgent, (agent) => api.listAbilities(agent || undefined).then((res) => res.abilities));
   const [agents] = createResource(() => api.listAgents().then((res) => res.agents).catch(() => [] as api.Agent[]));
   createEffect(on(abilitySheetOpen, (now, before) => { if (before && !now) void refetchAbilities(); }, { defer: true }));
-  const abilityNeedsYou = (ability: api.Ability) => ability.state === "waiting" || ability.state === "offered";
+  const abilityNeedsYou = (ability: api.Ability) => ability.state === "waiting" || ability.state === "offered" || !!ability.proposal;
   const waitingAbilities = () => (abilities() ?? []).filter(abilityNeedsYou);
 
   const shown = createMemo(() => {

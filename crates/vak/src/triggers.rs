@@ -339,6 +339,7 @@ fn detail(trigger: &Trigger) -> String {
     let mut parts = vec![match &trigger.action {
         TriggerAction::Script { command } => format!("script: {command}"),
         TriggerAction::SourcePoll { source } => format!("polls source {source}"),
+        TriggerAction::AbilityReview => "reviews abilities that failed".to_string(),
         TriggerAction::Prompt { text, model_pin } => {
             let mut line = format!("prompt: {}", text.lines().next().unwrap_or_default());
             if let Some(model) = model_pin {

@@ -274,7 +274,9 @@ live.
 - [x] E7 (2026-10-15): admin Learned abilities (`#/capabilities`) with
   revoke, the per-version table in How the models did, `vak skills`
   verbs replacing `skills-review`. Checked against the installed home.
-- [ ] E8: the opt-in review of failures as a trigger per Agent.
+- [x] E8 (2026-10-15): the opt-in nightly review of failures, one
+  `ability_review` automation per Agent; checked live (failure, offer,
+  review run, fix waiting, approved).
 - [ ] E9: card data from a capability call (R5), generalising
   `Tool::output_of_command`.
 

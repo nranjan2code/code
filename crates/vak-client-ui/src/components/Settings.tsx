@@ -239,6 +239,16 @@ function TimeLimitsGroup() {
 /** Settings → Capabilities → Learned (docs/design/93 §9.4): what the
  *  Agents learned, each opening its sheet, and the owner's switch. */
 function LearnedByAgents(props: { abilities: api.Ability[]; agent?: string; goLive: boolean; onGoLive: (live: boolean) => void; onLibrary: () => void }) {
+  const [review, { mutate: setReview }] = createResource(() => props.agent ?? "", (agent) => api.abilityReview(agent || undefined).catch(() => null));
+  const [reviewError, setReviewError] = createSignal<string | null>(null);
+  const toggleReview = async (on: boolean) => {
+    setReviewError(null);
+    try {
+      setReview(await api.setAbilityReview(on, props.agent));
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : String(error));
+    }
+  };
   const counts = () => {
     const by = new Map<api.Ability["state"], number>();
     for (const ability of props.abilities) by.set(ability.state, (by.get(ability.state) ?? 0) + 1);
@@ -264,7 +274,7 @@ function LearnedByAgents(props: { abilities: api.Ability[]; agent?: string; goLi
                 </div>
                 <div class="setting-control">
                   <Pill mark={ABILITY_STATE[ability.state].mark}>{ABILITY_STATE[ability.state].word}</Pill>
-                  <button class="settings-button" onClick={() => openAbilitySheet(ability.name, props.agent)}>{ability.state === "waiting" ? "Review" : "Open"}</button>
+                  <button class="settings-button" onClick={() => openAbilitySheet(ability.name, props.agent)}>{ability.proposal ? "Review" : "Open"}</button>
                 </div>
               </div>
             )}
@@ -276,6 +286,10 @@ function LearnedByAgents(props: { abilities: api.Ability[]; agent?: string; goLi
         <Row title="Let Agents switch on new abilities that only work with your files" description="An ability that passed its tests and reaches nothing but this project's files is ready from the Agent's next turn. Off, every new ability waits for your review.">
           <Switch label="Let Agents switch on new abilities that only work with your files" checked={props.goLive} onChange={props.onGoLive} />
         </Row>
+        <Row title="Look at failures and suggest fixes" description="Each night this Agent looks at its abilities that failed since it last looked and proposes fixes; every fix waits for your review. It costs nothing on a night nothing failed, and its time is changed on the Automations page.">
+          <Switch label="Look at failures and suggest fixes" checked={review()?.on ?? false} onChange={(on) => void toggleReview(on)} />
+        </Row>
+        <Show when={reviewError()}><p class="settings-hint" role="alert">{reviewError()}</p></Show>
       </Group>
     </>
   );

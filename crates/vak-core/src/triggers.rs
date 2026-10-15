@@ -284,6 +284,11 @@ pub enum TriggerAction {
     /// Polls an intake source (plan M6.5): fetch, parse in the worker, take
     /// what is new. No model is involved.
     SourcePoll { source: vak_session::ids::SourceId },
+    /// Looks at the Agent's learned abilities that failed since they were
+    /// last looked at and, when there are some, runs a turn that proposes
+    /// fixes, each waiting for the owner's review (docs/design/93 §8).
+    /// Nothing failed costs nothing.
+    AbilityReview,
 }
 
 /// When a scheduled trigger's slots fall.
@@ -435,14 +440,18 @@ impl Trigger {
     pub fn prompt(&self) -> Option<&str> {
         match &self.action {
             TriggerAction::Prompt { text, .. } => Some(text),
-            TriggerAction::Script { .. } | TriggerAction::SourcePoll { .. } => None,
+            TriggerAction::Script { .. }
+            | TriggerAction::SourcePoll { .. }
+            | TriggerAction::AbilityReview => None,
         }
     }
 
     pub fn script(&self) -> Option<&str> {
         match &self.action {
             TriggerAction::Script { command } => Some(command),
-            TriggerAction::Prompt { .. } | TriggerAction::SourcePoll { .. } => None,
+            TriggerAction::Prompt { .. }
+            | TriggerAction::SourcePoll { .. }
+            | TriggerAction::AbilityReview => None,
         }
     }
 
@@ -450,15 +459,24 @@ impl Trigger {
     pub fn source(&self) -> Option<vak_session::ids::SourceId> {
         match &self.action {
             TriggerAction::SourcePoll { source } => Some(*source),
-            TriggerAction::Prompt { .. } | TriggerAction::Script { .. } => None,
+            TriggerAction::Prompt { .. }
+            | TriggerAction::Script { .. }
+            | TriggerAction::AbilityReview => None,
         }
     }
 
     pub fn model_pin(&self) -> Option<&str> {
         match &self.action {
             TriggerAction::Prompt { model_pin, .. } => model_pin.as_deref(),
-            TriggerAction::Script { .. } | TriggerAction::SourcePoll { .. } => None,
+            TriggerAction::Script { .. }
+            | TriggerAction::SourcePoll { .. }
+            | TriggerAction::AbilityReview => None,
         }
+    }
+
+    /// Whether it is an Agent's review of its failing abilities.
+    pub fn reviews_abilities(&self) -> bool {
+        matches!(self.action, TriggerAction::AbilityReview)
     }
 
     /// Structural validation. Pure; never touches the store.
