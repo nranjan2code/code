@@ -21,7 +21,8 @@ across them. Nothing here is started unless it says so.
 
 - [x] CHANGELOG: the `## 8.2.0` section.
 - [x] Version: 8.2.0 (`scripts/bump-version.sh`).
-- [ ] `scripts/release.sh`: every gate passed, tagged `v8.2.0`.
+- [x] `scripts/release.sh`: every gate passed (`6957c0dd5`), tagged `v8.2.0`;
+  artifacts in `dist/8.2.0`.
 - [ ] This Mac and AWS: install when the maintainer asks.
 
 8.1.0 (2026-10-15), additive within 8.x, with a purge on this Mac

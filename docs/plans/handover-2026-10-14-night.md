@@ -13,10 +13,8 @@ failure' and 'Verification before every commit'), then
 docs/plans/handover-2026-10-14-night.md whole.
 
 Run `git status` and `git log --oneline -8`. If the newest commit is not
-'Catalog: a conversation is named by its first words', that work is in
-the working tree uncommitted: run `scripts/gate.sh` (about 13 minutes,
-in the background), fix what it finds, and commit it with that
-message. Stage only your own paths; keep only `main`; check `git show
+'Handover: 8.2.0 released', read 'Where things stand' and finish what
+it says is unfinished. Stage only your own paths; keep only `main`; check `git show
 --stat` before every push. We are on a Claude Code Pro plan, so keep
 token use to what the task needs: read with grep and line ranges, never
 whole large files; batch independent commands; filter command output;
@@ -32,7 +30,9 @@ open lines: an Agent asking before proposing a new version (observed,
 nothing in Vak asks it), ability history lost before E6a on the
 installed home (data only; fixed for new versions), Node dependencies
 (designed when needed)) and the release questions under 'Next', which are
-the maintainer's to decide; ask before cutting a release.
+the maintainer's to decide; ask before cutting a release. 8.2.0 is
+released and tagged; installing it on this Mac or AWS waits for the
+maintainer.
 
 Live runs: the installed home (8.1.0, OpenAI key, gpt-6-luna) may be
 used sparingly: launch entry `vak-e3-live` (a dev server on port 8907 in
@@ -44,6 +44,15 @@ throwaway VAK_HOME, PATCH /config to ollama qwen3.5:4b-mlx). Short
 progress lines."
 
 ## Where things stand
+
+**8.2.0 released 2026-10-15** (`6957c0dd5`, tag `v8.2.0`, artifacts in
+`dist/8.2.0`, feed at the local 127.0.0.1:8899 URL like 8.1.0): doc 93
+E2 to E9, scheduled work (doc 94) and catalog titles. Additive within
+8.x, no purge. Not installed anywhere yet: this Mac and AWS still run
+8.1.0 / 8.0.0; install when the maintainer asks (see 'Local release
+install' notes: `dist/8.2.0/vak self install`, `self services-sync`,
+`self verify`). AWS's 8.0.0 home predates the home-version stamp, so it
+needs a purge whenever it is next installed.
 
 **Catalog session titles** (2026-10-15, after E9):
 `MessageRecord::conversation_title` is the one wording for a
