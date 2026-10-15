@@ -102,6 +102,7 @@ fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
                 Some(&core.artifacts()),
             ) {
                 Ok(name) => {
+                    core.proposal_settled(&id);
                     println!("promoted skill '{name}'");
                     0
                 }
@@ -114,6 +115,7 @@ fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
         SkillsReviewAction::Reject { id } => {
             match vak_core::learning::reject(&core.scope(), core.cwd(), &id) {
                 Ok(()) => {
+                    core.proposal_settled(&id);
                     println!("rejected proposal {id}");
                     0
                 }

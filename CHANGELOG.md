@@ -1,5 +1,12 @@
 ## Unreleased
 
+- An ability an Agent makes for itself now says what it reaches ("Reads
+  the files in this project", "Connects to …") in its approval, in the
+  proposal waiting for you and in your inbox. Settings → Capabilities has
+  "Let Agents switch on new abilities that only work with your files"
+  (on by default); turned off, every new ability waits for your review.
+  An Agent's own skill can carry presentation packs, active while the
+  skill is installed.
 - A scheduled run's prompt shows as a "Scheduled" line with the
   automation's name and time in the conversation, not as a message you
   wrote, also when its answer is only cards; and "run it now" on a

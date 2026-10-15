@@ -148,6 +148,93 @@ pub fn effective(
     effective
 }
 
+/// The presentation packs a skill carries in its `presentation/` folder
+/// (docs/design/93-self-evolving-capabilities.md §3.1): each a declarative
+/// spec for one card form that adds kinds of its own. A pack that does not
+/// parse, names no form, or claims a form's own kind is refused with what
+/// to fix, so a skill is never admitted with a pack that cannot draw.
+pub fn skill_packs(skill: &Path) -> Result<Vec<vak_presentation::PresentationSpec>, String> {
+    let Ok(entries) = std::fs::read_dir(skill.join("presentation")) else {
+        return Ok(Vec::new());
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    let mut specs = Vec::new();
+    for path in files {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("presentation/{name}: {error}"))?;
+        let spec = vak_presentation::parse_spec(&bytes)
+            .map_err(|error| format!("presentation/{name}: {error}"))?;
+        match spec.block.as_deref() {
+            Some(block) if vak_delivery::is_form(block) => {}
+            Some(block) => {
+                return Err(format!(
+                    "presentation/{name}: `block` '{block}' is not a card form; use one of {}",
+                    vak_delivery::FORMS.join(", ")
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "presentation/{name}: name the card form it draws in `block`"
+                ));
+            }
+        }
+        if let Some(kind) = spec.accepts.iter().find(|kind| vak_delivery::is_form(kind)) {
+            return Err(format!(
+                "presentation/{name}: '{kind}' is a card form's own kind; a pack adds kinds of its own"
+            ));
+        }
+        specs.push(spec);
+    }
+    Ok(specs)
+}
+
+/// The packs of the skills installed in `skills` (an Agent's own), as
+/// records active for `owner`'s workspace. A skill whose packs cannot be
+/// read adds none.
+pub fn skill_pack_records(skills: &Path, owner: &str) -> Vec<StoredPresentation> {
+    let Ok(entries) = std::fs::read_dir(skills) else {
+        return Vec::new();
+    };
+    let mut records = Vec::new();
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let specs = match skill_packs(&dir) {
+            Ok(specs) => specs,
+            Err(_) => {
+                tracing::warn!("a skill's presentation packs could not be read");
+                continue;
+            }
+        };
+        let skill = entry.file_name().to_string_lossy().into_owned();
+        for spec in specs {
+            let Ok(digest) = vak_presentation::digest(&spec) else {
+                continue;
+            };
+            records.push(StoredPresentation {
+                spec,
+                origin: vak_presentation::PresentationOrigin {
+                    scope: vak_presentation::LibraryScope::Workspace,
+                    owner: owner.to_string(),
+                    plugin_id: None,
+                    generation: Some(format!("skill:{skill}:{digest}")),
+                },
+                digest,
+                enabled: true,
+            });
+        }
+    }
+    records
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod tests {

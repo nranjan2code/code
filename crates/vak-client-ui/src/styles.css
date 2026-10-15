@@ -2225,6 +2225,7 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .setting-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .setting-copy strong { color: var(--text-soft); font-size: var(--fs-control); font-weight: 500; }
 .setting-copy span { max-width: 580px; color: var(--muted); font-size: var(--fs-meta); line-height: 1.4; }
+.setting-copy .proposal-reaches { margin: 2px 0 0; padding-left: 18px; color: var(--muted); font-size: var(--fs-meta); line-height: 1.4; }
 .setting-control { flex: 0 1 auto; min-width: 0; max-width: 55%; display: flex; align-items: center; gap: var(--space-2); }
 .setting-control select, .settings-input, .settings-number { height: 32px; outline: 0; border: 1px solid var(--border); border-radius: 8px; padding: var(--space-1) 9px; color: var(--text-soft); background: var(--surface); }
 .settings-input { width: 190px; }

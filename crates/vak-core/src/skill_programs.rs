@@ -166,9 +166,13 @@ pub struct ProgramProposal<'a> {
 }
 
 /// Why a verified program waits for the owner instead of going live, from
-/// what it declares and what the proposing turn held (doc 93 §5); `None`
-/// when it may go live.
-pub fn review_reason(program: &Program, held: vak_control::Provenance) -> Option<String> {
+/// what it declares, what the proposing turn held and the owner's
+/// `abilities_go_live` (doc 93 §5); `None` when it may go live.
+pub fn review_reason(
+    program: &Program,
+    held: vak_control::Provenance,
+    go_live: bool,
+) -> Option<String> {
     if !program.hosts.is_empty() {
         return Some(format!("it connects to {}", program.hosts.join(", ")));
     }
@@ -183,10 +187,66 @@ pub fn review_reason(program: &Program, held: vak_control::Provenance) -> Option
     if held.untrusted {
         return Some("it was written in a turn that read someone else's words".into());
     }
+    if !go_live {
+        return Some("the owner reviews every new ability".into());
+    }
     None
 }
 
+/// What a proposal waiting for review records about its program, so every
+/// surface that shows it says why it waits and what it would reach
+/// without reading the bundle again (doc 93 §9.2, §9.5).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProgramReview {
+    pub why: String,
+    pub reaches: Vec<String>,
+    pub artifact: String,
+    pub version: String,
+}
+
+const REVIEW_TRAILER: &str = "<!-- program-review: ";
+
+impl ProgramReview {
+    fn trailer(&self) -> String {
+        format!(
+            "{REVIEW_TRAILER}{} -->",
+            serde_json::to_string(self).unwrap_or_default()
+        )
+    }
+
+    /// The record a proposal's body carries, if it has a program.
+    pub fn read(body: &str) -> Option<Self> {
+        let line = body
+            .lines()
+            .rev()
+            .find(|line| line.starts_with(REVIEW_TRAILER))?;
+        serde_json::from_str(line.strip_prefix(REVIEW_TRAILER)?.strip_suffix(" -->")?).ok()
+    }
+}
+
+/// The inbox key of the entry that says proposal `id` is waiting.
+pub fn waiting_key(id: &str) -> String {
+    format!("proposal-waiting|{id}")
+}
+
+/// Marks read the entry that said proposal `id` was waiting, once the owner
+/// approved or declined it.
+fn settle_waiting(scope: &vak_config::scope::AgentScope, id: &str) {
+    let key = waiting_key(id);
+    for entry in crate::inbox::unread(scope) {
+        if entry.dedupe_key.as_deref() == Some(key.as_str()) {
+            let _ = crate::inbox::ack(scope, &entry.id);
+        }
+    }
+}
+
 impl Core {
+    /// The owner approved or declined proposal `id`: the inbox no longer
+    /// says it is waiting.
+    pub fn proposal_settled(&self, id: &str) {
+        settle_waiting(&self.shared_scope().as_agent(), id);
+    }
+
     /// Checks, verifies, records and admits a skill with a program
     /// (doc 93 §4): the folder is copied as one bundle with the skill's
     /// `SKILL.md` written from the proposal's own words, its tests run in a
@@ -235,6 +295,7 @@ impl Core {
             .map_err(|error| format!("cannot write the skill: {error}"))?;
         let program = Program::load(staging)?
             .ok_or_else(|| format!("{} did not load", vak_tools::capability::DECLARATION))?;
+        crate::presentation_store::skill_packs(staging)?;
         let verification = self.verify_skill_program(name, staging).await?;
         let bytes = vak_tools::capability::bundle(staging)?;
 
@@ -287,15 +348,42 @@ impl Core {
 
         let standing = if !verification.passed() {
             Standing::Failed
-        } else if let Some(why) = review_reason(&program, proposal.held) {
+        } else if let Some(why) = review_reason(&program, proposal.held, self.abilities_go_live()) {
             let id = uuid::Uuid::now_v7().simple().to_string();
             let dir = self.scope().skill_proposals(self.cwd());
+            let review = ProgramReview {
+                why: why.clone(),
+                reaches: program.reaches(),
+                artifact: artifact.to_string(),
+                version: version.to_string(),
+            };
             let body = format!(
-                "{skill_md}\n<!-- proposed-by: {} at {}; proposal id {id}; library: {artifact} {version} -->\n",
+                "{skill_md}\n<!-- proposed-by: {} at {}; proposal id {id}; library: {artifact} {version} -->\n{}\n",
                 proposal.session,
-                chrono::Utc::now().to_rfc3339()
+                chrono::Utc::now().to_rfc3339(),
+                review.trailer()
             );
             vak_session::documents::create(&dir.join(format!("{id}.md")), &body)?;
+            let _ = crate::inbox::record_with_result_and_key(
+                &self.shared_scope().as_agent(),
+                crate::inbox::Kind::ProposalOpened,
+                &format!("{name} is waiting for your review"),
+                &format!(
+                    "{}\nIt waits because {why}.\n{}",
+                    proposal.description.trim(),
+                    review
+                        .reaches
+                        .iter()
+                        .map(|line| format!("- {line}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+                Some(proposal.session),
+                None,
+                None,
+                Some(&waiting_key(&id)),
+                Some(&trace),
+            );
             Standing::Review { id, why }
         } else {
             install(&bytes, &self.scope().skills().join(name))?;

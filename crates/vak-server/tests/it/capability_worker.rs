@@ -474,3 +474,134 @@ async fn a_proposed_program_is_verified_versioned_and_admitted_by_its_tier() {
             .is_some()
     );
 }
+
+/// Doc 93 E3b: with the owner's switch off, an ability that reaches only
+/// the project's files still waits for review; the proposal and its inbox
+/// entry say why and what it would reach, and approving it clears the
+/// entry. A pack the skill carries draws its kind once the skill is live,
+/// and a pack that names no form keeps the skill out.
+#[tokio::test]
+async fn the_owners_switch_and_a_skills_packs_are_honoured() {
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(workspace.path()).unwrap();
+    let project = workspace.path().join(".vak");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("config.toml"),
+        "[owner]\nabilities_go_live = false\n",
+    )
+    .unwrap();
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).unwrap();
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    assert!(!core.abilities_go_live(), "a narrower layer turns it off");
+    let tool = vak_core::learning::ProposeSkillTool {
+        sessions_home: core.scope().into_root(),
+        cwd: workspace.path().to_path_buf(),
+        session_id: "sess-switch".into(),
+        core: Some(core.clone()),
+    };
+    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_agent_id("vak");
+    let propose = |name: &str, source: &str| {
+        json!({"name": name, "description": "Split a bill evenly",
+               "instructions": "Call the tool with the amount and people.", "source": source})
+    };
+
+    prepared(workspace.path(), "reviewed", "args['people']", 30);
+    let out = tool
+        .execute(&propose("reviewed-split", "reviewed"), &ctx)
+        .await;
+    assert!(
+        out.content.contains("the owner reviews every new ability"),
+        "{}",
+        out.content
+    );
+    let proposal = vak_core::learning::list_proposals(&core.scope(), workspace.path())
+        .into_iter()
+        .find(|proposal| proposal.name == "reviewed-split")
+        .expect("queued for review");
+    let review = proposal.program.clone().expect("the review record");
+    assert_eq!(review.why, "the owner reviews every new ability");
+    assert!(
+        review
+            .reaches
+            .iter()
+            .any(|line| line == "Reads the files in this project")
+    );
+    assert!(
+        review
+            .reaches
+            .iter()
+            .any(|line| line == "Reaches nothing outside this computer")
+    );
+    let inbox = core.shared_scope().as_agent();
+    let entry = vak_core::inbox::unread(&inbox)
+        .into_iter()
+        .find(|entry| entry.title == "reviewed-split is waiting for your review")
+        .expect("the inbox says it is waiting");
+    assert_eq!(entry.kind, vak_core::inbox::Kind::ProposalOpened);
+    assert!(
+        entry.body.contains("- Reads the files in this project"),
+        "{}",
+        entry.body
+    );
+    let shared = tempfile::tempdir().unwrap();
+    vak_core::learning::promote(
+        &core.scope(),
+        workspace.path(),
+        &proposal.id,
+        shared.path(),
+        Some(&core.artifacts()),
+    )
+    .unwrap();
+    core.proposal_settled(&proposal.id);
+    assert!(
+        !vak_core::inbox::unread(&inbox)
+            .iter()
+            .any(|entry| entry.title == "reviewed-split is waiting for your review"),
+        "approving it clears the entry"
+    );
+
+    std::fs::write(project.join("config.toml"), "").unwrap();
+    core.refresh_persisted_preferences().unwrap();
+    assert!(core.abilities_go_live(), "on unless a layer turns it off");
+    let pack = |block: &str| {
+        let mut spec: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../packages/answer-layouts/presentation/at-a-glance.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        spec["id"] = json!("split.receipt");
+        spec["accepts"] = json!(["bill_split"]);
+        spec["block"] = json!(block);
+        spec.to_string()
+    };
+    prepared(workspace.path(), "badpack", "args['people']", 30);
+    let dir = workspace.path().join("badpack/presentation");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("receipt.json"), pack("receipt")).unwrap();
+    let out = tool
+        .execute(&propose("packed-split", "badpack"), &ctx)
+        .await;
+    assert!(out.is_error(), "{}", out.content);
+    assert!(
+        out.content.contains("is not a card form"),
+        "{}",
+        out.content
+    );
+    assert!(!core.scope().skills().join("packed-split").exists());
+
+    std::fs::write(dir.join("receipt.json"), pack("stats")).unwrap();
+    let out = tool
+        .execute(&propose("packed-split", "badpack"), &ctx)
+        .await;
+    assert!(
+        out.content.contains("yours from your next turn"),
+        "{}",
+        out.content
+    );
+    assert_eq!(core.pack_kinds().block_of("bill_split"), Some("stats"));
+}

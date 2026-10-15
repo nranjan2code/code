@@ -2968,6 +2968,7 @@ fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
                 "id": p.id,
                 "name": p.name,
                 "description": p.description,
+                "program": p.program,
             })
         })
         .collect()
@@ -3004,6 +3005,9 @@ async fn promote_proposal(
         }
         other => other,
     };
+    if res.is_ok() {
+        state.core.proposal_settled(&id);
+    }
     match res {
         Ok(name) => (
             StatusCode::OK,
@@ -3032,6 +3036,9 @@ async fn reject_proposal(
         }
         other => other,
     };
+    if res.is_ok() {
+        state.core.proposal_settled(&id);
+    }
     match res {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "rejected": id }))).into_response(),
         Err(e) => (
@@ -17093,6 +17100,7 @@ async fn get_config(
         "timezone": core.owner_timezone(),
         "timezone_set": core.owner_timezone_set().is_some(),
         "host_timezone": vak_core::triggers::host_timezone(),
+        "abilities_go_live": core.abilities_go_live(),
     });
     Json(serde_json::json!({
         "provider": route.provider,
@@ -17646,8 +17654,13 @@ async fn patch_evidence_policy(
 
 #[derive(serde::Deserialize)]
 struct OwnerSettingsBody {
-    /// An IANA zone, or `null` for this machine's.
-    timezone: Option<String>,
+    /// An IANA zone, or `null` for this machine's; absent leaves it.
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    timezone: Option<Option<String>>,
+    /// Whether an Agent's new ability that reaches only this project's files
+    /// goes live without review; absent leaves it.
+    #[serde(default)]
+    abilities_go_live: Option<bool>,
 }
 
 /// `[owner]` lives in the Shared layer alone: the owner is one person
@@ -17656,38 +17669,51 @@ async fn put_owner_settings(
     State(state): State<AppState>,
     Json(body): Json<OwnerSettingsBody>,
 ) -> axum::response::Response {
-    let zone = body
-        .timezone
-        .map(|zone| zone.trim().to_string())
-        .filter(|zone| !zone.is_empty());
-    if let Some(zone) = &zone
-        && !vak_core::triggers::is_zone(zone)
-    {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": format!("'{zone}' is not a time zone")})),
-        )
-            .into_response();
-    }
     let Some(path) = vak_config::global_path() else {
         return (StatusCode::INTERNAL_SERVER_ERROR, "user home unavailable").into_response();
     };
-    if let Err(error) = vak_config::persist_owner_timezone(path, zone.as_deref()) {
-        return (
+    let failed = |error: vak_config::ConfigError| {
+        (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": error.to_string()})),
         )
-            .into_response();
+            .into_response()
+    };
+    if let Some(zone) = body.timezone {
+        let zone = zone
+            .map(|zone| zone.trim().to_string())
+            .filter(|zone| !zone.is_empty());
+        if let Some(zone) = &zone
+            && !vak_core::triggers::is_zone(zone)
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("'{zone}' is not a time zone")})),
+            )
+                .into_response();
+        }
+        if let Err(error) = vak_config::persist_owner_timezone(path.clone(), zone.as_deref()) {
+            return failed(error);
+        }
+    }
+    if let Some(live) = body.abilities_go_live
+        && let Err(error) = vak_config::persist_abilities_go_live(path, live)
+    {
+        return failed(error);
     }
     if state.core.refresh_persisted_preferences().is_err() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            "could not apply the time zone",
+            "could not apply the owner's settings",
         )
             .into_response();
     }
-    Json(serde_json::json!({"timezone": state.core.owner_timezone(), "set": zone.is_some()}))
-        .into_response()
+    Json(serde_json::json!({
+        "timezone": state.core.owner_timezone(),
+        "set": state.core.owner_timezone_set().is_some(),
+        "abilities_go_live": state.core.abilities_go_live(),
+    }))
+    .into_response()
 }
 
 /// Which keys this write landed on disk but did NOT put into force, because

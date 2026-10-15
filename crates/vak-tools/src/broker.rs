@@ -399,6 +399,10 @@ impl Tool for BrokeredTool {
         self.inner.leaves_machine()
     }
 
+    fn reaches(&self) -> Vec<String> {
+        self.inner.reaches()
+    }
+
     fn output_of_command(&self) -> Option<crate::CommandOutput> {
         self.inner.output_of_command()
     }

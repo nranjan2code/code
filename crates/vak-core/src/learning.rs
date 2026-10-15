@@ -282,6 +282,8 @@ pub struct SkillProposal {
     /// The conversation (and turn, when recorded) the draft came from, read
     /// from its `proposed-by` trailer.
     pub derived_from: Option<vak_session::trace::DerivedFrom>,
+    /// For a skill with a program: why it waits and what it would reach.
+    pub program: Option<crate::skill_programs::ProgramReview>,
 }
 
 /// Parse `<!-- proposed-by: <sid> at <ts>; ...; turn: <t> -->`.
@@ -483,14 +485,15 @@ fn list_proposals_in_dir(dir: &Path, cwd: &Path) -> Vec<SkillProposal> {
         let accepted = accepted_skill_bodies(cwd);
         for (id, path, skill) in found {
             let tag = screen_proposal(&path, &skill.name, &accepted);
+            let body = vak_session::documents::read(&path).ok().flatten();
             out.push(SkillProposal {
                 id,
                 name: skill.name,
                 description: with_duplicate_note(&skill.description, tag.as_deref()),
-                derived_from: vak_session::documents::read(&path)
-                    .ok()
-                    .flatten()
-                    .and_then(|b| proposal_provenance(&b)),
+                derived_from: body.as_deref().and_then(proposal_provenance),
+                program: body
+                    .as_deref()
+                    .and_then(crate::skill_programs::ProgramReview::read),
                 path,
             });
         }

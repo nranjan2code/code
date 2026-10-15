@@ -1413,7 +1413,8 @@ The one tool an Agent may admit itself is a skill's program
 (docs/design/93-self-evolving-capabilities.md §5), and only for itself
 (its own `agents/<id>/skills`): one whose tests the runtime ran and passed,
 that declares no host, needs no install and was not written in a turn that
-held someone else's words (`skill_programs::review_reason`). It runs only
+held someone else's words, while the owner leaves `[owner]
+abilities_go_live` on (`skill_programs::review_reason`). It runs only
 under the sandbox its declaration gives it, and anything else it proposes
 waits for the owner; reaching every Agent is always the owner's promotion.
 Promotion never silently activates a proposal, and revocation takes effect

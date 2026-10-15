@@ -352,6 +352,31 @@ impl Program {
                 .is_some_and(|requirements| !requirements.installed())
     }
 
+    /// What a call reaches, in the owner's words, from its declaration
+    /// alone: the one wording for an approval, a proposal waiting for
+    /// review and its inbox entry (docs/design/93-self-evolving-capabilities.md §9.2).
+    pub fn reaches(&self) -> Vec<String> {
+        let mut lines = vec!["Reads the files in this project".to_string()];
+        if self.writes == Writes::Drafts {
+            lines.push("Writes only drafts, which reach the project through Review".into());
+        }
+        if !self.hosts.is_empty() {
+            lines.push(format!("Connects to {}", self.hosts.join(", ")));
+        }
+        if let Some(requirements) = &self.requirements
+            && !requirements.installed()
+        {
+            lines.push(format!(
+                "Installs its packages from {}, once",
+                requirements.hosts.join(", ")
+            ));
+        }
+        if !self.leaves_machine() {
+            lines.push("Reaches nothing outside this computer".into());
+        }
+        lines
+    }
+
     /// What it reaches, from its declaration alone.
     pub fn permission(&self) -> vak_permission::Declared {
         vak_permission::Declared::reach(if self.leaves_machine() {
@@ -802,6 +827,10 @@ impl Tool for CapabilityTool {
 
     fn leaves_machine(&self) -> bool {
         self.program.leaves_machine()
+    }
+
+    fn reaches(&self) -> Vec<String> {
+        self.program.reaches()
     }
 
     fn time_limit_argument(&self) -> Option<&'static str> {

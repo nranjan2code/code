@@ -179,12 +179,26 @@ live.
   case); `capability::FORMAT` in the description and refusals; AGENTS.md
   paragraph. Checked live with gpt-6-luna: built, 4 of 4 tests, live, and
   a fresh conversation used it.
-- [ ] E3b: the owner's switch "Let Agents switch on new abilities that only
-  work with your files" (on by default; off sends every proposal to
-  Review), an inbox entry for a program waiting for review, and the
-  approval and Review wording saying what it reaches. Presentation packs
-  in a skill (`presentation/`) are carried in the bundle but not yet
-  activated from an Agent's own skills.
+- [x] E3b (2026-10-15): `[owner] abilities_go_live` (on by default; a
+  narrower layer can only turn it off; `PUT /config/owner`, read live),
+  the switch in Settings → Capabilities → Manage → Skills;
+  `Program::reaches` as the one wording, declared as `Tool::reaches` and
+  carried by an approval's reason; a proposal waiting for review records
+  `ProgramReview` (why, reaches, Library version) and writes a
+  `ProposalOpened` inbox entry, cleared when the owner approves or
+  declines (`Core::proposal_settled`); packs in a skill's
+  `presentation/` checked at proposal and active from the Agent's own
+  skills. Live with gpt-6-luna (switch off in the folder's layer): a
+  kilometres-to-miles ability passed its test and waited "because the
+  owner reviews every new ability", with its two reach lines in the
+  proposal and the inbox; declining cleared the entry. The switch toggled
+  in the running app at 1440 × 900 dark and persisted to the Shared
+  layer alone.
+- [ ] Found live (E3b): Settings lists the proposals of the Agent's own
+  folder, but a proposal is filed under the folder the turn ran in, so
+  one made in another folder never shows there (the API for that folder
+  lists it). Review belongs to E6, drawn from the Library's waiting
+  versions rather than a list per folder.
 - [ ] E4: catalog source, prompt index, `find_tools` ranking; the tool
   carries the skill's `serves:` so it defers (E1a loads it every turn).
 - [ ] Seen live (E1a, dev route): a card the model drew after the

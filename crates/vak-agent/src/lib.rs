@@ -8524,6 +8524,14 @@ async fn authorize(
             }
             Decision::Ask { reason, source } => {
                 facts.permission = Permission::Ask;
+                // The approval says what the call reaches when its tool
+                // declares it in the owner's words.
+                let reaches = tool.map(|tool| tool.reaches()).unwrap_or_default();
+                let reason = if reaches.is_empty() {
+                    reason
+                } else {
+                    format!("{reason}. {}.", reaches.join(". "))
+                };
                 gate = Some((reason, source));
             }
         }

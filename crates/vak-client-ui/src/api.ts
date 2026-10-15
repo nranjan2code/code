@@ -558,6 +558,8 @@ export interface SkillProposal {
   id: string;
   name: string;
   description: string;
+  /** For a skill with a program: why it waits and what it would reach. */
+  program?: { why: string; reaches: string[]; artifact: string; version: string } | null;
 }
 
 export interface DiscoveredSkill {
@@ -1360,8 +1362,9 @@ export function recordOutcomeReview(
   });
 }
 
-export function putOwnerTimezone(timezone: string | null): Promise<{ timezone: string; set: boolean }> {
-  return req("/config/owner", { method: "PUT", body: JSON.stringify({ timezone }) });
+/** The owner's settings (Shared layer); a field left out keeps its value. */
+export function putOwnerSettings(settings: { timezone?: string | null; abilities_go_live?: boolean }): Promise<{ timezone: string; set: boolean; abilities_go_live: boolean }> {
+  return req("/config/owner", { method: "PUT", body: JSON.stringify(settings) });
 }
 
 export function patchEvidencePolicy(seconds: number, scope: "user" | "workspace"): Promise<{ saved: boolean; seconds: number }> {

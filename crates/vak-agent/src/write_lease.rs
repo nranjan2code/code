@@ -192,6 +192,10 @@ impl Tool for ScopedWriteTool {
         self.inner.leaves_machine()
     }
 
+    fn reaches(&self) -> Vec<String> {
+        self.inner.reaches()
+    }
+
     fn output_of_command(&self) -> Option<vak_tools::CommandOutput> {
         self.inner.output_of_command()
     }

@@ -556,6 +556,7 @@ struct CoreInner {
     control_override: std::sync::Mutex<Option<vak_config::ControlSettings>>,
     /// `[owner] timezone` as last read from disk (`Some(None)`: none set).
     owner_timezone_override: std::sync::Mutex<Option<Option<String>>>,
+    abilities_go_live_override: std::sync::Mutex<Option<bool>>,
     /// Runs an automation now; set by the process that runs the scheduler.
     trigger_runner: std::sync::RwLock<Option<Arc<dyn triggers::Runner>>>,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
@@ -1476,6 +1477,7 @@ impl Core {
             evidence_max_age_override: std::sync::Mutex::new(None),
             control_override: std::sync::Mutex::new(None),
             owner_timezone_override: std::sync::Mutex::new(None),
+            abilities_go_live_override: std::sync::Mutex::new(None),
             trigger_runner: std::sync::RwLock::new(None),
             mode_override: std::sync::Mutex::new(None),
             permission_lease: std::sync::Mutex::new(CancellationToken::new()),
@@ -1675,6 +1677,14 @@ impl Core {
         self.owner_timezone_set()
             .filter(|zone| zone.parse::<chrono_tz::Tz>().is_ok())
             .unwrap_or_else(crate::triggers::host_timezone)
+    }
+
+    /// Whether an ability an Agent made may go live for it without the
+    /// owner's review: `[owner] abilities_go_live`, read live
+    /// (docs/design/93-self-evolving-capabilities.md §5).
+    pub fn abilities_go_live(&self) -> bool {
+        Self::read_override(&self.inner.abilities_go_live_override)
+            .unwrap_or_else(|| self.config().abilities_go_live)
     }
 
     /// Installs what runs an automation now (`triggers::Runner`).
@@ -3049,6 +3059,10 @@ impl Core {
             Some(config.owner_timezone.clone()),
         );
         Self::write_override(
+            &self.inner.abilities_go_live_override,
+            Some(config.abilities_go_live),
+        );
+        Self::write_override(
             &self.inner.bedrock_region_override,
             Some(config.bedrock_region.clone()),
         );
@@ -3974,7 +3988,8 @@ impl Core {
     }
 
     /// The presentation library as it applies to `owner`'s workspace: what
-    /// was saved, the built-in seeds, and the packs of every enabled plugin,
+    /// was saved, the built-in seeds, the packs of the Agent's own skills,
+    /// and the packs of every enabled plugin,
     /// each active there unless suppressed or an explicit activation already
     /// draws one of its kinds. Read on demand, so enabling or disabling a
     /// plugin reaches its packs at once, as it reaches its skills
@@ -4003,6 +4018,12 @@ impl Core {
                 }
             }
         }
+        // An ability the Agent made carries its packs with the version it
+        // runs (docs/design/93-self-evolving-capabilities.md §3.1).
+        plugins.extend(presentation_store::skill_pack_records(
+            &self.scope().skills(),
+            owner,
+        ));
         presentation_store::effective(library, owner, plugins)
     }
 

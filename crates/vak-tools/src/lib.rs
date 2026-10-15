@@ -336,6 +336,13 @@ pub trait Tool: Send + Sync {
         )
     }
 
+    /// What a call reaches, in the owner's words, from its declaration:
+    /// an approval for it says this rather than the tool's name alone.
+    /// Empty when the permission engine's own wording says enough.
+    fn reaches(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// For a card tool that shows what a command printed: the argument
     /// naming the command, as a call ran it, and the argument the loop
     /// fills with that call's recorded result, so the card shows what the

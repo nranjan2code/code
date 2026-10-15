@@ -882,6 +882,11 @@ pub struct OwnerSettings {
     /// The owner's IANA time zone, such as `Asia/Kolkata`: what "9 AM"
     /// means in a schedule and the time line. Unset, this machine's.
     pub timezone: Option<String>,
+    /// Whether an ability an Agent made goes live for it when it passes its
+    /// tests and reaches nothing but this project's files
+    /// (docs/design/93-self-evolving-capabilities.md §5). Unset, yes. A
+    /// narrower layer can only turn it off.
+    pub abilities_go_live: Option<bool>,
 }
 
 /// Opt-in update awareness (docs/design/29-personal-os.md P3). A `None`
@@ -1421,6 +1426,9 @@ pub struct Config {
     pub automation: AutomationResolved,
     /// `[owner] timezone` as written; `Core::owner_timezone` resolves it.
     pub owner_timezone: Option<String>,
+    /// `[owner] abilities_go_live`, every layer's answer joined: off when
+    /// any layer turns it off.
+    pub abilities_go_live: bool,
     pub update: UpdateResolved,
     pub tools: ToolsResolved,
     pub heartbeat: HeartbeatResolved,
@@ -1768,6 +1776,7 @@ impl Default for Config {
                 catch_up_missed: true,
             },
             owner_timezone: None,
+            abilities_go_live: true,
             update: UpdateResolved {
                 url: None,
                 interval_hours: 24,
@@ -2212,6 +2221,15 @@ pub fn persist_owner_timezone(path: PathBuf, zone: Option<&str>) -> Result<(), C
                 owner.remove("timezone");
             }
         }
+        Ok(())
+    })
+}
+
+/// Write `[owner] abilities_go_live` in the layer at `path`.
+pub fn persist_abilities_go_live(path: PathBuf, live: bool) -> Result<(), ConfigError> {
+    update_config_file(&path, |document| {
+        let owner = child_table(document, "owner", &path)?;
+        owner.insert("abilities_go_live".into(), toml::Value::Boolean(live));
         Ok(())
     })
 }
@@ -3381,6 +3399,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .clone()
         .map(|zone| zone.trim().to_string())
         .filter(|zone| !zone.is_empty());
+    cfg.abilities_go_live = merged.owner.abilities_go_live.unwrap_or(true);
     cfg.update.url = merged.update.url.clone();
     cfg.update.interval_hours = merged.update.interval_hours.unwrap_or(24);
     cfg.tools.web_fetch = merged.tools.web_fetch.unwrap_or(true);
@@ -4359,6 +4378,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.owner.timezone.is_some() {
         base.owner.timezone = over.owner.timezone;
     }
+    if let Some(live) = over.owner.abilities_go_live {
+        base.owner.abilities_go_live = Some(base.owner.abilities_go_live.unwrap_or(true) && live);
+    }
     if over.update.url.is_some() {
         base.update.url = over.update.url;
     }
@@ -4580,6 +4602,27 @@ pub fn upsert_env_file(path: &std::path::Path, key: &str, value: &str) -> std::i
     clippy::field_reassign_with_default
 )]
 mod tests {
+    /// A narrower layer can turn the owner's switch off, never back on.
+    #[test]
+    fn abilities_go_live_only_narrows() {
+        let layer = |live: Option<bool>| super::FileConfig {
+            owner: super::OwnerSettings {
+                abilities_go_live: live,
+                ..super::OwnerSettings::default()
+            },
+            ..super::FileConfig::default()
+        };
+        let mut base = layer(Some(false));
+        super::merge_into(&mut base, layer(Some(true)));
+        assert_eq!(base.owner.abilities_go_live, Some(false));
+        let mut base = layer(None);
+        super::merge_into(&mut base, layer(Some(false)));
+        assert_eq!(base.owner.abilities_go_live, Some(false));
+        let mut base = layer(None);
+        super::merge_into(&mut base, layer(None));
+        assert_eq!(base.owner.abilities_go_live, None);
+    }
+
     #[test]
     fn voice_defaults_are_safe_and_serializable() {
         let settings = VoiceSettings::default();

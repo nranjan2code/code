@@ -8,7 +8,10 @@ built 2026-10-15 (a program's own tests run by the runtime in a run of
 their own, kept per digest); E3a built 2026-10-15 (propose_skill with a
 `source` folder, Library versions with their verification, the tier
 gate, the Agent's own skills discovered; checked live with gpt-6-luna);
-the rest of E3 and E4 to E9 not built. Agreed with the
+E3 built 2026-10-15 (E3b: the owner's switch `[owner] abilities_go_live`,
+the waiting proposal's inbox entry and review record, what a program
+reaches in approvals, packs from an Agent's own skills); E4 to E9 not
+built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -323,9 +326,9 @@ that proposed it, never from words:
 | Tier | When | What happens |
 |---|---|---|
 | **Live** | every test passed, no `hosts`, no install still to make, and the proposing turn held no untrusted content | installed in the Agent's own skills (`agents/<id>/skills`), discovered from its next turn |
-| **Review** | it passed, but declares a host, needs an install, or the proposing turn held untrusted content (`skill_programs::review_reason`) | a proposal in the review queue naming its Library version; promoting it installs that version in the Shared layer |
+| **Review** | it passed, but declares a host, needs an install, the proposing turn held untrusted content, or the owner turned off `[owner] abilities_go_live` (`skill_programs::review_reason`) | a proposal in the review queue naming its Library version; promoting it installs that version in the Shared layer |
 | **Failed** | a test failed | not admitted; the version is kept in the Library with its failed verification, and the model is told each failing case |
-| **Live (packs)** | a presentation pack, which runs no code and reaches nothing | live with its version, whatever the program's tier |
+| **Live (packs)** | a presentation pack, which runs no code and reaches nothing | live with the installed version that carries it (`presentation_store::skill_pack_records`); a version waiting for review keeps its packs until approved, since a pack apart from its version would be a second record of it. A pack that does not parse, names no form or claims a form's own kind refuses the proposal |
 | **Refused** | a declaration the session itself could not use (wider than its mode), a schema that fails the portability checks, a program with no tests, an Office file or PDF in its drafts (R6) | refused with what to fix |
 
 - **Untrusted content pushes to Review.** A turn that read a web page, a
@@ -338,7 +341,18 @@ that proposed it, never from words:
 - **The tier is the owner's setting.** Settings → Capabilities offers
   "Let Agents switch on new abilities that only work with your files"
   (on by default, per D1) and nothing wider. Turning it off sends every
-  proposal to Review.
+  proposal to Review. It is `[owner] abilities_go_live`, written to the
+  Shared layer by `PUT /config/owner` and read live
+  (`Core::abilities_go_live`); a narrower layer can turn it off, never
+  back on.
+- **Saying what it reaches.** `Program::reaches` is the one wording of
+  what a program reaches ("Reads the files in this project", "Connects
+  to …", "Installs its packages from …, once", "Reaches nothing outside
+  this computer"). A tool declares it (`Tool::reaches`) and an approval
+  for a call carries it; a proposal waiting for review records it with
+  why it waits (`ProgramReview`, served by `/skills/proposals`), and its
+  `ProposalOpened` inbox entry says both until the owner approves or
+  declines it.
 - **FullAccess** does not change the tier rules: a capability is code
   that will run again later, unattended, not one command the owner saw.
 
