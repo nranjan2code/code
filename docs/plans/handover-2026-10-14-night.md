@@ -31,10 +31,9 @@ a wrong design or screen rather than patch it.
 Self-evolving capabilities (doc 93) stand at E6 done: E1 to E6 are
 built and checked (E6d: the capability sheet, Review in it, Library
 filters and Needs you, Settings > Capabilities as Learned / Installed /
-Connections / Discover, inbox entries open their ability). Next is E7
-(admin #/capabilities with revoke, the per-version table in
-#/measurements, `vak skills` verbs replacing `skills-review`), then E8
-and E9 as doc 93 §11 orders them.
+Connections / Discover, inbox entries open their ability), and E7 (admin
+Learned abilities with revoke, the per-version table, `vak skills`
+verbs). Next is E8 (the opt-in review of failures, doc 93 §8), then E9.
 Build each as a
 design, never spot fixes or tuned numbers.
 
@@ -80,8 +79,8 @@ route pin); a scheduled run's cards are drawn as cards in the home turn
 model still reads their text). Left on the dev home: the "morning line"
 automation and its test conversation.
 
-**Self-evolving capabilities (doc 93) stand at E6 done** (2026-10-15,
-full gate green, pushed): E7 to E9 not started (tracker lines in
+**Self-evolving capabilities (doc 93) stand at E7 done** (2026-10-15,
+full gate green, pushed): E8 and E9 not started (tracker lines in
 open-items "Self-evolving capabilities").
 
 **E6d is built** (checked in the running app on the installed home,
@@ -98,7 +97,14 @@ and docs 26, 29 name it); admin inventory over
 `agent_definitions::effective` with each Agent's scoped Core; revoke
 only Agent-made abilities; per-version calls by time window from
 `calls_of`. Left on the installed home: temperature-converter versions
-1 (tests failed) and 2 (in use), its test conversation.
+1 (tests failed) and 2 (in use), its test conversation; its record has
+three entries for version 2 from before re-use stopped adding one.
+
+**E7 is built** (checked on the installed home): `/admin/api/capabilities`
+and its revoke route (`vak-server/src/admin.rs`), `Core::ability_measure`
+and `Core::revoke_shared_ability`, the admin `Capabilities.tsx` page and
+`AbilityVersionsPanel` in Measurements, and the `vak skills` verbs
+(`run_abilities` in `crates/vak/src/main.rs`).
 
 **E6a is built** (checked in the running app on the installed home):
 the Library's Learned abilities chip over `GET /skills/abilities`

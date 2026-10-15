@@ -1690,9 +1690,166 @@ pub(crate) async fn revoke_gateway_allowlist(
 
 // ---- Admin route mounter --------------------------------------------------
 
+/// Every Agent's id, the built-in one first.
+fn agent_ids(state: &AppState) -> Vec<(String, String)> {
+    let mut ids = vec![("vak".to_string(), "Vakyartha".to_string())];
+    for agent in vak_core::agent_definitions::effective(&state.core).unwrap_or_default() {
+        if !ids.iter().any(|(id, _)| *id == agent.id) {
+            ids.push((agent.id, agent.name));
+        }
+    }
+    ids
+}
+
+#[derive(Serialize)]
+struct AgentAbility {
+    #[serde(flatten)]
+    ability: vak_core::skill_programs::AbilityView,
+    agent: String,
+    agent_name: String,
+    /// Its Shared copy, given to every Agent.
+    shared: bool,
+    measure: Vec<vak_core::ability_sheet::VersionMeasure>,
+}
+
+#[derive(Serialize)]
+struct SharedSkill {
+    name: String,
+    description: String,
+    /// Where it comes from: `builtin`, `shared`, `project`, `plugin` or
+    /// `agent` (the serving Agent's own).
+    origin: Option<String>,
+    /// The Agent that made it, for an ability given to every Agent.
+    made_by: Option<String>,
+    reaches: Vec<String>,
+}
+
+/// The capability inventory (docs/design/93 §9.6): every Agent's learned
+/// abilities with each installed version's measure, and the skills every
+/// Agent finds, with who made them.
+async fn capabilities_admin(State(state): State<AppState>) -> Response {
+    let result = tokio::task::spawn_blocking(move || {
+        let mut abilities = Vec::new();
+        let mut makers: Vec<(String, vak_core::Core)> = Vec::new();
+        let shared_dir = state.core.shared_skills_dir();
+        for (id, name) in agent_ids(&state) {
+            let Ok((_, core)) = crate::agent_chats::resolve_agent_core(&state, &id) else {
+                continue;
+            };
+            for ability in core.abilities() {
+                let shared = vak_tools::capability::Program::load(&shared_dir.join(&ability.name))
+                    .ok()
+                    .flatten()
+                    .is_some();
+                abilities.push(AgentAbility {
+                    measure: core.ability_measure(&ability.name),
+                    ability,
+                    agent: id.clone(),
+                    agent_name: name.clone(),
+                    shared,
+                });
+            }
+            makers.push((id, core));
+        }
+        let skills: Vec<SharedSkill> = state
+            .core
+            .skills()
+            .into_iter()
+            .filter(|skill| !skill.shadowed)
+            .map(|skill| {
+                let dir = skill.path.parent().map(std::path::Path::to_path_buf);
+                SharedSkill {
+                    made_by: makers
+                        .iter()
+                        .find(|(_, core)| core.skill_artifact(&skill.name).is_some())
+                        .filter(|_| {
+                            dir.as_deref()
+                                .is_some_and(|dir| dir.starts_with(&shared_dir))
+                        })
+                        .map(|(id, _)| id.clone()),
+                    reaches: dir
+                        .and_then(|dir| vak_tools::capability::Program::load(&dir).ok().flatten())
+                        .map(|program| program.reaches())
+                        .unwrap_or_default(),
+                    origin: Some(
+                        if skill
+                            .provenance
+                            .as_deref()
+                            .is_some_and(|from| from.starts_with("plugin"))
+                        {
+                            "plugin"
+                        } else if skill.path.starts_with(&shared_dir) {
+                            "shared"
+                        } else if skill.path.starts_with(state.core.scope().skills()) {
+                            "agent"
+                        } else if skill.path.starts_with(state.core.cwd()) {
+                            "project"
+                        } else {
+                            "builtin"
+                        }
+                        .to_string(),
+                    ),
+                    name: skill.name,
+                    description: skill.description,
+                }
+            })
+            .collect();
+        serde_json::json!({ "abilities": abilities, "skills": skills })
+    })
+    .await;
+    match result {
+        Ok(body) => Json(body).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct RevokeQuery {
+    /// The Agent to take it from; absent takes the Shared copy from every
+    /// Agent.
+    agent: Option<String>,
+}
+
+/// Revokes a learned ability (docs/design/93 §9.6): from one Agent, or its
+/// Shared copy from every Agent. It takes effect at once: the next call
+/// to it is refused.
+async fn revoke_capability_admin(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(q): Query<RevokeQuery>,
+) -> Response {
+    let outcome = match q.agent.as_deref() {
+        Some(agent) => match crate::agent_chats::resolve_agent_core(&state, agent) {
+            Ok((_, core)) => core.turn_off_ability(&name),
+            Err(response) => return response,
+        },
+        None => agent_ids(&state)
+            .into_iter()
+            .filter_map(|(id, _)| crate::agent_chats::resolve_agent_core(&state, &id).ok())
+            .find(|(_, core)| core.skill_artifact(&name).is_some())
+            .map_or_else(
+                || Err(format!("'{name}' was not made by an Agent")),
+                |(_, core)| core.revoke_shared_ability(&name),
+            ),
+    };
+    match outcome {
+        Ok(()) => Json(serde_json::json!({ "revoked": name })).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
 pub(crate) fn routes() -> axum::Router<AppState> {
     use axum::routing::{get, patch, post};
     axum::Router::new()
+        .route("/admin/api/capabilities", get(capabilities_admin))
+        .route(
+            "/admin/api/capabilities/{name}/revoke",
+            post(revoke_capability_admin),
+        )
         .route("/admin/api/sessions", get(list_sessions_admin))
         .route(
             "/admin/api/sessions/{id}/transcript",

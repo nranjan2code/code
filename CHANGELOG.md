@@ -1,5 +1,11 @@
 ## Unreleased
 
+- The admin console has Learned abilities: every Agent's abilities and
+  the skills every Agent finds, with Take back, which stops the next
+  call at once. How the models did adds each ability version's calls,
+  failures and what the promotion rule would do. `vak skills list`,
+  `show`, `use`, `approve`, `decline`, `promote` and `turn-off` replace
+  `vak skills-review`.
 - Every learned ability has a sheet, opened from the line under an
   answer, the Library, Settings and the inbox: what it can do, why it
   waits, each version with what it changed and how its tests went, its

@@ -268,7 +268,7 @@ pub struct VersionRecord {
 }
 
 impl VersionRecord {
-    fn facts(&self) -> vak_judge::ability::VersionFacts {
+    pub(crate) fn facts(&self) -> vak_judge::ability::VersionFacts {
         vak_judge::ability::VersionFacts {
             passed: self.passed,
             succeeded_elsewhere: self.succeeded_elsewhere,
@@ -483,13 +483,14 @@ impl Core {
             .and_then(|text| serde_json::from_str(&text).ok())
     }
 
-    /// Marks the Agent's learned ability `skill` withdrawn in its record.
-    pub(crate) fn mark_withdrawn(&self, skill: &str) -> Result<(), String> {
+    /// Marks the Agent's learned ability `skill` withdrawn, or not, in its
+    /// record.
+    pub(crate) fn mark_withdrawn(&self, skill: &str, withdrawn: bool) -> Result<(), String> {
         vak_session::documents::update(&self.ability_path(skill), |current| {
             let mut record: AbilityRecord = current
                 .and_then(|text| serde_json::from_str(text).ok())
                 .unwrap_or_default();
-            record.withdrawn = true;
+            record.withdrawn = withdrawn;
             let text = serde_json::to_string(&record).map_err(|error| error.to_string())?;
             Ok(Some((text, ())))
         })?;
@@ -784,17 +785,26 @@ impl Core {
                 continue;
             }
             let (artifact, versions) = artifact_of(&name).unzip();
-            // Installed nowhere: what it does is its Library summary.
-            let description = library
+            // Installed nowhere: what it does and reaches are its newest
+            // Library version's.
+            let known = library
                 .iter()
-                .find(|known| Some(known.id.to_string()) == artifact)
+                .find(|known| Some(known.id.to_string()) == artifact);
+            let description = known
                 .and_then(|known| known.summary.clone())
+                .unwrap_or_default();
+            let reaches = known
+                .and_then(|known| {
+                    let newest = known.versions.last()?;
+                    self.artifacts().bytes(known, &newest.id).ok()
+                })
+                .map(|bytes| crate::ability_sheet::reaches_of(&bytes))
                 .unwrap_or_default();
             rows.push(AbilityView {
                 name,
                 description,
                 state: "turned_off",
-                reaches: Vec::new(),
+                reaches,
                 why: None,
                 proposal: None,
                 artifact,

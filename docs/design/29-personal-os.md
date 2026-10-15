@@ -55,7 +55,7 @@ delivery applies. (The inline TUI this table once listed was withdrawn;
 | Backup export/import | `vak backup …` | Settings: folder picker → export/import buttons | — |
 | Weekly digest | `vak digest` | Digest card | scheduled digest as an ordinary task (`deliver_to`) |
 | webfetch / browse | approval prompt + transcript (url shown) | approval queue w/ URL shown | forwarded gates per doc 22 rules |
-| Skill curation | `vak skills-review list` (duplicate flags) | Learning page duplicate badges + merge review | — |
+| Skill curation | `vak skills list` (duplicate flags) | Learning page duplicate badges + merge review | — |
 | Inbox | `vak inbox list/show/ack/count` | InboxPage + bell badge + ack/ack-all | entries mirror every delivery (single chokepoint) |
 | Heartbeat | `vak inbox` | inbox kind chip + native notification while hidden | URGENT findings push; everything else parks |
 

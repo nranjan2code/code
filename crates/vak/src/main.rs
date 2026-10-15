@@ -34,7 +34,7 @@ mod sync;
 mod triggers;
 mod update_check;
 
-use cli::{CheckpointAction, Cli, Command, FlowAction, SkillsAction, SkillsReviewAction};
+use cli::{CheckpointAction, Cli, Command, FlowAction, SkillsAction};
 
 fn run_export(cwd: PathBuf, session_id: String, html: bool, out: Option<PathBuf>) -> i32 {
     let core = match Core::new(cwd) {
@@ -77,54 +77,216 @@ fn run_export(cwd: PathBuf, session_id: String, html: bool, out: Option<PathBuf>
     0
 }
 
-fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
-    let Some(core) = Core::new(cwd).ok() else {
-        return 2;
+/// The Core whose learned abilities a `vak skills` verb acts on: this
+/// folder's, as the Agent `--agent` names (the built-in one by default).
+fn abilities_core(cwd: PathBuf, agent: Option<&str>) -> Result<Core, i32> {
+    let trusted = vak_core::trust::is_trusted(&cwd);
+    let core = Core::new_with_trust(cwd, trusted).map_err(|e| {
+        eprintln!("error: {e}");
+        2
+    })?;
+    let Some(agent) = agent.filter(|agent| *agent != "vak") else {
+        return Ok(core);
+    };
+    let profile = vak_core::agent_definitions::effective(&core)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|p| p.id == agent || p.name.eq_ignore_ascii_case(agent))
+        .ok_or_else(|| {
+            eprintln!(
+                "error: agent '{agent}' not found. Run 'vak agents list' to view configured agents."
+            );
+            2
+        })?;
+    Ok(core.with_agent_identity(Some(profile.identity())))
+}
+
+fn done(result: Result<String, String>) -> i32 {
+    match result {
+        Ok(words) => {
+            println!("{words}");
+            0
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            1
+        }
+    }
+}
+
+const ABILITY_WORDS: &[(&str, &str)] = &[
+    ("working", "working"),
+    ("failing", "failing"),
+    ("offered", "ready for every Agent"),
+    ("waiting", "waiting for review"),
+    ("turned_off", "turned off"),
+    ("in_use", "in use"),
+    ("failed_tests", "its tests failed"),
+    ("failed_in_use", "failed when used"),
+    ("earlier", "used before"),
+    ("not_used", "never used"),
+];
+
+fn words_of(state: &str) -> &str {
+    ABILITY_WORDS
+        .iter()
+        .find(|(key, _)| *key == state)
+        .map_or(state, |(_, words)| words)
+}
+
+/// The learned-ability verbs of `vak skills` (docs/design/93 §9.7): the
+/// same Core functions the app's routes call.
+fn run_abilities(cwd: PathBuf, action: SkillsAction) -> i32 {
+    let agent = match &action {
+        SkillsAction::List { agent, .. }
+        | SkillsAction::Show { agent, .. }
+        | SkillsAction::Use { agent, .. }
+        | SkillsAction::Approve { agent, .. }
+        | SkillsAction::Decline { agent, .. }
+        | SkillsAction::Promote { agent, .. }
+        | SkillsAction::TurnOff { agent, .. } => agent.clone(),
+        SkillsAction::Validate { .. } | SkillsAction::Verify { .. } => None,
+    };
+    let core = match abilities_core(cwd, agent.as_deref()) {
+        Ok(core) => core,
+        Err(code) => return code,
     };
     match action {
-        SkillsReviewAction::List => {
-            let proposals = vak_core::learning::list_proposals(&core.scope(), core.cwd());
-            if proposals.is_empty() {
-                println!("no pending skill proposals");
+        SkillsAction::List { json, .. } => {
+            let abilities = core.abilities();
+            if json {
+                println!("{}", serde_json::to_string(&abilities).unwrap_or_default());
                 return 0;
             }
-            for p in &proposals {
-                println!("{}  {} — {}", p.id, p.name, p.description);
+            if abilities.is_empty() {
+                println!("no learned abilities");
+            }
+            for ability in &abilities {
+                let waiting = ability
+                    .proposal
+                    .as_deref()
+                    .map(|id| format!("  (proposal {id})"))
+                    .unwrap_or_default();
+                println!("{}  {}{waiting}", ability.name, words_of(ability.state));
+                if !ability.description.is_empty() {
+                    println!("    {}", ability.description);
+                }
             }
             0
         }
-        SkillsReviewAction::Promote { id } => {
-            match vak_core::learning::promote(
-                &core.scope(),
-                core.cwd(),
-                &id,
-                &core.shared_skills_dir(),
-                Some(&core.artifacts()),
-            ) {
-                Ok(name) => {
-                    core.proposal_settled(&id);
-                    println!("promoted skill '{name}'");
-                    0
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    1
+        SkillsAction::Show { name, json, .. } => {
+            let Some(sheet) = core.ability_sheet(&name) else {
+                eprintln!("no learned ability '{name}'");
+                return 1;
+            };
+            if json {
+                println!("{}", serde_json::to_string(&sheet).unwrap_or_default());
+                return 0;
+            }
+            println!("{} — {}", sheet.ability.name, words_of(sheet.ability.state));
+            if !sheet.ability.description.is_empty() {
+                println!("{}", sheet.ability.description);
+            }
+            for line in &sheet.ability.reaches {
+                println!("  · {line}");
+            }
+            if let Some(why) = &sheet.ability.why {
+                println!("waiting because {why}");
+            }
+            for version in &sheet.history {
+                let tests = version.tests.as_ref().map_or_else(String::new, |tests| {
+                    let passed = tests.cases.iter().filter(|case| case.passed).count();
+                    format!(
+                        " · tests {passed} of {} passed, run {}",
+                        tests.cases.len(),
+                        tests.run
+                    )
+                });
+                let changed: Vec<String> = version
+                    .changes
+                    .iter()
+                    .map(|change| format!("{} {}", change.change, change.path))
+                    .collect();
+                println!(
+                    "version {} ({}) {}{tests}\n    {}",
+                    version.number,
+                    version.version,
+                    words_of(version.state),
+                    if changed.is_empty() {
+                        "no file changes".to_string()
+                    } else {
+                        changed.join(", ")
+                    }
+                );
+            }
+            let failed = sheet
+                .uses
+                .iter()
+                .filter(|used| used.outcome.as_deref() == Some("failed"))
+                .count();
+            println!("{} uses, {failed} failed", sheet.uses.len());
+            0
+        }
+        SkillsAction::Use { name, version, .. } => {
+            let id = match version.parse::<usize>() {
+                Ok(number) => match core
+                    .ability_sheet(&name)
+                    .and_then(|sheet| sheet.history.into_iter().find(|v| v.number == number))
+                {
+                    Some(found) => found.version,
+                    None => {
+                        eprintln!("'{name}' has no version {number}");
+                        return 1;
+                    }
+                },
+                Err(_) => version,
+            };
+            done(
+                core.use_ability_version(&name, &id, None)
+                    .map(|number| format!("{name} version {number} is in use")),
+            )
+        }
+        SkillsAction::Approve { proposal, .. } => {
+            let found = vak_core::learning::list_proposals(&core.scope(), core.cwd())
+                .into_iter()
+                .find(|p| p.id == proposal);
+            match found {
+                None => done(Err(format!("no proposal '{proposal}'"))),
+                Some(p) if p.program.is_some() => done(
+                    core.approve_for_agent(&proposal)
+                        .map(|name| format!("{name} is now this Agent's")),
+                ),
+                Some(_) => {
+                    let promoted = vak_core::learning::promote(
+                        &core.scope(),
+                        core.cwd(),
+                        &proposal,
+                        &core.shared_skills_dir(),
+                        Some(&core.artifacts()),
+                    );
+                    if promoted.is_ok() {
+                        core.proposal_settled(&proposal);
+                    }
+                    done(promoted.map(|name| format!("{name} is now available to every Agent")))
                 }
             }
         }
-        SkillsReviewAction::Reject { id } => {
-            match vak_core::learning::reject(&core.scope(), core.cwd(), &id) {
-                Ok(()) => {
-                    core.proposal_settled(&id);
-                    println!("rejected proposal {id}");
-                    0
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    1
-                }
+        SkillsAction::Decline { proposal, .. } => {
+            let declined = vak_core::learning::reject(&core.scope(), core.cwd(), &proposal);
+            if declined.is_ok() {
+                core.proposal_settled(&proposal);
             }
+            done(declined.map(|()| format!("declined proposal {proposal}")))
         }
+        SkillsAction::Promote { name, .. } => done(
+            core.promote_ability(&name)
+                .map(|()| format!("{name} is now available to every Agent")),
+        ),
+        SkillsAction::TurnOff { name, .. } => done(
+            core.turn_off_ability(&name)
+                .map(|()| format!("{name} is turned off; its versions stay in the Library")),
+        ),
+        SkillsAction::Validate { .. } | SkillsAction::Verify { .. } => 2,
     }
 }
 
@@ -239,6 +401,7 @@ async fn run_skills(cwd: PathBuf, action: SkillsAction) -> i32 {
             }
             i32::from(failed)
         }
+        other => run_abilities(cwd, other),
     }
 }
 
@@ -586,7 +749,6 @@ async fn main() {
             html,
             out,
         }) => run_export(cwd, session_id, html, out),
-        Some(Command::SkillsReview { action }) => run_skills_review(cwd, action),
         Some(Command::Skills { action }) => run_skills(cwd, action).await,
         Some(Command::Plugins { action }) => plugins::run_plugins(cwd, action),
         Some(Command::Intent { action }) => intent::run_intent(cwd, action),

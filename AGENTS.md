@@ -1959,8 +1959,9 @@ crates/vak           binary. Run: exec / plan / flow / eval /
                      for Office files and PDFs: JSON over the same worker
                      tasks as the Agent's tools, docs/design/72-openxml-
                      documents.md, 77-pdf-documents.md). Configure: config /
-                     prompts / skills /
-                     skills-review / plugins / setup / doctor / backup /
+                     prompts / skills (validate, verify, and the learned
+                     abilities: list, show, use, approve, decline,
+                     promote, turn-off) / plugins / setup / doctor / backup /
                      digest / self (state, install, reinstall, verify,
                      update, uninstall, status, services-sync), plus the
                      first-run wizard and the opt-in update check.

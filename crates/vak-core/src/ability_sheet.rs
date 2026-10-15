@@ -126,7 +126,7 @@ fn changes(before: Option<&[u8]>, after: &[u8]) -> Vec<FileChange> {
 }
 
 /// What the program in a skill bundle reaches, in the owner's words.
-fn reaches_of(bytes: &[u8]) -> Vec<String> {
+pub(crate) fn reaches_of(bytes: &[u8]) -> Vec<String> {
     let dir = vak_config::paths::runtime_dir()
         .join("ability-sheets")
         .join(uuid::Uuid::now_v7().simple().to_string());
@@ -150,7 +150,7 @@ impl Core {
 
     /// The sheet of the Agent's learned ability `name`, if it has one.
     pub fn ability_sheet(&self, name: &str) -> Option<AbilitySheet> {
-        let mut ability = self.abilities().into_iter().find(|row| row.name == name)?;
+        let ability = self.abilities().into_iter().find(|row| row.name == name)?;
         let installed = self.scope().skills().join(name);
         let program = Program::load(&installed).ok().flatten();
         let record = self.ability_record(name).unwrap_or_default();
@@ -268,19 +268,6 @@ impl Core {
                     })
             })
             .unwrap_or_default();
-        // One turned off is installed nowhere: what it does and reaches are
-        // its newest version's.
-        if let Some(artifact) = artifact.as_ref().filter(|_| ability.state == "turned_off") {
-            if ability.description.is_empty() {
-                ability.description = artifact.summary.clone().unwrap_or_default();
-            }
-            if ability.reaches.is_empty()
-                && let Some(newest) = artifact.versions.last()
-                && let Ok(bytes) = self.artifacts().bytes(artifact, &newest.id)
-            {
-                ability.reaches = reaches_of(&bytes);
-            }
-        }
         Some(AbilitySheet {
             declaration: std::fs::read_to_string(
                 installed.join(vak_tools::capability::DECLARATION),
@@ -364,16 +351,26 @@ impl Core {
             })
             .map_err(|error| format!("the version was not recorded in the Library: {error}"))?;
         install(&bytes, &target)?;
-        self.record_ability_version(
-            name,
-            VersionRecord {
-                digest,
-                version: made.to_string(),
-                parent: current.map(|program| program.digest),
-                passed: true,
-                ..VersionRecord::default()
-            },
-        )?;
+        // The newest version chosen again is the same version: it is in use
+        // once more, not installed as another.
+        if self
+            .ability_record(name)
+            .and_then(|record| record.versions.last().cloned())
+            .is_some_and(|last| last.version == made.to_string())
+        {
+            self.mark_withdrawn(name, false)?;
+        } else {
+            self.record_ability_version(
+                name,
+                VersionRecord {
+                    digest,
+                    version: made.to_string(),
+                    parent: current.map(|program| program.digest),
+                    passed: true,
+                    ..VersionRecord::default()
+                },
+            )?;
+        }
         Ok(self
             .skill_artifact(name)
             .and_then(|artifact| artifact.versions.iter().position(|known| known.id == made))
@@ -388,8 +385,127 @@ impl Core {
         if Program::load(&installed).ok().flatten().is_none() {
             return Err(format!("'{name}' is not in use for this Agent"));
         }
-        self.mark_withdrawn(name)?;
+        self.mark_withdrawn(name, true)?;
         std::fs::remove_dir_all(&installed)
+            .map_err(|error| format!("'{name}' could not be removed: {error}"))
+    }
+}
+
+/// One installed version of an ability as the measure shows it (doc 93
+/// §9.6): its calls and failures, and what R2 says of it now.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct VersionMeasure {
+    /// Its place in the Library's history, when the Library still has it.
+    pub number: Option<usize>,
+    pub at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Calls while it was the version installed (from the start, when the
+    /// Library no longer has the version), and how many failed.
+    pub calls: usize,
+    pub failed: usize,
+    pub passed: bool,
+    pub succeeded_elsewhere: bool,
+    pub failed_in_use: bool,
+    pub offered: bool,
+    /// `offer`, `withdraw` or `keep`: `vak_judge::ability::verdict` on it.
+    pub verdict: &'static str,
+    /// The version installed now.
+    pub current: bool,
+}
+
+impl Core {
+    /// Each installed version of the learned ability `name`, oldest first,
+    /// with the calls made while it was installed (found through the
+    /// catalog) and R2's verdict on it.
+    pub fn ability_measure(&self, name: &str) -> Vec<VersionMeasure> {
+        let record = self.ability_record(name).unwrap_or_default();
+        let artifact = self.skill_artifact(name);
+        let placed = |version: &str| {
+            artifact.as_ref().and_then(|artifact| {
+                artifact
+                    .versions
+                    .iter()
+                    .position(|known| known.id.to_string() == version)
+                    .map(|at| (at + 1, artifact.versions[at].at))
+            })
+        };
+        let calls: Vec<(chrono::DateTime<chrono::Utc>, bool)> = self
+            .catalog()
+            .ok()
+            .and_then(|catalog| {
+                let _ = catalog.catch_up();
+                catalog.calls_of(name, None, &self.catalog_audience()).ok()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|call| {
+                let at = chrono::DateTime::parse_from_rfc3339(call.created_at.as_deref()?).ok()?;
+                Some((
+                    at.with_timezone(&chrono::Utc),
+                    call.status.as_deref() == Some("failed"),
+                ))
+            })
+            .collect();
+        let starts: Vec<_> = record
+            .versions
+            .iter()
+            .map(|version| placed(&version.version).map(|(_, at)| at))
+            .collect();
+        let last = record.versions.len().saturating_sub(1);
+        record
+            .versions
+            .iter()
+            .enumerate()
+            .map(|(at, version)| {
+                let from = starts[at];
+                let until = starts[at + 1..].iter().flatten().next().copied();
+                let window: Vec<_> = calls
+                    .iter()
+                    .filter(|(when, _)| {
+                        from.is_none_or(|from| *when >= from)
+                            && until.is_none_or(|until| *when < until)
+                    })
+                    .collect();
+                let parent = version.parent.as_ref().and_then(|digest| {
+                    record.versions[..at]
+                        .iter()
+                        .rev()
+                        .find(|earlier| &earlier.digest == digest)
+                        .map(VersionRecord::facts)
+                });
+                VersionMeasure {
+                    number: placed(&version.version).map(|(number, _)| number),
+                    at: from,
+                    calls: window.len(),
+                    failed: window.iter().filter(|(_, failed)| *failed).count(),
+                    passed: version.passed,
+                    succeeded_elsewhere: version.succeeded_elsewhere,
+                    failed_in_use: version.failed.is_some(),
+                    offered: version.offered,
+                    verdict: match vak_judge::ability::verdict(version.facts(), parent) {
+                        vak_judge::ability::AbilityVerdict::Offer => "offer",
+                        vak_judge::ability::AbilityVerdict::Withdraw => "withdraw",
+                        vak_judge::ability::AbilityVerdict::Keep => "keep",
+                    },
+                    current: at == last && !record.withdrawn,
+                }
+            })
+            .collect()
+    }
+
+    /// Takes back from every Agent the Shared copy of `name`, an ability an
+    /// Agent of this Core made (its versions are in this Core's Library):
+    /// the copy goes at once, so the next call to it is refused, and its
+    /// versions stay. A Shared skill no Agent made is the owner's file and
+    /// is never removed here.
+    pub fn revoke_shared_ability(&self, name: &str) -> Result<(), String> {
+        if self.skill_artifact(name).is_none() {
+            return Err(format!("'{name}' was not made by this Agent"));
+        }
+        let shared = self.shared_skills_dir().join(name);
+        if Program::load(&shared).ok().flatten().is_none() {
+            return Err(format!("'{name}' is not given to every Agent"));
+        }
+        std::fs::remove_dir_all(&shared)
             .map_err(|error| format!("'{name}' could not be removed: {error}"))
     }
 }

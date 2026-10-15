@@ -1728,3 +1728,37 @@ export interface LedgerReport {
   models: LedgerModelMeasure[];
   proposals: Proposal[];
 }
+
+/** One installed version of a learned ability, measured (docs/design/93 §9.6). */
+export interface AbilityVersionMeasure {
+  number: number | null;
+  at: string | null;
+  calls: number;
+  failed: number;
+  passed: boolean;
+  succeeded_elsewhere: boolean;
+  failed_in_use: boolean;
+  offered: boolean;
+  verdict: "offer" | "withdraw" | "keep";
+  current: boolean;
+}
+
+export interface CapabilityAbility {
+  name: string;
+  description: string;
+  state: "working" | "failing" | "offered" | "waiting" | "turned_off";
+  reaches: string[];
+  why?: string | null;
+  proposal?: string | null;
+  artifact?: string | null;
+  versions: number;
+  agent: string;
+  agent_name: string;
+  shared: boolean;
+  measure: AbilityVersionMeasure[];
+}
+
+export interface CapabilityInventory {
+  abilities: CapabilityAbility[];
+  skills: { name: string; description: string; origin: string | null; made_by: string | null; reaches: string[] }[];
+}

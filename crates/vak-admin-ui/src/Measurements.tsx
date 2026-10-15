@@ -8,6 +8,7 @@ import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
 import { pushToast } from "./store";
 import type { LedgerModelMeasure, Proposal, ProposalPattern } from "./types";
+import { AbilityVersionsPanel } from "./Capabilities";
 
 type ReviewFilter = "waiting" | "accepted" | "dismissed";
 
@@ -126,6 +127,8 @@ export function Measurements() {
                   </div>
                 </Show>
               </section>
+
+              <AbilityVersionsPanel />
 
               <section class="panel">
                 <div class="panel-title-row"><div><span class="eyebrow">Patterns to review</span><h2>What might change</h2></div></div>

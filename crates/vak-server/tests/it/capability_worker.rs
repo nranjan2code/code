@@ -949,4 +949,75 @@ async fn an_abilitys_sheet_shows_its_versions_and_the_owner_chooses_one() {
         core.ability_sheet("sheet-splitter").unwrap().ability.state,
         "working"
     );
+    // Turned off and chosen again, the newest is in use once more, not twice.
+    core.turn_off_ability("sheet-splitter").unwrap();
+    assert_eq!(
+        core.use_ability_version("sheet-splitter", &second, None),
+        Ok(4)
+    );
+    assert_eq!(core.ability_measure("sheet-splitter").len(), 4);
+}
+
+#[tokio::test]
+async fn a_revoked_ability_is_refused_at_its_next_call() {
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(workspace.path()).unwrap();
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).unwrap();
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let propose = vak_core::learning::ProposeSkillTool {
+        sessions_home: core.scope().into_root(),
+        cwd: workspace.path().to_path_buf(),
+        session_id: "sess-revoke".into(),
+        core: Some(core.clone()),
+    };
+    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_agent_id("vak");
+    prepared(workspace.path(), "first", "args['people']", 30);
+    let out = propose
+        .execute(
+            &json!({"name": "revoke-splitter", "description": "Split a bill evenly",
+                    "instructions": "Call the tool.", "source": "first"}),
+            &ctx,
+        )
+        .await;
+    assert!(!out.is_error(), "{}", out.content);
+
+    let measure = core.ability_measure("revoke-splitter");
+    assert_eq!(measure.len(), 1);
+    assert_eq!(
+        (
+            measure[0].number,
+            measure[0].calls,
+            measure[0].verdict,
+            measure[0].current
+        ),
+        (Some(1), 0, "keep", true)
+    );
+
+    let installed = core.scope().skills().join("revoke-splitter");
+    let call = CapabilityTool::new(
+        "revoke-splitter".into(),
+        "Split a bill evenly".into(),
+        Program::load(&installed).unwrap().unwrap(),
+        PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")),
+    );
+    let args = json!({"amount": 90, "people": 3, "timeout_ms": 20000});
+    let first = call.execute(&args, &ctx).await;
+    assert!(!first.is_error(), "{}", first.content);
+    core.turn_off_ability("revoke-splitter").unwrap();
+    let after = call.execute(&args, &ctx).await;
+    assert!(after.is_error(), "{}", after.content);
+    assert!(!core.ability_measure("revoke-splitter")[0].current);
+
+    // A Shared copy an Agent made is taken back; the owner's own is not.
+    let bytes = vak_tools::capability::bundle(&workspace.path().join("first")).unwrap();
+    let shared = core.shared_skills_dir().join("revoke-splitter");
+    vak_core::skill_programs::install(&bytes, &shared).unwrap();
+    core.revoke_shared_ability("revoke-splitter").unwrap();
+    assert!(!shared.exists());
+    vak_core::skill_programs::install(&bytes, &core.shared_skills_dir().join("owners-own"))
+        .unwrap();
+    assert!(core.revoke_shared_ability("owners-own").is_err());
+    assert!(core.shared_skills_dir().join("owners-own").exists());
+    std::fs::remove_dir_all(core.shared_skills_dir().join("owners-own")).unwrap();
 }

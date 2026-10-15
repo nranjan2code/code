@@ -125,7 +125,7 @@ searches for the note the user asked it to forget. `session_search` and
   root every turn discovers; refuses silent overwrite of an existing skill
   name.
 - `POST /skills/proposals/{id}/reject` — forgets the pending Document.
-- CLI mirrors: `vak skills-review list|promote|reject`, `vak memory`.
+- CLI mirrors: `vak skills list|show|approve|decline|promote|turn-off`, `vak memory`.
 
 Provenance footer (HTML comment) survives inside SKILL.md harmlessly:
 `<!-- proposed-by: <session-id> at <ts> -->`.

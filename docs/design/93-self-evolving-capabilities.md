@@ -25,8 +25,10 @@ entries and Settings open the Learned abilities view); E6c built
 version and Turn off; Review in the sheet and waiting abilities in the
 Library's Needs you; filters by name, Agent and state; Settings →
 Capabilities as Learned, Installed, Connections and Discover; inbox
-entries open their ability; checked in the running app); E7 to E9 not
-built. Agreed with the
+entries open their ability; checked in the running app); E7 built
+2026-10-15 (admin Learned abilities with revoke, the per-version table
+in How the models did, `vak skills` verbs replacing `skills-review`);
+E8 and E9 not built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -629,11 +631,33 @@ and opens its sheet.
 - **#/inbox** shows the new entry kinds; **#/runs** shows verification and
   review runs like any run.
 
+As built in E7: `GET /admin/api/capabilities` lists every Agent's
+abilities (over `agent_definitions::effective`, each Agent's own Core)
+with whether a Shared copy exists and each installed version's measure
+(`Core::ability_measure`: its Library number, the calls made while it
+was installed and how many failed, found through `Catalog::calls_of`,
+its R2 facts and `vak_judge::ability::verdict` on it), and the skills
+every Agent finds with where each comes from (built in, Shared, this
+project, an add-on, the Agent's own) and which Agent made it. `POST
+/admin/api/capabilities/{name}/revoke` takes an ability back from one
+Agent (`?agent=`, `Core::turn_off_ability`) or its Shared copy from
+every Agent (`Core::revoke_shared_ability`, only for one an Agent made;
+the owner's own Shared skills are never removed there). Either takes
+effect at the next call: the tool finds its program gone and refuses.
+The page is Work › Learned abilities (`#/capabilities`); the version
+table is a panel of How the models did. Lineage stays the Library's.
+
 ### 9.7 CLI
 
 `vak skills` grows the same verbs (list with state, show, versions,
 review, approve, decline, promote, turn off, retire), over the same
 routes; there is no second implementation.
+
+As built in E7: `vak skills list | show <name> | use <name> <version>
+| approve <proposal> | decline <proposal> | promote <name> | turn-off
+<name>`, each with `--agent`, calling the Core functions the routes
+call; `show` lists the versions and is how a waiting one is reviewed,
+and turn-off is retiring. `vak skills-review` is removed.
 
 ## 10. Security
 

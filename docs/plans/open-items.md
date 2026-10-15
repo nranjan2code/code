@@ -271,7 +271,9 @@ live.
 - [ ] A conversation in the catalog has no title, so the sheet names a
   use by the sidebar's title or its Agent; give session nodes their
   title.
-- [ ] E7: admin `#/capabilities` and `#/measurements`; `vak skills` verbs.
+- [x] E7 (2026-10-15): admin Learned abilities (`#/capabilities`) with
+  revoke, the per-version table in How the models did, `vak skills`
+  verbs replacing `skills-review`. Checked against the installed home.
 - [ ] E8: the opt-in review of failures as a trigger per Agent.
 - [ ] E9: card data from a capability call (R5), generalising
   `Tool::output_of_command`.

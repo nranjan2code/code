@@ -5,6 +5,7 @@ import Runs from "./Runs";
 import Data from "./Data";
 import Diagnostics from "./Diagnostics";
 import { Measurements } from "./Measurements";
+import { Capabilities } from "./Capabilities";
 import Automations from "./Automations";
 import { api, AuthRequired } from "./api";
 import { headlessAuth } from "./headlessAuth";
@@ -7234,6 +7235,7 @@ const NAV: NavItem[] = [
   { group: "Work", hash: "#/library", label: "Library", icon: ICONS.library, scope: "project" },
   { group: "Work", hash: "#/automations", label: "Automations", icon: ICONS.automations, scope: "project" },
   { group: "Work", hash: "#/commitments", label: "Commitments", icon: ICONS.commitments, scope: "project" },
+  { group: "Work", hash: "#/capabilities", label: "Learned abilities", icon: ICONS.integrations, scope: "global" },
   {
     group: "Operate",
     hash: "#/operations",
@@ -7914,6 +7916,7 @@ export default function App() {
               <Match when={currentRoute() === "#/data"}><Data section={dataTab() === "#/data/storage" ? "storage" : dataTab() === "#/data/integrity" ? "integrity" : dataTab() === "#/data/keys" ? "keys" : dataTab() === "#/data/sync" ? "sync" : "retention"} /></Match>
               <Match when={currentRoute() === "#/diagnostics"}><Diagnostics /></Match>
               <Match when={currentRoute() === "#/measurements"}><Measurements /></Match>
+              <Match when={currentRoute() === "#/capabilities"}><Capabilities /></Match>
               <Match when={currentRoute() === "#/security"}><Security /></Match>
               <Match when={currentRoute() === "#/prompts"}><PromptsPage /></Match>
               <Match when={currentRoute() === "#/settings"}><Settings /></Match>

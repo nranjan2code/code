@@ -271,11 +271,6 @@ pub(crate) enum Command {
         #[arg(long, short)]
         out: Option<PathBuf>,
     },
-    /// Review proposed skills: list / promote / reject
-    SkillsReview {
-        #[command(subcommand)]
-        action: SkillsReviewAction,
-    },
     /// Validate Agent Skills files in a project or explicit path
     Skills {
         #[command(subcommand)]
@@ -424,6 +419,52 @@ pub(crate) enum SkillsAction {
         name: String,
         #[arg(long)]
         json: bool,
+    },
+    /// An Agent's learned abilities with their state, and what waits for review
+    List {
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// One learned ability: what it reaches, its versions and tests, its uses
+    Show {
+        name: String,
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Put a version of a learned ability in use (its number or Library id)
+    Use {
+        name: String,
+        version: String,
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// Approve a proposal waiting for review (its id from `list`)
+    Approve {
+        proposal: String,
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// Decline a proposal waiting for review
+    Decline {
+        proposal: String,
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// Give an ability that has shown it works to every Agent
+    Promote {
+        name: String,
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// Turn a learned ability off for its Agent; its versions stay
+    TurnOff {
+        name: String,
+        #[arg(long)]
+        agent: Option<String>,
     },
 }
 
@@ -1154,16 +1195,6 @@ pub(crate) enum PromptsAction {
     },
     /// List named agent roles defined for this workspace
     Roles,
-}
-
-#[derive(Subcommand, Debug)]
-pub(crate) enum SkillsReviewAction {
-    /// List pending proposals
-    List,
-    /// Promote a proposal into user-level skills
-    Promote { id: String },
-    /// Discard a proposal
-    Reject { id: String },
 }
 
 #[derive(Subcommand, Debug)]

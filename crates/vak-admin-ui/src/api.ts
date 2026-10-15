@@ -1,4 +1,5 @@
 import type {
+  CapabilityInventory,
   ControlLayer,
   TimeLimits,
   TurnStep,
@@ -288,6 +289,9 @@ export const api = {
     if (filter.spans) q.set("spans", "true");
     return fetch(`/telemetry/logs?${q}`).then((r) => handle(r));
   },
+  capabilities: (): Promise<CapabilityInventory> => fetch("/admin/api/capabilities").then((r) => handle(r)),
+  revokeCapability: (name: string, agent?: string): Promise<{ revoked: string }> =>
+    fetch(`/admin/api/capabilities/${encodeURIComponent(name)}/revoke${agent ? `?agent=${encodeURIComponent(agent)}` : ""}`, { method: "POST" }).then((r) => handle(r)),
   effects: (filter: { run?: string; state?: EffectStatus } = {}, limit = 200): Promise<{ effects: EffectRecord[] }> => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (filter.run) q.set("run", filter.run);
