@@ -8,29 +8,65 @@ history keeps them); every note of theirs that is still true is under
 
 "Continue in /Users/nisheethranjan/Projects/Vak/code on main. Read
 AGENTS.md first (especially 'The data rules', 'No word lists, no tuned
-limits', 'A tool's permission is what it declares' and 'Verification
-before every commit'), then docs/plans/handover-2026-10-14-night.md
-whole, docs/design/93-self-evolving-capabilities.md whole, and
-docs/plans/open-items.md ('Self-evolving capabilities' and 'Before the
-next release').
+limits', 'A tool's permission is what it declares', 'Investigating a
+failure' and 'Verification before every commit'), then
+docs/plans/handover-2026-10-14-night.md whole, then
+docs/design/94-scheduled-work-you-can-see.md whole (the current work)
+and docs/design/93-self-evolving-capabilities.md §2, §5, §11.
 
 Run `git status` and `git log --oneline -8`. Stage only your own paths;
-keep only `main`. We are on a Claude Code Pro plan: read lean (grep and
-line ranges, not whole files), commit each verified step, keep the
-tracker ticked, and rewrite this handover's prompt and 'Where things
-stand' before the session's limit. Next: E3b (doc 93 §11 and the
-tracker: the owner's switch, the inbox entry, the Review wording, packs
-from an Agent's skills), then E4; E1, E2 and E3a are built; decisions D1
-to D8 and R1 to R7 are settled. Build each as a design, never spot fixes or tuned numbers;
-UI that gets in the way is rewritten, not patched (no users yet). After the maintainer's setup, live runs may use the installed home (its
-OpenAI key, luna) for bigger tests; otherwise live runs use launch entry
-`vak-e1-live` (port 8905, a throwaway
-VAK_HOME=/tmp/vak-live/e1-home, workspace /tmp/vak-live/forms; set the
-route once with PATCH /config to ollama qwen3.5:4b-mlx; the Shared layer
-is then /tmp/vak-live/e1-home/vak-home/.vak). The installed data home was purged
-and set up fresh on 8.1.0 on 2026-10-15. Short progress lines."
+keep only `main`; check `git show --stat` before every push. We are on
+a Claude Code Pro plan, so keep token use to what the task needs: read
+with grep and line ranges, never whole large files; never re-read a file
+you just edited; batch independent commands in one call; filter command
+output (grep, tail, cut) instead of printing it whole; run the full gate
+(about 12 minutes) once per finished step, in the background, using
+`scripts/gate.sh --changed` while working; prefer one live check per
+stage, on the local route unless the stage needs a stronger model;
+commit each verified step; tick docs/plans/open-items.md; and rewrite
+this handover's prompt and 'Where things stand' before the session's
+limit, telling the maintainer when the session is near it. The maintainer is the only user and there are no others: rewrite
+a wrong design or screen rather than patch it.
+
+Next: doc 94 'Scheduled work' in the tracker. Finish S0 (Settings shows
+and sets the owner's time zone; the remaining fixed-clock tests), then S1
+(each automation's `home` conversation and `made_by`; a prompt run's
+result appended to that conversation as a new `ScheduledResult` ledger
+entry, model-visible, drawn as the Agent's turn marked scheduled, with a
+notification; the Inbox keeps a note), S2 (`triggers::describe` and the
+schedule picker), S3 (the tool's `update` and `run_now`, by name), S4
+(the automation card in chat), S5 (the Automations page replacing
+AutomationsModal). Then doc 93's E3b and E4. Build each as a design, never
+spot fixes or tuned numbers.
+
+Live runs: the installed home (8.1.0, OpenAI key, gpt-6-luna) may be
+used sparingly: launch entry `vak-e3-live` (a dev server on port 8907 in
+/tmp/vak-live/e3 against the real home; token in
+/tmp/vak-live/test-gateway-token; /tmp/vak-live/turn.sh with PORT=8907).
+The installed gateway is on 8901 (its token is in the URL `vak setup`
+prints; /tmp/vak-live/turn-gw.sh uses it). For the local model, launch
+entry `vak-e1-live` (port 8905, throwaway VAK_HOME, PATCH /config to
+ollama qwen3.5:4b-mlx). Short progress lines."
 
 ## Where things stand
+
+**Scheduled work (doc 94) is designed; S0's rules are built** (2026-10-15).
+Checked on the installed 8.1.0: the engine fires on time (a one-minute
+script every minute; a prompt answered "pong"; asking luna "every
+weekday at 8am" made `0 8 * * 1-5` in Asia/Kolkata). What fails is what a
+person sees: a prompt run's result goes only to the Inbox in a
+conversation of its own; the app's dialog asks for cron; the tool cannot
+change a schedule or run one now; and the time zone was the host's.
+Maintainer's decisions (docs/decisions.md 2026-10-15): results go to the
+conversation; a chat card, an Automations page and the Agent's tool over
+one set of operations; rewrite what is wrong. Built: `vak inbox` reads
+the shared inbox (it read the Agent's own, so it was always empty);
+`[owner] timezone` and `Core::owner_timezone`; the time line names the
+owner's zone on every surface; `Trigger::in_zone` on every write path and
+`validate` refuses a cron without a zone; the tool's `at` (local time,
+`triggers::local_instant`) replaces `due_at`; the gap rule
+(`first_existing`); fixed-clock tests. Left on the installed home from
+testing: no automations (all removed); Inbox notes from them.
 
 **E3a is built** (2026-10-15, gate green, checked live with gpt-6-luna on
 the installed home): `propose_skill` takes `source`, a folder the Agent
@@ -180,7 +216,8 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Build E3b, then E4, each step with the full gate and a live
+1. Doc 94: finish S0, then S1 to S5 (the prompt's order). Then doc 93's
+   E3b, then E4, each step with the full gate and a live
    turn; tick `docs/plans/open-items.md` and doc 93's Status as stages
    land.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are

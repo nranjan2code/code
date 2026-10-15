@@ -1,5 +1,13 @@
 ## Unreleased
 
+- Schedules mean your time. Vakyartha has one time zone for you
+  (`[owner] timezone`, this machine's unless you set it), every repeating
+  schedule is saved with it, and "remind me at 9" is 9 in that zone
+  whichever computer runs it. A time that falls in a skipped daylight-
+  saving hour runs at the first minute after it instead of a day late.
+- `vak inbox` shows what automations and the gateway deliver. It read a
+  different inbox from the one they write, so it always said there was
+  nothing.
 - An Agent can save a skill with a program it wrote and tested. Vakyartha
   runs the program's tests itself; a skill whose tests pass, that reaches
   no network and was not written after reading someone else's words is

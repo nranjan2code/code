@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 2 proposal, 18 in progress, 54 implemented, 3 reference, 8 superseded, 4 historical.
+Counts: 2 proposal, 19 in progress, 54 implemented, 3 reference, 8 superseded, 4 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -98,3 +98,4 @@ Counts: 2 proposal, 18 in progress, 54 implemented, 3 reference, 8 superseded, 4
 | [91-presentation-capabilities.md](91-presentation-capabilities.md) | 91 — Presentations are capabilities | implemented | stages 1 to 5 built 2026-10-14 |
 | [92-card-forms.md](92-card-forms.md) | 92 — Card forms | implemented | F1 to F6 built and checked live 2026-10-14 |
 | [93-self-evolving-capabilities.md](93-self-evolving-capabilities.md) | 93-self-evolving-capabilities.md | in progress | E1 built (E1a 2026-10-14: a skill's program runs as a tool under its own sandbox |
+| [94-scheduled-work-you-can-see.md](94-scheduled-work-you-can-see.md) | 94-scheduled-work-you-can-see.md | in progress | S0's rules built 2026-10-15 (the owner's time zone, `at` in local time, a cron always names its zone, the gap rule, with fixed-clock tests) |

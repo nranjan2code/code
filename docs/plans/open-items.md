@@ -191,6 +191,33 @@ live.
 - [ ] E9: card data from a capability call (R5), generalising
   `Tool::output_of_command`.
 
+## Scheduled work (docs/design/94)
+
+Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
+
+- [x] `vak inbox` read the Agent's own scope while the scheduler and the
+  server use the shared one, so it showed nothing; it reads the shared
+  inbox now (2026-10-15).
+- [x] S0 rules (2026-10-15): `[owner] timezone` (`Core::owner_timezone`,
+  default this machine's) named in the time line on every surface; every
+  write path fills a cron's zone with it (`Trigger::in_zone`: the tool,
+  the server's create and change, the CLI) and `validate` refuses a cron
+  without one; the tool's `at` is the person's local time
+  (`triggers::local_instant`, a past time refused with the time now),
+  replacing `due_at`; a slot in a skipped hour runs at the first minute
+  after it. Fixed-clock tests for the gap, the repeated hour, `at` and
+  the zone.
+- [ ] S0 rest: Settings shows and sets the owner's time zone; tests for an
+  interval's anchor, catch-up after sleep and one start per slot across
+  two processes; the intake and mail routine makers checked for a cron
+  without a zone.
+- [ ] S1: `home`, `made_by`, `ScheduledResult` delivery into the
+  conversation.
+- [ ] S2: `triggers::describe` and the schedule picker's vocabulary.
+- [ ] S3: one set of operations; the tool's `update`, `run_now`, by name.
+- [ ] S4: the automation card in chat.
+- [ ] S5: the Automations page (replaces `AutomationsModal`).
+
 ## Installed 7.2.0 run (docs/audits/installed-7.2.0-run-2026-10-14.md)
 
 - The details card offers itself for "a set of readings" and accepts

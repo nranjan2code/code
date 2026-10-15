@@ -7,6 +7,15 @@ maintainer decides something a later session might otherwise ask again or
 undo, in the same commit that records it. Do not ask again about anything
 listed here unless the maintainer reopens it.
 
+## 2026-10-15
+
+- Scheduled work you can see (`docs/design/94-scheduled-work-you-can-see.md`
+  §2): a scheduled result appears in the conversation it belongs to, as
+  the Agent's turn marked scheduled, with a notification (the Inbox lists
+  it too); people steer automations three ways over one set of
+  operations: a card in the chat, an Automations page, and asking the
+  Agent; wrong screens and contracts are rewritten, not patched.
+
 ## 2026-10-14
 
 - Self-evolving capabilities (`docs/design/93-self-evolving-capabilities.md`
