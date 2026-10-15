@@ -13,7 +13,7 @@ failure' and 'Verification before every commit'), then
 docs/plans/handover-2026-10-14-night.md whole.
 
 Run `git status` and `git log --oneline -8`. If the newest commit is not
-'Handover: 8.2.0 released', read 'Where things stand' and finish what
+'Handover: 8.2.0 installed fresh on this Mac', read 'Where things stand' and finish what
 it says is unfinished. Stage only your own paths; keep only `main`; check `git show
 --stat` before every push. We are on a Claude Code Pro plan, so keep
 token use to what the task needs: read with grep and line ranges, never
@@ -31,11 +31,11 @@ nothing in Vak asks it), ability history lost before E6a on the
 installed home (data only; fixed for new versions), Node dependencies
 (designed when needed)) and the release questions under 'Next', which are
 the maintainer's to decide; ask before cutting a release. 8.2.0 is
-released and tagged; installed on this Mac; AWS waits for the
-maintainer.
+released and tagged; installed fresh on this Mac (purged); `vak setup` is
+the maintainer's next step; AWS waits for the maintainer.
 
-Live runs: the installed home (8.1.0, OpenAI key, gpt-6-luna) may be
-used sparingly: launch entry `vak-e3-live` (a dev server on port 8907 in
+Live runs: the installed home (8.2.0, fresh; once the maintainer has
+run setup with the OpenAI key) may be used sparingly: launch entry `vak-e3-live` (a dev server on port 8907 in
 /tmp/vak-live/e3 against the real home; token in
 /tmp/vak-live/test-gateway-token; /tmp/vak-live/turn.sh with PORT=8907
 for a new conversation, /tmp/vak-live/turn-same.sh <session> for a
@@ -48,11 +48,10 @@ progress lines."
 **8.2.0 released 2026-10-15** (`6957c0dd5`, tag `v8.2.0`, artifacts in
 `dist/8.2.0`, feed at the local 127.0.0.1:8899 URL like 8.1.0): doc 93
 E2 to E9, scheduled work (doc 94) and catalog titles. Additive within
-8.x, no purge. Installed on this Mac the same day over the
-existing home (`self verify` clean, services on 8.2.0, `doctor` passed);
-AWS still runs 8.0.0. Open from the install: the 8.1.0 gateway could not
-read the automations written by the doc 94 dev builds (see open-items,
-'Before the next release'). AWS's 8.0.0 home predates the home-version stamp, so it
+8.x, no purge required. This Mac was purged and installed fresh at 8.2.0 the same day
+(maintainer's choice; `self verify` clean, services running, home names
+8.2.0). The maintainer runs `vak setup` with the provider key next; until
+then the installed home has no key and no route. AWS still runs 8.0.0. AWS's 8.0.0 home predates the home-version stamp, so it
 needs a purge whenever it is next installed.
 
 **Catalog session titles** (2026-10-15, after E9):

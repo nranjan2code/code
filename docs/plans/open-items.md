@@ -23,18 +23,20 @@ across them. Nothing here is started unless it says so.
 - [x] Version: 8.2.0 (`scripts/bump-version.sh`).
 - [x] `scripts/release.sh`: every gate passed (`6957c0dd5`), tagged `v8.2.0`;
   artifacts in `dist/8.2.0`.
-- [x] This Mac (2026-10-15): `dist/8.2.0/vak self install` over the home
-  (no purge), `self services-sync`, `self verify` clean, `doctor` in
-  `~/vak-home` all checks passed; the catalog rebuilt at schema 6.
-- [ ] AWS: still 8.0.0; its home predates the home-version stamp, so it
-  needs a purge at its next install. When the maintainer asks.
-- [ ] Found at the install: from 11:10 until its restart the 8.1.0
-  gateway logged "the automations could not be read" (`Corrupt`) every
-  20 s, after dev builds of the doc 94 work had run against the
-  installed home; 8.2.0 reads them. A store written by a newer 8.x that
-  an older 8.x refuses breaks invariant 29's additive-only rule: find
-  which row or field 8.1.0 refused (a new enum variant or a tightened
-  check) and make the shape one an older reader can pass over.
+- [x] This Mac (2026-10-15, maintainer's choice: purge, no upgrade):
+  `vak self uninstall --purge --yes` (private deployments copied first to
+  `~/Documents/Vakyartha-private-deployments-2026-10-15-8.2`),
+  `dist/8.2.0/vak self install`, the CLI linked again at
+  `~/.local/bin/vak`, `vak self services-sync`; `self verify` clean, both
+  services running, the home names `8.2.0`, the plugins seeded.
+- [ ] The maintainer runs `vak setup` with the provider key; then `doctor`
+  in `~/vak-home`.
+- [ ] AWS: still 8.0.0; purge and install 8.2.0 fresh when the maintainer
+  asks.
+- [x] Seen before the purge: the 8.1.0 gateway could not read automations
+  written by dev builds of the doc 94 work. Expected (maintainer): a home
+  a dev build has written is purged, never kept readable by an older
+  install.
 
 8.1.0 (2026-10-15), additive within 8.x, with a purge on this Mac
 (maintainer's choice: the 8.0.0 home predates the home-version stamp):
