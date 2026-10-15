@@ -1,4 +1,11 @@
-## Unreleased
+## 8.2.0 — 2026-10-15
+
+Agents learn abilities they can keep (docs/design/93-self-evolving-capabilities.md,
+stages E2 to E9): a program an Agent writes is tested, offered, reviewed
+and kept with its versions, and every ability has a page of its own.
+Scheduled work speaks your time and answers in the conversation that asked
+for it (docs/design/94). Additive within 8.x: no purge, the data baseline
+stays 8.0.
 
 - An ability's page names each conversation that used it by its first
   words, as the sidebar does, rather than by its Agent.

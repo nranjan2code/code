@@ -17,6 +17,13 @@ across them. Nothing here is started unless it says so.
 
 ## Before the next release
 
+8.2.0 (2026-10-15), additive within 8.x, no purge:
+
+- [x] CHANGELOG: the `## 8.2.0` section.
+- [x] Version: 8.2.0 (`scripts/bump-version.sh`).
+- [ ] `scripts/release.sh`: every gate passed, tagged `v8.2.0`.
+- [ ] This Mac and AWS: install when the maintainer asks.
+
 8.1.0 (2026-10-15), additive within 8.x, with a purge on this Mac
 (maintainer's choice: the 8.0.0 home predates the home-version stamp):
 
