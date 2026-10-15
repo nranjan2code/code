@@ -31,7 +31,7 @@ nothing in Vak asks it), ability history lost before E6a on the
 installed home (data only; fixed for new versions), Node dependencies
 (designed when needed)) and the release questions under 'Next', which are
 the maintainer's to decide; ask before cutting a release. 8.2.0 is
-released and tagged; installing it on this Mac or AWS waits for the
+released and tagged; installed on this Mac; AWS waits for the
 maintainer.
 
 Live runs: the installed home (8.1.0, OpenAI key, gpt-6-luna) may be
@@ -48,10 +48,11 @@ progress lines."
 **8.2.0 released 2026-10-15** (`6957c0dd5`, tag `v8.2.0`, artifacts in
 `dist/8.2.0`, feed at the local 127.0.0.1:8899 URL like 8.1.0): doc 93
 E2 to E9, scheduled work (doc 94) and catalog titles. Additive within
-8.x, no purge. Not installed anywhere yet: this Mac and AWS still run
-8.1.0 / 8.0.0; install when the maintainer asks (see 'Local release
-install' notes: `dist/8.2.0/vak self install`, `self services-sync`,
-`self verify`). AWS's 8.0.0 home predates the home-version stamp, so it
+8.x, no purge. Installed on this Mac the same day over the
+existing home (`self verify` clean, services on 8.2.0, `doctor` passed);
+AWS still runs 8.0.0. Open from the install: the 8.1.0 gateway could not
+read the automations written by the doc 94 dev builds (see open-items,
+'Before the next release'). AWS's 8.0.0 home predates the home-version stamp, so it
 needs a purge whenever it is next installed.
 
 **Catalog session titles** (2026-10-15, after E9):
