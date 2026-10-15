@@ -641,11 +641,6 @@ struct CoreInner {
     /// respawned more than once per [`Core::CAPACITY_PROBE_MIN_INTERVAL`].
     capacity_probe_attempted:
         Arc<std::sync::Mutex<HashMap<vak_context::capacity::ProfileKey, std::time::Instant>>>,
-    /// Per session, the non-presentation tool names any of its turns loaded:
-    /// they stay loaded (`capability::build_tool_surface`) so the cached tools
-    /// array holds. Admitted presentation schemas are always loaded and carry
-    /// no historical card content, so they need no session-level carry state.
-    loaded_tools: std::sync::Mutex<HashMap<String, std::collections::BTreeSet<String>>>,
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
     mcp_runtime_pinned: std::sync::atomic::AtomicBool,
@@ -1523,7 +1518,6 @@ impl Core {
             capacity_cache: std::sync::Mutex::new(HashMap::new()),
             capacity_probes: Arc::new(std::sync::Mutex::new(HashMap::new())),
             capacity_probe_attempted: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            loaded_tools: std::sync::Mutex::new(HashMap::new()),
             mcp_override: std::sync::Mutex::new(None),
             mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
             hooks_override: std::sync::Mutex::new(None),
@@ -7535,13 +7529,10 @@ impl Core {
                 tools.push(program);
             }
         }
-        let carried = self
-            .inner
-            .loaded_tools
-            .lock()
-            .ok()
-            .and_then(|loaded| loaded.get(&sid).cloned())
-            .unwrap_or_default();
+        // A tool any turn of this conversation called stays loaded
+        // (docs/design/88-control-plane.md §12.1), read from the ledger so a
+        // restart or another process serving it changes nothing.
+        let carried = session.called_tools();
         let surface = capability::build_tool_surface(&tools, progressive, &carried);
         let card_tools: std::collections::HashSet<String> = tools
             .iter()
@@ -7554,16 +7545,6 @@ impl Core {
             .iter()
             .map(|tool| (tool.name().to_string(), tool.clone()))
             .collect();
-        if let Ok(mut loaded) = self.inner.loaded_tools.lock() {
-            if loaded.len() >= 512 && !loaded.contains_key(&sid) {
-                loaded.clear();
-            }
-            let carried = loaded.entry(sid.clone()).or_default();
-            carried.extend(surface.core.iter().filter_map(|definition| {
-                let tool = tools.iter().find(|tool| tool.name() == definition.name)?;
-                (!tool.presents_cards()).then(|| definition.name.clone())
-            }));
-        }
         // `find_tools` is synthetic and never itself deferred. Search spans
         // every admitted tool, not only the deferred subset: weaker/local
         // models often use discovery to relocate an already-loaded broker

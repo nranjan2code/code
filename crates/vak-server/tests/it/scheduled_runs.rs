@@ -56,6 +56,61 @@ impl Provider for Counting {
     }
 }
 
+/// A provider that answers with a callout card, then a word of narration.
+struct Carding(crate::support::CapacityKey, std::sync::Mutex<u32>);
+
+#[async_trait::async_trait]
+impl Provider for Carding {
+    fn name(&self) -> &str {
+        "carding"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.0.0.clone()
+    }
+
+    async fn stream(
+        &self,
+        _request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        let step = {
+            let mut step = self.1.lock().unwrap();
+            *step += 1;
+            *step
+        };
+        let (content, stop) = if step == 1 {
+            (
+                ContentBlock::ToolUse {
+                    id: "c1".into(),
+                    name: "emit_callout_card".into(),
+                    input: serde_json::json!({"semantic_type": "callout", "label": "Quote of the day", "text": "Small steps make big change.", "tone": "note"}),
+                },
+                vak_llm::types::StopReason::ToolUse,
+            )
+        } else {
+            (
+                ContentBlock::text("Here it is."),
+                vak_llm::types::StopReason::EndTurn,
+            )
+        };
+        let (mut sink, rx) = stream::channel(8);
+        let done = AssistantMessage {
+            content: vec![content],
+            stop_reason: stop,
+            usage: Usage::default(),
+            model: "card-model".into(),
+            response_id: None,
+            applied: None,
+        };
+        sink.push(stream::StreamEvent::Start {
+            partial: done.clone(),
+        });
+        sink.close_message(done).await;
+        Ok(rx)
+    }
+}
+
 /// A provider that refuses every request as the caller's mistake.
 struct Refusing(crate::support::CapacityKey);
 
@@ -649,7 +704,23 @@ async fn non_git_space_routine_runs_in_copy_environment() {
         "before\n",
         "the run works in a copy of the folder"
     );
-    assert!(!copy.join(".vak").exists(), "control state is not copied");
+    assert_eq!(
+        std::fs::read_to_string(copy.join(".vak/config.toml")).unwrap(),
+        std::fs::read_to_string(ws.join(".vak/config.toml")).unwrap(),
+        "the copy is configured as the folder"
+    );
+    let layer: Vec<_> = vak_config::scope::WorkspaceScope::new(&copy)
+        .layer()
+        .into_iter()
+        .collect();
+    for entry in std::fs::read_dir(copy.join(".vak")).unwrap() {
+        let path = entry.unwrap().path();
+        assert!(
+            layer.contains(&path),
+            "control state is not copied: {}",
+            path.display()
+        );
+    }
     // What the work does to its copy.
     std::fs::write(copy.join("notes.txt"), "after\n").unwrap();
     std::fs::write(copy.join("new.txt"), "added\n").unwrap();
@@ -902,5 +973,89 @@ async fn a_run_whose_dispatch_failed_delivers_the_failure_not_a_completion() {
         .await,
         "the failure reached the conversation: {}",
         server.get(&transcript).await.1
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_run_that_answered_with_a_card_delivers_the_card_as_a_card() {
+    let (_dir, ws, home, ids) = space(true, |ws| {
+        let mut trigger = prompt_trigger("quote", ws, "vak");
+        trigger.enabled = false;
+        vec![trigger]
+    });
+    let id = ids[0].as_str();
+    vak_config::paths::isolate_home_for_tests();
+    let core = Core::new_with_trust(ws.clone(), true).unwrap();
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    core.set_provider_instance(Arc::new(Carding(
+        crate::support::CapacityKey::default(),
+        std::sync::Mutex::new(0),
+    )));
+    let server = serve_core(core, Arc::new(AtomicUsize::new(0))).await;
+    let created = server
+        .client()
+        .post(format!("{}/sessions", server.base))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let session = created["session_id"].as_str().unwrap().to_string();
+    assert!(
+        server
+            .edit(id, |trigger| trigger["home"] = serde_json::json!(session))
+            .await
+            .is_success()
+    );
+    server.run_now(id).await;
+    let snapshot = format!("/sessions/{session}/presentation");
+    assert!(
+        eventually(30, || async {
+            server
+                .get(&snapshot)
+                .await
+                .1
+                .to_string()
+                .contains("\"source\":\"scheduled\"")
+        })
+        .await,
+        "the card reached the conversation as a card: {}",
+        server.get(&snapshot).await.1
+    );
+    let (_, timeline) = server.get(&snapshot).await;
+    let items = timeline["items"].as_array().unwrap();
+    let card = items
+        .iter()
+        .find(|item| item["provenance"]["source"] == "scheduled")
+        .unwrap();
+    assert_eq!(card["kind"], "card");
+    assert!(
+        card["fallback_text"]
+            .as_str()
+            .unwrap()
+            .contains("Small steps make big change.")
+    );
+    let answer = items
+        .iter()
+        .find(|item| {
+            item["role"] == "assistant"
+                && item["content"]["document"]["metadata"]["scheduled_name"] == "quote"
+        })
+        .unwrap();
+    assert_eq!(
+        answer["fallback_text"].as_str().unwrap().trim(),
+        "Here it is.",
+        "the narration, not the card's text again"
+    );
+    let (_, transcript) = server.get(&format!("/sessions/{session}/transcript")).await;
+    assert!(
+        transcript
+            .to_string()
+            .contains("Small steps make big change."),
+        "the model still reads the card's text: {transcript}"
     );
 }

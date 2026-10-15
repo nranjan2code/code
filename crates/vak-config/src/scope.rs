@@ -527,11 +527,96 @@ impl WorkspaceScope {
     pub fn env_file(&self) -> PathBuf {
         self.root.join(".env")
     }
+
+    /// The files and folders that are this workspace's configuration layer
+    /// (docs/design/44-shared-config.md), as opposed to the control state
+    /// beside them in `.vak`.
+    pub fn layer(&self) -> [PathBuf; 9] {
+        [
+            self.config_file(),
+            self.permissions_local(),
+            self.agents_file(),
+            self.output_prefs(),
+            self.prompts(),
+            self.skills(),
+            self.commands(),
+            self.flows(),
+            self.plugins(),
+        ]
+    }
+
+    /// Gives `copy`, a working copy of this workspace (a run's environment
+    /// or worktree), this workspace's configuration layer, so the copy is
+    /// configured as the folder it copies. What the copy already holds
+    /// (a tracked file in a worktree) is left as it is; control state is
+    /// never copied.
+    pub fn give_layer_to(&self, copy: &WorkspaceScope) -> std::io::Result<()> {
+        for (from, to) in self.layer().iter().zip(copy.layer().iter()) {
+            if to.exists() || !from.exists() {
+                continue;
+            }
+            copy_tree(from, to)?;
+        }
+        Ok(())
+    }
+}
+
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    let kind = std::fs::symlink_metadata(from)?.file_type();
+    if kind.is_symlink() {
+        return Ok(());
+    }
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if kind.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(from, to).map(|_| ())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_working_copy_gets_the_layer_and_never_the_control_state() {
+        let folder = tempfile::tempdir().unwrap();
+        let copy = tempfile::tempdir().unwrap();
+        let (source, target) = (
+            WorkspaceScope::new(folder.path()),
+            WorkspaceScope::new(copy.path()),
+        );
+        std::fs::create_dir_all(source.prompts()).unwrap();
+        std::fs::write(source.config_file(), "model = \"m\"\n").unwrap();
+        std::fs::write(source.prompts().join("identity.md"), "me").unwrap();
+        std::fs::create_dir_all(source.project_dir().join("scratch")).unwrap();
+        std::fs::write(source.project_dir().join("scratch/state"), "x").unwrap();
+        std::fs::create_dir_all(target.project_dir()).unwrap();
+        std::fs::write(target.permissions_local(), "kept").unwrap();
+        std::fs::write(source.permissions_local(), "theirs").unwrap();
+        source.give_layer_to(&target).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(target.config_file()).unwrap(),
+            "model = \"m\"\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(target.prompts().join("identity.md")).unwrap(),
+            "me"
+        );
+        assert_eq!(
+            std::fs::read_to_string(target.permissions_local()).unwrap(),
+            "kept"
+        );
+        assert!(!target.project_dir().join("scratch").exists());
+    }
 
     #[test]
     fn agent_scope_matches_the_raw_paths() {

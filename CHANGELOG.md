@@ -22,8 +22,11 @@
 - Managing automations no longer asks for approval each time in
   workspace-write mode; adding or changing a shell check still asks, and
   can be remembered as a command rule.
-- An automation in a folder that is not a git repository uses that
-  folder's model; it ran with none. A scheduled run whose model call
+- An automation in a folder that is not a git repository runs with that
+  folder's settings (its model, permissions, prompts and skills); it ran
+  with none. Cards an automation's run shows appear as cards in your
+  conversation. A tool the Agent used earlier in a conversation stays at
+  hand after Vakyartha restarts. A scheduled run whose model call
   failed is reported as failed, with the reason, instead of finished.
 - Ask the Agent to change an automation by its name: "move my morning
   line to 9", "pause it", "run it now". `vak triggers` says `pause` and

@@ -1,7 +1,10 @@
 //! A scheduled run's result, delivered into the conversation its
 //! automation belongs to (docs/design/94 §4).
 
-use vak_session::types::{MessageMeta, MessageRecord, ScheduledMeta, TurnCardRecord};
+use vak_session::types::{
+    MessageMeta, MessageRecord, PresentationRecord, PresentationSource, ScheduledMeta,
+    TurnCardRecord,
+};
 use vak_session::{SessionError, SessionLog};
 
 /// What a run delivers.
@@ -16,6 +19,9 @@ pub struct Delivery<'a> {
     /// What the run's turns held (invariant 43): the delivered turn holds
     /// it too, so a reply to it is labelled as the run was.
     pub provenance: vak_control::Provenance,
+    /// The cards the run showed, drawn as cards in the delivered turn; the
+    /// answer's text carries their text form for the model.
+    pub cards: Vec<PresentationRecord>,
 }
 
 /// Appends the delivery to `log` as a turn of its own, at a turn boundary
@@ -43,6 +49,14 @@ pub fn deliver(log: &mut SessionLog, delivery: &Delivery<'_>) -> Result<String, 
         message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(delivery.text)]),
         meta: meta(),
     })?;
+    for card in &delivery.cards {
+        let mut card = card.clone();
+        card.turn_id = turn_id.clone();
+        card.source = PresentationSource::Scheduled {
+            run_session_id: delivery.meta.run_session.clone().unwrap_or_default(),
+        };
+        log.append_presentation(card)?;
+    }
     if delivery.provenance != vak_control::Provenance::NONE {
         log.append_call_effect(vak_session::types::CallEffectRecord {
             tool_use_id: format!("scheduled:{}", delivery.meta.run),

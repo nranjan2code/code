@@ -432,6 +432,10 @@ pub struct ScheduledMeta {
     /// The run failed; the answer says why.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub failed: bool,
+    /// What a person reads of the answer when its cards are drawn as cards
+    /// (the message holds their text form too, for the model).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narration: Option<String>,
 }
 
 /// What the person asked of an attached artifact.
@@ -850,6 +854,10 @@ pub enum PresentationSource {
     /// document (docs/design/87-composed-answers.md §2). One call carries
     /// several; `block` is the block's position in the call's `blocks`.
     Answer { tool_use_id: String, block: u32 },
+    /// A card a scheduled run showed, delivered with its answer into the
+    /// conversation its automation belongs to (docs/design/94 §4); the
+    /// run's own ledger holds its original call.
+    Scheduled { run_session_id: String },
 }
 
 /// A validated `emit_*_card` (or fence) presentation, written once at the

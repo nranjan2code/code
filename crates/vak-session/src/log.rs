@@ -2312,6 +2312,23 @@ impl SessionLog {
         TurnIndex::from_entries_resolving(entries, &|body| self.object_text(body))
     }
 
+    /// The names of the tools this conversation's turns called, on the
+    /// branch it is on: what stays loaded for it (docs/design/88 §12.1).
+    pub fn called_tools(&self) -> std::collections::BTreeSet<String> {
+        self.chain_to_root()
+            .into_iter()
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::Message(record) => Some(&record.message.content),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|block| match block {
+                vak_llm::ContentBlock::ToolUse { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn chain_to_root(&self) -> Vec<&Entry> {
         let mut chain = Vec::new();
         let mut cursor = self.tail_id.clone();

@@ -603,23 +603,14 @@ fn note_refusal(state: &AppState, trigger: &Trigger, run: &str, reason: &str) {
 fn refuse(state: &AppState, trigger: &Trigger, run: &mut OpenRun, reason: String) -> NotFired {
     note_refusal(state, trigger, &run.id().to_string(), &reason);
     if trigger.home.is_some() && trigger.scope.is_none() {
-        let (state, trigger, run, text) = (
-            state.clone(),
-            trigger.clone(),
+        let (state, trigger) = (state.clone(), trigger.clone());
+        let answer = RunAnswer::words(
             run.id().to_string(),
             format!("It did not run: {reason}"),
+            true,
         );
         tokio::spawn(async move {
-            deliver_home(
-                &state,
-                &trigger,
-                &run,
-                None,
-                &text,
-                true,
-                vak_control::Provenance::NONE,
-            )
-            .await;
+            deliver_home(&state, &trigger, answer).await;
         });
     }
     run.settle_with(RunOutcome::Failed { reason }, None);
@@ -957,30 +948,18 @@ async fn fire(
                                     .as_ref()
                                     .map(|outcome| outcome.result_id.clone())
                             });
-                        let held = child_handle
+                        let answer = child_handle
                             .session
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .as_ref()
                             .map(|log| {
-                                vak_session::turns::TurnIndex::from_log(log)
-                                    .turns
-                                    .iter()
-                                    .fold(vak_control::Provenance::NONE, |held, turn| {
-                                        held.join(turn.provenance)
-                                    })
+                                RunAnswer::of_run(run.id().to_string(), log, &summary, is_error)
                             })
-                            .unwrap_or(vak_control::Provenance::NONE);
-                        deliver_home(
-                            &st,
-                            &home_trigger,
-                            &run.id().to_string(),
-                            Some(&child_session),
-                            &text,
-                            is_error,
-                            held,
-                        )
-                        .await;
+                            .unwrap_or_else(|| {
+                                RunAnswer::words(run.id().to_string(), text.clone(), is_error)
+                            });
+                        deliver_home(&st, &home_trigger, answer).await;
                         let body = format!("automation '{name}' finished:\n{text}");
                         let title = format!("automation '{name}' finished");
                         if let Some(target) = &deliver_to {
@@ -1053,11 +1032,7 @@ async fn fire_script(
         deliver_home(
             state,
             trigger,
-            &run_id,
-            None,
-            &outcome.text,
-            !outcome.ok,
-            vak_control::Provenance::NONE,
+            RunAnswer::words(run_id.clone(), outcome.text.clone(), !outcome.ok),
         )
         .await;
     }
@@ -1319,14 +1294,79 @@ fn routine_prompt(prompt: &str, scope: Option<&vak_mail_calendar::RoutineScope>)
 /// belongs to, as a turn of its own (docs/design/94 §4): at a turn boundary,
 /// so it never lands inside a turn someone is in. A conversation that
 /// cannot be opened (trashed, erased) gets nothing; the Inbox note stands.
+/// What a run answered, as its home conversation receives it.
+pub(crate) struct RunAnswer {
+    pub(crate) run: String,
+    /// The run's own conversation, when it had one.
+    pub(crate) session: Option<String>,
+    /// The answer as the model will read it: its cards' text, then its
+    /// narration, or why it failed.
+    pub(crate) text: String,
+    /// The narration alone, when the cards are drawn as cards.
+    pub(crate) narration: Option<String>,
+    pub(crate) cards: Vec<vak_session::types::PresentationRecord>,
+    pub(crate) failed: bool,
+    pub(crate) provenance: vak_control::Provenance,
+}
+
+impl RunAnswer {
+    /// An answer that is only words: a refusal or a script's output.
+    fn words(run: String, text: String, failed: bool) -> Self {
+        Self {
+            run,
+            session: None,
+            text,
+            narration: None,
+            cards: Vec::new(),
+            failed,
+            provenance: vak_control::Provenance::NONE,
+        }
+    }
+
+    /// What the run in `log` answered in its last turn.
+    fn of_run(run: String, log: &vak_session::SessionLog, summary: &str, failed: bool) -> Self {
+        let narration = log
+            .derive_messages()
+            .into_iter()
+            .rev()
+            .find(|message| message.role == vak_llm::Role::Assistant)
+            .map(|message| crate::projection::clean_scaffolding(&message.text_content()))
+            .unwrap_or_default();
+        let turn = log.current_turn().map(str::to_string);
+        let cards: Vec<_> = log
+            .presentations()
+            .into_iter()
+            .filter(|(_, record)| Some(&record.turn_id) == turn.as_ref())
+            .map(|(_, record)| record.clone())
+            .collect();
+        let text = crate::projection::text_with_run_cards(log, narration.clone());
+        let text = if text.trim().is_empty() {
+            summary.to_string()
+        } else {
+            text
+        };
+        let provenance = vak_session::turns::TurnIndex::from_log(log)
+            .turns
+            .iter()
+            .fold(vak_control::Provenance::NONE, |held, turn| {
+                held.join(turn.provenance)
+            });
+        Self {
+            run,
+            session: log.header().map(|header| header.session_id.clone()),
+            text,
+            narration: (!cards.is_empty()).then_some(narration),
+            cards,
+            failed,
+            provenance,
+        }
+    }
+}
+
 pub(crate) async fn deliver_home(
     state: &AppState,
     trigger: &Trigger,
-    run: &str,
-    run_session: Option<&str>,
-    text: &str,
-    failed: bool,
-    provenance: vak_control::Provenance,
+    answer: RunAnswer,
 ) -> Option<String> {
     use tokio_stream::StreamExt;
     let home = trigger.home.as_ref()?;
@@ -1343,14 +1383,16 @@ pub(crate) async fn deliver_home(
         meta: vak_session::types::ScheduledMeta {
             trigger: trigger.id.to_string(),
             name: trigger.name.clone(),
-            run: run.to_string(),
-            run_session: run_session.map(str::to_string),
-            failed,
+            run: answer.run,
+            run_session: answer.session,
+            failed: answer.failed,
+            narration: answer.narration,
         },
         prompt: &what,
         when: &when,
-        text,
-        provenance,
+        text: &answer.text,
+        provenance: answer.provenance,
+        cards: answer.cards,
     };
     loop {
         let mut finished =

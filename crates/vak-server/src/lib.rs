@@ -20086,6 +20086,13 @@ async fn spawn_isolated_run(
     let routine_conversation = mail_calendar_scope
         .as_ref()
         .map(|_| mail_calendar_routine_conversation(agent_id.unwrap_or("vak")));
+    // A working copy is configured as the folder it copies: it gets the
+    // folder's configuration layer, never its control state.
+    if wt.path != *state.core.cwd() {
+        vak_config::scope::WorkspaceScope::new(state.core.cwd())
+            .give_layer_to(&vak_config::scope::WorkspaceScope::new(&wt.path))
+            .map_err(|_| "its working copy could not take the folder's settings".to_string())?;
+    }
     let child_core = vak_core::Core::new_with_trust(wt.path.clone(), true)
         .map(|c| {
             c.with_agent_identity(identity)
@@ -20124,13 +20131,6 @@ async fn spawn_isolated_run(
     if let Some(pin) = model_pin.map(str::trim).filter(|p| !p.is_empty()) {
         let (pin_provider, pin_model) = split_model_pin(pin, &child_core.effective_provider());
         child_core.set_route(pin_provider, pin_model);
-    } else if wt.path != *state.core.cwd() {
-        // A copy of the folder holds none of its `.vak` layer, so the run
-        // takes the folder's live route, as it stands when the run starts.
-        let route = state.core.effective_route();
-        if !route.provider.is_empty() && !route.model.is_empty() {
-            child_core.set_route(route.provider, route.model);
-        }
     }
 
     let child_log = child_core

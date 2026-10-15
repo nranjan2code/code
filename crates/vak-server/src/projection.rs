@@ -732,9 +732,27 @@ fn snapshot_inner(
             }
             vak_session::types::PresentationSource::Fence { .. }
             | vak_session::types::PresentationSource::Delegated { .. }
-            | vak_session::types::PresentationSource::Answer { .. } => None,
+            | vak_session::types::PresentationSource::Answer { .. }
+            | vak_session::types::PresentationSource::Scheduled { .. } => None,
         })
         .collect();
+    // The cards a scheduled run showed, by the delivered turn they belong to
+    // (docs/design/94 §4).
+    let mut scheduled_cards: HashMap<
+        String,
+        Vec<(String, &vak_session::types::PresentationRecord)>,
+    > = HashMap::new();
+    for (entry_id, record) in session.presentations() {
+        if matches!(
+            record.source,
+            vak_session::types::PresentationSource::Scheduled { .. }
+        ) {
+            scheduled_cards
+                .entry(record.turn_id.clone())
+                .or_default()
+                .push((entry_id, record));
+        }
+    }
     // A delegated call (`task`) may carry several cards: the ones its worker
     // showed, recorded in this ledger when the worker ended.
     let mut delegated_by_tool_use_id: HashMap<
@@ -989,6 +1007,53 @@ fn snapshot_inner(
                     turn_numbers.insert(entry.id.clone(), turn);
                 }
                 let turn_id = format!("turn-{turn}");
+                let scheduled = record
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.scheduled.as_ref());
+                if record.message.role == Role::Assistant
+                    && scheduled.is_some()
+                    && let Some(cards) = entry
+                        .at_turn
+                        .as_ref()
+                        .and_then(|at| scheduled_cards.get(at))
+                {
+                    for (index, (presentation, card)) in cards.iter().enumerate() {
+                        let output = vak_delivery::StructuredOutput {
+                            semantic_type: card.semantic_type.clone(),
+                            block: card.block.clone().unwrap_or_else(|| {
+                                if vak_delivery::is_form(&card.semantic_type) {
+                                    card.semantic_type.clone()
+                                } else {
+                                    String::new()
+                                }
+                            }),
+                            schema_version: u16::try_from(card.schema_version).unwrap_or(u16::MAX),
+                            skill_id: card.skill_id.clone(),
+                            skill_version: card.skill_version.clone(),
+                            payload: card.payload.clone(),
+                        };
+                        timeline.items.push(OutputItem {
+                            id: format!("{}-scheduled-{index}", entry.id),
+                            timestamp: entry.ts.to_rfc3339(),
+                            turn_id: turn_id.clone(),
+                            role: OutputRole::Tool,
+                            kind: OutputKind::Card,
+                            status: OutputStatus::Succeeded,
+                            outcome: None,
+                            fallback_text: structured_markdown(&output),
+                            content: OutputContent::Structured { output },
+                            provenance: Some(OutputProvenance {
+                                session_id: Some(session_id.into()),
+                                entry_id: Some(entry.id.clone()),
+                                tool_call_id: None,
+                                source: Some("scheduled".into()),
+                                presentation_id: Some(presentation.clone()),
+                            }),
+                            actions: Vec::new(),
+                        });
+                    }
+                }
                 for (index, block) in record.message.content.iter().enumerate() {
                     match block {
                         ContentBlock::Text { text } if !text.trim().is_empty() => {
@@ -1001,6 +1066,11 @@ fn snapshot_inner(
                             if assistant && is_presentation_envelope(text) {
                                 continue;
                             }
+                            // A delivered answer whose cards are drawn above
+                            // shows its narration, not their text again.
+                            let text = scheduled
+                                .and_then(|scheduled| scheduled.narration.as_deref())
+                                .unwrap_or(text);
                             let cleaned_text_storage = clean_scaffolding(text);
                             if cleaned_text_storage.is_empty() {
                                 continue;

@@ -93,15 +93,20 @@ Appending waits at the conversation's turn boundary
 person is in. The projection marks both items (`scheduled_*` metadata);
 the client draws a "Scheduled · <name> · <time>" head in place of the
 person's bubble, then the answer; the turn's end notifies like any turn
-(doc 29 P6). The run's cards arrive in their deterministic text form,
-as channels get them (`text_with_run_cards`); drawing them as cards in
-the home conversation is open. A script automation delivers only when
+(doc 29 P6). The run's cards are drawn as cards in the delivered
+turn: each is recorded there as a `Presentation` with
+`PresentationSource::Scheduled` (the run's own ledger keeps its original
+call), the answer's text keeps their text form so the model reads them
+(`text_with_run_cards`), and `ScheduledMeta::narration` is what a person
+reads beneath them. A script automation delivers only when
 it prints or fails. A run refused before it starts delivers its reason,
 never silence (invariant 38's `RoutineFailed`). The Inbox keeps its note.
 
 The run itself still works in a copy (invariant 38), and anything it
 changed still comes back for Review; delivery is the answer, not the
-changes.
+changes. The copy is configured as the folder it copies: it gets the
+folder's configuration layer (`WorkspaceScope::layer`, `give_layer_to`),
+never its control state.
 
 ## 5. Steering (D2)
 

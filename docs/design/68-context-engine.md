@@ -352,7 +352,10 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
   Loading their full schemas from the start removes that discovery dependency.
 - **`find_tools({ query })`** returns full schemas for matching admitted
   tools and promotes deferred matches to loaded definitions for the rest of the turn on
-  every provider (`vak_agent::load_discovered`). Its result reports how many
+  every provider (`vak_agent::load_discovered`). A tool any turn of the
+  conversation called is loaded from its next turn on
+  (`SessionLog::called_tools`, read from the ledger, so a restart or
+  another process serving the conversation changes nothing). Its result reports how many
   tool names are new to the current turn. Search covers tool names,
   descriptions, argument names/descriptions at every schema depth, and schema
   enum values (for example a card's `semantic_type` choices), so a model can

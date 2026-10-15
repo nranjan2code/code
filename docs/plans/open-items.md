@@ -1,11 +1,12 @@
-- [ ] Live, dev route (2026-10-15): "Pause my morning line." was
+- [x] Live, dev route (2026-10-15): "Pause my morning line." was
   answered "The morning line is paused" with no call. Cause: the set of
   tools a session has loaded ("stays loaded for the session", doc 88
   §12.1) is `Core::inner.loaded_tools`, in process memory; the dev server
   had restarted since the turn that found `automations`, so it was
-  deferred again and the turn did not call `find_tools`. Derive the
-  carried set from the session's ledger (the tools its turns called or
-  loaded) rather than memory, so a restart changes nothing.
+  deferred again and the turn did not call `find_tools`. Fixed
+  2026-10-15: the carried set is `SessionLog::called_tools`, read from
+  the ledger (test `vak-core/tests/it/loaded_tools.rs`, a restart
+  between the turns).
 # Open items
 
 Status: the one tracker of what is not done, kept current. Started
@@ -239,11 +240,13 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   copy holds no `.vak`; it takes the folder's live route); and a turn
   whose dispatch failed was reported "completed" (`begin_turn` now
   reports the outcome).
-- [ ] A run in a copy of a folder still reads the rest of its
-  configuration (permission mode, prompt layers) from the copy, which
-  has no `.vak`: give it the folder's project layer.
-- [ ] Draw a delivered run's cards as cards in the home conversation
-  (they arrive in their text form today).
+- [x] A run in a copy of a folder read its configuration from the copy,
+  which has no `.vak` (2026-10-15): `spawn_isolated_run` gives the copy
+  the folder's configuration layer (`WorkspaceScope::give_layer_to`,
+  never control state), which replaces the route pin added earlier.
+- [x] A delivered run's cards are drawn as cards in the home
+  conversation (2026-10-15): `PresentationSource::Scheduled`,
+  `ScheduledMeta::narration`; the model still reads their text.
 - [x] S2 (2026-10-15): `triggers::describe` (`Trigger::when_words`) is the
   one wording, used by the tool's results, `vak triggers list`/`add` and
   the server's `when_words`; `triggers::Repeat` is the picker's
