@@ -720,7 +720,12 @@ async fn a_learned_ability_defers_by_what_it_serves_and_is_improved_from_its_fil
         PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")),
     );
     assert_eq!(programs[0].serves(), vec!["documents", "money"]);
-    let surface = vak_core::capability::build_tool_surface(&programs, true, &Default::default());
+    let surface = vak_core::capability::build_tool_surface(
+        &programs,
+        true,
+        &Default::default(),
+        &Default::default(),
+    );
     assert!(surface.core.is_empty());
     assert_eq!(surface.deferred[0].name, "bill-splitter");
 

@@ -16,6 +16,11 @@
   wording that led to the same mistake again.
 - A step's record says which of its tools were sent without their
   schema.
+- Cards that only show what a call produced (a command's output, test
+  results, a diff, a file preview, sources, an ability's answer) are offered
+  once the conversation has such a call, from the very next step, instead of
+  on every request. A conversation that has run nothing is not offered a
+  terminal or file preview card, and every request is smaller.
 
 ## 8.3.0 — 2026-10-15
 

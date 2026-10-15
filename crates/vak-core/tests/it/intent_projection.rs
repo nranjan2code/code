@@ -153,8 +153,12 @@ fn the_surface_partitions_the_admitted_tools_and_never_adds_or_drops_one() {
         defs.iter().map(|d| d.name.clone()).collect()
     };
     for progressive in [true, false] {
-        let surface =
-            vak_core::capability::build_tool_surface(&admitted, progressive, &Default::default());
+        let surface = vak_core::capability::build_tool_surface(
+            &admitted,
+            progressive,
+            &Default::default(),
+            &Default::default(),
+        );
         let mut seen = names(&surface.core);
         seen.extend(names(&surface.deferred));
         seen.sort();

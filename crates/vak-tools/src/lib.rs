@@ -247,6 +247,71 @@ pub struct CommandOutput {
     pub duration_ms: &'static str,
 }
 
+/// What a card shows that only a call in the conversation can have
+/// produced (docs/design/68-context-engine.md §5). A card tool that declares
+/// one is loaded once the conversation holds such a call, and promoted in
+/// place at the step one appears, as a `find_tools` match is; until then it
+/// is listed under "More tools". The facts are other tools' own records, so
+/// a tool added at runtime that runs, writes, retrieves or answers data
+/// brings its card with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Grounds {
+    /// A process a call started ran (`CallEffect::Ran`).
+    Ran,
+    /// A call wrote a workspace file (`CallEffect::FileWrite`).
+    Wrote,
+    /// A call fetched a page or reached an integration (`CallEffect::Fetched`,
+    /// `CallEffect::Mcp`).
+    Retrieved,
+    /// A call of a tool that answers data (`Tool::answers_data`) succeeded.
+    Answered,
+}
+
+/// The facts `log`'s conversation holds, on the branch it is on. `answering`
+/// names the tools that declare `Tool::answers_data`.
+pub fn grounds_held(
+    log: &vak_session::SessionLog,
+    answering: &std::collections::BTreeSet<String>,
+) -> std::collections::BTreeSet<Grounds> {
+    use vak_session::types::CallEffect;
+    let mut held = std::collections::BTreeSet::new();
+    let mut failed = std::collections::HashSet::new();
+    let mut answered = Vec::new();
+    for entry in log.chain_to_root() {
+        match &entry.payload {
+            vak_session::EntryPayload::CallEffect(record) => match &record.effect {
+                CallEffect::Ran { .. } => {
+                    held.insert(Grounds::Ran);
+                }
+                CallEffect::FileWrite { .. } => {
+                    held.insert(Grounds::Wrote);
+                }
+                CallEffect::Fetched { .. } | CallEffect::Mcp(_) => {
+                    held.insert(Grounds::Retrieved);
+                }
+                CallEffect::Failed { .. } => {
+                    failed.insert(record.tool_use_id.clone());
+                }
+                _ => {}
+            },
+            vak_session::EntryPayload::Message(record) => {
+                for block in &record.message.content {
+                    if let vak_llm::ContentBlock::ToolUse { id, name, .. } = block
+                        && answering.contains(name)
+                    {
+                        answered.push(id.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if answered.iter().any(|id| !failed.contains(id)) {
+        held.insert(Grounds::Answered);
+    }
+    held
+}
+
 /// For a card tool that shows what one of the Agent's abilities answered
 /// (docs/design/93 R5): the argument naming the ability, the argument
 /// saying where the records are in its answer, and the arguments the loop
@@ -369,6 +434,13 @@ pub trait Tool: Send + Sync {
     /// fills (`CallData`). A card naming an ability no call in the
     /// conversation answered is refused.
     fn data_of_call(&self) -> Option<CallData> {
+        None
+    }
+
+    /// For a card tool: what only a call in the conversation can have
+    /// produced for it to show (`Grounds`). None loads it from the first
+    /// call, like every other card.
+    fn grounded_in(&self) -> Option<Grounds> {
         None
     }
 

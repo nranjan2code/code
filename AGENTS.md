@@ -1290,7 +1290,14 @@ commit (invariant 30).
   suppress a current prose answer.
   **Presentation schema access is independent of request vocabulary.** The
   shared tool surface loads every admitted `presents_cards` schema from the
-  first call on every provider. Schemas carry no historical card content and
+  first call on every provider, except a card that shows only what a call
+  produced (`Tool::grounded_in`: a command ran, a file was written, a source
+  was retrieved, an ability answered). That one loads once the conversation
+  holds such a call, read from the ledger's own records
+  (`vak_tools::grounds_held`), and is promoted in place at the step one
+  appears, the way a `find_tools` match is; a card required by the plan
+  check is promoted too. Before then it could only be refused, so it waits
+  under "More tools". Schemas carry no historical card content and
   do not make ordinary conversation require structured output. Recipes and
   request predictions inform output demand and composition, not access to
   alternative shapes. **The model plans, the runtime checks**

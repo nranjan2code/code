@@ -32,23 +32,29 @@ pub struct ToolSurface {
 /// * A tool that declares itself always loaded, a presentation tool (an
 ///   output shape needs its schema), and a tool that declares no domain (an
 ///   unknown tool fails open) are loaded.
+/// * A card that shows only what a call can have produced
+///   (`Tool::grounded_in`) is loaded once `held`, the conversation's facts
+///   (`vak_tools::grounds_held`), has its fact; the loop promotes it in
+///   place at the step one appears.
 /// * `carried` names the tools earlier turns of this session loaded; they
 ///   stay loaded (cache stability, docs/design/68 §6), so the set only
-///   grows, in the tools' fixed order.
+///   grows, in the tools' fixed order. Facts only accumulate too.
 /// * Every other tool is deferred.
 pub fn build_tool_surface(
     tools: &[Arc<dyn vak_tools::Tool>],
     progressive: bool,
     carried: &BTreeSet<String>,
+    held: &BTreeSet<vak_tools::Grounds>,
 ) -> ToolSurface {
     let mut surface = ToolSurface::default();
     for tool in tools {
         let definition = ToolDefinition::new(tool.name(), tool.description(), tool.schema());
         let loaded = !progressive
-            || tool.always_loaded()
-            || tool.presents_cards()
-            || tool.serves().is_empty()
-            || carried.contains(tool.name());
+            || carried.contains(tool.name())
+            || match tool.grounded_in() {
+                Some(grounds) => held.contains(&grounds),
+                None => tool.always_loaded() || tool.presents_cards() || tool.serves().is_empty(),
+            };
         if loaded {
             surface.core.push(definition);
         } else {
@@ -98,6 +104,7 @@ mod tests {
         serves: &'static [&'static str],
         always: bool,
         card: bool,
+        grounded: Option<vak_tools::Grounds>,
     }
 
     #[async_trait::async_trait]
@@ -123,6 +130,9 @@ mod tests {
         fn presents_cards(&self) -> bool {
             self.card
         }
+        fn grounded_in(&self) -> Option<vak_tools::Grounds> {
+            self.grounded
+        }
     }
 
     fn tool(name: &'static str, serves: &'static [&'static str]) -> Arc<dyn vak_tools::Tool> {
@@ -131,6 +141,7 @@ mod tests {
             serves,
             always: false,
             card: false,
+            grounded: None,
         })
     }
 
@@ -141,6 +152,7 @@ mod tests {
                 serves: &["filesystem"],
                 always: true,
                 card: false,
+                grounded: None,
             }),
             tool("bash", &["code-exec"]),
             tool("webfetch", &["web", "live-data"]),
@@ -150,6 +162,7 @@ mod tests {
                 serves: &[],
                 always: false,
                 card: true,
+                grounded: None,
             }),
         ]
     }
@@ -160,14 +173,14 @@ mod tests {
 
     #[test]
     fn without_progressive_disclosure_everything_is_loaded() {
-        let surface = build_tool_surface(&fixture(), false, &BTreeSet::new());
+        let surface = build_tool_surface(&fixture(), false, &BTreeSet::new(), &BTreeSet::new());
         assert_eq!(surface.core.len(), 5);
         assert!(surface.deferred.is_empty());
     }
 
     #[test]
     fn a_tool_s_own_declaration_decides_what_is_loaded() {
-        let surface = build_tool_surface(&fixture(), true, &BTreeSet::new());
+        let surface = build_tool_surface(&fixture(), true, &BTreeSet::new(), &BTreeSet::new());
         assert_eq!(
             names(&surface.core),
             vec!["read", "plugin_thing", "emit_chart_card"]
@@ -178,7 +191,7 @@ mod tests {
     #[test]
     fn a_tool_an_earlier_turn_loaded_stays_loaded() {
         let carried = BTreeSet::from(["bash".to_string(), "emit_absent_card".to_string()]);
-        let surface = build_tool_surface(&fixture(), true, &carried);
+        let surface = build_tool_surface(&fixture(), true, &carried, &BTreeSet::new());
         assert_eq!(
             names(&surface.core),
             vec!["read", "bash", "plugin_thing", "emit_chart_card"],
@@ -188,6 +201,31 @@ mod tests {
 
     /// The catalogue is a function of the admitted tools only, so the cached
     /// prefix does not move from turn to turn.
+    #[test]
+    fn a_card_that_shows_what_a_call_made_loads_once_the_conversation_has_one() {
+        let mut tools = fixture();
+        tools.push(Arc::new(Fake {
+            name: "emit_terminal_card",
+            serves: &[],
+            always: false,
+            card: true,
+            grounded: Some(vak_tools::Grounds::Ran),
+        }));
+        let fresh = build_tool_surface(&tools, true, &BTreeSet::new(), &BTreeSet::new());
+        assert!(names(&fresh.deferred).contains(&"emit_terminal_card"));
+        assert!(
+            names(&fresh.core).contains(&"emit_chart_card"),
+            "{:?}",
+            names(&fresh.core)
+        );
+        let ran = BTreeSet::from([vak_tools::Grounds::Ran]);
+        let after = build_tool_surface(&tools, true, &BTreeSet::new(), &ran);
+        assert!(names(&after.core).contains(&"emit_terminal_card"));
+        let wrote = BTreeSet::from([vak_tools::Grounds::Wrote]);
+        let other = build_tool_surface(&tools, true, &BTreeSet::new(), &wrote);
+        assert!(names(&other.deferred).contains(&"emit_terminal_card"));
+    }
+
     #[test]
     fn the_catalogue_is_stable_sorted_and_schema_free() {
         let entries = vec![

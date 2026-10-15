@@ -40,6 +40,9 @@ struct CardShape {
     /// A card that shows what an ability answered (`Tool::data_of_call`)
     /// and how its records become the filled arguments.
     data_of_call: Option<(vak_tools::CallData, FillFromData)>,
+    /// What only a call in the conversation can have produced for this
+    /// card to show (`Tool::grounded_in`): it loads once one has.
+    grounded_in: Option<vak_tools::Grounds>,
     /// The arguments, as `{"properties": {...}, "required": [...]}`.
     fields: fn() -> Value,
     /// The stored card for validated arguments, or a refusal the model can
@@ -1340,6 +1343,7 @@ const fn shape(
         fill,
         output_of_command: None,
         data_of_call: None,
+        grounded_in: None,
         fields,
         build,
     }
@@ -1589,14 +1593,17 @@ const SHAPES: &[CardShape] = &[
         build_callout,
         fill_nothing,
     ),
-    shape(
-        "sources",
-        "emit_sources_card",
-        "Findings drawn from sources you retrieved, each tied to the exact title and URL it came from.",
-        sources_fields,
-        build_sources,
-        fill_nothing,
-    ),
+    CardShape {
+        grounded_in: Some(vak_tools::Grounds::Retrieved),
+        ..shape(
+            "sources",
+            "emit_sources_card",
+            "Findings drawn from sources you retrieved, each tied to the exact title and URL it came from.",
+            sources_fields,
+            build_sources,
+            fill_nothing,
+        )
+    },
     shape(
         "calendar",
         "emit_calendar_card",
@@ -1621,14 +1628,17 @@ const SHAPES: &[CardShape] = &[
         build_media,
         fill_nothing,
     ),
-    shape(
-        "file_preview",
-        "emit_file_preview_card",
-        "A live preview of an HTML or UI file in the workspace, by its path. For markup with no file, use emit_markup_preview_card.",
-        file_preview_fields,
-        build_file_preview,
-        fill_nothing,
-    ),
+    CardShape {
+        grounded_in: Some(vak_tools::Grounds::Wrote),
+        ..shape(
+            "file_preview",
+            "emit_file_preview_card",
+            "A live preview of an HTML or UI file in the workspace, by its path. For markup with no file, use emit_markup_preview_card.",
+            file_preview_fields,
+            build_file_preview,
+            fill_nothing,
+        )
+    },
     shape(
         "markup_preview",
         "emit_markup_preview_card",
@@ -1637,15 +1647,19 @@ const SHAPES: &[CardShape] = &[
         build_markup_preview,
         fill_nothing,
     ),
-    shape(
-        "diff",
-        "emit_diff_card",
-        "The code changes you made, file by file.",
-        diff_fields,
-        build_diff,
-        fill_nothing,
-    ),
     CardShape {
+        grounded_in: Some(vak_tools::Grounds::Wrote),
+        ..shape(
+            "diff",
+            "emit_diff_card",
+            "The code changes you made, file by file.",
+            diff_fields,
+            build_diff,
+            fill_nothing,
+        )
+    },
+    CardShape {
+        grounded_in: Some(vak_tools::Grounds::Ran),
         output_of_command: Some(vak_tools::CommandOutput {
             command: "command",
             output: None,
@@ -1662,6 +1676,7 @@ const SHAPES: &[CardShape] = &[
         )
     },
     CardShape {
+        grounded_in: Some(vak_tools::Grounds::Ran),
         output_of_command: Some(vak_tools::CommandOutput {
             command: "command",
             output: Some("output"),
@@ -1678,6 +1693,7 @@ const SHAPES: &[CardShape] = &[
         )
     },
     CardShape {
+        grounded_in: Some(vak_tools::Grounds::Answered),
         data_of_call: Some((
             vak_tools::CallData {
                 from: "from",
@@ -1696,6 +1712,7 @@ const SHAPES: &[CardShape] = &[
         )
     },
     CardShape {
+        grounded_in: Some(vak_tools::Grounds::Answered),
         data_of_call: Some((
             vak_tools::CallData {
                 from: "from",
@@ -1985,6 +2002,10 @@ impl Tool for EmitCardTool {
 
     fn data_of_call(&self) -> Option<vak_tools::CallData> {
         self.shape.data_of_call.map(|(spec, _)| spec)
+    }
+
+    fn grounded_in(&self) -> Option<vak_tools::Grounds> {
+        self.shape.grounded_in
     }
 
     fn fill_from_data(&self, args: &mut Value, records: &[Value]) -> Result<(), String> {
@@ -2661,14 +2682,54 @@ mod tests {
     }
 
     #[test]
-    fn every_card_tool_is_loaded_for_any_request() {
+    fn every_card_tool_is_loaded_for_any_request_once_its_facts_are_held() {
         let tools: Vec<std::sync::Arc<dyn Tool>> = EmitCardTool::all()
             .into_iter()
             .map(|tool| std::sync::Arc::new(tool) as std::sync::Arc<dyn Tool>)
             .collect();
-        let surface = crate::capability::build_tool_surface(&tools, true, &Default::default());
-        assert!(surface.deferred.is_empty());
-        assert_eq!(surface.core.len(), SHAPES.len());
+        let fresh = crate::capability::build_tool_surface(
+            &tools,
+            true,
+            &Default::default(),
+            &Default::default(),
+        );
+        let grounded = SHAPES
+            .iter()
+            .filter(|shape| shape.grounded_in.is_some())
+            .count();
+        assert_eq!(fresh.core.len(), SHAPES.len() - grounded);
+        assert_eq!(fresh.deferred.len(), grounded);
+        let every = std::collections::BTreeSet::from([
+            vak_tools::Grounds::Ran,
+            vak_tools::Grounds::Wrote,
+            vak_tools::Grounds::Retrieved,
+            vak_tools::Grounds::Answered,
+        ]);
+        let held = crate::capability::build_tool_surface(&tools, true, &Default::default(), &every);
+        assert!(held.deferred.is_empty());
+        assert_eq!(held.core.len(), SHAPES.len());
+    }
+
+    #[test]
+    fn a_card_that_shows_a_call_s_output_is_grounded_in_that_call() {
+        for shape in SHAPES {
+            if shape.output_of_command.is_some() {
+                assert_eq!(
+                    shape.grounded_in,
+                    Some(vak_tools::Grounds::Ran),
+                    "{}",
+                    shape.name
+                );
+            }
+            if shape.data_of_call.is_some() {
+                assert_eq!(
+                    shape.grounded_in,
+                    Some(vak_tools::Grounds::Answered),
+                    "{}",
+                    shape.name
+                );
+            }
+        }
     }
 
     #[test]

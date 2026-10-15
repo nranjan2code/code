@@ -764,3 +764,140 @@ async fn a_card_refused_for_a_missing_file_is_withdrawn_and_a_gone_page_is_not()
         "{written}"
     );
 }
+
+/// A card that shows what a command printed waits for a command
+/// (`Tool::grounded_in`): deferred until a call runs one, then promoted in
+/// place from the next step of the same turn, as a `find_tools` match is
+/// (docs/design/68-context-engine.md §5).
+struct Runs;
+
+#[async_trait]
+impl Tool for Runs {
+    fn name(&self) -> &str {
+        "run"
+    }
+    fn description(&self) -> &str {
+        "Run a command."
+    }
+    fn schema(&self) -> Value {
+        json!({"type": "object", "properties": {
+            "command": {"type": "string", "description": "The command."}
+        }, "required": ["command"]})
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("hi").ran(Some(0), 3)
+    }
+}
+
+struct Terminal;
+
+#[async_trait]
+impl Tool for Terminal {
+    fn name(&self) -> &str {
+        "emit_terminal_card"
+    }
+    fn description(&self) -> &str {
+        "A command you ran."
+    }
+    fn schema(&self) -> Value {
+        json!({"type": "object", "properties": {
+            "command": {"type": "string", "description": "The command."}
+        }, "required": ["command"]})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    fn card_kinds(&self) -> Vec<String> {
+        vec!["terminal".into()]
+    }
+    fn grounded_in(&self) -> Option<vak_tools::Grounds> {
+        Some(vak_tools::Grounds::Ran)
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("Shown to the user.")
+    }
+}
+
+#[tokio::test]
+async fn a_card_grounded_in_a_command_is_offered_from_the_step_after_one_ran() {
+    let dir = tempfile::tempdir().unwrap();
+    let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
+        agent: None,
+        session_id: "grounded".into(),
+        created_at: chrono::Utc::now(),
+        cwd: dir.path().to_path_buf(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: FrozenContract {
+            app_version: "0".into(),
+            provider: "scripted".into(),
+            model: "test-model".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: "sys".into(),
+            permission_mode: "full-access".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    };
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let ledger = SessionPath::new_session_file(&home, dir.path(), "grounded");
+    let log = SessionLog::create(ledger.clone(), header).unwrap();
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(Runs), Arc::new(Terminal)];
+    let mut definitions = vak_tools::definitions(&tools);
+    for definition in &mut definitions {
+        if definition.name == "emit_terminal_card" {
+            definition.defer = true;
+        }
+    }
+    let mut agent = Agent::new(
+        Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
+            responses: Mutex::new(VecDeque::from(vec![
+                call("r1", "run", json!({"command": "echo hi"})),
+                call("t1", "emit_terminal_card", json!({"command": "echo hi"})),
+                text("Done."),
+            ])),
+            seen: seen.clone(),
+        }),
+        log,
+        {
+            let mut cfg = AgentConfig::new("sys");
+            cfg.model = "test-model".into();
+            cfg.tools = tools;
+            cfg.tool_definitions = Some(definitions);
+            cfg.mode = vak_permission::Mode::FullAccess;
+            cfg.permission = Some(Arc::new(PermissionEngine::default()));
+            cfg.stop_policy = None;
+            cfg
+        },
+    );
+    let outcome = agent
+        .run(
+            "run echo hi and show it",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let seen = seen.lock().unwrap();
+    let offered = |step: usize| seen[step].0.iter().any(|name| name == "emit_terminal_card");
+    assert!(!offered(0), "no command has run yet: {seen:?}");
+    assert!(offered(1), "the command ran at step 1: {seen:?}");
+    assert!(
+        SessionLog::text(&ledger).contains("Shown to the user."),
+        "the card was shown"
+    );
+}

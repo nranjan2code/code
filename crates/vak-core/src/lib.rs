@@ -3658,7 +3658,11 @@ impl Core {
                 tools.push(program.clone());
             }
         }
-        tools.retain(|tool| !tool.always_loaded() && !tool.presents_cards());
+        // A grounded card waits for its fact (`Tool::grounded_in`), so it is
+        // listed; every other card is always loaded.
+        tools.retain(|tool| {
+            !tool.always_loaded() && (!tool.presents_cards() || tool.grounded_in().is_some())
+        });
         let mut entries: Vec<(&str, &str)> = tools
             .iter()
             .map(|tool| (tool.name(), tool.description()))
@@ -7579,7 +7583,15 @@ impl Core {
         // (docs/design/88-control-plane.md §12.1), read from the ledger so a
         // restart or another process serving it changes nothing.
         let carried = session.called_tools();
-        let surface = capability::build_tool_surface(&tools, progressive, &carried);
+        // What only a call can have produced, which a grounded card shows
+        // (`Tool::grounded_in`), from the tools' own declarations.
+        let answering: std::collections::BTreeSet<String> = tools
+            .iter()
+            .filter(|tool| tool.answers_data())
+            .map(|tool| tool.name().to_string())
+            .collect();
+        let held = vak_tools::grounds_held(&session, &answering);
+        let surface = capability::build_tool_surface(&tools, progressive, &carried, &held);
         let card_tools: std::collections::HashSet<String> = tools
             .iter()
             .filter(|tool| tool.presents_cards())

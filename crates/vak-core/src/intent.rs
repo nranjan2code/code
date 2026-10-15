@@ -564,7 +564,14 @@ mod tests {
                 .into_iter()
                 .map(|tool| std::sync::Arc::new(tool) as std::sync::Arc<dyn vak_tools::Tool>)
                 .collect();
-        let surface = crate::capability::build_tool_surface(&tools, true, &Default::default());
+        let every = std::collections::BTreeSet::from([
+            vak_tools::Grounds::Ran,
+            vak_tools::Grounds::Wrote,
+            vak_tools::Grounds::Retrieved,
+            vak_tools::Grounds::Answered,
+        ]);
+        let surface =
+            crate::capability::build_tool_surface(&tools, true, &Default::default(), &every);
         assert_eq!(surface.core.len(), tools.len());
         let mut intent = Intent::general(vak_intent::RESOLVER_VERSION);
         complete_output_contract(&mut intent, "Hello, how are you?");

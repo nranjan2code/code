@@ -58,6 +58,23 @@ contract:
   only through `recall`. The doc's reason is no longer true.
 - [ ] Not checked live after the fix on the installed route: needs a
   release, or a dev build against the installed home.
+- [x] Grounded cards (2026-10-15): the terminal, test report, diff, file
+  preview, sources and the two ability cards load once the conversation
+  holds the call they show (`Tool::grounded_in`, `vak_tools::grounds_held`),
+  promoted in place the step one appears; AGENTS.md and doc 68 §5 say so.
+  Measured before and after on the dev route
+  (docs/audits/grounded-cards-2026-10-15.md).
+- [ ] The repeated card-level argument descriptions (`deliverable`,
+  `replaces`, `beside_previous`, `label`, `title`, about 600 characters on
+  each card tool) could be shorter, with their rule stated once in the
+  presentation contract; measure separately.
+- [ ] OpenAI Responses tool search (gpt-5.4 and later, `defer_loading`,
+  hosted or client-executed, namespaces of under ten) is not used: declare
+  it in the adapter's reach and learn it from refusal, as `strict_tools`.
+- [ ] Seen in the baseline replay: on fresh requests the 0.8b route often
+  calls `recall`, `session_search` or `find_tools` first (list, define,
+  steps, remember); the prompt's history and discovery wording is the
+  first suspect for the wording audit.
 
 ## Before the next release
 

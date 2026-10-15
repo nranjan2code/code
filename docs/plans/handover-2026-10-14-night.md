@@ -59,6 +59,15 @@ repeated until the turn was stopped; recall's word list and "half the
 terms" rule hid the turn holding the name; the table refusal's wording led
 to the same mistake. Each is fixed in Vak's contract (unreleased); the
 open lines there are what the investigation found and did not fix.
+Grounded cards followed (docs/audits/grounded-cards-2026-10-15.md): seven
+cards that show what a call produced load once the conversation has such a
+call; requests are 17% smaller; first-step choice did not change overall,
+and about half of first steps on the 0.8b route are a history or discovery
+lookup on a fresh request, which is the next thing to investigate (the
+wording audit). The maintainer asked for no full gate until a build is
+cut; the touched crates' tests pass, and `vak/tests/sync_roundtrip.rs`
+failed once in a full gate run, unrelated to these changes and not yet
+looked at.
 
 **8.2.0 released 2026-10-15** (`6957c0dd5`, tag `v8.2.0`, artifacts in
 `dist/8.2.0`, feed at the local 127.0.0.1:8899 URL like 8.1.0): doc 93

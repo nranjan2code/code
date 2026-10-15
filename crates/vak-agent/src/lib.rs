@@ -2725,6 +2725,9 @@ impl Agent {
                     let finding = match (rung, requirable) {
                         (Rung::Reframe, Some((name, tool))) => {
                             self.cards_required.insert(name.clone());
+                            if let Some(base) = &turn_tool_base {
+                                self.promote(base, std::slice::from_ref(&tool));
+                            }
                             self.must_call = Some(tool.clone());
                             Finding::CardRequired { name, tool }
                         }
@@ -3262,6 +3265,10 @@ impl Agent {
                 }
             }
 
+            if let Some(base) = &turn_tool_base {
+                let grounded = self.grounded_now().await;
+                self.promote(base, &grounded);
+            }
             if let Some(outcome) =
                 reconcile_repair(self, &failed_correctable, &succeeded_tools).await
             {
@@ -3279,6 +3286,56 @@ impl Agent {
                 return nudge_write_failed(error);
             }
             turn += 1;
+        }
+    }
+
+    /// The grounded cards (`Tool::grounded_in`) whose fact this
+    /// conversation now holds (`vak_tools::grounds_held`).
+    async fn grounded_now(&self) -> Vec<String> {
+        let grounded: Vec<(String, vak_tools::Grounds)> = self
+            .config
+            .tools
+            .iter()
+            .filter_map(|tool| tool.grounded_in().map(|g| (tool.name().to_string(), g)))
+            .collect();
+        if grounded.is_empty() {
+            return Vec::new();
+        }
+        let answering: std::collections::BTreeSet<String> = self
+            .config
+            .tools
+            .iter()
+            .filter(|tool| tool.answers_data())
+            .map(|tool| tool.name().to_string())
+            .collect();
+        let held = vak_tools::grounds_held(&*self.session.lock().await, &answering);
+        grounded
+            .into_iter()
+            .filter(|(_, grounds)| held.contains(grounds))
+            .map(|(name, _)| name)
+            .collect()
+    }
+
+    /// Promotes these of the turn's deferred tools in place for the rest of
+    /// the turn, the way a `find_tools` match is (`load_discovered`): a
+    /// grounded card whose fact a call of this turn produced, or the card a
+    /// step is required to call (docs/design/68-context-engine.md §5).
+    fn promote(&self, base: &[vak_llm::ToolDefinition], names: &[String]) {
+        let mut sink = self
+            .config
+            .discovered_tools
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for name in names {
+            if sink.iter().any(|found| &found.name == name) {
+                continue;
+            }
+            if let Some(definition) = base
+                .iter()
+                .find(|definition| &definition.name == name && definition.defer)
+            {
+                sink.push(definition.clone());
+            }
         }
     }
 

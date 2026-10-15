@@ -204,6 +204,10 @@ impl Tool for ScopedWriteTool {
         self.inner.data_of_call()
     }
 
+    fn grounded_in(&self) -> Option<vak_tools::Grounds> {
+        self.inner.grounded_in()
+    }
+
     fn fill_from_data(
         &self,
         args: &mut serde_json::Value,

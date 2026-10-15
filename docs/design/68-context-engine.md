@@ -330,7 +330,8 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
 - **Loaded**: tools that declare `always_loaded` (`read`, `glob`, `grep`,
   `find_tools`, `recall`, `skill`, `mcp`, `session_search`, `commitments`);
   tools whose `serves` meets the reading's required domains; undeclared
-  tools; and every admitted tool that declares `presents_cards`. Output-shape
+  tools; and every admitted tool that declares `presents_cards`, except a
+  grounded card (below). Output-shape
   selection needs the schema on the first call and is not gated by request
   vocabulary. Availability alone does not require a card. An uncertain reading
   arrives as the explicit *orientation floor* (`Engagement::orienting`,
@@ -343,9 +344,24 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
   providers. Schemas contain no earlier card payloads; those stay subject to
   the working-set planner and current-turn evidence rules. Request prediction
   still informs output demand and composition, rather than schema availability.
+- **Grounded cards** (2026-10-15): a card that shows only what a call
+  produced declares it (`Tool::grounded_in`: `Ran` for the terminal and
+  test report cards, `Wrote` for the diff and file preview cards,
+  `Retrieved` for the sources card, `Answered` for the ability cards). It is
+  loaded once the conversation holds such a call (`vak_tools::grounds_held`
+  over the ledger's call effects and the calls of tools that declare
+  `answers_data`), and promoted in place at the step one appears
+  (`Agent::promote`, the `find_tools` path), so the turn's tools array
+  changes only as a discovery changes it, and only grows. Until then it is
+  listed in the catalogue, and a card the plan check requires is promoted
+  first. Nothing names a tool: a tool added at runtime that runs, writes,
+  retrieves or answers data brings its card. Measured: on the installed
+  route a file preview of a file that did not exist was offered on a turn
+  that asked a person's name, and its refusals ran the turn until stopped.
 - **Catalogue** ("More tools"), one line per admitted tool that can be deferred
   (`name — first sentence`), sorted, in the stable prefix. Always-loaded tools
-  and presentation tools are excluded because their schemas are already visible. It
+  and ungrounded presentation tools are excluded because their schemas are
+  already visible; grounded cards are listed. It
   depends on the admitted set only, never on the reading, so it does not move
   when the loaded set does. Presentation emitters previously appeared here
   without schemas; live runs guessed fields or emitted prose without searching.
