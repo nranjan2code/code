@@ -28,22 +28,13 @@ this handover's prompt and 'Where things stand' before the session's
 limit, telling the maintainer when the session is near it. The maintainer is the only user and there are no others: rewrite
 a wrong design or screen rather than patch it.
 
-First, check the last step landed: `git log --oneline -3` should show a
-commit "Doc 94 follow-ups: tools stay loaded across restarts; a copy is
-configured as its folder; scheduled cards as cards". If it is not there,
-the work is uncommitted in the tree (`git status`): run the full
-`scripts/gate.sh` once (in the background), and if it is green commit
-those paths (crates/vak-config/src/scope.rs, crates/vak-core/src/lib.rs
-and scheduled.rs, crates/vak-core/tests/it/loaded_tools.rs and main.rs,
-crates/vak-session/src/log.rs, types.rs and turns.rs,
-crates/vak-server/src/automations.rs, lib.rs and projection.rs,
-crates/vak-server/tests/it/scheduled_runs.rs, CHANGELOG.md, docs/) and
-push. Then one live check on the dev route (launch entry `vak-e1-live`,
-/tmp/vak-live/say.sh and items.sh, conversation id in
-/tmp/vak-live/s94): restart the server, say "Pause my morning line." and
-see that the automations tool is called (it is now loaded from the
-ledger); run the morning line now and see its answer delivered, with any
-card drawn as a card.
+First, one live check of doc 94's follow-ups on the dev route (launch
+entry `vak-e1-live`, /tmp/vak-live/say.sh and items.sh, conversation id
+in /tmp/vak-live/s94): say "Pause my morning line." and see that the
+automations tool is called (it is now loaded from the ledger, so the
+restart does not matter); run the morning line now and see its answer
+delivered, with any card drawn as a card. Record what you see in
+docs/plans/open-items.md.
 
 Then return to self-evolving capabilities (doc 93), which doc 94
 interrupted: E1a, E1b, E2 and E3a are built; next is E3b (the owner's
@@ -88,7 +79,7 @@ replacing the modal) share one set of buttons and the `SchedulePicker`.
 Found live and fixed: a copy run had no route; a failed dispatch was
 reported "completed" (`begin_turn` now reports the outcome); the claims
 restart test was timing-dependent. Its three follow-ups were built on
-2026-10-15 (last step's gate was running at the session's end): the
+2026-10-15 (`5754c3c0c`, full gate green; not yet checked live): the
 tools a conversation keeps loaded are `SessionLog::called_tools`, read
 from the ledger (they lived in process memory and a restart lost them);
 a run's working copy gets the folder's configuration layer
@@ -250,8 +241,8 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Confirm the doc 94 follow-ups commit landed (the prompt says how),
-   then doc 93's E3b, then E4, each step with the full gate and a live
+1. The live check of doc 94's follow-ups (the prompt says how), then
+   doc 93's E3b, then E4, each step with the full gate and a live
    turn; tick `docs/plans/open-items.md` and the docs' Status as stages
    land.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are
