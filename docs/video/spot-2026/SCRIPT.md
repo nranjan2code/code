@@ -43,6 +43,12 @@ Shared negative prompt: `extra people, distorted face, extra fingers, morphing, 
 
 > Upbeat lifestyle commercial, fast cuts. Shot 1 (0-5s): the flat app interface from the start frame, on warm paper, held perfectly still by the camera: the "Checkout total" result card lands with a small bounce, the Before and After values appear, the two check marks in the Checks column tick green one after the other, and the large serif headline "Does it. On a copy." pops in at the top right; the footer line stays readable. Shot 2 (5-10s): hard cut to a bright café, over-the-shoulder close-up of the same woman in the mustard cardigan holding her phone, exactly the end frame's framing: the phone shows two cards; her thumb presses the green "Accept into workspace" button, the button flashes to a green tick, she smiles, and the shot settles exactly into the end frame. Crisp, correctly spelled text throughout; consistent character.
 
+### Clip B1 — start `03b-empty-start`, end `03`, 5 s
+
+> Flat app interface on warm paper, camera locked and perfectly still, screen recording look. Starting from the start frame, everything already on screen stays exactly in place. Then, briskly and in order: the "Checkout total" result card slides up into place below the agent message with a small bounce; the Before and After values appear; the Changes lines fade in; the two check marks in the Checks column tick green one after the other; the buttons appear; the footer line fades in at the bottom of the card; finally the large serif headline "Does it. On a copy." pops in at the top right. Everything settles exactly into the end frame and holds for the last second. Crisp, correctly spelled text throughout, no new elements.
+
+Negative: `camera movement, zoom, pan, shake, extra people, morphing, flicker, warped letters, misspelled text, invented UI, dark theme, neon, glow`. The empty start frame's edit prompt: *Keep this app screenshot identical in layout, palette, typography, size and framing, with exactly these changes: remove the "Checkout total" result card entirely (Before/After values, Changes column, Checks column with ticks, and both buttons), remove the agent headline line next to the songbird, and remove the large serif headline "Does it. On a copy." in the upper right. Where they were, leave plain empty warm paper of the same colour. Keep unchanged: the left sidebar with the "Vak" wordmark, the user bubble "Fix the checkout total rounding issue", the songbird glyph, the composer at the bottom. Remove the footer status line too. Flat, no shadows, no glow, no new elements.* (It kept the agent line and dropped the header; the header was pasted back from `03`.)
+
 ### Clip C — start `05`, end `06`
 
 > Upbeat lifestyle commercial, fast cuts. Shot 1 (0-4s): the flat split-view app interface from the start frame on warm paper, camera locked: Priya's message bubble "Swap the museum for the garden?" slides in on the left, Mira's reply appears beneath it, the afternoon option cards on the right swap places with a quick smooth reorder, and the large serif headline "Bring a friend." pops in. Shot 2 (4-7s): hard cut to a sunny botanic garden path: the same woman in the mustard cardigan walks with her toddler, laughs, glances at her phone and slips it into her pocket. Shot 3 (7-10s): hard cut to plain warm paper: the indigo-and-saffron songbird drops in from above and lands with a tiny bounce on the left, blinks once with calm open eyes; beside it the navy Devanagari mark with its amber bar and blue dash fades in crisply with no box behind it; below, the serif line "Ask. Then go live your day." settles in; everything holds perfectly still, matching the end frame exactly.
@@ -61,6 +67,9 @@ Shared negative prompt: `extra people, distorted face, extra fingers, morphing, 
 | sfx-thud | 1.0 s | Soft low felt thud, like a thick book set down gently on a wooden desk, dry, short decay, no reverb |
 
 ## Edit (ffmpeg)
+
+`vak-spot-25s-v2.mp4` is this edit with a ninth input, `clips/clip-B1-card-landing.mp4`, and
+`[1:v]…trim=0:2.5…[b1]` replaced by `[8:v]setpts=PTS/2,fps=24,trim=0:2.5,setpts=PTS-STARTPTS[b1]`.
 
 Inputs in order: clipA.mp4, clipB.mp4, clipC.mp4, music-take-1.mp3, sfx-pencil-line.mp3, sfx-tick.mp3, sfx-chirp.mp3, sfx-thud.mp3.
 
