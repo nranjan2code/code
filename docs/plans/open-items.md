@@ -247,10 +247,18 @@ live.
   installed home the history of the abilities made on 2026-10-15 was
   already trashed (their cards show no versions link); the installed
   copies themselves are untouched.
-- [ ] E6 rest: projection line and capability sheet (§9.1), Review beside
-  file candidates (§9.2), ability filters and search, Settings →
-  Capabilities rewritten (§9.4), inbox entries that open their card
-  (§9.5), Approve for this Agent only.
+- [x] E6b (2026-10-15): Approve for this Agent (`Core::approve_for_agent`,
+  `POST /skills/proposals/{id}/approve`; approving a program proposal
+  now replaces the version it improves); the inbox's proposal and
+  ability entries ("See learned abilities") and Settings → Capabilities
+  ("Open in Library") open the Learned abilities view. Checked in the
+  running app at 1440 × 900 dark.
+- [ ] E6 rest: the ability line under an answer ("Used …", "Learned …",
+  "Improved … (version N)", "… is waiting for your review") as a typed
+  audit entry the projection draws, and the capability sheet it opens
+  (§9.1); Review beside file candidates (§9.2); ability filters and
+  search; Settings → Capabilities rewritten around the three sections
+  (§9.4).
 - [ ] E7: admin `#/capabilities` and `#/measurements`; `vak skills` verbs.
 - [ ] E8: the opt-in review of failures as a trigger per Agent.
 - [ ] E9: card data from a capability call (R5), generalising

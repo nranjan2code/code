@@ -2,7 +2,7 @@ import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import * as api from "../api";
 import type { ArtifactDetail, ArtifactShare, ArtifactSummary, ArtifactVersion, FileNeeds, ReadInput, ShareRole, VersionCompare } from "../api";
 import { host } from "../host";
-import { libraryFocus, setLibraryFocus, setLibraryOpen, technicalDetails } from "../store";
+import { libraryAbilities, libraryFocus, setLibraryAbilities, setLibraryFocus, setLibraryOpen, technicalDetails } from "../store";
 import { relAgo } from "../time";
 import { activate, openAgentChat } from "../App";
 import { attachArtifact } from "../attachFiles";
@@ -700,6 +700,9 @@ function AbilitiesView(props: { onOpen: (artifact: string) => void }) {
                     <Show when={ability.state === "waiting" && ability.proposal}>
                       {(id) => (
                         <>
+                          <Show when={ability.reaches.length > 0}>
+                            <button type="button" class="settings-button" onClick={() => void act(api.approveProposal(id()), `${ability.name} is now this Agent's.`)}>Approve for this Agent</button>
+                          </Show>
                           <button type="button" class="settings-button" onClick={() => void act(api.promoteProposal(id()), `${ability.name} is now available to every Agent.`)}>Approve for every Agent</button>
                           <button type="button" class="settings-button danger" onClick={() => void act(api.rejectProposal(id()), `${ability.name} was declined.`)}>Decline</button>
                         </>
@@ -734,7 +737,8 @@ export default function LibraryPage() {
   const [kind, setKind] = createSignal("all");
   const [changed, setChanged] = createSignal("any");
   /** Which files to show by their state (doc 90 §5). */
-  const [state, setState] = createSignal<"all" | "needs" | "changed" | "starred" | "archived" | "abilities">("all");
+  const [state, setState] = createSignal<"all" | "needs" | "changed" | "starred" | "archived" | "abilities">(libraryAbilities() ? "abilities" : "all");
+  setLibraryAbilities(false);
   const starred = () => state() === "starred";
   const archived = () => state() === "archived";
   const needsYou = (artifact: ArtifactSummary) => !!artifact.needs && (artifact.needs.waiting > 0 || artifact.needs.missing);

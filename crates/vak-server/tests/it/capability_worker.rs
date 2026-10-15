@@ -578,6 +578,30 @@ async fn the_owners_switch_and_a_skills_packs_are_honoured() {
         "approving it clears the entry"
     );
 
+    let out = tool
+        .execute(&propose("reviewed-split", "reviewed"), &ctx)
+        .await;
+    assert!(out.content.contains("waits"), "{}", out.content);
+    let again = vak_core::learning::list_proposals(&core.scope(), workspace.path())
+        .into_iter()
+        .find(|proposal| proposal.name == "reviewed-split")
+        .expect("waiting again");
+    assert_eq!(core.approve_for_agent(&again.id).unwrap(), "reviewed-split");
+    assert!(
+        core.scope()
+            .skills()
+            .join("reviewed-split/run.py")
+            .is_file()
+    );
+    assert_eq!(
+        core.ability_record("reviewed-split")
+            .unwrap()
+            .versions
+            .len(),
+        1,
+        "its record starts when it is approved for the Agent"
+    );
+
     std::fs::write(project.join("config.toml"), "").unwrap();
     core.refresh_persisted_preferences().unwrap();
     assert!(core.abilities_go_live(), "on unless a layer turns it off");

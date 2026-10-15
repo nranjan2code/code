@@ -18,7 +18,9 @@ how to improve it; checked live across conversations); E5 built 2026-10-15
 the offer and the withdrawal with their inbox entries, refusal by exit
 status 2); E6a built 2026-10-15 (the Library's Learned abilities view
 over `Core::abilities`, proposals listed across folders, every ability
-version kept); the rest of E6 and E7 to E9 not built. Agreed with the
+version kept); E6b built 2026-10-15 (Approve for this Agent, inbox
+entries and Settings open the Learned abilities view); the rest of E6
+and E7 to E9 not built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
@@ -531,8 +533,12 @@ artifact keeps every version (`Artifact::keeps_every_version`), as a
 starred one does, so its history never fades as drafts. Still to come in
 E6: the projection line and the capability sheet (§9.1), Review beside
 file candidates (§9.2), filters and search over abilities, Settings
-rewritten (§9.4), inbox entries that open their card (§9.5), and Approve
-for this Agent only.
+rewritten (§9.4). Built in E6b: Approve for this Agent
+(`Core::approve_for_agent`, `POST /skills/proposals/{id}/approve`, a
+program proposal installed among the Agent's own skills, replacing the
+version it improves, with its record started); the inbox's proposal and
+ability entries and Settings > Capabilities open the Learned abilities
+view.
 
 ### 9.4 Settings
 

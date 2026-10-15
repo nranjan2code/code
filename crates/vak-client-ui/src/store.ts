@@ -737,6 +737,12 @@ export const [inboxOpen, setInboxOpen] = createSignal(false);
 export const [libraryOpen, setLibraryOpen] = createSignal(false);
 /** The artifact the Library opens on, when something asked for one. */
 export const [libraryFocus, setLibraryFocus] = createSignal<string | null>(null);
+/** Opens the Library on what the Agents learned (docs/design/93 §9.3). */
+export const [libraryAbilities, setLibraryAbilities] = createSignal(false);
+export function openLearnedAbilities() {
+  setLibraryAbilities(true);
+  setLibraryOpen(true);
+}
 /** Opens the Library on one artifact: "Open in Library" from a chat card,
  *  the Canvas or the Workbench. */
 export function openInLibrary(artifactId: string): void {

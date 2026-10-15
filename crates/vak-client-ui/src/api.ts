@@ -888,6 +888,11 @@ export function listAbilities(): Promise<{ abilities: Ability[] }> {
   return req("/skills/abilities");
 }
 
+/** Approves a proposed ability for its Agent alone. */
+export function approveProposal(id: string): Promise<{ approved: string }> {
+  return req(`/skills/proposals/${encodeURIComponent(id)}/approve`, { method: "POST", body: "{}" });
+}
+
 /** Gives an Agent's ability that has shown it works to every Agent. */
 export function promoteAbility(name: string): Promise<{ promoted: string }> {
   return req(`/skills/abilities/${encodeURIComponent(name)}/promote`, { method: "POST", body: "{}" });

@@ -1563,6 +1563,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/skills/proposals/{id}/promote", post(promote_proposal))
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
         .route("/skills/abilities", get(list_abilities))
+        .route(
+            "/skills/proposals/{id}/approve",
+            post(approve_proposal_for_agent),
+        )
         .route("/skills/abilities/{name}/promote", post(promote_ability))
         .merge(gateway::routes())
         .merge(intake::routes())
@@ -2974,6 +2978,24 @@ fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
             })
         })
         .collect()
+}
+
+/// Approves a proposal for its Agent alone (docs/design/93 §9.2).
+async fn approve_proposal_for_agent(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = scoped_core!(&state, None, q.agent.as_deref());
+    match core.approve_for_agent(&id) {
+        Ok(name) => Json(serde_json::json!({ "approved": name })).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 /// The Agent's learned abilities, each with its state in plain terms

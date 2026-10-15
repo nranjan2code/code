@@ -674,6 +674,45 @@ impl Core {
         rows
     }
 
+    /// Approves proposal `id` for this Agent alone (doc 93 §9.2): its
+    /// version is installed among the Agent's own skills, replacing the
+    /// one it improves, and its record starts there.
+    pub fn approve_for_agent(&self, id: &str) -> Result<String, String> {
+        let proposal = crate::learning::list_proposals(&self.scope(), self.cwd())
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .ok_or_else(|| format!("no proposal '{id}'"))?;
+        let review = proposal.program.clone().ok_or_else(|| {
+            format!(
+                "'{}' has no program; approve it for every Agent",
+                proposal.name
+            )
+        })?;
+        let target = self.scope().skills().join(&proposal.name);
+        let parent = Program::load(&target).ok().flatten().map(|old| old.digest);
+        let name = crate::learning::promote(
+            &self.scope(),
+            self.cwd(),
+            id,
+            &self.scope().skills(),
+            Some(&self.artifacts()),
+        )?;
+        let program = Program::load(&target)?
+            .ok_or_else(|| format!("'{name}' did not install with its program"))?;
+        self.record_ability_version(
+            &name,
+            VersionRecord {
+                digest: program.digest,
+                version: review.version,
+                parent,
+                passed: true,
+                ..VersionRecord::default()
+            },
+        )?;
+        self.proposal_settled(id);
+        Ok(name)
+    }
+
     /// The owner approved or declined proposal `id`: the inbox no longer
     /// says it is waiting.
     pub fn proposal_settled(&self, id: &str) {

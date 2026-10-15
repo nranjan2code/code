@@ -584,13 +584,6 @@ pub fn promote(
         .ok_or_else(|| format!("no proposal '{id}'"))?;
     let target_dir = skills.join(&p.name);
     let target = target_dir.join("SKILL.md");
-    if target.exists() {
-        return Err(format!(
-            "a skill named '{}' already exists at {}; remove or rename it first",
-            p.name,
-            target.display()
-        ));
-    }
     let text =
         vak_session::documents::read(&p.path)?.ok_or_else(|| format!("no proposal '{id}'"))?;
     match library_version(&text) {
@@ -611,6 +604,15 @@ pub fn promote(
                 .bytes(&found, &version)
                 .map_err(|error| format!("proposal '{id}': {error}"))?;
             crate::skill_programs::install(&bytes, &target_dir)?;
+        }
+        // A skill of instructions alone never replaces one; a program is
+        // the next version of its Library skill and replaces the copy there.
+        None if target.exists() => {
+            return Err(format!(
+                "a skill named '{}' already exists at {}; remove or rename it first",
+                p.name,
+                target.display()
+            ));
         }
         None => {
             std::fs::create_dir_all(&target_dir).map_err(|e| format!("create skill dir: {e}"))?;

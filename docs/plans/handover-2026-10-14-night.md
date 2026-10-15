@@ -28,12 +28,13 @@ this handover's prompt and 'Where things stand' before the session's
 limit, telling the maintainer when the session is near it. The maintainer is the only user and there are no others: rewrite
 a wrong design or screen rather than patch it.
 
-Self-evolving capabilities (doc 93) stand at E6a: E1 to E5 and the
-Library's Learned abilities view are built and checked. Next is the rest
-of E6 (open-items "E6 rest": projection line and capability sheet,
-Review beside file candidates, Settings > Capabilities rewritten, inbox
-entries that open their card, Approve for this Agent only), then E7, E8
-and E9 as doc 93 §11 orders them.
+Self-evolving capabilities (doc 93) stand at E6b: E1 to E5, the
+Library's Learned abilities view, Approve for this Agent, and the inbox
+and Settings links are built and checked. Next is the rest of E6
+(open-items "E6 rest": the ability line under an answer as a typed audit
+entry and the sheet it opens, Review beside file candidates, ability
+filters, Settings > Capabilities rewritten), then E7, E8 and E9 as doc
+93 §11 orders them.
 Build each as a
 design, never spot fixes or tuned numbers.
 
@@ -79,7 +80,7 @@ route pin); a scheduled run's cards are drawn as cards in the home turn
 model still reads their text). Left on the dev home: the "morning line"
 automation and its test conversation.
 
-**Self-evolving capabilities (doc 93) stand at E6a** (2026-10-15, full
+**Self-evolving capabilities (doc 93) stand at E6b** (2026-10-15, full
 gate green, pushed): the rest of E6 and E7 to E9 not started (tracker lines in open-items
 "Self-evolving capabilities").
 

@@ -1,5 +1,7 @@
 ## Unreleased
 
+- A proposed ability can be approved for just the Agent that made it, and
+  the inbox and Settings take you straight to Learned abilities.
 - The Library has "Learned abilities": what your Agents taught
   themselves, whether each works, what it can reach, and what waits for
   you, with Approve, Decline and Give to every Agent. Abilities proposed
