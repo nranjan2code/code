@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Under an answer, a quiet line says when an Agent used, learned or
+  improved one of its abilities, or that one waits for you; it opens
+  Learned abilities.
 - A proposed ability can be approved for just the Agent that made it, and
   the inbox and Settings take you straight to Learned abilities.
 - The Library has "Learned abilities": what your Agents taught

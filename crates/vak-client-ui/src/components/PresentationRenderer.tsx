@@ -5,6 +5,7 @@ import type {
   ArtifactRef,
   DocumentBlock,
   InlineNode,
+  OutputContent,
   OutputItem,
   OutputTimeline,
   PresentationDocument,
@@ -28,6 +29,7 @@ import {
   health,
   sessions,
   openInLibrary,
+  openLearnedAbilities,
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
@@ -107,6 +109,28 @@ function AssistantMessage(props: { children: JSX.Element; text?: string; session
         <Show when={props.text}><MessageActions text={props.text!} role="assistant" /></Show>
       </div>
     </div>
+  );
+}
+
+/** What an Agent's learned ability did in this turn, as one quiet line
+ * under the answer (docs/design/93 §9.1); it opens Learned abilities. */
+function AbilityLine(props: { content: Extract<OutputContent, { type: "ability" }> }) {
+  const words = () => {
+    const name = <strong>{props.content.skill}</strong>;
+    switch (props.content.event) {
+      case "used": return <>Used {name}</>;
+      case "failed": return <>{name} failed</>;
+      case "learned": return <>Learned {name}</>;
+      case "improved": return <>Improved {name}<Show when={props.content.version}>{(version) => <> (version {version()})</>}</Show></>;
+      case "waiting": return <>{name} is waiting for your review</>;
+      case "offered": return <>{name} is ready for every Agent</>;
+      case "turned_off": return <>{name} was turned off</>;
+    }
+  };
+  return (
+    <button type="button" class="ability-line" onClick={() => openLearnedAbilities()}>
+      <Icon name="spark" size={13} /><span>{words()}</span>
+    </button>
   );
 }
 
@@ -1290,6 +1314,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
     });
   };
   const OrderedItem = (item: OutputItem): JSX.Element | null => {
+    if (item.content.type === "ability") return <AbilityLine content={item.content} />;
     if (item.role === "user" && item.content.type === "document" && item.content.document.metadata.scheduled_name) {
       const document = item.content.document;
       return <ScheduledHead name={document.metadata.scheduled_name} failed={document.metadata.scheduled_failed === "true"} timestamp={item.timestamp} title={document.source_markdown} />;

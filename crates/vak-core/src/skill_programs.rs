@@ -208,6 +208,9 @@ pub struct ProgramReview {
     pub reaches: Vec<String>,
     pub artifact: String,
     pub version: String,
+    /// The `propose_skill` call that made it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<String>,
 }
 
 const REVIEW_TRAILER: &str = "<!-- program-review: ";
@@ -281,6 +284,65 @@ pub struct AbilityRecord {
     pub versions: Vec<VersionRecord>,
     #[serde(default)]
     pub withdrawn: bool,
+}
+
+/// One thing a learned ability did in a turn, drawn as a line under the
+/// answer (doc 93 §9.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbilityEvent {
+    /// `used`, `failed`, `learned`, `improved`, `waiting`, `offered` or
+    /// `turned_off`.
+    pub event: &'static str,
+    pub skill: String,
+    /// Which version, for one learned or improved.
+    pub version: Option<u32>,
+}
+
+impl AbilityEvent {
+    fn new(event: &'static str, skill: &str, version: Option<u32>) -> Self {
+        Self {
+            event,
+            skill: skill.to_string(),
+            version,
+        }
+    }
+
+    /// The line in plain words, for a surface that cannot draw it.
+    pub fn words(&self) -> String {
+        let skill = &self.skill;
+        match (self.event, self.version) {
+            ("used", _) => format!("Used {skill}"),
+            ("failed", _) => format!("{skill} failed"),
+            ("learned", _) => format!("Learned {skill}"),
+            ("improved", Some(version)) => format!("Improved {skill} (version {version})"),
+            ("improved", None) => format!("Improved {skill}"),
+            ("waiting", _) => format!("{skill} is waiting for your review"),
+            ("offered", _) => format!("{skill} is ready for every Agent"),
+            _ => format!("{skill} was turned off"),
+        }
+    }
+
+    /// The audit entry the projection draws.
+    pub fn activity(&self) -> vak_session::ActivityRecord {
+        let mut data = std::collections::BTreeMap::new();
+        data.insert("event".to_string(), self.event.to_string());
+        data.insert("skill".to_string(), self.skill.clone());
+        if let Some(version) = self.version {
+            data.insert("version".to_string(), version.to_string());
+        }
+        vak_session::ActivityRecord {
+            activity_id: format!("ability-{}", uuid::Uuid::now_v7()),
+            kind: vak_session::ActivityKind::Ability,
+            status: if self.event == "failed" || self.event == "turned_off" {
+                vak_session::ActivityStatus::Failed
+            } else {
+                vak_session::ActivityStatus::Succeeded
+            },
+            label: self.skill.clone(),
+            detail: Some(self.words()),
+            data,
+        }
+    }
 }
 
 /// What one call to an ability's program came to.
@@ -440,7 +502,8 @@ impl Core {
     /// its parent did is withdrawn for this Agent. Only a failure by the
     /// program's own fault counts; a refusal of the call's arguments or a
     /// stopped call does not.
-    pub fn settle_ability_uses(&self, turn: &TurnUses) {
+    pub fn settle_ability_uses(&self, turn: &TurnUses) -> Vec<AbilityEvent> {
+        let mut events = Vec::new();
         for found in &turn.uses {
             let path = self.ability_path(&found.skill);
             let verdict = vak_session::documents::update(&path, |current| {
@@ -501,8 +564,10 @@ impl Core {
             match verdict {
                 Ok(Some(Some(vak_judge::ability::AbilityVerdict::Withdraw))) => {
                     self.withdraw_ability(&found.skill);
+                    events.push(AbilityEvent::new("turned_off", &found.skill, None));
                 }
                 Ok(Some(Some(vak_judge::ability::AbilityVerdict::Offer))) => {
+                    events.push(AbilityEvent::new("offered", &found.skill, None));
                     let _ = crate::inbox::record_with_result_and_key(
                         &self.shared_scope().as_agent(),
                         crate::inbox::Kind::AbilityOffered,
@@ -519,6 +584,66 @@ impl Core {
                 Err(_) => tracing::warn!("an ability's record could not be updated"),
             }
         }
+        events
+    }
+
+    /// What the Agent's learned abilities did in `turn`, one event each
+    /// (doc 93 §9.1): used or failed by its calls, learned or improved by a
+    /// version its call installed, waiting for a proposal its call made,
+    /// and offered or turned off by the settlement. Read from records and
+    /// call ids, never from any words.
+    pub fn ability_events(&self, turn: &TurnUses) -> Vec<AbilityEvent> {
+        let mut events = Vec::new();
+        for found in &turn.uses {
+            let event = match found.fault {
+                None => "used",
+                Some(vak_control::Fault::Tool) => "failed",
+                Some(_) => continue,
+            };
+            let next = AbilityEvent::new(event, &found.skill, None);
+            if !events.contains(&next) {
+                events.push(next);
+            }
+        }
+        if turn.calls.is_empty() {
+            return events;
+        }
+        for path in vak_session::documents::under(&self.scope().ability_standing()) {
+            let Some(skill) = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+            else {
+                continue;
+            };
+            let Some(record) = self.ability_record(&skill) else {
+                continue;
+            };
+            for (at, version) in record.versions.iter().enumerate() {
+                if version
+                    .built_by
+                    .as_ref()
+                    .is_some_and(|call| turn.calls.contains(call))
+                {
+                    let number = u32::try_from(at + 1).unwrap_or(u32::MAX);
+                    events.push(if at == 0 {
+                        AbilityEvent::new("learned", &skill, Some(number))
+                    } else {
+                        AbilityEvent::new("improved", &skill, Some(number))
+                    });
+                }
+            }
+        }
+        for proposal in crate::learning::list_proposals(&self.scope(), self.cwd()) {
+            if proposal
+                .program
+                .as_ref()
+                .and_then(|review| review.call.as_ref())
+                .is_some_and(|call| turn.calls.contains(call))
+            {
+                events.push(AbilityEvent::new("waiting", &proposal.name, None));
+            }
+        }
+        events
     }
 
     fn withdraw_ability(&self, skill: &str) {
@@ -829,6 +954,7 @@ impl Core {
                 reaches: program.reaches(),
                 artifact: artifact.to_string(),
                 version: version.to_string(),
+                call: Some(proposal.call.to_string()),
             };
             let body = format!(
                 "{skill_md}\n<!-- proposed-by: {} at {}; proposal id {id}; library: {artifact} {version} -->\n{}\n",

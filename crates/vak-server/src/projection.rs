@@ -2010,7 +2010,8 @@ fn is_user_facing_activity(activity: &vak_session::ActivityRecord) -> bool {
         ActivityKind::Approval
         | ActivityKind::Worker
         | ActivityKind::CandidateComment
-        | ActivityKind::CandidateRevision => true,
+        | ActivityKind::CandidateRevision
+        | ActivityKind::Ability => true,
         ActivityKind::Run => activity.label != "Request accepted",
         _ => false,
     }
@@ -2034,6 +2035,18 @@ fn activity_item(
         ActivityStatus::Partial => OutputStatus::Partial,
     };
     let (role, kind, content) = match activity.kind {
+        ActivityKind::Ability => (
+            OutputRole::System,
+            OutputKind::Ability,
+            OutputContent::Ability {
+                event: activity.data.get("event").cloned().unwrap_or_default(),
+                skill: activity.data.get("skill").cloned().unwrap_or_default(),
+                version: activity
+                    .data
+                    .get("version")
+                    .and_then(|version| version.parse().ok()),
+            },
+        ),
         ActivityKind::Approval => (
             OutputRole::System,
             OutputKind::Approval,

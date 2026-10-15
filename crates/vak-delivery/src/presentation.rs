@@ -30,6 +30,9 @@ pub enum OutputKind {
     /// user should see, as opposed to `Information`/`Progress` activity
     /// chatter that chat views fold away.
     Card,
+    /// What an Agent's learned ability did in this turn, as one quiet line
+    /// under the answer (docs/design/93-self-evolving-capabilities.md §9.1).
+    Ability,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,6 +117,13 @@ pub enum OutputContent {
     Information {
         label: String,
         detail: Option<String>,
+    },
+    /// `event` is `used`, `failed`, `learned`, `improved`, `waiting`,
+    /// `offered` or `turned_off`; `version` numbers the ability's versions.
+    Ability {
+        event: String,
+        skill: String,
+        version: Option<u32>,
     },
     Approval {
         request_id: String,

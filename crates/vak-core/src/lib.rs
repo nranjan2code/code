@@ -8360,9 +8360,15 @@ impl Core {
             }
         }
 
+        // What the Agent's learned abilities did this turn, kept as one
+        // audit line each for the projection (docs/design/93 §9.1).
         let ability_uses = skill_programs::uses_in_turn(&session, &turn_id, &program_digests);
-        if !ability_uses.uses.is_empty() {
-            self.settle_ability_uses(&ability_uses);
+        let mut ability_events = self.ability_events(&ability_uses);
+        ability_events.extend(self.settle_ability_uses(&ability_uses));
+        for event in &ability_events {
+            if session.append_activity(event.activity()).is_err() {
+                tracing::warn!("an ability's line could not be recorded");
+            }
         }
 
         // The model is idle now that this turn is done: this is the only

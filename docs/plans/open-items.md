@@ -253,12 +253,19 @@ live.
   ability entries ("See learned abilities") and Settings → Capabilities
   ("Open in Library") open the Learned abilities view. Checked in the
   running app at 1440 × 900 dark.
-- [ ] E6 rest: the ability line under an answer ("Used …", "Learned …",
-  "Improved … (version N)", "… is waiting for your review") as a typed
-  audit entry the projection draws, and the capability sheet it opens
-  (§9.1); Review beside file candidates (§9.2); ability filters and
-  search; Settings → Capabilities rewritten around the three sections
-  (§9.4).
+- [x] E6c (2026-10-15): the ability line under an answer: an `Activity`
+  of kind `Ability` (event, skill, version) written at turn end from the
+  turn's own program calls, records and proposals, projected as
+  `OutputKind::Ability` and drawn as one quiet line that opens Learned
+  abilities. Live with gpt-6-luna: "Five of us split a $123.45 dinner
+  with a 15% tip" called restaurant-bill-splitter, answered $28.40 × 2
+  and $28.39 × 3, and showed "Used restaurant-bill-splitter" (1440 × 900
+  light; 390 × 844 dark checked through the DOM). Learned and improved
+  covered by the integration test.
+- [ ] E6 rest: the capability sheet the line opens (§9.1, today it opens
+  the Learned abilities view); Review beside file candidates (§9.2);
+  ability filters and search; Settings → Capabilities rewritten around
+  the three sections (§9.4).
 - [ ] E7: admin `#/capabilities` and `#/measurements`; `vak skills` verbs.
 - [ ] E8: the opt-in review of failures as a trigger per Agent.
 - [ ] E9: card data from a capability call (R5), generalising

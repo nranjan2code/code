@@ -833,6 +833,11 @@ pub enum ActivityKind {
     /// A turn's usage or instruction-following outcome updated an existing
     /// `CapacityProfile` (§1 "Feedback"). Never model-visible.
     CapacityFeedback,
+    /// What one of the Agent's learned abilities did in this turn: used,
+    /// learned, improved, waiting for review, offered or turned off
+    /// (docs/design/93-self-evolving-capabilities.md §9.1). `data` holds
+    /// `event`, `skill` and, for a version, `version`. Never model-visible.
+    Ability,
 }
 
 /// Where a validated presentation came from (docs/design/68-context-engine.md

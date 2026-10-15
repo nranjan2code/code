@@ -822,3 +822,50 @@ async fn an_ability_is_offered_when_it_works_and_withdrawn_when_its_fix_fails() 
     let row = rows.iter().find(|row| row.name == "r2-splitter").unwrap();
     assert_eq!(row.state, "turned_off");
 }
+
+/// Doc 93 §9.1: a turn whose call made or improved an ability reads as
+/// "Learned …" or "Improved … (version 2)", from the record and the call's
+/// id alone.
+#[tokio::test]
+async fn a_turn_that_learns_or_improves_an_ability_says_so() {
+    use vak_core::skill_programs::TurnUses;
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(workspace.path()).unwrap();
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).unwrap();
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let tool = vak_core::learning::ProposeSkillTool {
+        sessions_home: core.scope().into_root(),
+        cwd: workspace.path().to_path_buf(),
+        session_id: "sess-line".into(),
+        core: Some(core.clone()),
+    };
+    let call = |id: &str| {
+        let mut ctx = ToolContext::new(workspace.path().to_path_buf()).with_agent_id("vak");
+        ctx.sandbox_sink = Some(vak_tools::SandboxEventSink::new_with_id(id.to_string()).0);
+        ctx
+    };
+    let propose = |source: &str| {
+        json!({"name": "line-splitter", "description": "Split a bill evenly",
+               "instructions": "Call the tool.", "source": source})
+    };
+    let words = |id: &str| {
+        core.ability_events(&TurnUses {
+            uses: Vec::new(),
+            calls: [id.to_string()].into(),
+        })
+        .iter()
+        .map(|event| event.words())
+        .collect::<Vec<_>>()
+    };
+    prepared(workspace.path(), "line1", "args['people']", 30);
+    tool.execute(&propose("line1"), &call("call-learn")).await;
+    assert_eq!(words("call-learn"), vec!["Learned line-splitter"]);
+    prepared(workspace.path(), "line2", "max(args['people'], 1)", 30);
+    tool.execute(&propose("line2"), &call("call-improve")).await;
+    assert_eq!(
+        words("call-improve"),
+        vec!["Improved line-splitter (version 2)"]
+    );
+    assert!(words("call-other").is_empty());
+}

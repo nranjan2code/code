@@ -2911,6 +2911,9 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .schedule-day { padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: transparent; color: var(--text-soft); font-size: var(--fs-caption); }
 .schedule-day[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .schedule-zone { font-size: var(--fs-caption); color: var(--muted); align-self: center; }
+.ability-line { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0; padding: 2px 0; border: 0; background: transparent; color: var(--muted); font-size: var(--fs-meta); cursor: pointer; }
+.ability-line:hover strong { text-decoration: underline; }
+.ability-line strong { color: var(--text-soft); font-weight: 600; }
 .scheduled-turn-head {
   display: flex;
   align-items: center;

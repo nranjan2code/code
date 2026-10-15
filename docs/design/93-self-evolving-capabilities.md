@@ -19,7 +19,9 @@ the offer and the withdrawal with their inbox entries, refusal by exit
 status 2); E6a built 2026-10-15 (the Library's Learned abilities view
 over `Core::abilities`, proposals listed across folders, every ability
 version kept); E6b built 2026-10-15 (Approve for this Agent, inbox
-entries and Settings open the Learned abilities view); the rest of E6
+entries and Settings open the Learned abilities view); E6c built
+2026-10-15 (the ability line under an answer); the capability sheet,
+Review beside candidates, ability filters and the Settings rewrite of E6
 and E7 to E9 not built. Agreed with the
 maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
@@ -477,8 +479,12 @@ details is on. Each screen is done when it holds in the running app at
 ### 9.1 In the conversation (the projection)
 
 - **A typed record, not narration.** Using, improving, building and
-  retiring are recorded as an audit entry (`CapabilityActivity`) beside
-  the call, and `vak-server`'s projection draws it as one quiet line
+  retiring are recorded as an audit entry beside the call (as built in
+  E6c: an `Activity` of kind `Ability` with typed `event`, `skill` and
+  `version`, written when the turn ends from that turn's program calls,
+  the records whose `built_by` names one of its calls, and the proposals
+  its calls made; `vak_core::skill_programs::AbilityEvent`), projected as
+  `OutputKind::Ability`, and `vak-server`'s projection draws it as one quiet line
   under the answer: "Used **Split a bill**", "Improved **Split a bill**
   (version 3)", "Learned **Split a bill**", "**Split a bill** is waiting
   for your review". The model's prose is not required to say it, and

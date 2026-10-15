@@ -44,7 +44,8 @@ export type OutputKind =
   | "error"
   | "outcome"
   | "artifact"
-  | "card";
+  | "card"
+  | "ability";
 export type OutputStatus =
   | "pending"
   | "running"
@@ -127,6 +128,7 @@ export interface PresentationDocument {
 export type OutputContent =
   | { type: "document"; document: PresentationDocument }
   | { type: "information"; label: string; detail?: string | null }
+  | { type: "ability"; event: "used" | "failed" | "learned" | "improved" | "waiting" | "offered" | "turned_off"; skill: string; version?: number | null }
   | { type: "approval"; request_id: string; tool: string; args_json: string; reason: string; expires_at?: string | null }
   | { type: "progress"; label: string; detail?: string | null; percent?: number | null }
   | { type: "retry"; attempt: number; delay_ms: number; reason: string }
