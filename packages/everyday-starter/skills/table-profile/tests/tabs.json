@@ -1,0 +1,1 @@
+{"arguments": {"text": "name\tscore\nA\t1.5\nB\t2.5\n"}, "expect": {"delimiter": "tab", "columns": [{"name": "name"}, {"name": "score", "type": "number", "mean": 2.0}]}}

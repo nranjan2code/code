@@ -1,5 +1,14 @@
 ## Unreleased
 
+- The skills Vakyartha ships are rewritten as real procedures that name
+  the tools and cards it has today: getting started, research and
+  sources, planning, data and spreadsheets, writing and editing,
+  software development, debugging and code review. Two new abilities
+  come with them: a date calculator (days, working days and months
+  between dates, with weekdays) and a table profile (a CSV's columns,
+  types, missing values, ranges and duplicate rows), each tested.
+- Layout guidance no longer names card kinds that were retired.
+
 ## 8.2.0 — 2026-10-15
 
 Agents learn abilities they can keep (docs/design/93-self-evolving-capabilities.md,

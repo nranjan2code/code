@@ -1,0 +1,14 @@
+{
+  "entry": "run.py",
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "start": {"type": "string", "description": "The date to count from, written YYYY-MM-DD."},
+      "end": {"type": "string", "description": "A date to count to, written YYYY-MM-DD: the answer gives the days, weeks and working days between."},
+      "add_days": {"type": "integer", "description": "Days to move from start (negative moves back). Working days when business_days is true."},
+      "add_months": {"type": "integer", "description": "Calendar months to move from start, applied before add_days; the day is kept, or the month's last day when it has fewer."},
+      "business_days": {"type": "boolean", "description": "Count add_days as working days, Monday to Friday."}
+    },
+    "required": ["start"]
+  }
+}

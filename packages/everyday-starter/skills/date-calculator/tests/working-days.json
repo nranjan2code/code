@@ -1,0 +1,1 @@
+{"arguments": {"start": "2026-10-16", "add_days": 3, "business_days": true}, "expect": {"start": {"weekday": "Friday"}, "result": {"date": "2026-10-21", "weekday": "Wednesday"}}}

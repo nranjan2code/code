@@ -1,0 +1,1 @@
+{"arguments": {"start": "2026-10-15", "end": "2026-12-25"}, "expect": {"days_between": 71, "business_days_between": 51, "end": {"weekday": "Friday"}}}
