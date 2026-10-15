@@ -207,10 +207,13 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   replacing `due_at`; a slot in a skipped hour runs at the first minute
   after it. Fixed-clock tests for the gap, the repeated hour, `at` and
   the zone.
-- [ ] S0 rest: Settings shows and sets the owner's time zone; tests for an
-  interval's anchor, catch-up after sleep and one start per slot across
-  two processes; the intake and mail routine makers checked for a cron
-  without a zone.
+- [x] S0 rest (2026-10-15): Settings → General → Your time zone
+  (`PUT /config/owner`, Shared layer only; `GET /config` `owner`), read
+  live across processes (`Core::owner_timezone_set`). The interval anchor,
+  catch-up and one start per slot across two processes were already
+  pinned (`triggers.rs` tests, `vak-core/tests/it/claims.rs`,
+  `scheduler_personal_os.rs`); intake makes intervals and mail routines go
+  through the automations route, so no maker leaves a cron without a zone.
 - [ ] S1: `home`, `made_by`, `ScheduledResult` delivery into the
   conversation.
 - [ ] S2: `triggers::describe` and the schedule picker's vocabulary.

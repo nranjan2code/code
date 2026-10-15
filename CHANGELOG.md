@@ -5,6 +5,7 @@
   schedule is saved with it, and "remind me at 9" is 9 in that zone
   whichever computer runs it. A time that falls in a skipped daylight-
   saving hour runs at the first minute after it instead of a day late.
+  Settings → General → Your time zone shows and changes it.
 - `vak inbox` shows what automations and the gateway deliver. It read a
   different inbox from the one they write, so it always said there was
   nothing.

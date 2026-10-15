@@ -98,4 +98,4 @@ Counts: 2 proposal, 19 in progress, 54 implemented, 3 reference, 8 superseded, 4
 | [91-presentation-capabilities.md](91-presentation-capabilities.md) | 91 — Presentations are capabilities | implemented | stages 1 to 5 built 2026-10-14 |
 | [92-card-forms.md](92-card-forms.md) | 92 — Card forms | implemented | F1 to F6 built and checked live 2026-10-14 |
 | [93-self-evolving-capabilities.md](93-self-evolving-capabilities.md) | 93-self-evolving-capabilities.md | in progress | E1 built (E1a 2026-10-14: a skill's program runs as a tool under its own sandbox |
-| [94-scheduled-work-you-can-see.md](94-scheduled-work-you-can-see.md) | 94-scheduled-work-you-can-see.md | in progress | S0's rules built 2026-10-15 (the owner's time zone, `at` in local time, a cron always names its zone, the gap rule, with fixed-clock tests) |
+| [94-scheduled-work-you-can-see.md](94-scheduled-work-you-can-see.md) | 94-scheduled-work-you-can-see.md | in progress | S0 built 2026-10-15 (the owner's time zone, set in Settings, `at` in local time, a cron always names its zone, the gap rule, with fixed-clock tests) |

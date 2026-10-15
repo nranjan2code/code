@@ -207,6 +207,11 @@ fn first_existing<Tz: TimeZone>(tz: &Tz, local: chrono::NaiveDateTime) -> Option
     })
 }
 
+/// Whether `zone` names an IANA time zone this build knows.
+pub fn is_zone(zone: &str) -> bool {
+    zone.parse::<chrono_tz::Tz>().is_ok()
+}
+
 /// This machine's IANA time zone, or `UTC` when it has none that can be
 /// named: the owner's when they have set none
 /// (`vak_config::Config::owner_timezone`).

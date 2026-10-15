@@ -1352,6 +1352,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
         .route("/config/intent/evidence", post(patch_evidence_policy))
+        .route("/config/owner", axum::routing::put(put_owner_settings))
         .route(
             "/config/global",
             get(get_global_config_layer).patch(patch_global_config),
@@ -17081,6 +17082,11 @@ async fn get_config(
     let permission_rules = core.effective_permission_rules();
     let project_path = vak_config::project_path(core.cwd());
     let limits = core.effective_limits().await;
+    let owner = serde_json::json!({
+        "timezone": core.owner_timezone(),
+        "timezone_set": core.owner_timezone_set().is_some(),
+        "host_timezone": vak_core::triggers::host_timezone(),
+    });
     Json(serde_json::json!({
         "provider": route.provider,
         "model": route.model,
@@ -17093,6 +17099,7 @@ async fn get_config(
         "max_tokens_source": limits.max_tokens_source,
         "max_turns": core.effective_max_turns(),
         "intent_evidence_max_age_secs": cfg.intent.evidence_max_age_secs,
+        "owner": owner,
         "permission_mode": format!("{:?}", core.effective_permission_mode()),
         // How an `Ask` gets resolved, and what the rules say — both were
         // absent here, which is why the desktop app could set the permission
@@ -17628,6 +17635,52 @@ async fn patch_evidence_policy(
             .into_response();
     }
     Json(serde_json::json!({"saved": true, "seconds": body.seconds.max(0)})).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct OwnerSettingsBody {
+    /// An IANA zone, or `null` for this machine's.
+    timezone: Option<String>,
+}
+
+/// `[owner]` lives in the Shared layer alone: the owner is one person
+/// whatever folder they work in (docs/design/94 §6).
+async fn put_owner_settings(
+    State(state): State<AppState>,
+    Json(body): Json<OwnerSettingsBody>,
+) -> axum::response::Response {
+    let zone = body
+        .timezone
+        .map(|zone| zone.trim().to_string())
+        .filter(|zone| !zone.is_empty());
+    if let Some(zone) = &zone
+        && !vak_core::triggers::is_zone(zone)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("'{zone}' is not a time zone")})),
+        )
+            .into_response();
+    }
+    let Some(path) = vak_config::global_path() else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "user home unavailable").into_response();
+    };
+    if let Err(error) = vak_config::persist_owner_timezone(path, zone.as_deref()) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": error.to_string()})),
+        )
+            .into_response();
+    }
+    if state.core.refresh_persisted_preferences().is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not apply the time zone",
+        )
+            .into_response();
+    }
+    Json(serde_json::json!({"timezone": state.core.owner_timezone(), "set": zone.is_some()}))
+        .into_response()
 }
 
 /// Which keys this write landed on disk but did NOT put into force, because

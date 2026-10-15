@@ -553,6 +553,8 @@ struct CoreInner {
     /// `[control]` as last persisted, so an edit applies at the next step
     /// without a restart (invariant 31).
     control_override: std::sync::Mutex<Option<vak_config::ControlSettings>>,
+    /// `[owner] timezone` as last read from disk (`Some(None)`: none set).
+    owner_timezone_override: std::sync::Mutex<Option<Option<String>>>,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
     mode_runtime_pinned: std::sync::atomic::AtomicBool,
     permission_lease: std::sync::Mutex<CancellationToken>,
@@ -1475,6 +1477,7 @@ impl Core {
             max_turns_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
             evidence_max_age_override: std::sync::Mutex::new(None),
             control_override: std::sync::Mutex::new(None),
+            owner_timezone_override: std::sync::Mutex::new(None),
             mode_override: std::sync::Mutex::new(None),
             permission_lease: std::sync::Mutex::new(CancellationToken::new()),
             mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
@@ -1671,11 +1674,15 @@ impl Core {
     /// The owner's IANA time zone: `[owner] timezone` when it names one,
     /// else this machine's (docs/design/94 §6).
     pub fn owner_timezone(&self) -> String {
-        self.config()
-            .owner_timezone
-            .clone()
+        self.owner_timezone_set()
             .filter(|zone| zone.parse::<chrono_tz::Tz>().is_ok())
             .unwrap_or_else(crate::triggers::host_timezone)
+    }
+
+    /// `[owner] timezone` as the layers say now, `None` when unset.
+    pub fn owner_timezone_set(&self) -> Option<String> {
+        Self::read_override(&self.inner.owner_timezone_override)
+            .unwrap_or_else(|| self.config().owner_timezone.clone())
     }
 
     /// The operator's time limits (docs/design/88-control-plane.md §5a):
@@ -3014,6 +3021,10 @@ impl Core {
             Some(config.intent.evidence_max_age_secs),
         );
         Self::write_override(&self.inner.control_override, Some(config.control.clone()));
+        Self::write_override(
+            &self.inner.owner_timezone_override,
+            Some(config.owner_timezone.clone()),
+        );
         Self::write_override(
             &self.inner.bedrock_region_override,
             Some(config.bedrock_region.clone()),

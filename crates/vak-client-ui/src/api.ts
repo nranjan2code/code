@@ -1360,6 +1360,10 @@ export function recordOutcomeReview(
   });
 }
 
+export function putOwnerTimezone(timezone: string | null): Promise<{ timezone: string; set: boolean }> {
+  return req("/config/owner", { method: "PUT", body: JSON.stringify({ timezone }) });
+}
+
 export function patchEvidencePolicy(seconds: number, scope: "user" | "workspace"): Promise<{ saved: boolean; seconds: number }> {
   return req("/config/intent/evidence", { method: "POST", body: JSON.stringify({ seconds, scope }) });
 }

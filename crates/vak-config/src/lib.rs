@@ -2199,6 +2199,23 @@ pub fn persist_evidence_max_age(path: PathBuf, seconds: i64) -> Result<(), Confi
     })
 }
 
+/// Write `[owner] timezone` in the layer at `path`; `None` removes it, so
+/// the owner's zone is this machine's again.
+pub fn persist_owner_timezone(path: PathBuf, zone: Option<&str>) -> Result<(), ConfigError> {
+    update_config_file(&path, |document| {
+        let owner = child_table(document, "owner", &path)?;
+        match zone {
+            Some(zone) => {
+                owner.insert("timezone".into(), toml::Value::String(zone.to_string()));
+            }
+            None => {
+                owner.remove("timezone");
+            }
+        }
+        Ok(())
+    })
+}
+
 /// Replace one layer's `[route]` backup lists. `Some(list)` replaces that
 /// layer's own list and an empty one removes the key; `None` leaves it
 /// alone. Other layers are untouched, so what a wider layer allows still

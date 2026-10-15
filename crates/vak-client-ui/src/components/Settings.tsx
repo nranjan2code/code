@@ -1781,6 +1781,22 @@ export default function Settings() {
     return maxTurns() !== c.max_turns || evidenceAgeHours() * 3600 !== (c.intent_evidence_max_age_secs ?? 86400);
   };
 
+  const timeZones = () => {
+    const known = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
+    const current = config()?.owner?.timezone;
+    return current && !known.includes(current) ? [current, ...known] : known;
+  };
+
+  const saveTimezone = async (zone: string | null) => {
+    try {
+      const saved = await api.putOwnerTimezone(zone);
+      await load();
+      setNotice({ kind: "info", text: `Times now mean ${saved.timezone.replaceAll("_", " ")}.` });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not save the time zone: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+
   const applyAgent = async () => {
     setSaving(true);
     try {
@@ -1942,6 +1958,7 @@ export default function Settings() {
             <Show when={page() === "general"}>
               <header><h1>General</h1><p>How Vakyartha looks after you day to day.</p></header>
               <Group>
+                <Row title="Your time zone" description={`What “9 AM” means in reminders and automations, wherever Vakyartha runs. Automatic uses this computer's: ${config()?.owner?.host_timezone ?? "…"}.`}><select aria-label="Your time zone" value={config()?.owner?.timezone_set ? config()?.owner?.timezone : ""} onChange={(event) => void saveTimezone(event.currentTarget.value || null)}><option value="">Automatic ({config()?.owner?.host_timezone ?? "…"})</option><For each={timeZones()}>{(zone) => <option value={zone}>{zone.replaceAll("_", " ")}</option>}</For></select></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
                 <Row title="Show technical details" description="Folders, file paths, IDs, tool output and the technical settings pages. Changes what you see, never what an agent may do."><Switch label="Show technical details" checked={technicalDetails()} onChange={(value) => setTechnicalDetails(value)} /></Row>
                 <Row title="Presentation styles" description="Choose how Vakyartha presents different kinds of results."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationCatalog().reduce((count, group) => count + group.types.length, 0)} available`}</span></Row>

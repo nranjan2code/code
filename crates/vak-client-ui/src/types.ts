@@ -451,6 +451,8 @@ export interface ConfigSnapshot {
   max_tokens: number | null;
   max_tokens_source?: "setting" | "model" | "unknown";
   max_turns: number;
+  /** The owner's time zone (docs/design/94 §6): what schedules mean. */
+  owner?: { timezone: string; timezone_set: boolean; host_timezone: string };
   intent_evidence_max_age_secs?: number;
   permission_mode: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
   /// How an `Ask` decision is resolved. Separate from the permission mode:
