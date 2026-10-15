@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, ErrorBoundary, For, onCleanup, Show } from "solid-js";
 import type { JSX } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import type {
   ArtifactRef,
   DocumentBlock,
@@ -1530,10 +1531,14 @@ export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRende
 export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean }) {
   // The automations a turn made or changed (docs/design/94 §5), read again
   // whenever the conversation grows, so a card follows its record.
-  const [automations, { refetch: refetchAutomations }] = createResource(
+  const [fetchedAutomations, { refetch: refetchAutomations }] = createResource(
     () => `${props.sessionId}:${props.timeline.items.length}`,
     () => api.listTriggers().then((list) => list.triggers.filter((trigger) => trigger.made_by?.kind === "turn" && trigger.made_by.session === props.sessionId)).catch(() => []),
   );
+  // Kept by id, so a refresh updates a card in place.
+  const [automationList, setAutomationList] = createStore<import("../types").Trigger[]>([]);
+  createEffect(() => { const next = fetchedAutomations(); if (next) setAutomationList(reconcile(next, { key: "id" })); });
+  const automations = () => automationList;
   const [ownerZone] = createResource(() => api.getConfig().then((config) => config.owner?.timezone).catch(() => undefined));
   const automationsOf = (turn: string) => {
     const directive = props.timeline.items.find((item) => item.turn_id === turn && item.role === "user")?.provenance?.entry_id;

@@ -10,6 +10,11 @@
   it, as the Agent's reply marked "Scheduled" with its name and time, and
   you can answer it there ("make it shorter"). A run that could not start
   says why in the same place. The Inbox still lists each one.
+- Automations is a page of its own: every automation in plain words with
+  its next and last run and its history, the same buttons as in chat, a
+  link to the conversation its results go to, and New automation with a
+  schedule picker (once, every day, weekdays, chosen days, every few
+  minutes or hours) in place of a cron box.
 - When the Agent makes or changes an automation, a card under its answer
   shows it in plain words with its next and last run, and lets you
   pause or resume it, run it now, change its time with a picker, or

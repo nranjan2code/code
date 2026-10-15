@@ -13,6 +13,7 @@ export default function AutomationCard(props: { trigger: Trigger; zone?: string;
   const [picking, setPicking] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [gone, setGone] = createSignal(false);
+  const [confirming, setConfirming] = createSignal(false);
   const act = async (work: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
@@ -39,7 +40,11 @@ export default function AutomationCard(props: { trigger: Trigger; zone?: string;
         <button type="button" class="btn" disabled={busy()} onClick={() => void act(() => api.putTrigger(t().id, api.draftOf(t(), { enabled: !t().enabled })))}>{t().enabled ? "Pause" : "Resume"}</button>
         <button type="button" class="btn" disabled={busy()} onClick={() => void act(() => api.runTrigger(t().id))}>Run now</button>
         <button type="button" class="btn" disabled={busy()} aria-expanded={picking()} onClick={() => setPicking(!picking())}>Change time</button>
-        <button type="button" class="btn danger" disabled={busy()} onClick={() => { if (window.confirm(`Delete “${t().name}”? It will not run again.`)) void act(async () => { await api.deleteTrigger(t().id); setGone(true); }); }}>Delete</button>
+        <Show when={confirming()} fallback={<button type="button" class="btn danger" disabled={busy()} onClick={() => setConfirming(true)}>Delete</button>}>
+          <span class="automation-confirm">It will not run again.</span>
+          <button type="button" class="btn danger" disabled={busy()} onClick={() => void act(async () => { await api.deleteTrigger(t().id); setGone(true); })}>Delete it</button>
+          <button type="button" class="btn" disabled={busy()} onClick={() => setConfirming(false)}>Keep it</button>
+        </Show>
       </div>
       <Show when={picking()}><SchedulePicker zone={props.zone} busy={busy()} onPick={(repeat) => void repeatTo(repeat)} /></Show>
       <Show when={error()}><p class="automation-error" role="alert">{error()}</p></Show>

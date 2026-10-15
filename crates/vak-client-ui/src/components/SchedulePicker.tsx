@@ -28,7 +28,7 @@ export default function SchedulePicker(props: { zone?: string; onPick: (repeat: 
   };
   const toggle = (day: number) => setDays((current) => current.includes(day) ? current.filter((d) => d !== day) : [...current, day].sort());
   return <div class="schedule-picker">
-    <label>When<select aria-label="When it runs" value={kind()} onChange={(event) => setKind(event.currentTarget.value as Kind)}>
+    <label>When<select aria-label="When it runs" value={kind()} onChange={(event) => { const next = event.currentTarget.value as Kind; setKind(next); if (next === "every_minutes") setCount(30); if (next === "every_hours") setCount(1); }}>
       <option value="once">Once</option>
       <option value="daily">Every day</option>
       <option value="weekdays">Weekdays</option>

@@ -1,16 +1,11 @@
 Scheduled Work You Can See
 ==========================
 
-Status: in progress: S0 built 2026-10-15 (the owner's time zone, set in
-Settings, `at` in local time, a cron always names its zone, the gap
-rule, with fixed-clock tests); S1 built 2026-10-15 (`home`, `made_by`,
-delivery into the conversation); S2 built 2026-10-15 (`describe`,
-`Repeat`; the picker screen with S5); S3 built 2026-10-15 (the tool's
-change, pause, resume, run_now by name); S4 built 2026-10-15 (the card
-in chat); S5 not built.
-Agreed with the maintainer on 2026-10-15. Paths below describe targets and may not exist yet. Rewrites the
-experience of automations; the engine stays `vak_core::triggers`
-(doc 73 §8, invariant 38).
+Status: implemented 2026-10-15: S0 to S5 built (the owner's time zone,
+delivery into the conversation, plain words and the picker, the tool's
+change, pause, resume and run_now by name, the card in chat, the
+Automations page). Follow-ups are in `docs/plans/open-items.md`
+"Scheduled work".
 
 ## 1. What is wrong
 

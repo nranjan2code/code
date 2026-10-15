@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import * as api from "../../api";
 import { closeArtifactCanvas, setTranscriptViewId, technicalDetails } from "../../store";
 import { relAgo } from "../../time";
-import { actionText, automationState, cadenceWords, canSendAgain, deliveryStatusLabel, sentAgainWords, nextRunWords, runStatusLabel, scheduleZone } from "../../automationWords";
+import { actionText, automationState, canSendAgain, deliveryStatusLabel, sentAgainWords, nextRunWords, runStatusLabel } from "../../automationWords";
 import type { Trigger } from "../../types";
 import { createLoader, problemWords } from "./createLoader";
 import LoadState from "./LoadState";
@@ -91,7 +91,7 @@ export default function AutomationViewer(props: ViewerProps) {
                 </header>
                 <dl>
                   <dt>Runs</dt>
-                  <dd>{cadenceWords(task(), technicalDetails())}<Show when={technicalDetails() && scheduleZone(task())}>{(zone) => <> · on {zone()} time</>}</Show></dd>
+                  <dd>{task().when_words}</dd>
                   <dt>Next run</dt>
                   <dd>
                     <Show when={task().enabled} fallback="Paused. It will not run until you resume it.">

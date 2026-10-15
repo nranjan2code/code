@@ -1,42 +1,9 @@
 // How an automation and its runs are described to the person who owns them
 // (doc 75 §7: Automation, Run). Shared by the Automations sheet and the
-// Canvas so the two never word the same state differently.
+// Canvas so the two never word the same state differently. When it runs
+// is the server's `when_words` (`triggers::describe`), never worded here.
 
 import type { RunStatus, Trigger } from "./types";
-
-export function intervalWords(seconds: number): string {
-  if (seconds % 3600 === 0) return seconds === 3600 ? "Every hour" : `Every ${seconds / 3600} hours`;
-  if (seconds % 60 === 0) return seconds === 60 ? "Every minute" : `Every ${seconds / 60} minutes`;
-  return `Every ${seconds} seconds`;
-}
-
-/** The short form beside an automation's name: `15m`, `once`, or the cron expression. */
-export function cadenceBadge(trigger: Pick<Trigger, "kind">): string {
-  if (trigger.kind.kind === "manual") return "manual";
-  const schedule = trigger.kind.schedule;
-  if (schedule.kind === "cron") return `cron ${schedule.expr}`;
-  if (schedule.kind === "once") return "once";
-  const s = schedule.every_secs;
-  if (s % 3600 === 0) return `${s / 3600}h`;
-  if (s % 60 === 0) return `${s / 60}m`;
-  return `${s}s`;
-}
-
-/** When it runs, in words; the cron expression is kept for the reader who asks for details. */
-export function cadenceWords(trigger: Pick<Trigger, "kind">, technical = false): string {
-  if (trigger.kind.kind === "manual") return "Only when you run it";
-  const schedule = trigger.kind.schedule;
-  if (schedule.kind === "cron") return technical ? `On a schedule · ${schedule.expr}` : "On a schedule";
-  if (schedule.kind === "once") return `Once, ${new Date(schedule.at).toLocaleString()}`;
-  return intervalWords(schedule.every_secs);
-}
-
-/** The zone a cron is read in, when it names one. */
-export function scheduleZone(trigger: Pick<Trigger, "kind">): string | null {
-  return trigger.kind.kind === "schedule" && trigger.kind.schedule.kind === "cron"
-    ? trigger.kind.schedule.timezone ?? null
-    : null;
-}
 
 /** Which slots a skipped or caught-up record stands for, in words. */
 export function missedWords(run: { missed?: { from: string; through: string } | null; coalesced_into?: string | null }, when: (at: string) => string): string | null {

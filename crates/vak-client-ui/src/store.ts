@@ -725,8 +725,9 @@ export const [editorPath, setEditorPath] = createSignal<string | null>(null);
 // `/btw` side chat panel.
 export const [sideOpen, setSideOpen] = createSignal(false);
 // Scheduled-tasks manager modal.
-export const [tasksOpen, setTasksOpen] = createSignal(false);
-export const [taskFocusId, setTaskFocusId] = createSignal<string | null>(null);
+/** The Automations page (docs/design/94 §5), and the one it scrolls to. */
+export const [automationsOpen, setAutomationsOpen] = createSignal(false);
+export const [automationFocusId, setAutomationFocusId] = createSignal<string | null>(null);
 // Cross-project recall search (docs/design/29-personal-os.md P1).
 export const [searchOpen, setSearchOpen] = createSignal(false);
 // Inbox page (docs/design/29-personal-os.md P6) + live unread total shared by

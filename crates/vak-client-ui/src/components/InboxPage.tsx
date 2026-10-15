@@ -3,8 +3,8 @@ import {
   inboxUnread,
   setInboxUnread,
   setInboxOpen,
-  setTasksOpen,
-  setTaskFocusId,
+  setAutomationsOpen,
+  setAutomationFocusId,
   setReplyTarget,
 } from "../store";
 import * as api from "../api";
@@ -266,7 +266,7 @@ export default function InboxPage() {
                             </Show>
                           </Show>
                           <Show when={entry.task_id}>
-                            <button class="btn sm primary" onClick={() => { setTaskFocusId(entry.task_id!); setTasksOpen(true); }}>
+                            <button class="btn sm primary" onClick={() => { setAutomationFocusId(entry.task_id!); setInboxOpen(false); setAutomationsOpen(true); }}>
                               {entry.kind === "routine_failed" ? "Review the automation" : "View the automation"}
                             </button>
                           </Show>

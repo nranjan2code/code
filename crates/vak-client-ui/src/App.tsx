@@ -71,6 +71,8 @@ import {
   setAgentPickerOpen,
   setAgentPickerTab,
   inboxOpen,
+  automationsOpen,
+  setAutomationsOpen,
   libraryOpen,
   setLibraryOpen,
   setInboxOpen,
@@ -115,7 +117,7 @@ import ShortcutsModal from "./components/ShortcutsModal";
 import SideChatPanel from "./components/SideChatPanel";
 import BestOfNDialog from "./components/BestOfNDialog";
 import PrPanel from "./components/PrPanel";
-import AutomationsModal from "./components/AutomationsModal";
+import AutomationsPage from "./components/AutomationsPage";
 import CheckpointsModal from "./components/CheckpointsModal";
 import ReceiptsModal from "./components/ReceiptsModal";
 import WorkModal from "./components/WorkModal";
@@ -502,6 +504,7 @@ function onFinished(id: string, summary: string) {
 export async function activate(id: string) {
   // Choosing a task always lands back in the workspace view.
   setInboxOpen(false);
+  setAutomationsOpen(false);
   // On a narrow viewport the sidebar is an overlay covering the very
   // transcript the tap asked for, so choosing dismisses it.
   if (narrowViewport()) setSidebarOpen(false);
@@ -1302,6 +1305,7 @@ export default function App() {
           if (e.defaultPrevented) return;
           if (closeOpenMenus()) return;
           if (settingsOpen()) setSettingsOpen(false);
+          else if (automationsOpen()) setAutomationsOpen(false);
           else if (inboxOpen()) setInboxOpen(false);
           else if (libraryOpen()) setLibraryOpen(false);
           else if (sideOpen()) setSideOpen(false);
@@ -1501,7 +1505,7 @@ export default function App() {
           <div class="main">
             <WorkspaceHeader />
             <Show
-              when={inboxOpen() || libraryOpen()}
+              when={inboxOpen() || libraryOpen() || automationsOpen()}
               fallback={
                 <>
                   <Show
@@ -1521,8 +1525,10 @@ export default function App() {
                 </>
               }
             >
-              <Show when={libraryOpen() && !inboxOpen()} fallback={<InboxPage />}>
-                <LibraryPage />
+              <Show when={!automationsOpen()} fallback={<AutomationsPage />}>
+                <Show when={libraryOpen() && !inboxOpen()} fallback={<InboxPage />}>
+                  <LibraryPage />
+                </Show>
               </Show>
             </Show>
           </div>
@@ -1621,7 +1627,6 @@ export default function App() {
           <Show when={bestOfOpen()}>
             <BestOfNDialog />
           </Show>
-          <AutomationsModal />
           <Show when={historyOpen()}>
             <CheckpointsModal />
           </Show>

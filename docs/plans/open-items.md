@@ -272,7 +272,18 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
   surface left it out of reach (doc 68 §5: whether the More-tools
   catalogue names it, and whether a conversation that owns automations
   should load the tool) before calling it model behaviour.
-- [ ] S5: the Automations page (replaces `AutomationsModal`).
+- [x] S5 (2026-10-15): the Automations page (`AutomationsPage.tsx`,
+  from the sidebar and the Inbox) replaces `AutomationsModal`: each
+  automation as its card (the same buttons as in chat), its history, and
+  "Open its conversation"; this Agent's or all Agents'; New automation
+  with name, what it does (a shell command behind Show technical
+  details) and the schedule picker, delivered to the conversation open
+  now. The client's own schedule wording (`cadenceWords`,
+  `intervalWords`, `cadenceBadge`, `scheduleZone`) is removed for the
+  server's `when_words`, and the modal's styles with it. Delete confirms
+  in place; a refresh keeps each card (reconciled by id). Checked in the
+  running app at 1440 × 900 dark and 390 × 844 dark: create (every 2
+  hours), history, delete.
 
 ## Installed 7.2.0 run (docs/audits/installed-7.2.0-run-2026-10-14.md)
 
