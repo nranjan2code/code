@@ -4276,6 +4276,119 @@
         }
       ],
       "status": "downloaded"
+    },
+    {
+      "batch": 6,
+      "kind": "image",
+      "name": "og-card",
+      "model": "gpt-image-2.5-sunburst",
+      "flow_node": "qbOX5oxq0uwCuy5PlbTa",
+      "style_reference": "pEGnd3S6PQbdr6JX78tN",
+      "settings": {
+        "custom_width": 1200,
+        "custom_height": 630,
+        "quality": "high"
+      },
+      "prompt": "Open Graph share card artwork for Vakyartha, 1200 x 630, in exactly the flat geometric editorial style, palette and line weight of the reference illustration. Warm off-white background. On the right half: the stylised crested songbird in deep indigo (#101D3D) with a saffron (#F5A400) throat, perched calmly on a thin line that flows into a few small abstract shapes (a document, a calendar card, a chat bubble, a small shield). The left half is completely empty warm off-white space, reserved for a logo lockup and a headline to be placed later. Indigo and saffron only with soft neutral greys. No text, no letters, no logos, no gradients, no 3D. Calm, premium, minimal; reads clearly as a small thumbnail.",
+      "takes": [
+        {
+          "file": "images/og-card-1.png"
+        },
+        {
+          "file": "images/og-card-2.png"
+        },
+        {
+          "file": "images/og-card-3.png"
+        },
+        {
+          "file": "images/og-card-4.png"
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 6,
+      "kind": "image",
+      "name": "feature-review",
+      "model": "gpt-image-2.5-sunburst",
+      "flow_node": "sCqGDiUfQLg4vTzt8A59",
+      "style_reference": "pEGnd3S6PQbdr6JX78tN",
+      "settings": {
+        "aspect_ratio": "3:2",
+        "quality": "high"
+      },
+      "prompt": "Feature illustration \"Review\" for the Vakyartha website, in exactly the flat geometric editorial style, palette and line weight of the reference illustration. Two simple document sheets side by side on warm off-white: the left one plain, the right one with a few lines marked by small saffron (#F5A400) highlights, and a thin indigo (#101D3D) arrow between them. Below them a small indigo checkmark and a small curved undo arrow, both calm and equal in weight. The idea: every change is shown side by side and nothing happens until you accept it. Indigo and saffron only with soft neutral greys, generous negative space. No text, no letters, no logos, no gradients, no 3D, no people.",
+      "takes": [
+        {
+          "file": "images/feature-review-1.png"
+        },
+        {
+          "file": "images/feature-review-2.png"
+        },
+        {
+          "file": "images/feature-review-3.png"
+        },
+        {
+          "file": "images/feature-review-4.png"
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 6,
+      "kind": "image",
+      "name": "feature-library",
+      "model": "gpt-image-2.5-sunburst",
+      "flow_node": "cWsS232gbYKjVG4AyNXT",
+      "style_reference": "pEGnd3S6PQbdr6JX78tN",
+      "settings": {
+        "aspect_ratio": "3:2",
+        "quality": "high"
+      },
+      "prompt": "Feature illustration \"Library\" for the Vakyartha website, in exactly the flat geometric editorial style, palette and line weight of the reference illustration. A tidy shelf drawn as simple flat shapes on warm off-white: a few document cards, a spreadsheet card and a slide card standing upright, one of them fanned into three thin stacked versions behind it to suggest version history, with a single small saffron (#F5A400) tab marking the current version. Deep indigo (#101D3D) outlines. The idea: everything made is kept, with every version. Indigo and saffron only with soft neutral greys, generous negative space. No text, no letters, no logos, no gradients, no 3D, no people.",
+      "takes": [
+        {
+          "file": "images/feature-library-1.png"
+        },
+        {
+          "file": "images/feature-library-2.png"
+        },
+        {
+          "file": "images/feature-library-3.png"
+        },
+        {
+          "file": "images/feature-library-4.png"
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "batch": 6,
+      "kind": "image",
+      "name": "feature-automations",
+      "model": "gpt-image-2.5-sunburst",
+      "flow_node": "8buhx3Y8YLHQZi5iOCPc",
+      "style_reference": "pEGnd3S6PQbdr6JX78tN",
+      "settings": {
+        "aspect_ratio": "3:2",
+        "quality": "high"
+      },
+      "prompt": "Feature illustration \"Automations\" for the Vakyartha website, in exactly the flat geometric editorial style, palette and line weight of the reference illustration. A simple flat clock face and a thin indigo (#101D3D) line that loops gently from it through three small cards (an envelope, a calendar card, a document) and ends at a small saffron (#F5A400) dot, like a routine that runs on its own and reports back. A small crescent moon above suggests it works overnight. Indigo and saffron only with soft neutral greys, generous negative space, calm. No text, no letters, no numbers on the clock, no logos, no gradients, no 3D, no people.",
+      "takes": [
+        {
+          "file": "images/feature-automations-1.png"
+        },
+        {
+          "file": "images/feature-automations-2.png"
+        },
+        {
+          "file": "images/feature-automations-3.png"
+        },
+        {
+          "file": "images/feature-automations-4.png"
+        }
+      ],
+      "status": "downloaded"
     }
   ]
 }

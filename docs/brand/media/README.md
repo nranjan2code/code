@@ -1,6 +1,6 @@
 # Vakyartha media: sound, image and film
 
-Status: in progress (2026-10-15). Batches 1 to 5 generated in ElevenLabs and
+Status: in progress (2026-10-15). Batches 1 to 6 generated in ElevenLabs and
 downloaded; the owner's listening choices are pending.
 
 This folder records how Vakyartha's media is made, so anyone can make the
@@ -425,6 +425,31 @@ included) and about 200 on sounds. `tools/batch5_sessions.txt` maps every
 generation session to its file, and `tools/fetch_flow_results.py` reads it;
 `tools/record_batch5.py` writes the manifest entries from the downloads.
 
+## Batch 6: share card and feature illustrations (2026-10-15)
+
+Flow **Vakyartha brand assets 2026-10**, `gpt-image-2.5-sunburst`, quality
+high, four takes each, every node wired to the hero illustration node
+(`pEGnd3S6PQbdr6JX78tN`) as its style reference, so the set reads as one
+family with the hero. Masters are PNG in `images/`; no WebP copies yet
+(the local ffmpeg has no WebP encoder), so export those when a take is
+chosen. About 7,790 credits.
+
+- **Open Graph card**, 1200 × 630 (`images/og-card-<take>.png`): the
+  songbird scene on the right, the left half left empty for the lockup and
+  headline, which are placed from the SVG master, never generated.
+- **Review** (`images/feature-review-<take>.png`, 3:2): two documents side
+  by side, the changed lines marked in saffron, an accept tick and an undo
+  arrow of equal weight.
+- **Library** (`images/feature-library-<take>.png`, 3:2): a shelf of
+  document, sheet and slide cards, one fanned into stacked versions with a
+  saffron tab on the current one.
+- **Automations** (`images/feature-automations-<take>.png`, 3:2): a
+  numberless clock whose line loops through mail, calendar and document
+  cards to a saffron dot, a crescent moon above.
+
+The exact prompts are in `manifest.json` (batch 6). The four OG takes came
+back very close to one another; the feature takes vary more.
+
 ## Files in this folder
 
 - `manifest.json`: every asset, its prompt (or voice description and line),
@@ -437,6 +462,8 @@ generation session to its file, and `tools/fetch_flow_results.py` reads it;
 - `sounds/system/<family>/<moment>.mp3`: the five families, six moments.
 - `music/theme-<take>.mp3`: two 30 s takes of the theme.
 - `images/hero-<take>.webp`: four 1024 × 576 hero illustrations.
+- `images/og-card-<take>.png`, `images/feature-<name>-<take>.png`: the
+  share card and the Review, Library and Automations illustrations (batch 6).
 - `video/vakyartha-idle.mp4`: the 5 s idle loop.
 - `speech/en/`, `speech/hi/`: spoken lines and announcements in
   Vakyartha's voice; `speech/en/<character>/`: the same moments in each
@@ -498,8 +525,7 @@ product's promise and is true of what it does) · "Heard, then done." ·
 
 ## Next batches
 
-- Images: Open Graph card (1200 × 630) with the lockup placed from the
-  master; three feature illustrations (Review, Library, Automations) in the
-  hero's style.
-- Film: produce "Heard" from real screen recordings of the app; generated
-  video only for the desk and window shots, never for the product screens.
+- Images: place the lockup on the chosen Open Graph take from the SVG
+  master.
+- Film: the desk and window shots are made (`docs/video/heard-2026/`);
+  record the app's screens for the rest and cut "Heard".
