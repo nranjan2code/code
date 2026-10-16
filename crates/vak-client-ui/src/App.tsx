@@ -147,6 +147,7 @@ import AbilitySheet from "./components/AbilitySheet";
 import { closeOpenMenus, dismissMenusOnPressOutside } from "./menus";
 import { titleBarGestures } from "./titleBar";
 import Skeleton from "./components/Skeleton";
+import { previewThemeChanged } from "./previewTheme";
 
 /** Unsubscribe handles for the sessions this tab follows (streamHub.ts). */
 const streams = new Map<string, () => void>();
@@ -1454,6 +1455,7 @@ export default function App() {
     const theme = resolveTheme(uiPreferences.theme, systemDark());
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.visualPack = uiPreferences.visualPack;
+    previewThemeChanged(`${theme}:${uiPreferences.visualPack}`);
     void host.setWindowIcon?.(uiPreferences.visualPack).catch((error) => {
       console.warn("Could not update the window icon:", error);
     });

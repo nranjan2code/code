@@ -39,3 +39,29 @@ assert.ok(!popped.replace(/srcdoc="[^"]*"/, "").includes("<script"), "the wrappe
 assert.ok(!popped.slice(popped.indexOf('srcdoc="') + 8, -"\"></iframe>".length).includes('"'), "the page cannot close the attribute");
 assert.ok(popped.includes("&amp;") && popped.includes("&quot;"));
 console.log("popout ok");
+
+// The theme is written as variables after the policy and before the markup,
+// and holds nothing a page could use to reach out (doc 96, Q1).
+import { withCurrentTheme } from "../src/safeUrl.ts";
+const tokens = { "--bg": "#111", "--text": "#eee", "--muted": "#999", "--accent": "#f80", "--border": "#333", "--sans": '"Inter", sans-serif', "--mono": "monospace", "--radius": "12px" };
+let scheme = "dark";
+globalThis.document = { documentElement: {} };
+globalThis.getComputedStyle = () => ({ colorScheme: scheme, getPropertyValue: (name) => tokens[name] ?? "" });
+const themed = sandboxedSrcdoc("<p>hi</p>");
+const themeAt = themed.indexOf("<style data-vak-theme>");
+assert.ok(policyAt(themed) < themeAt && themeAt < themed.indexOf("<p>"));
+assert.match(themed, /--vak-bg:#111;.*--vak-radius:12px;color-scheme:dark/);
+assert.match(themed, /body\{font-family:var\(--vak-font\)\}/);
+assert.ok(!/<script|https?:|url\(/.test(themed.slice(themeAt, themed.indexOf("<p>"))));
+tokens["--bg"] = "#fff</style><script>x()</script>";
+assert.ok(!sandboxedSrcdoc("<p>hi</p>").includes("<script>"), "a token value cannot close the block");
+tokens["--bg"] = "#fafafa";
+scheme = "light";
+const switched = withCurrentTheme(themed);
+assert.match(switched, /--vak-bg:#fafafa;.*color-scheme:light/);
+assert.equal(switched.replace(/<style data-vak-theme>[^<]*<\/style>/, ""), themed.replace(/<style data-vak-theme>[^<]*<\/style>/, ""));
+const forged = sandboxedSrcdoc('<style data-vak-theme>:root{--vak-bg:red}</style>');
+assert.equal(withCurrentTheme(forged).match(/--vak-bg:red/g).length, 1, "only the leading block is rewritten");
+delete globalThis.document;
+delete globalThis.getComputedStyle;
+console.log("preview theme ok");

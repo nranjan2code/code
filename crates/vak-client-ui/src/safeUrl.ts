@@ -118,7 +118,49 @@ const PREVIEW_CSP_META = `<meta http-equiv="Content-Security-Policy" content="${
 export function sandboxedSrcdoc(html: string): string {
   const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
   const rest = doctype ? html.slice(doctype[0].length) : html;
-  return `${doctype ? doctype[0].trim() : "<!doctype html>"}${PREVIEW_CSP_META}${rest}`;
+  return `${doctype ? doctype[0].trim() : "<!doctype html>"}${PREVIEW_CSP_META}${previewThemeStyle()}${rest}`;
+}
+
+/** The app's tokens a preview is given, by the name the page uses
+ *  (docs/design/96-answer-projection-gaps.md, Q1). */
+const PREVIEW_TOKENS: ReadonlyArray<readonly [string, string]> = [
+  ["--vak-bg", "--bg"],
+  ["--vak-fg", "--text"],
+  ["--vak-muted", "--muted"],
+  ["--vak-accent", "--accent"],
+  ["--vak-rule", "--border"],
+  ["--vak-font", "--sans"],
+  ["--vak-font-mono", "--mono"],
+  ["--vak-radius", "--radius"],
+];
+
+const THEME_STYLE = /<style data-vak-theme>[^<]*<\/style>/;
+
+/**
+ * The active theme as CSS variables, read from the app's root style when the
+ * document is built. It is written after the policy and before the markup, so
+ * it is always the first style block, and it holds no script and no address.
+ */
+function previewThemeStyle(): string {
+  if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return "";
+  const root = getComputedStyle(document.documentElement);
+  const tokens = PREVIEW_TOKENS
+    .map(([name, from]) => [name, root.getPropertyValue(from).trim().replace(/[<>;{}]/g, "")] as const)
+    .filter(([, value]) => value)
+    .map(([name, value]) => `${name}:${value}`)
+    .join(";");
+  const scheme = root.colorScheme === "dark" ? "dark" : "light";
+  return `<style data-vak-theme>:root{${tokens};color-scheme:${scheme}}body{font-family:var(--vak-font)}</style>`;
+}
+
+/**
+ * A built preview document with the theme as it is now: the leading theme
+ * block is written again and nothing else changes, so a theme switch redraws
+ * the open preview without reading its files again.
+ */
+export function withCurrentTheme(page: string): string {
+  const style = previewThemeStyle();
+  return style && THEME_STYLE.test(page) ? page.replace(THEME_STYLE, () => style) : page;
 }
 
 /**

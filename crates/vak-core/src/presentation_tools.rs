@@ -1642,7 +1642,7 @@ const SHAPES: &[CardShape] = &[
     shape(
         "markup_preview",
         "emit_markup_preview_card",
-        "A live preview of HTML markup written in the call itself, with no file. For a file in the workspace, use emit_file_preview_card.",
+        "A live preview of HTML markup written in the call itself, with no file. For a file in the workspace, use emit_file_preview_card. The page is given the app's theme as CSS variables, so markup that uses them matches every theme: --vak-bg, --vak-fg, --vak-muted, --vak-accent, --vak-rule, --vak-font, --vak-font-mono, --vak-radius.",
         markup_preview_fields,
         build_markup_preview,
         fill_nothing,

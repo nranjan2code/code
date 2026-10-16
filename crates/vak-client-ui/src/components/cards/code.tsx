@@ -7,6 +7,7 @@ import { artifactPreviewHtml } from "../../artifactPreview";
 import * as api from "../../api";
 import Icon from "../Icon";
 import { PresentationSessionContext, records, type Payload } from "./shared";
+import { themedPreview } from "../../previewTheme";
 
 // The code and media forms: each reads its stored payload through a render
 // node, the same shape a pack's tree carries.
@@ -455,7 +456,7 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
         <Show when={viewMode() === "preview"}>
           <div class="ui-preview-stage">
             <iframe
-              srcdoc={previewHtml()}
+              srcdoc={themedPreview(previewHtml())}
               title={title()}
               sandbox={previewSandbox("static")}
               class="ui-preview-frame"

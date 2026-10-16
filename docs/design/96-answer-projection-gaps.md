@@ -1,7 +1,7 @@
 # 96 — Answer projection gaps
 
-Status: proposal (2026-10-16): written from a review of what an answer can
-do on screen; nothing is built. Builds on docs/design/92-card-forms.md (the
+Status: in progress (2026-10-16): Q1 is built; Q2, Q3 and P1 to P6 are
+open. Written from a review of what an answer can do on screen. Builds on docs/design/92-card-forms.md (the
 forms), docs/design/87-composed-answers.md (composition),
 docs/design/66-immersive-artifact-canvas.md (the Canvas and preview
 isolation) and docs/design/86-model-plans-runtime-checks.md (the plan and

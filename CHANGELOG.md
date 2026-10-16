@@ -1,5 +1,9 @@
 ## Unreleased
 
+- A markup preview is given the app's theme as CSS variables (`--vak-bg`,
+  `--vak-fg`, `--vak-muted`, `--vak-accent`, `--vak-rule`, `--vak-font`,
+  `--vak-font-mono`, `--vak-radius`) and its colour scheme, so generated
+  markup can match every theme; switching theme redraws an open preview.
 - `GET /sessions/{id}/interface` shows what a conversation's last turn was
   given: every tool with its schema, which were held back under "More
   tools", and each installed capability with what it says it serves.

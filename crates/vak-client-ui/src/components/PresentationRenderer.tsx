@@ -61,6 +61,7 @@ import { FormView, PackTree, PresentationInteractionContext, PresentationSession
 import AgentMark from "./AgentMark";
 import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 import type { AssistantPart } from "../structured";
+import { themedPreview } from "../previewTheme";
 
 /** Renders a run of `AssistantPart`s (text + cards) with adjacent cards
  * grouped into a connected layout instead of independent stacked blocks —
@@ -808,7 +809,7 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
   const pending = () => !failed() && !page() && !image() && (source()?.kind === "Web page" || source()?.kind === "Image");
   return (
     <div class="result-card-preview" aria-hidden="true">
-      <Show when={page()}>{(html) => <div class="result-card-page"><iframe title="" tabIndex={-1} sandbox="allow-scripts" srcdoc={html()} /></div>}</Show>
+      <Show when={page()}>{(html) => <div class="result-card-page"><iframe title="" tabIndex={-1} sandbox="allow-scripts" srcdoc={themedPreview(html())} /></div>}</Show>
       <Show when={image()}>{(url) => <img class="result-card-image" src={url()} alt="" />}</Show>
       <Show when={pending()}><Skeleton label="Loading preview" shapes={["block"]} class="result-card-skeleton" /></Show>
       <Show when={!page() && !image() && !pending()}>

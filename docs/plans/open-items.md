@@ -259,7 +259,7 @@ Carried over from 7.2.0:
   dev and installed data homes are set up again.
 - Answer projection review (2026-10-16), staged in
   docs/design/96-answer-projection-gaps.md (Q1 to Q3, P1 to P6), each a
-  proposal for the maintainer, none started:
+  Q1 built 2026-10-16:
   - [ ] No live controls: a `controls` form of typed inputs with outputs
     written in a closed set of pure expressions evaluated in the client,
     and a worked example the builder checks. No code runs.
@@ -270,9 +270,9 @@ Carried over from 7.2.0:
   - [ ] A card shows nothing until its call is complete and valid. While
     its arguments stream, show a placeholder in the shell of the form the
     call names, never a partial card.
-  - [ ] Markup previews get none of the theme's tokens. Inject them as CSS
-    variables in `sandboxedSrcdoc`. Optionally serve pinned vendored
-    libraries from the preview origin, keeping `connect-src` closed.
+  - [x] Markup previews get none of the theme's tokens (Q1).
+  - [ ] Serve pinned vendored libraries from the preview origin, keeping
+    `connect-src` closed (P3).
   - [ ] A page bound to its data: a Library artifact of composed cards
     whose new version an automation's run produces, shared through grants.
   - [ ] Decide whether `ui://` HTML resources from MCP servers are drawn

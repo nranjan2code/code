@@ -8,6 +8,7 @@ import DeviceViewport from "./DeviceViewport";
 import LoadState from "./LoadState";
 import SourcePane from "./SourcePane";
 import type { ViewerProps } from "./types";
+import { themedPreview } from "../../previewTheme";
 
 type Shown =
   /** Served from an origin of its own, with the files it loads. */
@@ -91,7 +92,7 @@ export default function HtmlViewer(props: ViewerProps) {
             <DeviceViewport>
               {loaded.shown.mode === "origin"
                 ? <iframe class="artifact-canvas-frame" classList={{ drawing: !drawn() }} onLoad={() => setDrawn(true)} src={loaded.shown.url} title={props.subject.title} sandbox={previewSandbox("origin")} />
-                : <iframe class="artifact-canvas-frame" classList={{ drawing: !drawn() }} onLoad={() => setDrawn(true)} srcdoc={loaded.shown.page} title={props.subject.title} sandbox={previewSandbox("static")} />}
+                : <iframe class="artifact-canvas-frame" classList={{ drawing: !drawn() }} onLoad={() => setDrawn(true)} srcdoc={themedPreview(loaded.shown.page)} title={props.subject.title} sandbox={previewSandbox("static")} />}
             </DeviceViewport>
           </div>
           <Show when={props.view === "source"}>

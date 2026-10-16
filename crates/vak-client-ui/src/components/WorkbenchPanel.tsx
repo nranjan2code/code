@@ -32,6 +32,7 @@ import { sandboxedSrcdoc } from "../safeUrl";
 import { fileSubject, runOrigin } from "../canvasSubject";
 import { activate } from "../App";
 import Skeleton from "./Skeleton";
+import { themedPreview } from "../previewTheme";
 
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -861,7 +862,7 @@ export default function WorkbenchPanel() {
                 </div>
                 <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
                 <Show when={draftPage() && !reviewFileError()}>
-                  <iframe class="candidate-review-page" title={`Preview of ${reviewedPath()?.split("/").pop() ?? "the draft"}`} sandbox="allow-scripts" srcdoc={draftPage() ?? ""} />
+                  <iframe class="candidate-review-page" title={`Preview of ${reviewedPath()?.split("/").pop() ?? "the draft"}`} sandbox="allow-scripts" srcdoc={themedPreview(draftPage() ?? "")} />
                 </Show>
                 <Show when={!draftPage() && reviewedPath() && !reviewFileError() && !isDocumentPath(reviewedPath() ?? "")}>
                   <pre class="candidate-review-draft">{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre>
@@ -1440,7 +1441,7 @@ export default function WorkbenchPanel() {
                   <Show when={isHtmlArtifact(selectedArtifact()!) && artifactContent() !== null}>
                     <div style={{ width: "100%", height: "100%", "min-height": "400px" }}>
                       <iframe
-                        srcdoc={artifactPreview()}
+                        srcdoc={themedPreview(artifactPreview())}
                         sandbox="allow-scripts"
                         style={{
                           width: "100%",
