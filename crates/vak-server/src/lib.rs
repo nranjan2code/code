@@ -17199,8 +17199,7 @@ async fn get_config(
         "warnings": cfg.warnings,
     });
     snapshot["maps"] = serde_json::json!(vak_config::shared_maps());
-    Json(snapshot)
-    .into_response()
+    Json(snapshot).into_response()
 }
 
 fn read_config_layer(path: &std::path::Path) -> Result<vak_config::FileConfig, String> {

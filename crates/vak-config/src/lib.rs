@@ -923,7 +923,10 @@ pub fn tile_url_problem(template: &str) -> Option<&'static str> {
     if host.is_empty() || host.contains(['{', '}', '@']) {
         return Some("a tile address must name its host");
     }
-    if ["{z}", "{x}", "{y}"].iter().any(|part| !rest.contains(part)) {
+    if ["{z}", "{x}", "{y}"]
+        .iter()
+        .any(|part| !rest.contains(part))
+    {
         return Some("a tile address must contain {z}, {x} and {y}");
     }
     None
@@ -2994,8 +2997,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     if pp.is_file() && !is_global_workspace {
         let (mut fc, w) = parse_file(&pp)?;
         warnings.extend(w);
-        if fc.maps.tiles.is_some() || fc.maps.tile_url.is_some() || fc.maps.attribution.is_some()
-        {
+        if fc.maps.tiles.is_some() || fc.maps.tile_url.is_some() || fc.maps.attribution.is_some() {
             fc.maps = MapsSettings::default();
             warnings.push(
                 "project .vak/config.toml sets [maps]; map tiles are the owner's choice and are read from the shared settings alone"

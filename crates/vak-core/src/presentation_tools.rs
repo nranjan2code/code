@@ -1885,7 +1885,7 @@ fn fixture_for(form: &str) -> Value {
         }
         "map" => serde_json::json!({"connect": "route", "places": [
             {"label": "Pune Station", "position": "18.5286, 73.8746"},
-            {"label": "Shaniwar Wada", "position": "18.5195, 73.8553", "detail": "Opens at 8"}]}),
+            {"label": "Shaniwar Wada", "position": "18.5195, 73.8553", "detail": "The old palace, open from eight in the morning"}]}),
         "link" => serde_json::json!({"url": "https://example.com/page", "title": "Page"}),
         "media" => {
             serde_json::json!({"format": "image", "url": "https://example.com/a.png", "alt": "A chart"})
