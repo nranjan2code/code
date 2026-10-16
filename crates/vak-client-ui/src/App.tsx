@@ -148,6 +148,7 @@ import { closeOpenMenus, dismissMenusOnPressOutside } from "./menus";
 import { titleBarGestures } from "./titleBar";
 import Skeleton from "./components/Skeleton";
 import { previewThemeChanged } from "./previewTheme";
+import { holdsOnlyLiveGates } from "./liveGates";
 
 /** Unsubscribe handles for the sessions this tab follows (streamHub.ts). */
 const streams = new Map<string, () => void>();
@@ -206,7 +207,6 @@ export async function refreshSessions() {
           /* presence is optional and never replaces the last observed state */
         }
       }));
-      await Promise.all([...visible].filter((sessionId) => isRunning(sessionId)).map(restoreLiveGates));
       for (const s of res.sessions) {
         if (s.running) {
           if (!isRunning(s.session_id)) markRunning(s.session_id, true);
@@ -225,6 +225,10 @@ export async function refreshSessions() {
           await hydrate(s.session_id, true);
         }
       }
+      // After the loop has marked what the server says is running: on a
+      // fresh page every session starts not running, so asking before it
+      // left a waiting approval or question off screen until the next beat.
+      await Promise.all([...visible].filter((sessionId) => isRunning(sessionId)).map(restoreLiveGates));
       pruneStreams();
     }
   } catch {
@@ -311,7 +315,7 @@ async function hydrate(id: string, background = false) {
     // A freshly reopened running conversation has no in-memory items yet, so
     // paint its committed history prefix. On an already-live conversation,
     // keep the stream's current turn intact while refreshing sidecar state.
-    if (t && (!isRunning(id) || itemsOf(id).length === 0)) {
+    if (t && (!isRunning(id) || holdsOnlyLiveGates(itemsOf(id)))) {
       hydrateFromTranscript(id, t.messages, t.entries, isRunning(id));
       if (presentation) hydrateFromPresentation(id, presentation);
       setUsageFor(id, t.usage);
@@ -548,6 +552,9 @@ export async function activate(id: string) {
     if (window.location.hash !== route) window.history.replaceState({}, "", route);
   }
   await hydrate(id);
+  // A running turn may be waiting on the person: its approval or question
+  // was announced on a stream this page never saw.
+  if (isRunning(id)) await restoreLiveGates(id);
   // Load the durable conversation before opening two long-lived event
   // connections. Browsers cap same-origin HTTP/1.1 connections; opening
   // streams first could starve transcript/presentation requests on return

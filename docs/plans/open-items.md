@@ -291,6 +291,14 @@ Carried over from 7.2.0:
     reproduce (2026-10-17). The running snapshot is the handle's live
     timeline and carries every recorded card; a reload drew them at once.
     Pinned by `a_running_turns_timeline_carries_its_recorded_cards`.
+  - [x] A page reloaded while a turn waits on an approval or a worker's
+    question shows the card at once (2026-10-17; 10.2 s before, 0.4 s
+    after, live on the dev route). Cause: on a fresh page the conversation
+    has no item list yet, so restoring the gates threw and was logged as a
+    warning; the card came back only on the next heartbeat. The restores
+    now start from an empty list, a transcript keeps unanswered gates
+    (`keepLiveGates`), and opening a running conversation asks for them.
+    The question card shares the path and was not seen live.
   - [x] Markup previews get none of the theme's tokens (Q1).
   - [ ] Serve pinned vendored libraries from the preview origin, keeping
     `connect-src` closed (P3).

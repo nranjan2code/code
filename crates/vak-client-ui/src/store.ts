@@ -3,6 +3,7 @@ import { isSoundFamily, type SoundFamily } from "./soundFamilies";
 import { isThemeChoice, type ThemeChoice } from "./theme";
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
+import { keepLiveGates } from "./liveGates";
 import { fileSubject, matchExecutionArtifact, type ArtifactOrigin, type CanvasSubject } from "./canvasSubject";
 import { activeEntry, applyOp, entriesOf, isShared, type CanvasMode, type CanvasOp, type CanvasStacks, type EntryPatch } from "./canvasStack";
 import { freshEntry } from "./canvasViewers";
@@ -877,7 +878,7 @@ export function itemsOf(id: string | null, bucket: Bucket = "main"): Item[] {
 /** Restore live question cards after reconnecting to a session. */
 export function restorePendingQuestions(id: string, questions: api.PendingQuestion[]) {
   const listed = new Set(questions.map((question) => question.id));
-  setItemsBySession(id, (items) => {
+  updateList("main", id, (items) => {
     const existing = new Set(items.filter((item) => item.kind === "question").map((item) => item.id));
     // The server's list is authoritative: a card it no longer lists was
     // answered in another window or expired.
@@ -901,7 +902,7 @@ export function restorePendingQuestions(id: string, questions: api.PendingQuesti
 /** Restore live approval cards after reconnecting to a session. */
 export function restorePendingApprovals(id: string, approvals: api.PendingApproval[]) {
   if (!approvals.length) return;
-  setItemsBySession(id, (items) => {
+  updateList("main", id, (items) => {
     const existing = new Set(items.filter((item) => item.kind === "approval").map((item) => item.id));
     const restored: Item[] = approvals
       .filter((approval) => !existing.has(approval.id))
@@ -1144,7 +1145,7 @@ export function hydrateFromTranscript(id: string, messages: Message[], entries?:
   const incoming = keepUnchanged(current, transcriptToItems(id, messages, entries, running));
 
   if (current.length === 0) {
-    setItemsBySession(id, incoming);
+    setItemsBySession(id, keepLiveGates(current, incoming));
     return;
   }
 
@@ -1168,7 +1169,7 @@ export function hydrateFromTranscript(id: string, messages: Message[], entries?:
       if (it.kind === "assistant" && it.streaming) return { ...it, streaming: false };
       return it;
     });
-    setItemsBySession(id, [...incoming, ...tail]);
+    setItemsBySession(id, keepLiveGates(current, [...incoming, ...tail]));
     return;
   }
 
@@ -1179,11 +1180,11 @@ export function hydrateFromTranscript(id: string, messages: Message[], entries?:
     incoming.length > 0 &&
     incoming[incoming.length - 1]?.kind !== "system"
   ) {
-    setItemsBySession(id, [...incoming, lastCurrent]);
+    setItemsBySession(id, keepLiveGates(current, [...incoming, lastCurrent]));
     return;
   }
 
-  setItemsBySession(id, incoming);
+  setItemsBySession(id, keepLiveGates(current, incoming));
 }
 
 // ---- live event application ------------------------------------------------

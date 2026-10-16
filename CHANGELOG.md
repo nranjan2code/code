@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Reloading the page while a turn waits for your approval, or for your
+  answer to a worker's question, shows that card again at once. Before,
+  it came back only after about ten seconds, and until then nothing on
+  screen said the turn was waiting on you.
+
 ## 8.4.0 — 2026-10-16
 
 Answers come in as they are made, cards can show places on a map, and a
