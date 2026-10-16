@@ -76,9 +76,10 @@ contract:
   hop; `session_search` folded into `recall`, `find_tools` removed (tools
   are called by name), Anthropic deferral dropped. Lookups halved; turn-1
   recall 3 to 9 of 16.
-- [ ] `entity_query` reads what `recall` already searches; live, the
-  turn-1 question called it twice in three runs. Fold its reading into
-  `recall` (keep `entity_record`).
+- [x] `entity_query` folded into `recall` (2026-10-16): an entity hit
+  carries its whole record; turn-1 recall in replays 9 to 13 of 16.
+- [x] `open` beside `query` now answers both (live, a search sent with the
+  visible turn number never ran).
 - [ ] Fresh requests still reach for `recall` first often (`name` 13 of 16
   with the name in the carried card).
 - [ ] Measure whether the loop's regeneration repairs the invalid card

@@ -617,3 +617,62 @@ async fn a_card_the_host_cannot_record_is_never_reported_shown() {
         matches!(block, ContentBlock::ToolResult { tool_use_id, content, is_error: true }
             if tool_use_id == "call_1" && content.contains("not recorded"))));
 }
+
+/// Found live 2026-10-16: searching for a fact, a model also sent the turn
+/// number it could see in `open`; both are answered, so the search runs.
+#[tokio::test]
+async fn open_and_query_together_are_both_answered() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "recall-both",
+        vec![
+            text_msg("Noted: the cat is called Miso."),
+            tool_call_msg(
+                "both",
+                "recall",
+                serde_json::json!({"open": "#1", "query": "cat called"}),
+            ),
+            text_msg("Your cat is called Miso."),
+        ],
+        vec![],
+        false,
+    );
+    for prompt in ["my cat is called Miso", "what is my cat called?"] {
+        let outcome = agent
+            .run(
+                prompt,
+                &Default::default(),
+                CancellationToken::new(),
+                mpsc::channel(64).0,
+            )
+            .await;
+        assert!(
+            matches!(outcome, TurnOutcome::Completed { .. }),
+            "{outcome:?}"
+        );
+    }
+    let session = agent.session.lock().await;
+    let result: serde_json::Value = session
+        .message_chain()
+        .iter()
+        .flat_map(|(_, m)| &m.content)
+        .find_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } if tool_use_id == "both" => {
+                assert!(!is_error, "{content}");
+                Some(serde_json::from_str(content).unwrap())
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(result["opened"]["messages"].is_array(), "{result}");
+    let found = result["found"]["this_conversation"].as_array().unwrap();
+    assert!(
+        found[0]["record"].as_str().unwrap().contains("Miso"),
+        "{result}"
+    );
+}

@@ -307,113 +307,6 @@ impl vak_tools::Tool for EntityRecordTool {
     }
 }
 
-pub struct EntityQueryTool {
-    pub sessions_home: PathBuf,
-    pub cwd: PathBuf,
-}
-
-#[async_trait::async_trait]
-impl vak_tools::Tool for EntityQueryTool {
-    fn name(&self) -> &str {
-        "entity_query"
-    }
-
-    /// Its results are Vak's own records of the owner's
-    /// (docs/design/08-permissions.md "Provenance").
-    fn provenance(&self) -> vak_control::Provenance {
-        vak_control::Provenance::PRIVATE
-    }
-
-    fn serves(&self) -> Vec<&str> {
-        vec!["memory"]
-    }
-
-    fn description(&self) -> &str {
-        "Query the semantic entity knowledge graph by keyword or entity type. \
-         Returns matching entities with their attributes and related connections."
-    }
-
-    fn schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Keywords to match against entity names, summaries, attributes, or relations"
-                },
-                "entity_type": {
-                    "type": "string",
-                    "description": "Optional filter by entity category (e.g. 'system', 'dataset')"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max results to return (default 10, max 50)"
-                }
-            }
-        })
-    }
-
-    async fn execute(
-        &self,
-        args: &serde_json::Value,
-        _ctx: &vak_tools::ToolContext,
-    ) -> vak_tools::ToolOutput {
-        let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-        let entity_type_filter = args
-            .get("entity_type")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_ascii_lowercase());
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .map(|l| l as usize)
-            .unwrap_or(10)
-            .min(50);
-
-        let mut results = search_entities(&self.sessions_home, Some(&self.cwd), query);
-        if let Some(ref filter) = entity_type_filter {
-            results.retain(|e| e.entity_type.to_ascii_lowercase() == *filter);
-        }
-        results.truncate(limit);
-
-        if results.is_empty() {
-            return vak_tools::ToolOutput::ok("no matching entities found in knowledge graph");
-        }
-
-        let mut out = format!("Found {} entities:\n\n", results.len());
-        for e in results {
-            out.push_str(&format!(
-                "### [{}] {} (`{}`)\n",
-                e.entity_type, e.name, e.id
-            ));
-            out.push_str(&format!("{}\n", e.summary));
-            if !e.attributes.is_empty() {
-                out.push_str("Attributes:\n");
-                for (k, v) in &e.attributes {
-                    out.push_str(&format!("- **{k}**: {v}\n"));
-                }
-            }
-            if !e.relations.is_empty() {
-                out.push_str("Relations:\n");
-                for r in &e.relations {
-                    out.push_str(&format!("- {} -> `{}`\n", r.relation, r.target_entity_id));
-                }
-            }
-            out.push('\n');
-        }
-
-        vak_tools::ToolOutput::ok(out.trim_end().to_string())
-    }
-
-    fn claims(&self, _args: &serde_json::Value) -> vak_tools::ResourceClaims {
-        vak_tools::ResourceClaims {
-            exclusive: false,
-            read_only: true,
-            paths: vec![],
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -494,10 +387,6 @@ mod tests {
             sessions_home: home.clone(),
             cwd: cwd.clone(),
         };
-        let query_tool = EntityQueryTool {
-            sessions_home: home,
-            cwd: cwd.clone(),
-        };
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: tokio_util::sync::CancellationToken::new(),
@@ -526,36 +415,12 @@ mod tests {
             rec_out.content
         );
 
-        // Query entity via tool
-        let query_args = serde_json::json!({ "query": "JWT" });
-        let q_out = query_tool.execute(&query_args, &ctx).await;
-        assert!(!q_out.is_error(), "{}", q_out.content);
-        assert!(q_out.content.contains("Auth Gateway"), "{}", q_out.content);
-        assert!(
-            q_out
-                .content
-                .contains("depends_on -> `redis-session-store`"),
-            "{}",
-            q_out.content
-        );
-
-        // Filter query by entity_type
-        let type_args = serde_json::json!({ "entity_type": "service" });
-        let type_out = query_tool.execute(&type_args, &ctx).await;
-        assert!(!type_out.is_error(), "{}", type_out.content);
-        assert!(
-            type_out.content.contains("Auth Gateway"),
-            "{}",
-            type_out.content
-        );
-
-        let none_args = serde_json::json!({ "entity_type": "database" });
-        let none_out = query_tool.execute(&none_args, &ctx).await;
-        assert!(!none_out.is_error(), "{}", none_out.content);
-        assert!(
-            none_out.content.contains("no matching entities"),
-            "{}",
-            none_out.content
+        // What was recorded is in the store, relations included; `recall`
+        // reads it (`vak_core::elsewhere`).
+        let recorded = get_entity(&home, Some(&ctx.cwd), "auth-gateway").expect("recorded");
+        assert_eq!(
+            recorded.relations[0].target_entity_id,
+            "redis-session-store"
         );
     }
 }

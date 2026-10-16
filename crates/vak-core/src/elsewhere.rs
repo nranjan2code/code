@@ -30,10 +30,17 @@ pub struct Elsewhere {
     /// What the record says about a deliverable a hit names: its workspace
     /// path and state (docs/design/90-file-state.md §3.3), by artifact id.
     pub file: Option<FileLookup>,
+    /// An entity's whole record by its id (type, summary, attributes,
+    /// relations), so a hit on one answers what the snippet cuts: `recall`
+    /// is the one way to read the entity graph.
+    pub entity: Option<EntityLookup>,
 }
 
 /// An artifact id in, its file and state out (`Elsewhere::file`).
 pub type FileLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// An entity id in, its record out (`Elsewhere::entity`).
+pub type EntityLookup = Arc<dyn Fn(&str) -> Option<Value> + Send + Sync>;
 
 /// Where a hit is from, and the id `forget_memory` takes for a note.
 fn hit_label(node: &vak_catalog::Node) -> (String, &'static str) {
@@ -115,6 +122,15 @@ impl Elsewhere {
         {
             out["link"] = json!(link);
         }
+        // An entity carries its whole record, relations included.
+        if hit.node.kind == "entity"
+            && let Some(record) = self
+                .entity
+                .as_ref()
+                .and_then(|entity| entity(id.trim_start_matches("entity/")))
+        {
+            out["record"] = record;
+        }
         // A deliverable names its file and what the record says of it now,
         // so a later turn can reach it by name.
         if hit.node.kind == "artifact"
@@ -150,6 +166,7 @@ mod tests {
             space: Some(vak_session::trace::local::space(cwd).to_string()),
             trash: vak_config::scope::SharedScope::new(home),
             file: None,
+            entity: None,
         }
     }
 
@@ -281,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn entities_are_found() {
+    fn an_entity_is_found_with_its_whole_record() {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
@@ -296,19 +313,34 @@ mod tests {
                 name: "Project Apollo".into(),
                 entity_type: "mission".into(),
                 summary: "Lunar landing mission targeting Sea of Tranquility".into(),
-                attributes: Default::default(),
-                relations: Default::default(),
+                attributes: [("crew".to_string(), "3".to_string())]
+                    .into_iter()
+                    .collect(),
+                relations: vec![crate::entities::EntityRelation {
+                    relation: "launched_by".into(),
+                    target_entity_id: "saturn-v".into(),
+                }],
                 updated_at: chrono::Utc::now(),
                 derived_from: None,
             },
         )
         .unwrap();
-        let reach = reach_over(&home, &cwd, None, None);
+        let mut reach = reach_over(&home, &cwd, None, None);
+        let (store, workspace) = (home.clone(), cwd.clone());
+        reach.entity = Some(Arc::new(move |id: &str| {
+            crate::entities::get_entity(&store, Some(&workspace), id)
+                .and_then(|entity| serde_json::to_value(entity).ok())
+        }));
         let hits = reach.search("Sea of Tranquility", 5).unwrap();
-        let text = serde_json::to_string(&hits).unwrap();
-        assert!(
-            text.contains("Project Apollo") && text.contains("mission"),
-            "{text}"
+        let entity = hits
+            .iter()
+            .find(|hit| hit["from"] == "entity")
+            .expect("entity hit");
+        assert_eq!(entity["record"]["name"], "Project Apollo", "{hits:?}");
+        assert_eq!(
+            entity["record"]["relations"][0]["target_entity_id"],
+            "saturn-v"
         );
+        assert_eq!(entity["record"]["attributes"]["crew"], "3");
     }
 }

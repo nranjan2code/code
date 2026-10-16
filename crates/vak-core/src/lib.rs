@@ -4165,6 +4165,7 @@ impl Core {
             .map(|agent| agent.id.clone())
             .unwrap_or_else(|| "vak".into());
         let session = scope.session_id.clone();
+        let (store, workspace) = (self.scope().into_root(), self.inner.cwd.clone());
         Some(Arc::new(elsewhere::Elsewhere {
             catalog: self.catalog().ok(),
             audience,
@@ -4180,6 +4181,10 @@ impl Core {
                         session: Some(&session),
                     },
                 )
+            })),
+            entity: Some(Arc::new(move |id: &str| {
+                entities::get_entity(&store, Some(&workspace), id)
+                    .and_then(|entity| serde_json::to_value(entity).ok())
             })),
         }))
     }
@@ -4259,10 +4264,6 @@ impl Core {
                 core: Some(self.clone()),
             }));
         }
-        tools.push(Arc::new(entities::EntityQueryTool {
-            sessions_home: self.scope().into_root(),
-            cwd: self.inner.cwd.clone(),
-        }));
         tools.push(Arc::new(data_engine::DataQueryTool));
         for emit_tool in presentation_tools::EmitCardTool::with_packs(&self.pack_kinds()) {
             tools.push(Arc::new(emit_tool));

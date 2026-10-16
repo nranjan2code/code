@@ -45,6 +45,28 @@ progress lines."
 
 ## Where things stand
 
+**Next (2026-10-16): a careful audit of every tool, then consolidation.**
+The maintainer asked for a slow read of each built-in tool (where it comes
+from, what it is for, who needs it) and of everything runs can add (skill
+programs, MCP, hooks, plugins, card packs), to catalogue them, remove
+duplicates and keep the list from growing with overlaps, without
+restricting a commercial product. Read each tool's code and design doc
+before proposing: names mislead (`doc_read` is the anchored, labelled read
+`office_apply` edits against, not a second `read`). Candidates seen but not
+yet audited: `webfetch`/`browse`, `remember`/`entity_record`,
+`data_query`. Write the audit as docs/audits/tool-catalogue-<date>.md,
+decide with the maintainer, then build with one measurement per change.
+Method and scripts: docs/audits/history-lookup-2026-10-16.md, /tmp/vak-live
+(scenarios.sh, nturn.sh, outcomes.py, compare.py, ablate_report.py).
+
+**Done 2026-10-16 (pushed):** `session_search` and `entity_query` folded
+into `recall`; `find_tools` removed (tools called by name); Anthropic
+deferral dropped; grounded cards; `open` beside `query` answers both. A
+live check of the last fix (three five-turn runs, `/tmp/vak-live/measure/
+both*`) was still running at commit; read its outcomes.json before trusting
+the turn-1 recall number (replays: 13 of 16).
+
+
 **8.3.0 released and installed on this Mac** (2026-10-15, `e9bcf11fc`,
 tag `v8.3.0`): the shipped skills are real procedures in the packages
 (the `seed.rs` skill table is gone), with two tested programs,

@@ -142,6 +142,7 @@ async fn trashed_session_absent_from_every_search() {
         space: Some(vak_session::trace::local::space(&cwd).to_string()),
         trash: vak_config::scope::SharedScope::new(home.clone()),
         file: None,
+        entity: None,
     };
     // What a turn's recall reaches beyond its own conversation.
     let reach_search = || serde_json::to_string(&reach.search("zanzibar", 8).unwrap()).unwrap();

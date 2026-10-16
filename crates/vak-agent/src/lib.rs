@@ -5714,12 +5714,55 @@ impl Agent {
         input: &Value,
         cancel: &CancellationToken,
     ) -> Result<(String, vak_control::Provenance), RecallFailure> {
-        use vak_control::Provenance;
-        let request = vak_tools::parse_recall_args(input).map_err(|message| {
+        let requests = vak_tools::parse_recall_args(input).map_err(|message| {
             RecallFailure::Malformed(
                 serde_json::json!({"type": "invalid_arguments", "message": message}).to_string(),
             )
         })?;
+        if requests.len() == 1 {
+            let request = requests.into_iter().next().ok_or_else(|| {
+                RecallFailure::Malformed(r#"{"type":"invalid_arguments"}"#.into())
+            })?;
+            return self.resolve_one(request, cancel).await;
+        }
+        // An `open` and a `query` together: both answered, in one result,
+        // and a miss of one does not hide the other.
+        let mut parts = serde_json::Map::new();
+        let mut held = vak_control::Provenance::NONE;
+        let mut answered = false;
+        for request in requests {
+            let key = if matches!(request, RecallRequest::Search { .. }) {
+                "found"
+            } else {
+                "opened"
+            };
+            let part = match self.resolve_one(request, cancel).await {
+                Ok((content, labels)) => {
+                    answered = true;
+                    held = held.join(labels);
+                    serde_json::from_str(&content).unwrap_or(Value::String(content))
+                }
+                Err(RecallFailure::Malformed(error) | RecallFailure::NotFound(error)) => {
+                    serde_json::from_str(&error).unwrap_or(Value::String(error))
+                }
+            };
+            parts.insert(key.into(), part);
+        }
+        let content = Value::Object(parts).to_string();
+        if answered {
+            Ok((content, held))
+        } else {
+            Err(RecallFailure::NotFound(content))
+        }
+    }
+
+    /// Answers one `recall` request (see [`Self::resolve_recall`]).
+    async fn resolve_one(
+        &self,
+        request: RecallRequest,
+        cancel: &CancellationToken,
+    ) -> Result<(String, vak_control::Provenance), RecallFailure> {
+        use vak_control::Provenance;
         // Another conversation is reachable only when an artifact attached
         // in this one came from it (plan M8.3b); Core re-checks its trash,
         // Agent, audience and workspace on every call.

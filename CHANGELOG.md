@@ -22,6 +22,11 @@
   conversation search to pick wrongly: asked about something said several
   turns earlier, the smallest model chose the right tool 9 times in 16
   instead of 3.
+- Asked to reopen something and search at once, recall now does both
+  instead of only reopening.
+- Entities are read through recall too: a hit on one carries its whole
+  record (type, summary, attributes, relations); the separate entity
+  query tool is gone.
 - A tool listed under "More tools" is called by its name; there is no
   separate tool to look tools up first.
 - Cards that only show what a call produced (a command's output, test

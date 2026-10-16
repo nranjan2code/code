@@ -68,32 +68,37 @@ const OPEN_FORMS: &str = "open takes one reference as the context shows it: #3 (
 pres:<id> (a card), ev:<id> (a tool result), turn:<turn_id> or \
 conversation:<id>/turn:<turn_id> (from a search hit)";
 
-/// The request a `recall` call's arguments name. `open` wins over `query`
-/// when both are sent: the query is then the reason for the reopening.
-pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
-    let open = text_arg(args, "open");
-    let query = text_arg(args, "query");
-    if let Some(open) = open {
-        return parse_open(open, args);
+/// The requests a `recall` call's arguments name, in order: the reopening
+/// `open` names, then the search `query` names. Both are honoured when both
+/// are sent: found live on 2026-10-16, a model searching for a fact sent the
+/// turn number it could see in `open` beside its `query`, and answering only
+/// the `open` left the search unrun twice.
+pub fn parse_recall_args(args: &Value) -> Result<Vec<RecallRequest>, String> {
+    let mut requests = Vec::new();
+    if let Some(open) = text_arg(args, "open") {
+        requests.push(parse_open(open, args)?);
     }
-    let Some(query) = query else {
+    if let Some(query) = text_arg(args, "query") {
+        if query.chars().count() > 2048 {
+            return Err("query must be at most 2048 characters".into());
+        }
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map_or(DEFAULT_LIMIT, |n| (n as usize).clamp(1, MAX_LIMIT));
+        requests.push(RecallRequest::Search {
+            query: query.into(),
+            limit,
+        });
+    }
+    if requests.is_empty() {
         return Err(
             "send query (what to find from before this turn) or open (a reference to reopen); \
              a request that does not refer back needs no recall"
                 .into(),
         );
-    };
-    if query.chars().count() > 2048 {
-        return Err("query must be at most 2048 characters".into());
     }
-    let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
-        .map_or(DEFAULT_LIMIT, |n| (n as usize).clamp(1, MAX_LIMIT));
-    Ok(RecallRequest::Search {
-        query: query.into(),
-        limit,
-    })
+    Ok(requests)
 }
 
 /// A non-empty, trimmed string argument. Some providers send every optional
@@ -303,8 +308,14 @@ impl Tool for RecallTool {
 mod tests {
     use super::*;
 
+    fn one(args: Value) -> Result<RecallRequest, String> {
+        let mut requests = parse_recall_args(&args)?;
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        Ok(requests.remove(0))
+    }
+
     fn open(reference: &str) -> Result<RecallRequest, String> {
-        parse_recall_args(&json!({ "open": reference }))
+        one(json!({ "open": reference }))
     }
 
     #[test]
@@ -348,17 +359,23 @@ mod tests {
     }
 
     #[test]
-    fn a_query_beside_open_is_the_reason_for_the_reopening() {
+    fn a_query_beside_open_is_searched_too() {
         assert_eq!(
             parse_recall_args(&json!({"open": "#2", "query": "the Lisbon notes"})).unwrap(),
-            RecallRequest::Turn(2)
+            vec![
+                RecallRequest::Turn(2),
+                RecallRequest::Search {
+                    query: "the Lisbon notes".into(),
+                    limit: DEFAULT_LIMIT
+                }
+            ]
         );
     }
 
     #[test]
     fn lines_and_chars_slice_a_tool_result() {
         assert_eq!(
-            parse_recall_args(&json!({"open": "ev:e", "lines": {"start": 2, "end": 5}})).unwrap(),
+            one(json!({"open": "ev:e", "lines": {"start": 2, "end": 5}})).unwrap(),
             RecallRequest::Evidence {
                 id: "e".into(),
                 lines: Some((2, 5)),
@@ -366,8 +383,7 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_recall_args(&json!({"open": "ev:e", "chars": {"start": 2000, "end": 9000}}))
-                .unwrap(),
+            one(json!({"open": "ev:e", "chars": {"start": 2000, "end": 9000}})).unwrap(),
             RecallRequest::Evidence {
                 id: "e".into(),
                 lines: None,
@@ -383,7 +399,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            parse_recall_args(&json!({"open": "ev:e", "lines": {"start": 0, "end": 0}}))
+            one(json!({"open": "ev:e", "lines": {"start": 0, "end": 0}}))
                 .is_ok_and(|r| matches!(r, RecallRequest::Evidence { lines: None, .. }))
         );
     }
@@ -391,7 +407,7 @@ mod tests {
     #[test]
     fn search_is_bounded() {
         assert_eq!(
-            parse_recall_args(&json!({"query": " Noida forecast ", "limit": 1000})).unwrap(),
+            one(json!({"query": " Noida forecast ", "limit": 1000})).unwrap(),
             RecallRequest::Search {
                 query: "Noida forecast".into(),
                 limit: MAX_LIMIT
