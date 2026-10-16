@@ -54,9 +54,10 @@ store retired (O2), `data_query` removed (O3), an ability listed once
 reflection removed (O10). `mail_calendar` deferral was reverted (O5,
 16/16 to 3/16). O8, one capability index, is a proposal:
 docs/design/95-one-capability-index.md, for the maintainer to decide.
-Open lines from the measurements are in open-items "Installed route
-failures" (mail_calendar's size, a CSV question that never computes, the
-`skill` tool with only abilities, propose_skill's Jaccard threshold).
+The `skill` tool now defers when every skill is an ability, and
+propose_skill's Jaccard screen is gone. Open lines from the measurements
+are in open-items "Installed route failures" (mail_calendar's size, a CSV
+question that never computes).
 Method: replay a captured first request 16 times before and after
 (`scripts/measure_tool_form.py replay`; captures in /tmp/vak-live/capture
 via `ollama-capture` + `vak-inv-live` on 8915).

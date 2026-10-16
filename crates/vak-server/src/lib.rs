@@ -2783,9 +2783,9 @@ async fn amend_memory_note(
 }
 
 fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
-    let mut proposals = vak_core::learning::list_proposals(&core.scope(), core.cwd());
+    let mut proposals = vak_core::learning::list_proposals(&core.scope());
     if proposals.is_empty() && core.shared_scope().into_root() != core.scope().into_root() {
-        proposals = vak_core::learning::list_proposals(&core.shared_scope().as_agent(), core.cwd());
+        proposals = vak_core::learning::list_proposals(&core.shared_scope().as_agent());
     }
     proposals
         .iter()
@@ -2965,12 +2965,11 @@ async fn promote_proposal(
     let core = scoped_core!(&state, None, q.agent.as_deref());
     let skills = core.shared_skills_dir();
     let library = core.artifacts();
-    let res = vak_core::learning::promote(&core.scope(), core.cwd(), &id, &skills, Some(&library));
+    let res = vak_core::learning::promote(&core.scope(), &id, &skills, Some(&library));
     let res = match res {
         Err(_) if state.core.shared_scope().into_root() != core.scope().into_root() => {
             vak_core::learning::promote(
                 &state.core.shared_scope().as_agent(),
-                core.cwd(),
                 &id,
                 &skills,
                 Some(&library),
@@ -3002,10 +3001,10 @@ async fn reject_proposal(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, q.agent.as_deref());
-    let res = vak_core::learning::reject(&core.scope(), core.cwd(), &id);
+    let res = vak_core::learning::reject(&core.scope(), &id);
     let res = match res {
         Err(_) if state.core.shared_scope().into_root() != core.scope().into_root() => {
-            vak_core::learning::reject(&state.core.shared_scope().as_agent(), core.cwd(), &id)
+            vak_core::learning::reject(&state.core.shared_scope().as_agent(), &id)
         }
         other => other,
     };

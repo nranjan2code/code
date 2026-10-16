@@ -51,7 +51,7 @@ fn derived_writes_record_provenance() {
         .find(|n| n.tag == "r")
         .unwrap();
     assert_eq!(derived.derived_from.unwrap().turn.as_deref(), Some("trn-3"));
-    let queue = learning::list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
+    let queue = learning::list_proposals(&vak_config::scope::AgentScope::new(&home));
     assert_eq!(queue.len(), 1);
     assert_eq!(
         queue[0].derived_from,

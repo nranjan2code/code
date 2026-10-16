@@ -498,20 +498,14 @@ async fn a_proposed_program_is_verified_versioned_and_admitted_by_its_tier() {
         out.content
     );
     assert!(!core.scope().skills().join("steered-skill").exists());
-    let proposal = vak_core::learning::list_proposals(&core.scope(), workspace.path())
+    let proposal = vak_core::learning::list_proposals(&core.scope())
         .into_iter()
         .find(|proposal| proposal.name == "steered-skill")
         .expect("queued for review");
     let shared = tempfile::tempdir().unwrap();
     let library = core.artifacts();
-    vak_core::learning::promote(
-        &core.scope(),
-        workspace.path(),
-        &proposal.id,
-        shared.path(),
-        Some(&library),
-    )
-    .unwrap();
+    vak_core::learning::promote(&core.scope(), &proposal.id, shared.path(), Some(&library))
+        .unwrap();
     assert!(
         shared.path().join("steered-skill/run.py").is_file(),
         "promoted with its program"
@@ -564,7 +558,7 @@ async fn the_owners_switch_and_a_skills_packs_are_honoured() {
         "{}",
         out.content
     );
-    let proposal = vak_core::learning::list_proposals(&core.scope(), workspace.path())
+    let proposal = vak_core::learning::list_proposals(&core.scope())
         .into_iter()
         .find(|proposal| proposal.name == "reviewed-split")
         .expect("queued for review");
@@ -596,7 +590,6 @@ async fn the_owners_switch_and_a_skills_packs_are_honoured() {
     let shared = tempfile::tempdir().unwrap();
     vak_core::learning::promote(
         &core.scope(),
-        workspace.path(),
         &proposal.id,
         shared.path(),
         Some(&core.artifacts()),
@@ -614,7 +607,7 @@ async fn the_owners_switch_and_a_skills_packs_are_honoured() {
         .execute(&propose("reviewed-split", "reviewed"), &ctx)
         .await;
     assert!(out.content.contains("waits"), "{}", out.content);
-    let again = vak_core::learning::list_proposals(&core.scope(), workspace.path())
+    let again = vak_core::learning::list_proposals(&core.scope())
         .into_iter()
         .find(|proposal| proposal.name == "reviewed-split")
         .expect("waiting again");

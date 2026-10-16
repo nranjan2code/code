@@ -446,16 +446,8 @@ impl vak_tools::Tool for ProposeSkillTool {
             &vak_config::scope::AgentScope::new(&self.sessions_home),
             &self.cwd,
         );
-        let dup_line = match duplicate_of(
-            &name,
-            prose(instructions),
-            &accepted_skill_bodies(&self.cwd),
-        ) {
-            Some(dup) => format!("{DUPLICATE_KEY}: \"{dup}\"\n"),
-            None => String::new(),
-        };
         let body = format!(
-            "---\nname: \"{name}\"\ndescription: \"{desc}\"\n{serves_line}{dup_line}---\n\n{instr}\n\n<!-- proposed-by: {sid} at {ts}; proposal id {id} -->\n",
+            "---\nname: \"{name}\"\ndescription: \"{desc}\"\n{serves_line}---\n\n{instr}\n\n<!-- proposed-by: {sid} at {ts}; proposal id {id} -->\n",
             serves_line = crate::skill_programs::serves_line(&serves),
             desc = description.replace('"', "'"),
             instr = instructions,
@@ -500,7 +492,7 @@ pub fn sanitize_name(raw: &str) -> Option<String> {
 
 // ---- Review queue API -------------------------------------------------------
 
-fn list_proposals_in_dir(dir: &Path, cwd: &Path) -> Vec<SkillProposal> {
+fn list_proposals_in_dir(dir: &Path) -> Vec<SkillProposal> {
     let mut found = Vec::new();
     for path in vak_session::documents::under(dir) {
         let Some(id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
@@ -515,15 +507,13 @@ fn list_proposals_in_dir(dir: &Path, cwd: &Path) -> Vec<SkillProposal> {
         found.push((id, path, skill));
     }
     let mut out = Vec::with_capacity(found.len());
-    if !found.is_empty() {
-        let accepted = accepted_skill_bodies(cwd);
+    {
         for (id, path, skill) in found {
-            let tag = screen_proposal(&path, &skill.name, &accepted);
             let body = vak_session::documents::read(&path).ok().flatten();
             out.push(SkillProposal {
                 id,
                 name: skill.name,
-                description: with_duplicate_note(&skill.description, tag.as_deref()),
+                description: skill.description,
                 derived_from: body.as_deref().and_then(proposal_provenance),
                 program: body
                     .as_deref()
@@ -537,13 +527,9 @@ fn list_proposals_in_dir(dir: &Path, cwd: &Path) -> Vec<SkillProposal> {
 
 /// Pending drafts from every folder the Agent worked in, newest first:
 /// a proposal is filed under the folder its turn ran in, and the owner
-/// reviews them all in one place. When a proposal screens as a near copy of
-/// an accepted skill, the returned `description` carries a
-/// `[duplicate-of: <name>]` suffix (every review surface renders the
-/// description) and the flag persists as a `duplicate-of:` frontmatter line
-/// so hand edits and later listings agree.
-pub fn list_proposals(scope: &vak_config::scope::AgentScope, cwd: &Path) -> Vec<SkillProposal> {
-    let mut proposals = list_proposals_in_dir(&scope.skill_proposals_root(), cwd);
+/// reviews them all in one place.
+pub fn list_proposals(scope: &vak_config::scope::AgentScope) -> Vec<SkillProposal> {
+    let mut proposals = list_proposals_in_dir(&scope.skill_proposals_root());
     if proposals.is_empty() {
         let agents_dir = scope.agents_dir();
         if let Ok(entries) = std::fs::read_dir(&agents_dir) {
@@ -552,7 +538,6 @@ pub fn list_proposals(scope: &vak_config::scope::AgentScope, cwd: &Path) -> Vec<
                 if p.is_dir() {
                     let agent_props = list_proposals_in_dir(
                         &vak_config::scope::AgentScope::new(&p).skill_proposals_root(),
-                        cwd,
                     );
                     proposals.extend(agent_props);
                 }
@@ -577,12 +562,11 @@ pub fn shared_capability_root() -> PathBuf {
 /// skill of the same name.
 pub fn promote(
     scope: &vak_config::scope::AgentScope,
-    cwd: &Path,
     id: &str,
     skills: &Path,
     library: Option<&crate::artifacts::Artifacts>,
 ) -> Result<String, String> {
-    let proposals = list_proposals(scope, cwd);
+    let proposals = list_proposals(scope);
     let p = proposals
         .iter()
         .find(|p| p.id == id)
@@ -640,8 +624,8 @@ fn library_version(body: &str) -> Option<(String, String)> {
     Some((parts.next()?.to_string(), parts.next()?.to_string()))
 }
 
-pub fn reject(scope: &vak_config::scope::AgentScope, cwd: &Path, id: &str) -> Result<(), String> {
-    let proposals = list_proposals(scope, cwd);
+pub fn reject(scope: &vak_config::scope::AgentScope, id: &str) -> Result<(), String> {
+    let proposals = list_proposals(scope);
     let p = proposals
         .iter()
         .find(|p| p.id == id)
@@ -649,297 +633,11 @@ pub fn reject(scope: &vak_config::scope::AgentScope, cwd: &Path, id: &str) -> Re
     vak_session::documents::forget(&p.path).map(|_| ())
 }
 
-// ---- duplicate screening (docs/design/29-personal-os.md P5) -----------------
-
-/// Skill pollution is the failure
-/// mode at proposal time.
-const SKILL_DEDUP_THRESHOLD: f32 = 0.55;
-
-/// Name of the first existing skill (name, body) whose token-Jaccard
-/// similarity against the candidate's title+body reaches
-/// [`SKILL_DEDUP_THRESHOLD`]. Pure screening: callers tag the proposal
-/// `duplicate-of`; nothing is auto-deleted.
-pub fn duplicate_of(
-    candidate_title: &str,
-    candidate_body: &str,
-    existing: &[(String, String)],
-) -> Option<String> {
-    let candidate = format!("{candidate_title}\n{candidate_body}");
-    existing
-        .iter()
-        .find(|(name, body)| {
-            jaccard(&format!("{name}\n{body}"), &candidate) >= SKILL_DEDUP_THRESHOLD
-        })
-        .map(|(name, _)| name.clone())
-}
-
-fn tokens(text: &str) -> std::collections::HashSet<String> {
-    text.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|t| t.chars().count() >= 3)
-        .map(str::to_string)
-        .collect()
-}
-
-/// Jaccard similarity over word sets.
-fn jaccard(a: &str, b: &str) -> f32 {
-    let (a, b) = (tokens(a), tokens(b));
-    if a.is_empty() || b.is_empty() {
-        return 0.0;
-    }
-    let inter = a.intersection(&b).count() as f32;
-    let union = a.union(&b).count() as f32;
-    inter / union
-}
-
-/// Frontmatter key persisted on flagged proposals; consumers' parsers skip
-/// unknown keys, so the line is inert everywhere but machine-readable.
-const DUPLICATE_KEY: &str = "duplicate-of";
-
-/// Instructions-only view of a markdown body; provenance comments are noise
-/// for similarity scoring.
-fn prose(body: &str) -> &str {
-    match body.split_once("<!--") {
-        Some((head, _)) => head,
-        None => body,
-    }
-    .trim()
-}
-
-/// Header (between the opening and closing `---`) plus remainder of a
-/// house-style markdown file.
-fn split_header(text: &str) -> Option<(&str, &str)> {
-    text.strip_prefix("---")
-        .and_then(|rest| rest.split_once("---"))
-}
-
-fn duplicate_tag_in(frontmatter: &str) -> Option<String> {
-    frontmatter.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix(DUPLICATE_KEY)
-            .and_then(|rest| rest.strip_prefix(':'))
-            .map(|value| value.trim().trim_matches('"').to_string())
-    })
-}
-
-/// Insert the tag as the last frontmatter line. Malformed headers are left
-/// untouched — screening must never corrupt a reviewable draft.
-fn persist_duplicate_tag(path: &Path, dup: &str) -> Result<(), String> {
-    vak_session::documents::update(path, |text| {
-        let Some(text) = text else {
-            return Ok(None);
-        };
-        Ok(tagged(text, dup).map(|out| (out, ())))
-    })
-    .map(|_| ())
-}
-
-/// `text` with a `duplicate-of` line added to its frontmatter, `None` when
-/// it has one already or has no frontmatter.
-fn tagged(text: &str, dup: &str) -> Option<String> {
-    let (frontmatter, body) = split_header(text)?;
-    if duplicate_tag_in(frontmatter).is_some() {
-        return None;
-    }
-    let mut out = String::with_capacity(text.len() + DUPLICATE_KEY.len() + dup.len() + 5);
-    out.push_str("---");
-    out.push_str(frontmatter);
-    if !frontmatter.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push_str(DUPLICATE_KEY);
-    out.push_str(": \"");
-    out.push_str(dup);
-    out.push_str("\"\n---");
-    out.push_str(body);
-    Some(out)
-}
-
-/// Existing-or-newly-persisted duplicate flag for one pending proposal.
-fn screen_proposal(path: &Path, name: &str, accepted: &[(String, String)]) -> Option<String> {
-    let text = vak_session::documents::read(path).ok().flatten()?;
-    let (frontmatter, body) = split_header(&text)?;
-    if let Some(tag) = duplicate_tag_in(frontmatter) {
-        return Some(tag);
-    }
-    let dup = duplicate_of(name, prose(body), accepted)?;
-    persist_duplicate_tag(path, &dup).ok()?;
-    Some(dup)
-}
-
-fn with_duplicate_note(description: &str, dup: Option<&str>) -> String {
-    match dup {
-        Some(name) => format!("{description} [duplicate-of: {name}]"),
-        None => description.to_string(),
-    }
-}
-
-/// (name, instructions) pairs for every skill a turn in `cwd` discovers: the
-/// same roots `Core::skills` walks (the workspace and the Shared layer, with
-/// the Agents' folders under it), read-only from this side.
-fn accepted_skill_bodies(cwd: &Path) -> Vec<(String, String)> {
-    let shared = shared_capability_root();
-    let mut roots = vec![
-        vak_config::scope::WorkspaceScope::new(cwd).skills(),
-        shared.join("skills"),
-    ];
-    if let Ok(entries) = std::fs::read_dir(vak_config::scope::AgentScope::new(&shared).agents_dir())
-    {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                roots.push(vak_config::scope::AgentScope::new(&p).skills());
-            }
-        }
-    }
-    roots.dedup();
-    let mut out: Vec<(String, String)> = Vec::new();
-    for root in roots {
-        let Ok(entries) = std::fs::read_dir(&root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path().join("SKILL.md");
-            if !path.is_file() {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            if let Some(skill) = crate::skills::parse(&path) {
-                let body = split_header(&text).map(|(_, body)| body).unwrap_or(&text);
-                out.push((skill.name, prose(body).to_string()));
-            }
-        }
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out.dedup_by(|a, b| a.0 == b.0);
-    out
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use vak_tools::Tool as _;
-
-    #[test]
-    fn duplicate_of_flags_identical_skill() {
-        vak_config::paths::isolate_home_for_tests();
-        let existing = vec![(
-            "rotate-release-tags".to_string(),
-            "pause before rollback so the deploy script can finish".to_string(),
-        )];
-        assert_eq!(
-            duplicate_of(
-                "rotate-release-tags",
-                "pause before rollback so the deploy script can finish",
-                &existing,
-            ),
-            Some("rotate-release-tags".to_string())
-        );
-    }
-
-    #[test]
-    fn duplicate_of_catches_paraphrase_over_threshold() {
-        vak_config::paths::isolate_home_for_tests();
-        let existing = vec![(
-            "rotate-release-tags".to_string(),
-            "pause before rollback so the deploy script can finish".to_string(),
-        )];
-        assert_eq!(
-            duplicate_of(
-                "rotate release tags",
-                "pause before rollback lets the deploy script finish",
-                &existing,
-            ),
-            Some("rotate-release-tags".to_string())
-        );
-    }
-
-    #[test]
-    fn duplicate_of_allows_disjoint_skills() {
-        vak_config::paths::isolate_home_for_tests();
-        let existing = vec![
-            (
-                "frobulate-widget-frames".to_string(),
-                "wedge alignment for panel mounts".to_string(),
-            ),
-            (
-                "rotate-release-tags".to_string(),
-                "pause before rollback so the deploy script can finish".to_string(),
-            ),
-        ];
-        assert_eq!(
-            duplicate_of(
-                "quixotic-lantern-parade",
-                "spinning light festival route",
-                &existing,
-            ),
-            None
-        );
-        assert!(
-            duplicate_of(
-                "quixotic-lantern-parade",
-                "spinning light festival route",
-                &[],
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn duplicate_of_returns_first_matching_existing() {
-        vak_config::paths::isolate_home_for_tests();
-        let dup = (
-            "rotate-release-tags".to_string(),
-            "pause before rollback so the deploy script can finish".to_string(),
-        );
-        let existing = vec![(
-            "unrelated-thing".to_string(),
-            "totally different domain words here".to_string(),
-        )];
-        assert_eq!(
-            duplicate_of("rotate-release-tags", dup.1.as_str(), &existing),
-            None
-        );
-
-        let mut both = existing;
-        both.push(dup);
-        assert_eq!(
-            duplicate_of(
-                "rotate-release-tags",
-                "pause before rollback so the deploy script can finish",
-                &both,
-            ),
-            Some("rotate-release-tags".to_string())
-        );
-    }
-
-    // ---- submission/review integration ----
-
-    /// An accepted skill in the test's own workspace, one of the roots a
-    /// turn discovers.
-    fn seed_accepted_skill(cwd: &Path, name: &str, desc: &str, body: &str) {
-        let dir = vak_config::scope::WorkspaceScope::new(cwd)
-            .skills()
-            .join(name);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("SKILL.md"),
-            format!("---\nname: \"{name}\"\ndescription: \"{desc}\"\n---\n\n{body}\n"),
-        )
-        .unwrap();
-    }
-
-    fn pending_paths(home: &Path, cwd: &Path) -> Vec<PathBuf> {
-        let mut v: Vec<PathBuf> = vak_session::documents::under(&proposals_dir(
-            &vak_config::scope::AgentScope::new(home),
-            cwd,
-        ));
-        v.sort();
-        v
-    }
 
     fn temp_home_cwd() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -952,16 +650,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn propose_submission_tags_duplicate_and_promotion_still_works() {
+    async fn a_proposal_is_queued_as_written_and_promoted_by_the_owner() {
         vak_config::paths::isolate_home_for_tests();
         let (_dir, home, cwd) = temp_home_cwd();
-        seed_accepted_skill(
-            &cwd,
-            "rotate-release-tags",
-            "pause deploys during rollback windows",
-            "pause before rollback so the deploy script can finish",
-        );
-
         let tool = ProposeSkillTool {
             sessions_home: home.clone(),
             cwd: cwd.clone(),
@@ -970,186 +661,22 @@ mod tests {
         };
         let ctx = vak_tools::ToolContext::new(cwd.clone());
         let args = serde_json::json!({
-            "name": "rotate-release-tags-v2",
+            "name": "rotate-release-tags",
             "description": "wait out the deploy window",
-            "instructions": "always pause before rollback lets the deploy script finish"
+            "instructions": "pause before rollback so the deploy script can finish"
         });
         assert!(!tool.execute(&args, &ctx).await.is_error());
-        // Re-proposal queues a fresh draft; neither may stack tag lines.
-        assert!(!tool.execute(&args, &ctx).await.is_error());
 
-        for path in pending_paths(&home, &cwd) {
-            let text = vak_session::documents::read(&path).unwrap().unwrap();
-            assert!(text.contains("duplicate-of: \"rotate-release-tags\""));
-            assert_eq!(
-                text.matches("duplicate-of:").count(),
-                1,
-                "exactly one tag line in {}",
-                path.display()
-            );
-            // Stored description stays pristine; the flag lives on its own line.
-            assert!(text.contains("description: \"wait out the deploy window\""));
-            assert!(!text.contains("[duplicate-of:"));
-        }
-
-        let listed = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
-        assert_eq!(listed.len(), 2);
-        for p in &listed {
-            assert!(
-                p.description
-                    .ends_with("[duplicate-of: rotate-release-tags]"),
-                "{}",
-                p.description
-            );
-        }
-
-        // A flagged proposal is still promotable by explicit human decision.
-        let id = listed[0].id.clone();
+        let scope = vak_config::scope::AgentScope::new(&home);
+        let listed = list_proposals(&scope);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].description, "wait out the deploy window");
         assert_eq!(
-            promote(
-                &vak_config::scope::AgentScope::new(&home),
-                &cwd,
-                &id,
-                &home.join("skills"),
-                None
-            )
-            .unwrap(),
-            "rotate-release-tags-v2"
+            promote(&scope, &listed[0].id, &home.join("skills"), None).unwrap(),
+            "rotate-release-tags"
         );
-        let installed = home.join("skills/rotate-release-tags-v2/SKILL.md");
-        assert!(installed.exists());
+        let installed = home.join("skills/rotate-release-tags/SKILL.md");
         let parsed = crate::skills::parse(&installed).unwrap();
         assert_eq!(parsed.description, "wait out the deploy window");
-        assert!(!parsed.description.contains("duplicate-of"));
-    }
-
-    #[tokio::test]
-    async fn propose_submission_leaves_disjoint_skills_untagged() {
-        vak_config::paths::isolate_home_for_tests();
-        let (_dir, home, cwd) = temp_home_cwd();
-        seed_accepted_skill(
-            &cwd,
-            "frobulate-widget-frames",
-            "wedge alignment for panel mounts",
-            "wedge alignment for panel mounts",
-        );
-
-        let tool = ProposeSkillTool {
-            sessions_home: home.clone(),
-            cwd: cwd.clone(),
-            session_id: "sess-b".into(),
-            core: None,
-        };
-        let ctx = vak_tools::ToolContext::new(cwd.clone());
-        let out = tool
-            .execute(
-                &serde_json::json!({
-                    "name": "quixotic-lantern-parade",
-                    "description": "festival logistics",
-                    "instructions": "spinning light festival route planning"
-                }),
-                &ctx,
-            )
-            .await;
-        assert!(!out.is_error());
-
-        for path in pending_paths(&home, &cwd) {
-            let text = vak_session::documents::read(&path).unwrap().unwrap();
-            assert!(!text.contains("duplicate-of"), "{text}");
-        }
-        let listed = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].description, "festival logistics");
-    }
-
-    #[test]
-    fn a_queued_draft_is_screened_on_review_without_stacking() {
-        vak_config::paths::isolate_home_for_tests();
-        let (_dir, home, cwd) = temp_home_cwd();
-        seed_accepted_skill(
-            &cwd,
-            "rotate-release-tags",
-            "pause deploys during rollback windows",
-            "pause before rollback so the deploy script can finish",
-        );
-
-        let dir = proposals_dir(&vak_config::scope::AgentScope::new(&home), &cwd);
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("aaa111.md");
-        vak_session::documents::create(
-            &file,
-            "---\nname: \"rotate-release-tags-v3\"\ndescription: \"hold deploys at the rollback gate\"\n---\n\npause before rollback so the deploy script can finish cleanly\n\n<!-- proposed-by: sess-r at 2026-01-01T00:00:00+00:00; proposal id aaa111; source: reflection -->\n",
-    )
-        .unwrap();
-
-        let first = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
-        assert_eq!(first.len(), 1);
-        assert!(
-            first[0]
-                .description
-                .contains("[duplicate-of: rotate-release-tags]"),
-            "{}",
-            first[0].description
-        );
-        assert_eq!(
-            vak_session::documents::read(&file)
-                .unwrap()
-                .unwrap()
-                .matches("duplicate-of:")
-                .count(),
-            1
-        );
-
-        // Repeat listings never stack a second tag line.
-        let second = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
-        assert_eq!(second[0].description, first[0].description);
-        assert_eq!(
-            vak_session::documents::read(&file)
-                .unwrap()
-                .unwrap()
-                .matches("duplicate-of:")
-                .count(),
-            1
-        );
-
-        // Rejection is unchanged for flagged drafts.
-        assert!(reject(&vak_config::scope::AgentScope::new(&home), &cwd, "aaa111").is_ok());
-        assert!(list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd).is_empty());
-    }
-
-    #[test]
-    fn tagged_header_is_inert_to_consumer_parsers() {
-        vak_config::paths::isolate_home_for_tests();
-        let (_dir, home, cwd) = temp_home_cwd();
-        let dir = proposals_dir(&vak_config::scope::AgentScope::new(&home), &cwd);
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("bbb222.md");
-        vak_session::documents::create(
-            &file,
-            "---\nname: \"hand-tagged\"\ndescription: \"original text\"\nduplicate-of: \"rotate-release-tags\"\n---\n\nbody here\n\n<!-- proposed-by: sess-h at ts; proposal id bbb222 -->\n",
-    )
-        .unwrap();
-
-        // Replicates skills::parse as used by discovery and every listing:
-        // unknown frontmatter keys are skipped, name/description untouched.
-        let text = vak_session::documents::read(&file).unwrap().unwrap();
-        let parsed = crate::skills::parse_text(&text, &file).expect("tagged header still parses");
-        assert_eq!(parsed.name, "hand-tagged");
-        assert_eq!(parsed.description, "original text");
-
-        // Replicates the server payload shape and TUI/CLI row rendering,
-        // which all show the flag via description without their own changes.
-        let listed = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
-        let p = &listed[0];
-        let payload = serde_json::json!({"id": p.id, "name": p.name, "description": p.description});
-        assert_eq!(payload["name"], "hand-tagged");
-        assert!(
-            payload["description"]
-                .as_str()
-                .unwrap()
-                .contains("[duplicate-of: rotate-release-tags]"),
-            "{}",
-            payload["description"]
-        );
     }
 }

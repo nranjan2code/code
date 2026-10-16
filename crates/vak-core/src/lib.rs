@@ -3633,6 +3633,7 @@ impl Core {
         &self,
         admitted: &std::collections::BTreeSet<String>,
         programs: &[Arc<dyn vak_tools::Tool>],
+        listed_skill: bool,
     ) -> String {
         let mut tools: Vec<Arc<dyn vak_tools::Tool>> = self
             .scoped_tools(&ToolScope::default())
@@ -3654,6 +3655,9 @@ impl Core {
             .iter()
             .map(|tool| (tool.name(), tool.description()))
             .collect();
+        if listed_skill {
+            entries.push(("skill", skills::DESCRIPTION));
+        }
         if admitted.contains("task") {
             entries.push(("task", vak_agent::TaskTool::DESCRIPTION));
         }
@@ -7034,7 +7038,15 @@ impl Core {
         // records once the turn is done (docs/design/93 R2).
         let mut program_digests = skills::program_digests(&turn_capabilities.frozen_skills);
         let tool_catalogue = if progressive {
-            self.tool_catalogue_for(&turn_capabilities.tool_names, &programs)
+            // The `skill` tool defers when every admitted skill is an
+            // ability (`SkillTool::always_loaded`); it is then listed here.
+            let listed_skill = turn_capabilities.tool_names.contains("skill")
+                && !turn_capabilities.frozen_skills.is_empty()
+                && turn_capabilities
+                    .frozen_skills
+                    .iter()
+                    .all(skills::has_program);
+            self.tool_catalogue_for(&turn_capabilities.tool_names, &programs, listed_skill)
         } else {
             String::new()
         };

@@ -292,5 +292,9 @@ requests (`/tmp/vak-live/measure/o467`).
 | O9. `agent_network` declares its reach | none (the declaration matches what the default gave) | kept: explicit `Other`, a host-local broker, not `Network` |
 | O10. Reflection removed | none on the turn path (opt-in, off by default, after the turn) | kept: `remember` and `propose_skill` are the only writers |
 
-`propose_skill`'s duplicate screen keeps its own Jaccard threshold (0.55),
-a number picked in code; it is listed in open-items.
+Two lines this left open were then fixed:
+
+| Change | Measurement | Result |
+|---|---|---|
+| The `skill` tool defers when every admitted skill is an ability (its `always_loaded` reads its own skills; listed under "More tools" then) | the date question, `skill` loaded vs deferred | kept: `skill` 3 → 0, the ability 4 → 4, `bash` computing the dates 2 → 4 |
+| `propose_skill`'s Jaccard duplicate screen (0.55) removed, with the `duplicate-of` tag and the `cwd` that `list_proposals`, `promote` and `reject` carried only for it | none on the turn path | kept: a proposal is reviewed as written |

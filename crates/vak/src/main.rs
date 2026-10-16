@@ -246,7 +246,7 @@ fn run_abilities(cwd: PathBuf, action: SkillsAction) -> i32 {
             )
         }
         SkillsAction::Approve { proposal, .. } => {
-            let found = vak_core::learning::list_proposals(&core.scope(), core.cwd())
+            let found = vak_core::learning::list_proposals(&core.scope())
                 .into_iter()
                 .find(|p| p.id == proposal);
             match found {
@@ -258,7 +258,6 @@ fn run_abilities(cwd: PathBuf, action: SkillsAction) -> i32 {
                 Some(_) => {
                     let promoted = vak_core::learning::promote(
                         &core.scope(),
-                        core.cwd(),
                         &proposal,
                         &core.shared_skills_dir(),
                         Some(&core.artifacts()),
@@ -271,7 +270,7 @@ fn run_abilities(cwd: PathBuf, action: SkillsAction) -> i32 {
             }
         }
         SkillsAction::Decline { proposal, .. } => {
-            let declined = vak_core::learning::reject(&core.scope(), core.cwd(), &proposal);
+            let declined = vak_core::learning::reject(&core.scope(), &proposal);
             if declined.is_ok() {
                 core.proposal_settled(&proposal);
             }

@@ -146,6 +146,18 @@ fn program_files(base: &Path, program: &vak_tools::capability::Program) -> Strin
 
 /// Each frozen skill that carries a program, by name, with its program's
 /// digest: which version a call to it runs.
+/// What the `skill` tool says it does, in its schema and in "More tools".
+pub const DESCRIPTION: &str = "Load one skill by its exact name: its instructions, and for one of your abilities its program and tests, to improve it. Skills are instructions, not executable functions.";
+
+/// Whether a skill carries a program, so it is an ability: a tool of the
+/// turn under its own name.
+pub fn has_program(skill: &FrozenSkill) -> bool {
+    skill
+        .path
+        .parent()
+        .is_some_and(|dir| matches!(vak_tools::capability::Program::load(dir), Ok(Some(_))))
+}
+
 pub fn program_digests(skills: &[FrozenSkill]) -> std::collections::BTreeMap<String, String> {
     skills
         .iter()
@@ -279,6 +291,12 @@ pub fn expand_invocation(input: &str, skills: &[FrozenSkill]) -> Result<Option<S
 pub struct SkillTool {
     skills: BTreeMap<String, FrozenSkill>,
     description: String,
+    /// Whether an admitted skill is instructions: that one must be loaded
+    /// before the model relies on it, so the tool is loaded. When every
+    /// admitted skill is an ability (a skill with a program), each is
+    /// already a tool of the turn, and this one is found under "More
+    /// tools" for loading an ability to improve it.
+    instructions: bool,
 }
 
 impl SkillTool {
@@ -299,11 +317,11 @@ impl SkillTool {
             .into_iter()
             .map(|skill| (skill.name.clone(), skill))
             .collect::<BTreeMap<_, _>>();
+        let instructions = skills.values().any(|skill| !has_program(skill));
         Self {
             skills,
-            description: "Load one skill document by its exact name from the skills listed \
-                          in your instructions. Skills are instructions, not executable functions."
-                .into(),
+            description: DESCRIPTION.into(),
+            instructions,
         }
     }
 }
@@ -323,7 +341,7 @@ impl vak_tools::Tool for SkillTool {
     }
 
     fn always_loaded(&self) -> bool {
-        true
+        self.instructions
     }
 
     fn description(&self) -> &str {
@@ -964,5 +982,26 @@ mod tests {
         )
         .unwrap();
         assert!(validate(&path).is_ok());
+    }
+
+    #[test]
+    fn the_skill_tool_is_loaded_only_while_a_skill_is_instructions() {
+        use vak_tools::Tool;
+        let package = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/everyday-starter/skills");
+        let frozen = |name: &str| FrozenSkill {
+            name: name.into(),
+            description: String::new(),
+            path: package.join(name).join("SKILL.md"),
+            digest: "sha".into(),
+            provenance: None,
+        };
+        assert!(has_program(&frozen("date-calculator")));
+        assert!(!has_program(&frozen("data-and-spreadsheets")));
+        assert!(!SkillTool::new([frozen("date-calculator")]).always_loaded());
+        assert!(
+            SkillTool::new([frozen("date-calculator"), frozen("data-and-spreadsheets")])
+                .always_loaded()
+        );
     }
 }

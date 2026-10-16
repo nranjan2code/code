@@ -474,6 +474,10 @@ Every rule in AGENTS.md "The data rules" holds; the ones that bite here:
   (its name, description and path as text; `produced_by` edges to the
   call and run of each version); a version is not a node of its own. A capability declares `serves` so the surface can
   rank it; undeclared fails open (doc 41, `capability/domain.rs`).
+- An ability is listed once, as its tool: the Skills list leaves it out,
+  and the `skill` tool, which loads an ability to improve it, is loaded
+  only while an admitted skill is instructions; when every skill is an
+  ability it is listed under "More tools" (2026-10-16).
 - The prompt seed gains no instruction naming any capability. What the
   model needs to know about building is the `propose_skill` tool's own
   description and schema (prompt-seed budget, doc 07).

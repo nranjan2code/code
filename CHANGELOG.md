@@ -1,5 +1,10 @@
 ## Unreleased
 
+- A proposed skill is no longer tagged "duplicate-of" by a word-overlap
+  score picked in code; the review shows each proposal as written.
+- With only abilities installed, the skill loader no longer sits in every
+  request: it is listed under "More tools", for opening an ability to
+  improve it.
 - "Learn from conversations" is gone: the optional pass after a run that
   asked a second model call for notes and skill drafts, filtered by
   numbers picked in code, is removed with its `[memory] reflection`

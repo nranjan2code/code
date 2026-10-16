@@ -158,8 +158,7 @@ async fn remember_propose_recall_promote_loop() {
     assert!(logged.contains("queued for review"), "{logged}");
 
     // Proposal is pending, not installed.
-    let pending =
-        vak_core::learning::list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
+    let pending = vak_core::learning::list_proposals(&vak_config::scope::AgentScope::new(&home));
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].name, "deploy-safely");
     assert!(!home.join("skills/deploy-safely/SKILL.md").exists());
@@ -220,7 +219,6 @@ async fn remember_propose_recall_promote_loop() {
     let skills = core.shared_skills_dir();
     let promoted = vak_core::learning::promote(
         &vak_config::scope::AgentScope::new(&home),
-        &cwd,
         &id,
         &skills,
         None,
@@ -229,8 +227,7 @@ async fn remember_propose_recall_promote_loop() {
     assert_eq!(promoted, "deploy-safely");
     assert!(skills.join("deploy-safely/SKILL.md").exists());
     assert!(
-        vak_core::learning::list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd)
-            .is_empty()
+        vak_core::learning::list_proposals(&vak_config::scope::AgentScope::new(&home)).is_empty()
     );
     let discovered = core.skills();
     assert!(
@@ -244,10 +241,9 @@ async fn remember_propose_recall_promote_loop() {
     assert!(
         vak_core::learning::promote(
             &vak_config::scope::AgentScope::new(&home),
-            &cwd,
             &id,
             &skills,
-            None
+            None,
         )
         .is_err()
     );

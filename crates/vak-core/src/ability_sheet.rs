@@ -164,7 +164,7 @@ impl Core {
         let installed = self.scope().skills().join(name);
         let program = Program::load(&installed).ok().flatten();
         let record = self.ability_record(name).unwrap_or_default();
-        let proposals = crate::learning::list_proposals(&self.scope(), self.cwd());
+        let proposals = crate::learning::list_proposals(&self.scope());
         let waiting = proposals
             .iter()
             .find(|proposal| ability.proposal.as_deref() == Some(proposal.id.as_str()));

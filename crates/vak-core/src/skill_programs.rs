@@ -708,7 +708,7 @@ impl Core {
                 }
             }
         }
-        for proposal in crate::learning::list_proposals(&self.scope(), self.cwd()) {
+        for proposal in crate::learning::list_proposals(&self.scope()) {
             if proposal
                 .program
                 .as_ref()
@@ -854,7 +854,7 @@ impl Core {
                 versions: versions.unwrap_or(0),
             });
         }
-        for proposal in crate::learning::list_proposals(&self.scope(), self.cwd()) {
+        for proposal in crate::learning::list_proposals(&self.scope()) {
             let review = proposal.program;
             if let Some(row) = rows.iter_mut().find(|row| row.name == proposal.name) {
                 row.proposal = Some(proposal.id);
@@ -894,7 +894,7 @@ impl Core {
     /// version is installed among the Agent's own skills, replacing the
     /// one it improves, and its record starts there.
     pub fn approve_for_agent(&self, id: &str) -> Result<String, String> {
-        let proposal = crate::learning::list_proposals(&self.scope(), self.cwd())
+        let proposal = crate::learning::list_proposals(&self.scope())
             .into_iter()
             .find(|proposal| proposal.id == id)
             .ok_or_else(|| format!("no proposal '{id}'"))?;
@@ -908,7 +908,6 @@ impl Core {
         let parent = Program::load(&target).ok().flatten().map(|old| old.digest);
         let name = crate::learning::promote(
             &self.scope(),
-            self.cwd(),
             id,
             &self.scope().skills(),
             Some(&self.artifacts()),
