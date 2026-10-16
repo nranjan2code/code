@@ -6,6 +6,10 @@
   drawn plain, with nothing sent anywhere. Street tiles under them come
   only when you turn on Settings → General → Map tiles, which names the
   server each map's area is sent to.
+- A media card showing an image, video or audio file in the workspace
+  draws the file; it was empty before. A web image or video shows in the
+  desktop app too, where it was refused. When web images are off, or the
+  file cannot be read, the card says so instead of standing empty.
 - Ticks on a checkable list are kept: they survive a reload, and the next
   turn knows what you ticked. "Use this" on a step's choice starts the
   turn with your choice as your message, naming the card, instead of

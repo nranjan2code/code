@@ -311,6 +311,19 @@ Carried over from 7.2.0:
     choice in docs/decisions.md.
   - [ ] Measure format choice: a live eval of whether a card helped the
     request, reported beside cost.
+- Media card checked live 2026-10-16 (image and video by URL, an image in
+  the workspace):
+  - [x] A workspace path drew an empty card: the renderer drew only web
+    addresses. A path with no scheme is now read through the authenticated
+    file route (`mediaSource`, `tests/media-source.mjs`).
+  - [x] The desktop shell's policy refused web images and every video
+    (`img-src` without web schemes, no `media-src`); fixed and pinned
+    (`the_shell_policy_admits_what_a_media_card_draws`).
+  - [ ] The desktop shell drawing a media card is not seen in the running
+    app (checked in a browser only).
+  - [ ] A media card naming a file that is not in the workspace is
+    recorded and then says the file could not be read; the builder does
+    not check the path as a file preview's grounding does.
 
 ## Presentations as capabilities (docs/design/91)
 

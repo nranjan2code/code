@@ -8,6 +8,7 @@ import * as api from "../../api";
 import Icon from "../Icon";
 import { PresentationSessionContext, records, type Payload } from "./shared";
 import { themedPreview } from "../../previewTheme";
+import { mediaSource } from "../../mediaSource";
 
 // The code and media forms: each reads its stored payload through a render
 // node, the same shape a pack's tree carries.
@@ -499,40 +500,65 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
  */
 function renderMedia(node: AdaptiveRenderNode, _surface: RenderSurface) {
   const kind = (str(node.props, "kind") ?? "link").toLowerCase();
-  const source = () => str(node.props, "source") ?? "";
   const alt = () => str(node.props, "alt") ?? "";
-  const externalAllowed = () => uiPreferences.externalMedia && source().length > 0 && safeUrl(source(), true);
 
-  if (kind === "image") {
+  if (kind === "image" || kind === "video" || kind === "audio") {
+    const session = useContext(PresentationSessionContext) ?? activeId() ?? undefined;
+    const reader = api.workspaceReader(session);
+    const origin = createMemo(() => mediaSource(str(node.props, "source") ?? ""));
+    const [fileUrl, setFileUrl] = createSignal<string>();
+    const [fileError, setFileError] = createSignal<string>();
+    let request = 0;
+    let held: string | undefined;
+    const release = () => {
+      if (held) URL.revokeObjectURL(held);
+      held = undefined;
+      setFileUrl(undefined);
+    };
+    createEffect(() => {
+      const from = origin();
+      const generation = ++request;
+      release();
+      setFileError(undefined);
+      if (from.kind !== "workspace") return;
+      reader
+        .readFileRaw(from.path)
+        .then((url) => {
+          if (generation !== request) return URL.revokeObjectURL(url);
+          held = url;
+          setFileUrl(url);
+        })
+        .catch((e) => {
+          if (generation === request) setFileError(e instanceof Error ? e.message : String(e));
+        });
+    });
+    onCleanup(() => {
+      request += 1;
+      release();
+    });
+    const src = () => {
+      const from = origin();
+      if (from.kind === "web") return uiPreferences.externalMedia ? from.url : undefined;
+      return from.kind === "workspace" ? fileUrl() : undefined;
+    };
+    const unavailable = () =>
+      fileError() ?? (origin().kind === "web" && !uiPreferences.externalMedia ? "Images from the web are off in Settings." : undefined);
     return (
-      <Show when={externalAllowed()}>
-        <figure class="rich-media">
-          <img src={source()} alt={alt()} />
-          <Show when={alt()}>
-            <figcaption>{alt()}</figcaption>
-          </Show>
-        </figure>
-      </Show>
-    );
-  }
-  if (kind === "video") {
-    return (
-      <Show when={externalAllowed()}>
-        <video
-          class="rich-video"
-          src={source()}
-          controls
-          preload="metadata"
-          autoplay={uiPreferences.autoplayMedia}
-          aria-label={str(node.props, "alt") ?? "Video"}
-        />
-      </Show>
-    );
-  }
-  if (kind === "audio") {
-    return (
-      <Show when={externalAllowed()}>
-        <audio class="rich-audio" src={source()} controls preload="metadata" aria-label={str(node.props, "alt") ?? "Audio"} />
+      <Show when={src()} fallback={<Show when={unavailable()}>{(why) => <figure class="rich-media"><figcaption>{alt() || "Media"}: {why()}</figcaption></figure>}</Show>}>
+        {(url) =>
+          kind === "image" ? (
+            <figure class="rich-media">
+              <img src={url()} alt={alt()} />
+              <Show when={alt()}>
+                <figcaption>{alt()}</figcaption>
+              </Show>
+            </figure>
+          ) : kind === "video" ? (
+            <video class="rich-video" src={url()} controls preload="metadata" autoplay={uiPreferences.autoplayMedia} aria-label={alt() || "Video"} />
+          ) : (
+            <audio class="rich-audio" src={url()} controls preload="metadata" aria-label={alt() || "Audio"} />
+          )
+        }
       </Show>
     );
   }

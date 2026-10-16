@@ -1541,4 +1541,27 @@ mod tests {
             explicit
         );
     }
+
+    /// A media card draws what `safeUrl` admits and the "Images from the web"
+    /// setting allows, and a workspace file as a blob; the shell's policy must
+    /// not refuse either (a video had no `media-src` and fell to `'self'`).
+    #[test]
+    fn the_shell_policy_admits_what_a_media_card_draws() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let csp = conf["app"]["security"]["csp"].as_str().unwrap();
+        for directive in ["img-src", "media-src"] {
+            let sources = csp
+                .split(';')
+                .map(str::trim)
+                .find_map(|d| d.strip_prefix(directive))
+                .expect("the shell policy names every media directive");
+            for source in ["'self'", "data:", "blob:", "https:", "http:"] {
+                assert!(
+                    sources.split_whitespace().any(|s| s == source),
+                    "{directive} lacks {source}: {csp}"
+                );
+            }
+        }
+    }
 }
