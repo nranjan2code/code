@@ -1,10 +1,10 @@
 //! The per-turn tool surface: which admitted tools are *loaded* (full schema
 //! in the request) and which are *deferred* (named in the prompt's catalogue,
-//! schema one `find_tools` call away). See docs/design/68-context-engine.md §5.
+//! schema loaded once it is called by name). See docs/design/68-context-engine.md §5.
 //!
 //! This is presentation, never policy. Every tool here was already admitted
 //! by [`super::turn`]; the split only decides what the model reads up front,
-//! so a deferred tool costs one `find_tools` round trip, never a capability.
+//! so a deferred tool costs one call by name, never a capability.
 //!
 //! The split reads each tool's own declaration (`Tool::always_loaded`,
 //! `Tool::serves`, `Tool::presents_cards`), never a reading of the request
@@ -21,8 +21,8 @@ use vak_llm::ToolDefinition;
 pub struct ToolSurface {
     /// Sent with full schemas.
     pub core: Vec<ToolDefinition>,
-    /// Schema withheld; reachable through `find_tools`, or Anthropic
-    /// `defer_loading` on legs that support it.
+    /// Schema withheld; listed in the catalogue and loaded once called by
+    /// name.
     pub deferred: Vec<ToolDefinition>,
 }
 
@@ -80,7 +80,7 @@ pub fn tool_catalogue<'a>(entries: impl IntoIterator<Item = (&'a str, &'a str)>)
     }
     lines.sort();
     format!(
-        "\nMore tools (a tool not in your schemas this turn is loaded by calling `find_tools` with its name or purpose; call it before using one):\n{}\n",
+        "\nMore tools (call any of these by its name; its schema is applied for you):\n{}\n",
         lines.join("\n")
     )
 }

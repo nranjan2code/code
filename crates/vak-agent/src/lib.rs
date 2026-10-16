@@ -438,8 +438,10 @@ pub struct AgentConfig {
     /// See `PresentationRebuild`. `None` disables the write (the ack stays
     /// the tool's own generic text — no id to embed).
     pub presentation_rebuild: Option<PresentationRebuild>,
-    /// Host-owned, scoped indexed lookup for current-conversation history.
-    /// Standalone fixtures may omit it; production Core always supplies it.
+    /// Host-owned history for `recall`: this conversation's indexed turns,
+    /// what it reaches beyond them, and the gated turns of another
+    /// conversation. Standalone fixtures may omit it, and then `recall`
+    /// searches this conversation alone; production Core always supplies it.
     pub history_recall: Option<HistoryRecall>,
     /// Schedule an incremental derived-index refresh after settlement.
     pub history_refresh: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -523,12 +525,12 @@ pub struct AgentConfig {
     /// The `ProfileKey` `capacity` was probed under, so feedback activities
     /// land on the same key (docs/design/68 §1).
     pub capacity_key: Option<capacity::ProfileKey>,
-    /// Full schemas `find_tools` has surfaced so far this run
-    /// (docs/design/68-context-engine.md §5). `tool_definitions()` appends
-    /// these after the core set on every call, in discovery order, never
-    /// reordered — so a tool the model asked for by name stays reachable
+    /// Deferred tools promoted this run: called by name, or a grounded card
+    /// whose fact appeared (docs/design/68-context-engine.md §5).
+    /// `tool_definitions()` loads these after the core set on every call, in
+    /// promotion order, never reordered, so a promoted tool stays reachable
     /// for the rest of the turn without re-entering the stable prefix.
-    pub discovered_tools: Arc<StdMutex<Vec<vak_llm::ToolDefinition>>>,
+    pub promoted_tools: Arc<StdMutex<Vec<vak_llm::ToolDefinition>>>,
 }
 
 /// Records one hook run: the hook, the tool call it ran for (`None` for a
@@ -566,10 +568,20 @@ pub type HistoryRecall = Arc<
             String,
             CancellationToken,
         )
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Recalled, String>> + Send>>
         + Send
         + Sync,
 >;
+
+/// What the host's history answered: the result the model reads, and
+/// whether it reached beyond this conversation (other conversations may hold
+/// someone else's words, and followed sources are untrusted), which decides
+/// the result's provenance (docs/design/08-permissions.md "Provenance").
+#[derive(Debug, Clone)]
+pub struct Recalled {
+    pub content: String,
+    pub reached_elsewhere: bool,
+}
 
 impl AgentConfig {
     pub fn new(system_prefix: impl Into<String>) -> Self {
@@ -631,7 +643,7 @@ impl AgentConfig {
             max_audit_blocks: 2,
             capacity: None,
             capacity_key: None,
-            discovered_tools: Arc::new(StdMutex::new(Vec::new())),
+            promoted_tools: Arc::new(StdMutex::new(Vec::new())),
         }
     }
 }
@@ -818,28 +830,23 @@ fn strip_replayed_thinking(messages: &mut [Message]) {
     }
 }
 
-/// Per-leg tool inclusion (docs/design/68-context-engine.md §5): a leg whose
-/// adapter defers tools (`Provider::defers_tools`) gets the loaded and the
-/// deferred set, the deferred schemas withheld there and found through the
-/// provider's own tool search; every other leg gets the loaded set only,
-/// because its adapter would send a deferred schema in full.
-fn tools_for_leg(tools: &[vak_llm::ToolDefinition], defers: bool) -> Vec<vak_llm::ToolDefinition> {
-    if defers {
-        return tools.to_vec();
-    }
+/// The tools a request sends (docs/design/68-context-engine.md §5): the
+/// loaded ones. A deferred tool is never sent on any wire: the model sees
+/// its catalogue line, calls it by name, and from then on it is promoted
+/// (`load_promoted`), so one path serves every provider.
+fn tools_for_leg(tools: &[vak_llm::ToolDefinition]) -> Vec<vak_llm::ToolDefinition> {
     tools.iter().filter(|t| !t.defer).cloned().collect()
 }
 
-/// Promote tools `find_tools` returned this turn from deferred to loaded, so
-/// the next step declares them on every provider. A deferred copy of the same
-/// name is replaced in place, not kept beside it: a leg that does not defer
-/// tools drops every deferred definition (`tools_for_leg`), so keeping only that copy
-/// meant a discovered tool was never callable there.
-fn load_discovered(
+/// Promote tools this turn called by name, or whose grounding fact appeared
+/// (`Agent::promote`), from deferred to loaded, so the next step sends them.
+/// A deferred copy of the same name is replaced in place, never kept beside
+/// it, since a deferred definition is never sent.
+fn load_promoted(
     definitions: &mut Vec<vak_llm::ToolDefinition>,
-    discovered: Vec<vak_llm::ToolDefinition>,
+    promoted: Vec<vak_llm::ToolDefinition>,
 ) {
-    for mut found in discovered {
+    for mut found in promoted {
         found.defer = false;
         match definitions
             .iter_mut()
@@ -937,7 +944,7 @@ mod tool_id_tests {
 
 #[cfg(test)]
 mod tool_loading_tests {
-    use super::{load_discovered, tools_for_leg};
+    use super::{load_promoted, tools_for_leg};
     use vak_llm::ToolDefinition;
 
     fn def(name: &str) -> ToolDefinition {
@@ -945,19 +952,15 @@ mod tool_loading_tests {
     }
 
     #[test]
-    fn a_discovered_tool_is_declared_on_a_leg_that_does_not_defer() {
-        let mut defs = vec![def("find_tools"), def("bash").deferred()];
+    fn a_deferred_tool_is_sent_once_promoted_and_never_duplicated() {
+        let mut defs = vec![def("read"), def("bash").deferred()];
         assert!(
-            !tools_for_leg(&defs, false).iter().any(|d| d.name == "bash"),
-            "deferred tools stay out of a leg that does not defer them until found"
+            !tools_for_leg(&defs).iter().any(|d| d.name == "bash"),
+            "a deferred tool is never sent"
         );
-        load_discovered(&mut defs, vec![def("bash")]);
+        load_promoted(&mut defs, vec![def("bash")]);
         assert_eq!(defs.len(), 2, "promoted in place, never duplicated");
-        let sent = tools_for_leg(&defs, false);
-        assert!(sent.iter().any(|d| d.name == "bash"));
-        let defs = vec![def("find_tools"), def("bash").deferred()];
-        let sent = tools_for_leg(&defs, true);
-        assert!(sent.iter().any(|d| d.name == "bash"));
+        assert!(tools_for_leg(&defs).iter().any(|d| d.name == "bash"));
     }
 }
 
@@ -1312,12 +1315,12 @@ impl Agent {
         Ok((normalized, Some(meta)))
     }
 
-    /// The admitted set before `discovered_tools` is folded in: names,
+    /// The admitted set before `promoted_tools` is folded in: names,
     /// order and initial `defer` flags this agent was configured with
     /// (plus the conditional `work` tool). Stable across a run, so a
     /// caller that freezes ITS OWN clone of this once per turn
     /// (`turn_tools` in `run_message_inner`, §7) and re-applies
-    /// `load_discovered` against that same clone every step gets a tools
+    /// `load_promoted` against that same clone every step gets a tools
     /// array whose base names/order never move -- only a `defer` flag may
     /// flip in place (a promotion, never a reorder) and a genuinely new
     /// name is appended at the end.
@@ -1442,13 +1445,13 @@ impl Agent {
 
     fn tool_definitions(&self) -> Vec<vak_llm::ToolDefinition> {
         let mut definitions = self.base_tool_definitions();
-        let discovered = self
+        let promoted = self
             .config
-            .discovered_tools
+            .promoted_tools
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        load_discovered(&mut definitions, discovered);
+        load_promoted(&mut definitions, promoted);
         definitions
     }
 
@@ -1784,14 +1787,12 @@ impl Agent {
         // turn rather than being recomputed from scratch every step.
         // `turn_tool_base` freezes `base_tool_definitions()` (names, order,
         // and each one's INITIAL `defer` flag) at the first step;
-        // `load_discovered` is re-applied against a fresh clone of it every
-        // step, using whatever `discovered_tools` holds by then. A
-        // `find_tools`/presentation-check promotion can still flip an
-        // already-admitted tool's `defer` flag in place -- required so a
-        // deferred tool that `tools_for_leg` was stripping from a
-        // non-Anthropic leg's wire request actually starts being sent --
-        // but the base set's names and order never move, and a genuinely
-        // new name is only ever appended at the end.
+        // `load_promoted` is re-applied against a fresh clone of it every
+        // step, using whatever `promoted_tools` holds by then. A promotion
+        // (a tool called by name, a grounded card's fact, a required card)
+        // flips an already-admitted tool's `defer` flag in place, so it
+        // starts being sent; the base set's names and order never move, and
+        // a genuinely new name is only ever appended at the end.
         let mut turn_plan: Option<vak_session::WorkingSetPlan> = None;
         let mut compaction_failed = false;
         let mut logged_plan: Option<String> = None;
@@ -1881,13 +1882,13 @@ impl Agent {
             // A withdrawal is an explicit change of the turn's frame: a
             // tool taken out is no longer offered, whatever was frozen.
             tool_defs.retain(|definition| !self.is_withdrawn(&definition.name));
-            let discovered = self
+            let promoted = self
                 .config
-                .discovered_tools
+                .promoted_tools
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
-            load_discovered(&mut tool_defs, discovered);
+            load_promoted(&mut tool_defs, promoted);
             let prefix_tokens =
                 profile.estimate_tokens(prefix_chars(&self.config.system_prefix, &tool_defs));
             let tail_tokens = profile.estimate_tokens(turn_tail.len() as u64);
@@ -3317,13 +3318,13 @@ impl Agent {
     }
 
     /// Promotes these of the turn's deferred tools in place for the rest of
-    /// the turn, the way a `find_tools` match is (`load_discovered`): a
-    /// grounded card whose fact a call of this turn produced, or the card a
-    /// step is required to call (docs/design/68-context-engine.md §5).
+    /// the turn (`load_promoted`): a tool called by name, a grounded card
+    /// whose fact a call of this turn produced, or the card a step is
+    /// required to call (docs/design/68-context-engine.md §5).
     fn promote(&self, base: &[vak_llm::ToolDefinition], names: &[String]) {
         let mut sink = self
             .config
-            .discovered_tools
+            .promoted_tools
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for name in names {
@@ -4909,7 +4910,7 @@ impl Agent {
         // Count what that leg was sent: only a leg that defers tools carries
         // the deferred set.
         let mut sent = request.clone();
-        sent.tools = tools_for_leg(&request.tools, self.provider.defers_tools(&request.model));
+        sent.tools = tools_for_leg(&request.tools);
         let chars_sent = chat_request_chars(&sent);
         let cache_miss = usage.cache_read_input_tokens.unwrap_or(0) == 0;
         profile.observe_usage(chars_sent, usage, first_token_latency_ms, cache_miss);
@@ -4940,7 +4941,7 @@ impl Agent {
         reason: String,
     ) -> CapacityProfile {
         let mut sent = request.clone();
-        sent.tools = tools_for_leg(&request.tools, self.provider.defers_tools(&request.model));
+        sent.tools = tools_for_leg(&request.tools);
         let request_tokens = profile.estimate_tokens(chat_request_chars(&sent));
         let mut lowered = profile.clone();
         lowered.observe_over_length(
@@ -5106,10 +5107,7 @@ impl Agent {
                     .unwrap_or_else(|| provider_arc.name().to_string())
             };
             ledger.receipt.stamp_leg(&route_provider, model);
-            // Per-leg tool inclusion (docs/design/68-context-engine.md §5):
-            // a leg that defers tools gets the deferred set too, and every
-            // other leg the loaded set, with `find_tools` for the rest.
-            leg_req.tools = tools_for_leg(&request.tools, provider_arc.defers_tools(model));
+            leg_req.tools = tools_for_leg(&request.tools);
             if li > 0 && forward {
                 self.record_activity(
                     vak_session::ActivityKind::RouteFallback,
@@ -5668,8 +5666,7 @@ impl Agent {
         let mut history_misses = HashSet::new();
         for call in recall_calls {
             let output = match self.resolve_recall(&call.input, cancel).await {
-                Ok(content) => {
-                    let labels = self.recall_provenance(&call.input).await;
+                Ok((content, labels)) => {
                     {
                         let mut yields = self
                             .call_yields
@@ -5706,26 +5703,25 @@ impl Agent {
         (results, history_misses)
     }
 
-    /// Resolves one `recall` call's arguments against the current session:
-    /// `turn` → the resolved turn's full record as text; `presentation` →
-    /// the canonical payload; `id` → the evidence content, optionally
-    /// sliced by line range. The result is a current-turn tool result and
-    /// is verbatim for the rest of that turn like any other result.
+    /// Answers one `recall` call, with what its result holds
+    /// (docs/design/08-permissions.md "Provenance"): the owner's own history
+    /// always, and what the turn, card or call it reopens held. A search
+    /// that reached beyond this conversation holds words someone else may
+    /// have written; another conversation's turn is taken to, since nothing
+    /// recorded here says it does not.
     async fn resolve_recall(
         &self,
         input: &Value,
         cancel: &CancellationToken,
-    ) -> Result<String, RecallFailure> {
-        let request = match vak_tools::parse_recall_args(input) {
-            Ok(request) => request,
-            Err(message) => {
-                return Err(RecallFailure::Malformed(format!(
-                    r#"{{"type":"invalid_arguments","message":"{message}"}}"#
-                )));
-            }
-        };
+    ) -> Result<(String, vak_control::Provenance), RecallFailure> {
+        use vak_control::Provenance;
+        let request = vak_tools::parse_recall_args(input).map_err(|message| {
+            RecallFailure::Malformed(
+                serde_json::json!({"type": "invalid_arguments", "message": message}).to_string(),
+            )
+        })?;
         // Another conversation is reachable only when an artifact attached
-        // in this one names it (plan M8.3b); Core re-checks its trash,
+        // in this one came from it (plan M8.3b); Core re-checks its trash,
         // Agent, audience and workspace on every call.
         if let RecallRequest::Elsewhere { conversation, .. } = &request {
             let named = self
@@ -5743,11 +5739,17 @@ impl Agent {
             if !named {
                 return Err(RecallFailure::Malformed(
                     serde_json::json!({"type": "invalid_arguments",
-                    "message": "that conversation is not one an artifact attached here came from"})
+                    "message": "a turn of another conversation is reopened only when a file attached here came from it; its search hit is what can be read"})
                     .to_string(),
                 ));
             }
         }
+        let own_turns = |session: &SessionLog| {
+            TurnIndex::from_log(session)
+                .turns
+                .iter()
+                .fold(Provenance::NONE, |held, turn| held.join(turn.provenance))
+        };
         if matches!(
             &request,
             RecallRequest::Search { .. }
@@ -5755,135 +5757,139 @@ impl Agent {
                 | RecallRequest::Elsewhere { .. }
         ) && let Some(recall) = &self.config.history_recall
         {
-            let leaf = self
-                .session
-                .lock()
-                .await
-                .tail_id()
-                .cloned()
-                .unwrap_or_default();
-            return tokio::select! {
-                result = recall(request, leaf, cancel.clone()) => match result {
-                    Ok(content) => Ok(content),
-                    Err(message) => Err(RecallFailure::NotFound(message)),
-                },
-                _ = cancel.cancelled() => Err(RecallFailure::NotFound(serde_json::json!({"type":"cancelled",
+            let (leaf, own) = {
+                let session = self.session.lock().await;
+                (
+                    session.tail_id().cloned().unwrap_or_default(),
+                    own_turns(&session),
+                )
+            };
+            let held = match &request {
+                RecallRequest::TurnId(id) => TurnIndex::from_log(&*self.session.lock().await)
+                    .turn_by_id(id)
+                    .map(|turn| turn.provenance),
+                RecallRequest::Search { .. } => Some(own),
+                _ => None,
+            };
+            let recalled = tokio::select! {
+                result = recall(request, leaf, cancel.clone()) => result.map_err(RecallFailure::NotFound)?,
+                _ = cancel.cancelled() => return Err(RecallFailure::NotFound(serde_json::json!({"type":"cancelled",
                     "message":"history lookup cancelled"}).to_string())),
             };
+            let held = if recalled.reached_elsewhere {
+                Provenance::BOTH
+            } else {
+                held.unwrap_or(Provenance::UNTRUSTED)
+            };
+            return Ok((recalled.content, Provenance::PRIVATE.join(held)));
         }
         let session = self.session.lock().await;
-        match request {
+        let (content, held) = match request {
             RecallRequest::Search { query, limit } => {
                 let mut index = TurnIndex::from_log(&session);
                 index.ensure_cards(&|_| 0);
-                let matches = index.search(&query);
-                let positions: HashMap<&str, usize> = index
-                    .turns
-                    .iter()
-                    .enumerate()
-                    .map(|(n, turn)| (turn.id.as_str(), n))
-                    .collect();
-                let candidates: Vec<Value> = matches
+                let matches: Vec<Value> = index
+                    .search(&query)
                     .into_iter()
-                    .filter_map(|(id, score)| {
-                        let n = *positions.get(id.as_str())?;
-                        let turn = &index.turns[n];
+                    .filter_map(|(id, _)| {
+                        let (n, turn) = index
+                            .turns
+                            .iter()
+                            .enumerate()
+                            .find(|(_, turn)| turn.id == id)?;
                         if !turn.closed || turn.behind_reset {
                             return None;
                         }
                         let card = turn.card.as_ref()?;
-                        Some(serde_json::json!({"turn": n + 1, "turn_id": id,
-                        "match_score": score, "record": card.line(n + 1)}))
+                        Some(serde_json::json!({"open": format!("turn:{id}"),
+                            "record": card.line(n + 1)}))
                     })
                     .take(limit)
                     .collect();
-                Ok(serde_json::json!({"matches": candidates,
-                    "scope": "current_conversation", "historical": true,
-                    "note": "Search matches are candidates, not proof. Reopen the matching turn to verify; current conditions require fresh evidence."}).to_string())
+                (
+                    serde_json::json!({"this_conversation": matches,
+                        "note": "Matches are candidates, not proof: reopen one to verify. What a record says was true then."})
+                    .to_string(),
+                    Some(own_turns(&session)),
+                )
             }
             RecallRequest::TurnId(id) => {
                 let index = TurnIndex::from_log(&session);
-                match index.turn_by_id(&id) {
-                    Some(turn) => Ok(render_full_record(&turn.full_record())),
-                    None => Err(RecallFailure::NotFound(serde_json::json!({"type": "not_found", "message": "no matching turn in this conversation"}).to_string())),
-                }
+                let turn = index.turn_by_id(&id).ok_or_else(|| {
+                    RecallFailure::NotFound(
+                        serde_json::json!({"type": "not_found",
+                        "message": "no matching turn in this conversation"})
+                        .to_string(),
+                    )
+                })?;
+                (
+                    render_full_record(&turn.full_record()),
+                    Some(turn.provenance),
+                )
             }
-            RecallRequest::Elsewhere { .. } => Err(RecallFailure::NotFound(
-                serde_json::json!({"type": "history_unavailable",
-                    "message": "other conversations cannot be read in this run"})
-                .to_string(),
-            )),
+            RecallRequest::Elsewhere { .. } => {
+                return Err(RecallFailure::NotFound(
+                    serde_json::json!({"type": "history_unavailable",
+                        "message": "other conversations cannot be read in this run"})
+                    .to_string(),
+                ));
+            }
             RecallRequest::Turn(n) => {
                 let index = TurnIndex::from_log(&session);
-                match index.turn_by_number(n as usize) {
-                    Some(turn) => Ok(render_full_record(&turn.full_record())),
-                    None => Err(RecallFailure::NotFound(format!(
-                        r#"{{"type":"not_found","message":"no turn numbered {n}"}}"#
-                    ))),
-                }
+                let turn = index.turn_by_number(n as usize).ok_or_else(|| {
+                    RecallFailure::NotFound(
+                        serde_json::json!({"type": "not_found",
+                        "message": format!("no turn #{n} in this conversation")})
+                        .to_string(),
+                    )
+                })?;
+                (
+                    render_full_record(&turn.full_record()),
+                    Some(turn.provenance),
+                )
             }
             RecallRequest::Presentation(id) => {
-                match session
+                let (_, record) = session
                     .presentations()
                     .into_iter()
                     .find(|(pid, _)| *pid == id)
-                {
-                    Some((_, record)) => Ok(record.payload.to_string()),
-                    None => Err(RecallFailure::NotFound(format!(
-                        r#"{{"type":"not_found","message":"no presentation {id}"}}"#
-                    ))),
-                }
+                    .ok_or_else(|| {
+                        RecallFailure::NotFound(
+                            serde_json::json!({"type": "not_found",
+                            "message": format!("no card pres:{id}")})
+                            .to_string(),
+                        )
+                    })?;
+                (record.payload.to_string(), Some(own_turns(&session)))
             }
-            RecallRequest::Id { id, range, chars } => match session.evidence(&id) {
-                Some(evidence) => Ok(match chars {
-                    Some((start, end)) => vak_tools::apply_chars(&evidence.content, start, end),
-                    None => vak_tools::apply_range(&evidence.content, range),
-                }),
-                None => Err(RecallFailure::NotFound(format!(
-                    r#"{{"type":"not_found","message":"no evidence {id}"}}"#
-                ))),
-            },
-        }
-    }
-
-    /// What a `recall` result holds (docs/design/08-permissions.md
-    /// "Provenance"): the owner's own history always, and what the turn or
-    /// call it reopens held. A search or a card of this conversation holds
-    /// what its turns held; another conversation is taken to hold words
-    /// someone else wrote, since nothing recorded here says it does not.
-    async fn recall_provenance(&self, input: &Value) -> vak_control::Provenance {
-        use vak_control::Provenance;
-        let Ok(request) = vak_tools::parse_recall_args(input) else {
-            return Provenance::NONE;
-        };
-        let session = self.session.lock().await;
-        let reopened = match request {
-            RecallRequest::Turn(n) => TurnIndex::from_log(&session)
-                .turn_by_number(n as usize)
-                .map(|turn| turn.provenance),
-            RecallRequest::TurnId(id) => TurnIndex::from_log(&session)
-                .turn_by_id(&id)
-                .map(|turn| turn.provenance),
-            RecallRequest::Id { id, .. } => session.call_provenance(&id).or_else(|| {
-                session.evidence(&id).and_then(|evidence| {
+            RecallRequest::Evidence { id, lines, chars } => {
+                let evidence = session.evidence(&id).ok_or_else(|| {
+                    RecallFailure::NotFound(
+                        serde_json::json!({"type": "not_found",
+                        "message": format!("no tool result ev:{id}")})
+                        .to_string(),
+                    )
+                })?;
+                let content = match chars {
+                    Some((start, end)) => {
+                        vak_tools::apply_chars(&id, &evidence.content, start, end)
+                    }
+                    None => vak_tools::apply_range(&evidence.content, lines),
+                };
+                let held = session.call_provenance(&id).or_else(|| {
                     self.config
                         .tools
                         .iter()
                         .find(|tool| tool.name() == evidence.tool)
                         .map(|tool| tool.provenance())
-                })
-            }),
-            // What a search or a card of this conversation returns came
-            // from its own turns, so it holds at most what they held.
-            RecallRequest::Presentation(_) | RecallRequest::Search { .. } => Some(
-                TurnIndex::from_log(&session)
-                    .turns
-                    .iter()
-                    .fold(Provenance::NONE, |held, turn| held.join(turn.provenance)),
-            ),
-            RecallRequest::Elsewhere { .. } => None,
+                });
+                (content, held)
+            }
         };
-        Provenance::PRIVATE.join(reopened.unwrap_or(Provenance::UNTRUSTED))
+        Ok((
+            content,
+            Provenance::PRIVATE.join(held.unwrap_or(Provenance::UNTRUSTED)),
+        ))
     }
 
     async fn execute_batch_inner(
@@ -6506,31 +6512,14 @@ impl Agent {
         }
     }
 
-    /// A call to a tool this turn deferred loads it, as `find_tools` would:
-    /// a model that calls a tool it was shown only by name wrote arguments
-    /// it could not see the schema for (found live: `metric_data` and an
-    /// invented `emit_card`, repeated three times), so the next step carries
-    /// the schema whatever this call's outcome.
+    /// A call to a tool this turn deferred loads it: a model that calls a
+    /// tool it was shown only by name wrote arguments it could not see the
+    /// schema for (found live: `metric_data` and an invented `emit_card`,
+    /// repeated three times), so the next step carries the schema whatever
+    /// this call's outcome.
     fn load_called_deferred(&self, calls: &[PendingToolCall]) {
-        let deferred: Vec<vak_llm::ToolDefinition> = self
-            .base_tool_definitions()
-            .into_iter()
-            .filter(|definition| definition.defer)
-            .filter(|definition| calls.iter().any(|call| call.name == definition.name))
-            .collect();
-        if deferred.is_empty() {
-            return;
-        }
-        let mut discovered = self
-            .config
-            .discovered_tools
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for definition in deferred {
-            if !discovered.iter().any(|known| known.name == definition.name) {
-                discovered.push(definition);
-            }
-        }
+        let names: Vec<String> = calls.iter().map(|call| call.name.clone()).collect();
+        self.promote(&self.base_tool_definitions(), &names);
     }
 
     async fn execute_batch_calls(

@@ -191,7 +191,7 @@ async fn run_heartbeat_turn(
     let ledger = take_persistent_session(&core).await?;
     let prompt = format!(
         "Heartbeat review pass. You are an unattended check-in: use the \
-         tools you have (commitments, tasks, session_search, read) to review \
+         tools you have (commitments, tasks, recall, read) to review \
          what the person is waiting on — open commitments, scheduled \
          routines that failed or did not run, recent conversations left \
          unfinished, and work that has gone stale. Reply either exactly \

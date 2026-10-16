@@ -113,9 +113,8 @@ pub struct TurnBinding {
     /// Tool names sent with full schemas in the stable prefix this turn
     /// (docs/design/68-context-engine.md §5).
     pub core_tool_names: Vec<String>,
-    /// Tool names withheld from the prefix this turn — reachable via
-    /// `find_tools`, or via Anthropic `defer_loading` on legs that support
-    /// it.
+    /// Tool names withheld from the prefix this turn: each is listed by
+    /// name and loaded once called by name (docs/design/68 §5).
     pub deferred_tool_names: Vec<String>,
     /// The rendered `tool_index` text sent this turn: one line per deferred
     /// tool, no schemas.

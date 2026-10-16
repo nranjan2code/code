@@ -128,11 +128,9 @@ pub struct ToolDefinition {
     pub description: String,
     #[serde(rename = "input_schema")]
     pub parameters: Value,
-    /// Scheduling hint (docs/design/68 §5/§11): an adapter that defers
-    /// tools (`Provider::defers_tools`, today Anthropic's) renders
-    /// `defer_loading: true` and keeps the schema out of the stable prefix.
-    /// Every other adapter never reads it, and its caller sends it no
-    /// deferred tool.
+    /// Deferred this turn (docs/design/68-context-engine.md §5): the loop
+    /// never sends it; the model sees its catalogue line and calls it by
+    /// name, and it is promoted from then on. No adapter reads it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub defer: bool,
     /// Sent strict before other tools when a wire limits how many go strict
@@ -171,7 +169,7 @@ impl ToolDefinition {
         )
     }
 
-    /// Same tool, marked deferred (Anthropic `defer_loading`).
+    /// Same tool, marked deferred.
     pub fn deferred(mut self) -> Self {
         self.defer = true;
         self

@@ -13,7 +13,7 @@ flowchart LR
     E --> F
     D --> G[Skill review queue]
     E --> G
-    F --> H[session_search curated hit]
+    F --> H[recall curated hit]
     G --> I{Human review}
     I -- Promote --> J[Discoverable SKILL.md]
     I -- Reject --> K[Remove proposal]
@@ -45,7 +45,7 @@ We implement the loop with two model-invoked tools and one human gate:
 run completes ── model decides something is worth keeping
    │
    ├─ remember(note, kind?, tag?)        → MEMORY.md block (immediate)
-   │      recalled by session_search, ranked above raw transcripts
+   │      found by recall, ranked above raw transcripts
    │
    └─ propose_skill(name, description, instructions)
           → review queue (the Agent's skill-proposal Documents)
@@ -69,7 +69,7 @@ run completes ── model decides something is worth keeping
    Promoted skills enter discovery, whose names+descriptions are captured in
    every later FrozenContract.
 4. **No standing prompt injection.** Nothing is injected into prompts by the
-   note store; recall flows through `session_search`, which ranks memory
+   note store; recall flows through `recall`, whose search ranks memory
    blocks against transcripts. When enabled, post-run reflection makes an
    additional model call after a clean gateway completion.
 
@@ -101,7 +101,7 @@ text of the preceding block — hand-edits never lose data.
 | Tool | Args | Effect | Permission |
 |---|---|---|---|
 | `remember` | `note` (required), `kind` (fact\|decision\|preference\|reference\|invariant), `tag` | append block and return its `memory/<id>` source id | Allowed in WorkspaceWrite+ (journaling into vak's own per-workspace store, like session ledgers themselves); denied in ReadOnly |
-| `forget_memory` | `note_id` (required; exact `memory/<id>` or `profile/<id>` from `session_search`) | remove exactly one curated memory block; the source conversation remains in history | Allowed in WorkspaceWrite+; denied in ReadOnly |
+| `forget_memory` | `note_id` (required; exact `memory/<id>` or `profile/<id>` from a `recall` hit) | remove exactly one curated memory block; the source conversation remains in history | Allowed in WorkspaceWrite+; denied in ReadOnly |
 | `propose_skill` | `name`, `description`, `instructions` | queue file | Same |
 
 Each tool declares its reach (`Tool::permission`), so the engine decides
@@ -114,7 +114,7 @@ Memory and profile notes are rows in the data catalog beside conversation
 text (`Catalog::search`, docs/design/23-memory.md); hits surface as
 `role: "memory"` with a stable `memory/<id>` or `profile/<id>` source id and
 the note's tag/kind in the snippet prefix. This gives `forget_memory` an exact target after the agent
-searches for the note the user asked it to forget. `session_search` and
+searches for the note the user asked it to forget. `recall` and
 `GET /search` both feed parsed MEMORY.md entries in.
 
 ## Promotion

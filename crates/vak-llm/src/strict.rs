@@ -149,8 +149,7 @@ fn nullable(property: &mut Value) {
 
 /// Which of `tools` go strict, in the order given, and the strict schema of
 /// each that does: tools that prefer it first (`ToolDefinition::prefer_strict`),
-/// then the rest, within the dialect's published limits. A deferred tool
-/// never goes strict: its schema is not in the request.
+/// then the rest, within the dialect's published limits.
 pub fn select(tools: &[ToolDefinition], dialect: Dialect) -> Vec<Option<Value>> {
     let mut chosen: Vec<Option<Value>> = vec![None; tools.len()];
     let mut order: Vec<usize> = (0..tools.len()).collect();
@@ -158,9 +157,6 @@ pub fn select(tools: &[ToolDefinition], dialect: Dialect) -> Vec<Option<Value>> 
     let (mut count, mut optional, mut unions) = (0usize, 0usize, 0usize);
     for at in order {
         let tool = &tools[at];
-        if tool.defer {
-            continue;
-        }
         let Some(schema) = strict_schema(&tool.parameters, dialect) else {
             continue;
         };

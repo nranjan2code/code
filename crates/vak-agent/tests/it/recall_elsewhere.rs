@@ -1,6 +1,6 @@
-//! Reach-back (plan M8.3b, docs/design/82-library.md §6): `recall` reads
-//! another conversation only when an artifact attached in this one names
-//! it; any other conversation is refused before Core is asked.
+//! Reach-back (plan M8.3b, docs/design/82-library.md §6): `recall` reopens
+//! a turn of another conversation only when an artifact attached in this
+//! one came from it; any other conversation is refused before Core is asked.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -19,7 +19,7 @@ fn recall_call(id: &str, conversation: &str) -> AssistantMessage {
         content: vec![ContentBlock::ToolUse {
             id: id.into(),
             name: "recall".into(),
-            input: serde_json::json!({"query": "harbour", "conversation": conversation}),
+            input: serde_json::json!({"open": format!("conversation:{conversation}/turn:t1")}),
         }],
         stop_reason: StopReason::ToolUse,
         usage: Usage::default(),
@@ -138,7 +138,10 @@ async fn recall_reaches_only_conversations_attached_artifacts_name() {
         Box::pin(async move {
             if let vak_tools::RecallRequest::Elsewhere { conversation, .. } = request {
                 seen.lock().unwrap().push(conversation.clone());
-                return Ok(format!("turns of {conversation}"));
+                return Ok(vak_agent::Recalled {
+                    content: format!("turns of {conversation}"),
+                    reached_elsewhere: true,
+                });
             }
             Err("unexpected".into())
         })

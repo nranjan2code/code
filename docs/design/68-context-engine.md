@@ -67,7 +67,7 @@ it (the probe, the summariser call, receipts and feedback written back).
                       │               │  ▲                  │
                       │               │  │ relevance         │ stable prefix / tail
                       ▼               ▼  │                   ▼
-                 EvidenceStore   CompactionPacket      ToolSurface (core + index + find_tools)
+                 EvidenceStore   CompactionPacket      ToolSurface (core + index; call by name)
                  (full results,   (summary + ids)
                   recall tool)
 ```
@@ -328,7 +328,7 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
 "Tool surface"). Each tool declares itself on the `Tool` trait.
 
 - **Loaded**: tools that declare `always_loaded` (`read`, `glob`, `grep`,
-  `find_tools`, `recall`, `skill`, `mcp`, `session_search`, `commitments`);
+  `recall`, `remember`, `skill`, `mcp`, `commitments`);
   tools whose `serves` meets the reading's required domains; undeclared
   tools; and every admitted tool that declares `presents_cards`, except a
   grounded card (below). Output-shape
@@ -351,8 +351,8 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
   loaded once the conversation holds such a call (`vak_tools::grounds_held`
   over the ledger's call effects and the calls of tools that declare
   `answers_data`), and promoted in place at the step one appears
-  (`Agent::promote`, the `find_tools` path), so the turn's tools array
-  changes only as a discovery changes it, and only grows. Until then it is
+  (`Agent::promote`, the promotion a call by name takes), so the turn's
+  tools array changes only as a promotion changes it, and only grows. Until then it is
   listed in the catalogue, and a card the plan check requires is promoted
   first. Nothing names a tool: a tool added at runtime that runs, writes,
   retrieves or answers data brings its card. Measured: on the installed
@@ -363,38 +363,31 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
   and ungrounded presentation tools are excluded because their schemas are
   already visible; grounded cards are listed. It
   depends on the admitted set only, never on the reading, so it does not move
-  when the loaded set does. Presentation emitters previously appeared here
-  without schemas; live runs guessed fields or emitted prose without searching.
-  Loading their full schemas from the start removes that discovery dependency.
-- **`find_tools({ query })`** returns full schemas for matching admitted
-  tools and promotes deferred matches to loaded definitions for the rest of the turn on
-  every provider (`vak_agent::load_discovered`). A tool any turn of the
-  conversation called is loaded from its next turn on
-  (`SessionLog::called_tools`, read from the ledger, so a restart or
-  another process serving the conversation changes nothing). Its result reports how many
-  tool names are new to the current turn. Search covers tool names,
-  descriptions, argument names/descriptions at every schema depth, and schema
-  enum values (for example a card's `semantic_type` choices), so a model can
-  discover a deferred card emitter by the kind of result it needs to present.
-  An exact enum-value match ranks ahead of partial matches. Remaining matching
-  is case-insensitive substring and token overlap, not semantic retrieval, so
-  colloquial or ambiguous queries can rank poorly or miss an emitter. It does
-  not search individual presentation-pack definitions: the model selects the
-  card semantic type, then the server resolves the active compatible pack.
-  Repeating discovery with a different wording that returns only already
-  surfaced schemas says so explicitly. The prompt tells the model to stop
-  rephrasing that search and use an available tool or state the missing
-  capability. The presentation-check nudge can also expose admitted schemas
-  when a substantial structured draft misses presentation selection. This is
-  a single optional reconsideration, not a model-capacity failure. If a successful card is followed by structured answer text,
-  `[card-completion-check]` asks for any missing or incomplete parts to be
-  emitted as cards within the same logical turn. The answer projection still
-  preserves the assistant's text and gives it no special prefix semantics.
-  Which tools are loaded follows each tool's declaration, never the reading
-  (docs/design/88-control-plane.md §12.1). On a wire whose adapter defers tools
-  (`Provider::defers_tools`, today Anthropic's) the deferred schemas additionally
-  ride `defer_loading: true` with the server-side tool search tool (§11); every
-  other leg is sent the loaded set only.
+  when the loaded set does. Its header says a listed tool is called by its
+  name. Presentation emitters previously appeared here without schemas; live
+  runs guessed fields or emitted prose without searching. Loading their full
+  schemas from the start removes that discovery dependency.
+- **A deferred tool is called by its name** (2026-10-16). Its arguments,
+  written without the schema, are rewritten under it before the call is
+  recorded when the schema refuses them (docs/design/89-constrained-tool-
+  arguments.md §4.3), and the tool is promoted in place for the rest of the
+  turn (`Agent::load_called_deferred`, `load_promoted`). A tool any turn of
+  the conversation called is loaded from its next turn on
+  (`SessionLog::called_tools`, read from the ledger, so a restart or another
+  process serving the conversation changes nothing). No wire sends a
+  deferred schema: every provider gets the loaded set (`tools_for_leg`), so
+  one path serves them all. This replaced `find_tools` and Anthropic's
+  `defer_loading` with its server-side tool search: measured on the
+  installed route, the model called `find_tools` for tools it already had
+  (compare 8 of 16, table 5 of 16), and a second deferral mechanism on one
+  wire was a second contract to keep in agreement (invariant 30;
+  docs/audits/history-lookup-2026-10-16.md). Which tools are loaded follows
+  each tool's declaration, never the reading
+  (docs/design/88-control-plane.md §12.1).
+- **Card checks**: the presentation-check nudge can expose admitted schemas
+  when a substantial structured draft misses presentation selection, once.
+  The answer projection preserves the assistant's text and gives it no
+  special prefix semantics.
 - **MCP**: reached only through `mcp`, and started only by that demand
   (docs/design/41-capability-registry.md). The prompt names each admitted
   server with the tool *names* the pool last observed (none before its first
@@ -418,7 +411,7 @@ SHA-256. `docs/design/83-prompt-system.md` §10 shows the current tail.
 ```
 [system]   static layers only: identity, contract, guardrails, surface,
            skill list, MCP server names, tool catalogue.  ← byte-identical across turns
-[tools]    core schemas in a fixed order, then any find_tools additions
+[tools]    core schemas in a fixed order, then any promoted tools
 [messages] only turns explicitly selected by the working-set plan
            compaction packet (if this exact range was requested)
            selected Full records or compact Cards
@@ -620,7 +613,7 @@ provider prefix cache hit ~100% (observed: `matched=28964/29063`).
 | Current-turn assistant text between calls | verbatim | it is the model's own working state |
 | Current-turn thinking | replayed **only if the provider requires it** (Anthropic signed thinking with tool use; OpenAI Responses reasoning items or `previous_response_id`); dropped for OpenAI-chat/Ollama/Google | required for API validity there, pure cost elsewhere |
 | Nudges (stop-policy re-dispatch, repair directive, steering) | appended at the tail, never inserted earlier | keeps the prefix stable |
-| `find_tools` additions | appended to the tool list, never reordered | same |
+| Promoted tools (called by name, grounded) | appended to the tool list, never reordered | same |
 | Retries / re-dispatch after transient errors | identical bytes | cache hit on the retry |
 | Open turn outgrows the plan (history plus the turn as it stands would exceed the ceiling) | history is re-planned smaller with the turn's real size; the open turn stays verbatim; thinking blocks that were produced under the old shape are dropped; cache loss accepted | the only case where the middle changes, and it is a replan, not a cut. A turn whose own prefix, tail and steps exceed the ceiling takes the handoff rescue (§4) |
 
@@ -878,9 +871,9 @@ providers are out of scope here.
 
 | Provider (Vak name) | Prefix caching | Breakpoints / keys | Thinking across steps | Native deferred tools | Native compaction / context editing | Assembler rules |
 |---|---|---|---|---|---|---|
-| **Anthropic** | explicit; order tools → system → messages; min 512 (Fable/Mythos/Opus 5), 1,024 (Sonnet 5/4.6/4.5, Opus 4.8), 2,048 (Opus 4.7), 4,096 (Haiku 4.5, Opus 4.6/4.5); writes 1.25× (5m) / 2× (1h), reads 0.1× (0.025× Fable 5.1 / Mythos 5.1); 20-block lookback per breakpoint, runs of tool_use/tool_result count as one position | up to 4 `cache_control` blocks, or top-level `cache_control` for an auto-advancing breakpoint; `max_tokens: 0` pre-warms | signed `thinking` blocks must be replayed within a turn when tools are used; Opus 4.5+/Sonnet 4.6+/Fable/Mythos keep prior-turn thinking without breaking cache, earlier models and Haiku strip it | `defer_loading: true` per tool + `tool_search_tool_regex_20251119` / `_bm25_20251119` (all 4.5+ models); deferred schemas stay out of the prefix; a deferred tool cannot carry `cache_control`; custom search may return `tool_reference` blocks | `context-management-2025-06-27`: `clear_tool_uses_20250919` (trigger/keep/clear_at_least/exclude_tools), `clear_thinking_20251015`; `compact-2026-01-12`: `compact_20260112` (min trigger 50k, default 150k; readable summary block; `pause_after_compaction`; billing in `usage.iterations`) | breakpoint after tools+system, after the last past-turn message, and on the current step's last block (moved each step); top-level `cache_control` is the simpler equivalent — use it and keep one explicit breakpoint on the prefix. Use `defer_loading` for the non-core tool set and `clear_thinking` with `keep: all` on models that preserve it. Native compaction is opt-in (§12). |
+| **Anthropic** | explicit; order tools → system → messages; min 512 (Fable/Mythos/Opus 5), 1,024 (Sonnet 5/4.6/4.5, Opus 4.8), 2,048 (Opus 4.7), 4,096 (Haiku 4.5, Opus 4.6/4.5); writes 1.25× (5m) / 2× (1h), reads 0.1× (0.025× Fable 5.1 / Mythos 5.1); 20-block lookback per breakpoint, runs of tool_use/tool_result count as one position | up to 4 `cache_control` blocks, or top-level `cache_control` for an auto-advancing breakpoint; `max_tokens: 0` pre-warms | signed `thinking` blocks must be replayed within a turn when tools are used; Opus 4.5+/Sonnet 4.6+/Fable/Mythos keep prior-turn thinking without breaking cache, earlier models and Haiku strip it | `defer_loading: true` per tool + `tool_search_tool_regex_20251119` / `_bm25_20251119` (all 4.5+ models); deferred schemas stay out of the prefix; a deferred tool cannot carry `cache_control`; custom search may return `tool_reference` blocks | `context-management-2025-06-27`: `clear_tool_uses_20250919` (trigger/keep/clear_at_least/exclude_tools), `clear_thinking_20251015`; `compact-2026-01-12`: `compact_20260112` (min trigger 50k, default 150k; readable summary block; `pause_after_compaction`; billing in `usage.iterations`) | breakpoint after tools+system, after the last past-turn message, and on the current step's last block (moved each step); top-level `cache_control` is the simpler equivalent — use it and keep one explicit breakpoint on the prefix. Vak does not use `defer_loading`: one call-by-name path serves every wire (§5). Use `clear_thinking` with `keep: all` on models that preserve it. Native compaction is opt-in (§12). |
 | **OpenAI chat** (`openai`) | GPT-5.6+: explicit or implicit, min 1,024, writes 1.25×, reads 0.1×; earlier models implicit only, `cached_tokens` rounded down to 128 | `prompt_cache_options: {mode: explicit\|implicit, ttl: "30m"}` + `prompt_cache_breakpoint: {mode: explicit}` on a content block, up to 4 writes; earlier models: `prompt_cache_key` (routing) and `prompt_cache_retention: "24h" \| "in_memory"` | chat completions carry no reasoning items; nothing to replay | none on chat | none on chat | send `prompt_cache_key = session id`; on GPT-5.6+ explicit breakpoints at the same three positions as Anthropic; never change tools, schemas, reasoning effort or verbosity mid-session (each resets the prefix) |
-| **OpenAI Responses** (`openai-responses`) | as above | as above; `instructions` cannot carry a breakpoint, so the stable prefix must be a developer message | reasoning items must be carried: either replay them (stateless) or chain with `previous_response_id` (server-held); `configuration_update` items change effort without breaking the prefix | `defer_loading` + `tool_search` exist and are not used: measured 2026-10-08, a deferred tool still costs its description on every request and the model chose `find_tools` (docs/design/01-llm.md, "Deferred tools and tool search") | `context_management: {compact_threshold}` server-side, or `POST /responses/compact`; compaction items are **opaque and encrypted** | within a turn prefer `previous_response_id` (no reasoning replay); across turns Vak's own projection with stateless input; native compaction off by default because its output cannot be audited in the ledger |
+| **OpenAI Responses** (`openai-responses`) | as above | as above; `instructions` cannot carry a breakpoint, so the stable prefix must be a developer message | reasoning items must be carried: either replay them (stateless) or chain with `previous_response_id` (server-held); `configuration_update` items change effort without breaking the prefix | `defer_loading` + `tool_search` exist (gpt-5.4 and later) and are not used: one call-by-name path serves every wire (§5) | `context_management: {compact_threshold}` server-side, or `POST /responses/compact`; compaction items are **opaque and encrypted** | within a turn prefer `previous_response_id` (no reasoning replay); across turns Vak's own projection with stateless input; native compaction off by default because its output cannot be audited in the ledger |
 | **Google** (`google`) | implicit on Gemini 2.5+, min 2,048 (2.5) / 4,096 (3.x); reported as `usage.total_cached_tokens`; explicit `cachedContents` for long stable prefixes | none per block; explicit cache object with TTL | thinking models require **thought signatures** replayed exactly (stateless) or `store: true` + `previous_interaction_id` (Interactions API, server-managed) | none | none client-visible | keep the prefix identical; replay thought blocks within a turn; explicit cache for a prefix above the minimum when the session is long-lived; `thinking_level` chosen by intent stakes, not fixed |
 | **OpenRouter** (`openrouter`, `-responses`) | pass-through: OpenAI automatic + explicit, Anthropic `cache_control`, Gemini implicit/explicit, DeepSeek/Grok/Groq/Moonshot/Z.AI automatic, Qwen explicit | Anthropic-style `cache_control` on content blocks is translated per upstream; top-level `cache_control` for auto; `session_id` pins the upstream for cache reuse; `usage.prompt_tokens_details.{cached_tokens, cache_write_tokens, cache_discount}` | depends on upstream; treat as stateless replay | none | none | always send `session_id`; place `cache_control` as for Anthropic and let OpenRouter translate; the probe decides whether hits actually occur for the routed upstream |
 | **Bedrock Mantle** (`bedrock`) | OpenAI-compatible Responses models with explicit caching; Anthropic models via the Messages API with `cache_control` | `cache_control` / `prompt_cache_key` as documented by AWS | as OpenAI Responses | as upstream | as upstream | same rules as the upstream family; the probe verifies pass-through |
@@ -902,8 +895,7 @@ Provider-native compaction, tool search and context editing are faster and
 cheaper than doing the same client-side. The rule for using them:
 
 - **Use** a native feature when its effect is visible in the ledger and the
-  request stays reproducible: Anthropic `defer_loading` + tool search (the
-  discovered `tool_reference` blocks are in the response), `clear_thinking`,
+  request stays reproducible: `clear_thinking`,
   OpenAI `previous_response_id` within a turn, Gemini `previous_interaction_id`
   within a turn.
 - **Not implemented** for a native feature whose output the ledger cannot

@@ -19,17 +19,18 @@ data catalog's full-text index.
 ## Model
 
 ```
-model calls session_search {query, limit?}
+model calls recall {query, limit?}
         │
+this conversation's turns (Catalog::search_turns)  +  Elsewhere::search:
 Catalog::search(query, audience, scope, limit)
         │  the catalog caught up with every ledger and Document first
         │  FTS5 over message text, tool-result digests, memory notes,
         │  profile notes, entities and intake items, filtered by Agent,
         │  audience, space, the trash and intake's holds before ranking
         ▼
-top-N hits: {session, ts, role, score, snippet}
+{this_conversation: [{open, record}], elsewhere: [{from, id, date, text, open?}]}
         │
-returned as an ordinary tool result → appended to the ledger
+returned as one ordinary tool result → appended to the ledger
 ```
 
 A workspace search covers the workspace's space and anything of no space
@@ -37,8 +38,12 @@ A workspace search covers the workspace's space and anything of no space
 plan M6.5); `/search?all=true` covers every space. An intake item that
 detection held, or a person quarantined, never reaches the model's
 search: only a person's own view (`/search`, the intake reader) sets
-`Audience::held`, so every Agent read is closed by default. The current session
-and the trash are excluded. A memory note derived from a conversation keeps
+`Audience::held`, so every Agent read is closed by default. The trash is
+excluded, and the current conversation is searched as this conversation,
+never as elsewhere. `recall` is the only model-visible search (one tool,
+2026-10-16: a model offered two picked the one that cannot search this
+conversation 13 times in 16; docs/audits/history-lookup-2026-10-16.md);
+`[memory] search_enabled = false` keeps it to this conversation. A memory note derived from a conversation keeps
 that conversation's audience; profile notes belong to the owner's local
 audience. The model sees a search answer only through a logged
 `tool_result`, preserving invariant 1. The catalog is Derived; the ledgers
@@ -57,9 +62,9 @@ flowchart LR
 
 Session search ranks in the catalog with FTS5's `bm25` over the text
 projections (`Catalog::search`, `crates/vak-catalog`), after the audience
-filter, with snippets from FTS5's `snippet`. `session_search` returns
-`DEFAULT_LIMIT = 8` hits unless the call asks for up to 50
-(`vak-core/src/session_search.rs`). Recall inside one conversation ranks
+filter, with snippets from FTS5's `snippet`. `recall` returns 8 hits of
+each kind unless the call asks for up to 20 (`vak_tools::recall`,
+`vak-core/src/elsewhere.rs`). Recall inside one conversation ranks
 with `vak_session::text::score_normalized`: lowercased alphanumeric tokens
 of two or more characters, BM25-style saturated term frequency
 (`k1 = 1.2`, `b = 0.75`), a bonus for the whole phrase and for indexed
@@ -69,7 +74,7 @@ entity matches. There is one scorer for each and no surface keeps its own.
 
 | Surface | Access |
 |---|---|
-| Agent loop | `session_search` tool, injected in `Core::run_turn_with` next to task/MCP |
+| Agent loop | `recall`, answered by the loop; what it reaches beyond its conversation is `Core::elsewhere`, handed to it in `Core::run_turn_with` |
 | TUI/desktop/server/admin | `GET /search?q=…&limit=…` over the same function; Admin exposes scoped CRUD and cleanup controls |
 | Context | the working-set planner may retrieve relevant history under its context profile (doc 68) |
 

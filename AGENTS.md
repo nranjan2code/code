@@ -1295,7 +1295,7 @@ commit (invariant 30).
   was retrieved, an ability answered). That one loads once the conversation
   holds such a call, read from the ledger's own records
   (`vak_tools::grounds_held`), and is promoted in place at the step one
-  appears, the way a `find_tools` match is; a card required by the plan
+  appears, the way a tool called by name is; a card required by the plan
   check is promoted too. Before then it could only be refused, so it waits
   under "More tools". Schemas carry no historical card content and
   do not make ordinary conversation require structured output. Recipes and
@@ -1454,12 +1454,10 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      one model (model_identity.rs): confirmed
                      `[route] same_model` groups, and suggestions read
                      from id spelling alone, used only once confirmed. `ChatRequest.cache` (session key +
-                     per-message breakpoints) and `ToolDefinition.defer`
-                     render per provider: Anthropic `cache_control` (<=4
-                     breakpoints) + `defer_loading` + the server-side tool
-                     search tool with opaque `ContentBlock::Provider`
-                     round-tripping (which wire defers is the adapter's
-                     `Provider::defers_tools`), OpenAI `prompt_cache_key` +
+                     per-message breakpoints) render per provider:
+                     Anthropic `cache_control` (<=4 breakpoints) with
+                     opaque `ContentBlock::Provider` round-tripping for
+                     server tools, OpenAI `prompt_cache_key` +
                      `previous_response_id` chaining, OpenRouter
                      `session_id`; `turn.rs::current_turn_boundary` decides
                      what thinking gets replayed. Native Ollama
@@ -1543,7 +1541,7 @@ crates/vak-catalog   the data catalog (plan M6, docs/design/73 §9): one
                      holds each session's entry locations, one skew-binary
                      jump pointer per entry for branch membership, and
                      turn records for the turn recall (history.rs). Every
-                     search (`/search`, admin, `session_search`, recall)
+                     search (`/search`, admin, recall)
                      and every "where is session X" goes through it
 crates/vak-intake    intake connectors (plan M6.5, docs/design/76): the
                      closed set of source kinds (RSS/Atom, YouTube, Hacker
@@ -1628,7 +1626,7 @@ crates/vak-sandbox   the isolated-execution contract, deliberately ignorant
                      destination (docs/design/25-docker-sandbox.md,
                      54-task-environments-and-promotion.md)
 crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse/
-                     find_tools/recall behind Tool trait, the one reader
+                     recall behind Tool trait, the one reader
                      of every call's arguments (arguments.rs), a skill's
                      program run as a tool under its own declared sandbox
                      (capability.rs, docs/design/93-self-evolving-
@@ -1637,12 +1635,13 @@ crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse/
                      (egress.rs), versioned
                      broker-worker protocol, bounded subprocess
                      environment, resource claims, sandbox backends
-                     (Seatbelt/Landlock). `find_tools` ranks the deferred
-                     set by name/description/argument match and returns
-                     full schemas; `recall` is intercepted in the agent
-                     loop (never dispatched to a worker) and answers from
-                     the session by turn number, presentation id, or
-                     evidence id (docs/design/68-context-engine.md §3, §5)
+                     (Seatbelt/Landlock). `recall` is the one way to reach
+                     anything from before this turn: `query` searches this
+                     conversation's turns and, through Core, other
+                     conversations, notes, the profile, sources and
+                     deliverables; `open` reopens `#n`, `pres:`, `ev:` or a
+                     hit's `turn:`. The agent loop answers it (never a
+                     worker) (docs/design/68-context-engine.md §3, §5)
 crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny, over
                      what each tool declares (reach.rs: its reach and the
                      argument a rule matches; no tool names). Deny/Ask
@@ -1783,8 +1782,8 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      `Tool::always_loaded`/`serves`/`presents_cards`, plus the
                      reading-independent "More tools" catalogue -- a
                      low-confidence reading loads NO domain tools rather than
-                     all of them, and reaches the rest through `find_tools`;
-                     docs/design/68-context-engine.md §5),
+                     all of them; a deferred tool is called by its name and
+                     loaded from then on; docs/design/68-context-engine.md §5),
                      capacity_profile_for (the per-request bind: returns the
                      newer of the ledger-recorded profile and the in-process
                      cache by probed-at timestamp, synchronously, from
@@ -1818,7 +1817,8 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      upkeep pass: schedule wakes, predicate wakes, escalation
                      policies, explicit expiry), tools_commitments.rs (the
                      read-only `commitments` capability),
-                     session_search injection w/ profile tier, memory/
+                     elsewhere.rs (what `recall` reaches beyond its own
+                     conversation, by Agent and audience), memory/
                      skill-proposal tools + duplicate screening
                      (docs/design/26-learning.md, 29 P5), sandbox
                      selection incl. Docker exec backend + runtime backend

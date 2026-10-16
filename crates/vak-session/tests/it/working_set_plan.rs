@@ -352,7 +352,7 @@ fn addressed_projection_contains_only_selected_history_and_open_directive() {
     };
     let messages = log.derive_selected_checked(&plan).unwrap();
     let encoded = serde_json::to_string(&messages).unwrap();
-    assert!(encoded.contains(&format!("[turn_id:{}]", ids[0])));
+    assert!(encoded.contains(&format!("[turn:{}]", ids[0])));
     assert!(encoded.contains("first question"));
     assert!(encoded.contains("continue the first question"));
     assert!(!encoded.contains("second question"));

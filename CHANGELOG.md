@@ -16,6 +16,14 @@
   wording that led to the same mistake again.
 - A step's record says which of its tools were sent without their
   schema.
+- One way to look back: recall searches this conversation, your other
+  conversations, saved notes, your profile, followed sources and files in
+  one call, and each hit says where it is from. There is no separate
+  conversation search to pick wrongly: asked about something said several
+  turns earlier, the smallest model chose the right tool 9 times in 16
+  instead of 3.
+- A tool listed under "More tools" is called by its name; there is no
+  separate tool to look tools up first.
 - Cards that only show what a call produced (a command's output, test
   results, a diff, a file preview, sources, an ability's answer) are offered
   once the conversation has such a call, from the very next step, instead of

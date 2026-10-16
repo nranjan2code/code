@@ -121,7 +121,7 @@ fn header_for(id: &str, cwd: &Path) -> SessionHeader {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn session_search_tool_is_available_and_logged() {
+async fn recall_reaches_another_conversation_and_is_logged() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let cwd = dir.path().to_path_buf();
@@ -154,7 +154,7 @@ async fn session_search_tool_is_available_and_logged() {
         responses: Mutex::new(VecDeque::from(vec![
             tool_call(
                 "t1",
-                "session_search",
+                "recall",
                 serde_json::json!({"query": "deploy script"}),
             ),
             text("Found it: the deploy script pauses before rollbacks."),
@@ -190,25 +190,38 @@ async fn session_search_tool_is_available_and_logged() {
                 content, is_error, ..
             } = b
             {
-                eprintln!("TOOL_RESULT[{is_error}]: {content}");
                 assert!(!is_error, "search must not error: {content}");
-                if content.contains("hit(s)") {
-                    saw_search_output = true;
-                    assert!(
-                        content.contains("11111111-past"),
-                        "snippet cites the source session: {content}"
-                    );
-                    assert!(
-                        !content.contains(&live_id),
-                        "current session must be excluded from results"
-                    );
-                }
+                let Ok(found) = serde_json::from_str::<serde_json::Value>(content) else {
+                    continue;
+                };
+                let Some(elsewhere) = found["elsewhere"].as_array() else {
+                    continue;
+                };
+                saw_search_output = true;
+                let ids: Vec<&str> = elsewhere
+                    .iter()
+                    .filter_map(|hit| hit["id"].as_str())
+                    .collect();
+                assert!(
+                    ids.contains(&"11111111-past"),
+                    "the hit names the conversation it is from: {content}"
+                );
+                assert!(
+                    !ids.contains(&live_id.as_str()),
+                    "the running conversation is searched as this conversation, never elsewhere"
+                );
+                assert!(
+                    elsewhere
+                        .iter()
+                        .all(|hit| hit["from"] == "another conversation"),
+                    "{content}"
+                );
             }
         }
     }
     assert!(
         saw_search_output,
-        "tool result with hits must be logged on the chain"
+        "a recall result with hits from elsewhere must be logged on the chain"
     );
 
     // And the model's answer reflects what memory returned.
@@ -221,9 +234,8 @@ async fn session_search_tool_is_available_and_logged() {
     let capabilities = &log.header().unwrap().contract.capabilities;
     assert!(
         capabilities.iter().any(|capability| {
-            capability.kind == vak_session::CapabilityKind::Tool
-                && capability.name == "session_search"
+            capability.kind == vak_session::CapabilityKind::Tool && capability.name == "recall"
         }),
-        "session_search in frozen contract: {capabilities:?}"
+        "recall in frozen contract: {capabilities:?}"
     );
 }

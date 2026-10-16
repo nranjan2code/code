@@ -10,10 +10,10 @@
 //!
 //! That is the whole of admission, and it is policy. What the turn's reading
 //! *predicts* it will need is a separate, later question — which admitted
-//! tools are loaded with full schemas and which wait behind `find_tools` —
-//! answered by [`super::surface`]. Keeping the two apart is what makes
-//! presentation safe to get wrong: a misread can cost a `find_tools` call,
-//! never a capability (docs/design/41-capability-registry.md, "Turn
+//! tools are loaded with full schemas and which are listed by name until
+//! called — answered by [`super::surface`]. Keeping the two apart is what
+//! makes presentation safe to get wrong: a misread can cost a call by
+//! name, never a capability (docs/design/41-capability-registry.md, "Turn
 //! capabilities"; docs/design/68-context-engine.md §5).
 
 use std::collections::{BTreeSet, HashMap};

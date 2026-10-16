@@ -400,7 +400,8 @@ impl ServerResolved {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct MemorySettings {
-    /// Expose the `session_search` tool to agent runs. Default true.
+    /// Whether `recall` reaches beyond the conversation it runs in (other
+    /// conversations, saved notes, the profile). Default true.
     pub search_enabled: Option<bool>,
     /// `remember` tool: append durable per-workspace notes. Default true.
     pub write_enabled: Option<bool>,

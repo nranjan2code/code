@@ -71,10 +71,18 @@ contract:
 - [ ] OpenAI Responses tool search (gpt-5.4 and later, `defer_loading`,
   hosted or client-executed, namespaces of under ten) is not used: declare
   it in the adapter's reach and learn it from refusal, as `strict_tools`.
-- [ ] Seen in the baseline replay: on fresh requests the 0.8b route often
-  calls `recall`, `session_search` or `find_tools` first (list, define,
-  steps, remember); the prompt's history and discovery wording is the
-  first suspect for the wording audit.
+- [x] The lookup reflex (docs/audits/history-lookup-2026-10-16.md): not
+  the prompt's wording but two look-alike history tools and a discovery
+  hop; `session_search` folded into `recall`, `find_tools` removed (tools
+  are called by name), Anthropic deferral dropped. Lookups halved; turn-1
+  recall 3 to 9 of 16.
+- [ ] `entity_query` reads what `recall` already searches; live, the
+  turn-1 question called it twice in three runs. Fold its reading into
+  `recall` (keep `entity_record`).
+- [ ] Fresh requests still reach for `recall` first often (`name` 13 of 16
+  with the name in the carried card).
+- [ ] Measure whether the loop's regeneration repairs the invalid card
+  arguments the replay counts (29 of 155 first steps).
 
 ## Before the next release
 

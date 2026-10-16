@@ -106,13 +106,18 @@ override them field by field.
 
 ### Deferred tools and tool search
 
-Whether a wire keeps a deferred tool's schema out of the request is the
-adapter's answer, `Provider::defers_tools(model)`, never a provider name
-in the agent loop. A leg whose adapter says yes is sent the loaded and the
-deferred tools; any other leg is sent the loaded tools only, and the model
-reaches the rest through `find_tools`
-(docs/design/68-context-engine.md §5). Today only the Anthropic adapter
-says yes.
+No wire is sent a deferred tool (2026-10-16). Every leg gets the loaded
+tools only; the model sees a deferred tool's catalogue line, calls it by
+its name, and it is promoted for the rest of the turn
+(docs/design/68-context-engine.md §5). One path serves every provider.
+Until then Anthropic's adapter sent deferred tools with `defer_loading`
+and its server-side tool search while every other wire relied on
+`find_tools`: two mechanisms to keep in agreement (invariant 30), and on
+the installed route `find_tools` was called for tools already loaded.
+Both were removed (docs/audits/history-lookup-2026-10-16.md).
+
+> **Historical record** (2026-10-08): the measurement that kept OpenAI's
+> tool search out, when `find_tools` was the discovery path.
 
 The OpenAI Responses wire has the same feature (`defer_loading: true` on a
 function, a `{"type": "tool_search"}` entry, `tool_search_call` and

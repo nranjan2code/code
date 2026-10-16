@@ -670,7 +670,7 @@ pub const PROBE_SAMPLES_PER_RUNG: u32 = 3;
 /// Builds a probe request of roughly `tokens_target` tokens shaped like the
 /// history the model will really see (docs/design/68 §1): each filler turn
 /// is a user question, an assistant `lookup` tool call, a digest-shaped
-/// tool result carrying an `[evidence:…]` tag, and a short assistant
+/// tool result carrying an evidence tag, and a short assistant
 /// answer — the same call pattern a closed turn projects at `Full`. Inert
 /// prose would measure a horizon the model never reaches on real work.
 /// The content is varied and non-repeating so no adjacent-message
@@ -756,11 +756,10 @@ fn probe_filler_turn(seed: u64) -> Vec<vak_llm::Message> {
     let question = format!("What did the {topic} report say in section {}?", seed + 1);
     let result = format!(
         "[{{\"title\":\"{}\",\"url\":\"https://example.invalid/{seed}\"}},\
-         {{\"title\":\"{}\",\"url\":\"https://example.invalid/{seed}-b\"}}]\n\
-         [evidence:{call_id} \u{2014} {} chars; call recall to expand]",
+         {{\"title\":\"{}\",\"url\":\"https://example.invalid/{seed}-b\"}}]\n{}",
         probe_filler_text(seed.wrapping_add(101), 5),
         probe_filler_text(seed.wrapping_add(202), 5),
-        900 + seed * 7
+        vak_session::turns::evidence_tag(&call_id, 900 + seed as usize * 7)
     );
     let answer = format!(
         "Section {} of the {topic} report covers {}.",
@@ -1168,7 +1167,7 @@ mod tests {
         ));
         assert!(matches!(
             &req.messages[2].content[0],
-            vak_llm::ContentBlock::ToolResult { content, .. } if content.contains("[evidence:")
+            vak_llm::ContentBlock::ToolResult { content, .. } if content.contains("[evidence ev:")
         ));
         assert_eq!(req.messages[3].role, vak_llm::Role::Assistant);
         // Every filler turn differs (no prefix-cache shortcut inside a rung).

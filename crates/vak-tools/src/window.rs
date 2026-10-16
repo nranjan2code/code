@@ -46,7 +46,7 @@ pub fn window(content: &str, recall_id: Option<&str>, first_line: usize) -> Opti
                 let kept: String = line.chars().take(LINE_WINDOW_CHARS).collect();
                 let hint = match recall_id {
                     Some(id) if first_line == 1 => format!(
-                        "; recall {{\"id\": \"{id}\", \"chars\": {{\"start\": {}, \"end\": {}}}}} returns it",
+                        "; recall {{\"open\": \"ev:{id}\", \"chars\": {{\"start\": {}, \"end\": {}}}}} returns it",
                         start + LINE_WINDOW_CHARS,
                         start + chars
                     ),
@@ -91,7 +91,7 @@ pub fn window(content: &str, recall_id: Option<&str>, first_line: usize) -> Opti
         };
         let note = match recall_id {
             Some(id) => format!(
-                "[{span} omitted ({omitted_chars} chars); recall {{\"id\": \"{id}\", \"range\": {{\"start\": {start}, \"end\": {end}}}}} returns them]"
+                "[{span} omitted ({omitted_chars} chars); recall {{\"open\": \"ev:{id}\", \"lines\": {{\"start\": {start}, \"end\": {end}}}}} returns them]"
             ),
             None => format!("[{span} omitted ({omitted_chars} chars)]"),
         };
@@ -131,7 +131,10 @@ mod tests {
             .lines()
             .find(|line| line.starts_with("[lines "))
             .expect("omission note");
-        assert!(note.contains("recall {\"id\": \"call-7\""), "{note}");
+        assert!(
+            note.contains("recall {\"open\": \"ev:call-7\", \"lines\""),
+            "{note}"
+        );
         for line in windowed.lines().filter(|line| !line.starts_with('[')) {
             assert!(line.starts_with("line number "), "cut line: {line}");
             assert_eq!(line.len(), "line number 00000".len());
@@ -179,7 +182,7 @@ mod tests {
         let end = "head\n".len() + RESULT_WINDOW_CHARS;
         assert!(
             windowed.contains(&format!(
-                "recall {{\"id\": \"call-9\", \"chars\": {{\"start\": {start}, \"end\": {end}}}}} returns it"
+                "recall {{\"open\": \"ev:call-9\", \"chars\": {{\"start\": {start}, \"end\": {end}}}}} returns it"
             )),
             "{}",
             &windowed[..windowed.len().min(2_300)]

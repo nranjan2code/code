@@ -52,6 +52,7 @@ pub type PermissionRuleLists = (Vec<String>, Vec<String>, Vec<String>);
 pub mod ability_review;
 pub mod ability_sheet;
 mod catalog;
+pub mod elsewhere;
 mod indexed_history;
 pub mod mail_calendar;
 pub mod presentation_store;
@@ -62,7 +63,6 @@ pub mod routing;
 pub mod sandbox_docker;
 pub mod security_events;
 pub mod seed;
-pub mod session_search;
 pub mod skill_programs;
 pub mod skills;
 pub mod social;
@@ -3817,8 +3817,8 @@ impl Core {
         let project_dir = prompts::layer_dir(&self.inner.cwd);
         let mut project = prompts::read_layer(&project_dir);
         // Memory never writes a prompt layer. A note — however it was
-        // classified, and whoever wrote it — is recalled through
-        // `session_search`, never promoted into guardrails: the model's own
+        // classified, and whoever wrote it — is found through `recall`,
+        // never promoted into guardrails: the model's own
         // `remember` and background consolidation both write notes, so
         // anything else would let an inbound message author a permanent
         // instruction (invariant 28) and grow the cached prefix without bound.
@@ -4142,6 +4142,48 @@ impl Core {
         commands
     }
 
+    /// What `recall` reaches beyond the conversation `scope` names: other
+    /// conversations, saved notes, the profile, followed sources and
+    /// deliverables of this Agent and audience (invariant 37). None when
+    /// `memory_search_enabled` is off: `recall` then searches the
+    /// conversation alone.
+    fn elsewhere(&self, scope: &ToolScope) -> Option<Arc<elsewhere::Elsewhere>> {
+        if !self.effective_memory_search_enabled() {
+            return None;
+        }
+        let mut audience = self.catalog_audience();
+        audience.agents = scope
+            .agent_id
+            .as_deref()
+            .map(|agent| vec![vak_session::trace::local::agent(agent).to_string()]);
+        audience.audience = scope.audience_id.clone();
+        audience.exclude_sessions.insert(scope.session_id.clone());
+        let artifacts = self.artifacts();
+        let cwd = self.inner.cwd.clone();
+        let agent = self
+            .agent_identity()
+            .map(|agent| agent.id.clone())
+            .unwrap_or_else(|| "vak".into());
+        let session = scope.session_id.clone();
+        Some(Arc::new(elsewhere::Elsewhere {
+            catalog: self.catalog().ok(),
+            audience,
+            space: Some(vak_session::trace::local::space(&self.inner.cwd).to_string()),
+            trash: self.shared_scope(),
+            file: Some(Arc::new(move |id: &str| {
+                file_state::describe(
+                    &artifacts,
+                    &cwd,
+                    id,
+                    file_state::Reader {
+                        agent: &agent,
+                        session: Some(&session),
+                    },
+                )
+            })),
+        }))
+    }
+
     /// Every tool this Core offers a turn, constructed once.
     ///
     /// The only list of built-in tools: `tool_names`, the capability
@@ -4149,8 +4191,7 @@ impl Core {
     /// states its own domains and loading (`Tool::serves`,
     /// `Tool::always_loaded`). Three tools are bound to what the turn
     /// admitted and are added by the turn instead — `skill` (the admitted
-    /// skills), `mcp` (the admitted servers) and `task` (the admitted tools)
-    /// — plus the synthetic `find_tools`.
+    /// skills), `mcp` (the admitted servers) and `task` (the admitted tools).
     fn scoped_tools(&self, scope: &ToolScope) -> Vec<Arc<dyn vak_tools::Tool>> {
         let worker = self
             .inner
@@ -4177,41 +4218,6 @@ impl Core {
             tools.push(Arc::new(tools_commitments::CommitmentsTool {
                 sessions_home: self.scope().into_root(),
                 audience_id: scope.audience_id.clone(),
-            }));
-        }
-        if self.effective_memory_search_enabled() {
-            let mut audience = self.catalog_audience();
-            audience.agents = scope
-                .agent_id
-                .as_deref()
-                .map(|agent| vec![vak_session::trace::local::agent(agent).to_string()]);
-            audience.audience = scope.audience_id.clone();
-            audience.exclude_sessions.insert(scope.session_id.clone());
-            tools.push(Arc::new(session_search::SessionSearchTool {
-                catalog: self.catalog().ok(),
-                audience,
-                space: Some(vak_session::trace::local::space(&self.inner.cwd).to_string()),
-                trash: self.shared_scope(),
-                file: {
-                    let artifacts = self.artifacts();
-                    let cwd = self.inner.cwd.clone();
-                    let agent = self
-                        .agent_identity()
-                        .map(|agent| agent.id.clone())
-                        .unwrap_or_else(|| "vak".into());
-                    let session = scope.session_id.clone();
-                    Some(Arc::new(move |id: &str| {
-                        file_state::describe(
-                            &artifacts,
-                            &cwd,
-                            id,
-                            file_state::Reader {
-                                agent: &agent,
-                                session: Some(&session),
-                            },
-                        )
-                    }))
-                },
             }));
         }
         // Provider reads stay broker-owned: the model receives only a narrow
@@ -6963,7 +6969,7 @@ impl Core {
         // Admission is policy only — channel, reach, revocation — and is the
         // same for every kind. What the reading predicts the turn will need
         // decides only which admitted tools are *loaded* (the surface, below);
-        // a misread therefore costs one `find_tools` call, never a capability.
+        // a misread therefore costs one call by name, never a capability.
         let cap_set = registry.current().await;
         let revoked_ids = registry.revoked_ids().await;
         let reach_standings = self.capability_standings();
@@ -7265,14 +7271,29 @@ impl Core {
             .map(|h| h.session_id.clone())
             .unwrap_or_default();
         self.queue_history_index(&sid);
+        let tool_scope = ToolScope {
+            session_id: sid.clone(),
+            agent_id: session
+                .header()
+                .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()))
+                .or_else(|| self.agent_identity.as_ref().map(|agent| agent.id.clone())),
+            audience_id: session.header().and_then(|header| {
+                header
+                    .conversation
+                    .as_ref()
+                    .map(|context| context.audience_id.clone())
+            }),
+        };
         let history_core = self.clone();
         let history_session = sid.clone();
+        let reach = self.elsewhere(&tool_scope);
         cfg.history_recall = Some(Arc::new(move |request, leaf, cancel| {
             let core = history_core.clone();
             let session = history_session.clone();
+            let reach = reach.clone();
             Box::pin(async move {
                 match tokio::task::spawn_blocking(move || {
-                    core.resolve_indexed_recall(&session, &leaf, request, cancel)
+                    core.resolve_indexed_recall(&session, &leaf, request, reach.as_deref(), cancel)
                 })
                 .await
                 {
@@ -7364,22 +7385,7 @@ impl Core {
             .dispatch_ceiling
             .saturating_mul(u32::try_from(cfg.ladder.len().saturating_add(1)).unwrap_or(u32::MAX));
 
-        let mut tools = self.scoped_tools(&ToolScope {
-            session_id: session
-                .header()
-                .map(|h| h.session_id.clone())
-                .unwrap_or_default(),
-            agent_id: session
-                .header()
-                .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()))
-                .or_else(|| self.agent_identity.as_ref().map(|agent| agent.id.clone())),
-            audience_id: session.header().and_then(|header| {
-                header
-                    .conversation
-                    .as_ref()
-                    .map(|context| context.audience_id.clone())
-            }),
-        });
+        let mut tools = self.scoped_tools(&tool_scope);
         let frozen_skills = std::mem::take(&mut turn_capabilities.frozen_skills);
         let skill_tool = (!frozen_skills.is_empty())
             .then(|| Arc::new(skills::SkillTool::new(frozen_skills)) as Arc<dyn vak_tools::Tool>);
@@ -7603,40 +7609,6 @@ impl Core {
             .iter()
             .map(|tool| (tool.name().to_string(), tool.clone()))
             .collect();
-        // `find_tools` is synthetic and never itself deferred. Search spans
-        // every admitted tool, not only the deferred subset: weaker/local
-        // models often use discovery to relocate an already-loaded broker
-        // such as `mcp`, and an empty result must not be mistaken for absence.
-        // Domain labels stay search-only rather than mutating tool schemas.
-        let searchable_tools = surface
-            .core
-            .iter()
-            .chain(surface.deferred.iter())
-            .cloned()
-            .collect();
-        let search_keywords = tools
-            .iter()
-            .map(|tool| {
-                (
-                    tool.name().to_string(),
-                    tool.serves()
-                        .iter()
-                        .map(|domain| (*domain).to_string())
-                        .collect(),
-                )
-            })
-            .collect();
-        let find_tools_tool = Arc::new(
-            vak_tools::FindToolsTool::new(searchable_tools)
-                .with_keywords(search_keywords)
-                .with_discovered_sink(cfg.discovered_tools.clone()),
-        );
-        let find_tools_def = vak_llm::ToolDefinition::new(
-            vak_tools::Tool::name(find_tools_tool.as_ref()),
-            vak_tools::Tool::description(find_tools_tool.as_ref()),
-            vak_tools::Tool::schema(find_tools_tool.as_ref()),
-        );
-        tools.push(find_tools_tool);
         let core_tool_names: Vec<String> =
             surface.core.iter().map(|def| def.name.clone()).collect();
         let deferred_tool_names: Vec<String> = surface
@@ -7645,8 +7617,7 @@ impl Core {
             .map(|def| def.name.clone())
             .collect();
         let mut defs: Vec<vak_llm::ToolDefinition> =
-            Vec::with_capacity(surface.core.len() + surface.deferred.len() + 1);
-        defs.push(find_tools_def);
+            Vec::with_capacity(surface.core.len() + surface.deferred.len());
         defs.extend(surface.core);
         defs.extend(surface.deferred.into_iter().map(|def| def.deferred()));
         cfg.tool_definitions = Some(defs);
@@ -9134,10 +9105,11 @@ mod channel_mcp_network_tests {
             ..Default::default()
         });
         let names = core.tool_names();
-        assert!(!names.iter().any(|n| matches!(
-            n.as_str(),
-            "remember" | "forget_memory" | "propose_skill" | "session_search"
-        )));
+        assert!(
+            !names
+                .iter()
+                .any(|n| matches!(n.as_str(), "remember" | "forget_memory" | "propose_skill"))
+        );
         assert!(!core.channel_tool_allowed("remember"));
     }
 
@@ -9215,8 +9187,7 @@ mod channel_mcp_network_tests {
     #[test]
     fn default_prompt_documents_identity_and_dynamic_tool_boundaries() {
         for phrase in [
-            "Call only tools in this turn's schemas",
-            "`find_tools`",
+            "Call the tools in this turn's schemas",
             "skill({\"name\":\"...\"})",
             "MCP servers are reached only through the `mcp` tool",
             "Hooks and slash commands run automatically and are not tools",
@@ -9232,7 +9203,7 @@ mod channel_mcp_network_tests {
             // Checking is general: every kind of result names its own check,
             // so the prompt cannot regress to an engineering-only loop.
             "run code in any language",
-            "Ground answers in actual lookup results and cite sources",
+            "Ground answers in what your lookups returned and cite their sources",
             "review drafts against the request",
             "confirm effects",
             // Runtime-authored blocks are explained, not left to be mistaken
@@ -9317,7 +9288,7 @@ mod channel_mcp_network_tests {
             let untrusted = Core::new_with_trust(dir.path().to_path_buf(), false).unwrap();
             let prompt = untrusted.system_prompt();
             assert!(
-                prompt.contains("Call only tools in this turn's schemas"),
+                prompt.contains("Call the tools in this turn's schemas"),
                 "{file}: untrusted project deleted the capability contract"
             );
             assert!(
@@ -9968,12 +9939,12 @@ pub fn built_in_declarations() -> Vec<(String, vak_permission::Declared)> {
     ));
     // Built per turn or by a Core, so declared by their types.
     for (name, permission) in [
+        (
+            "recall",
+            vak_tools::Tool::permission(&vak_tools::RecallTool),
+        ),
         ("skill", skills::SkillTool::PERMISSION),
         ("mcp", vak_mcp::McpTool::PERMISSION),
-        (
-            "session_search",
-            session_search::SessionSearchTool::PERMISSION,
-        ),
         (
             "commitments",
             tools_commitments::CommitmentsTool::PERMISSION,
@@ -10971,7 +10942,7 @@ mod webfetch_classification_tests {
     #[test]
     fn other_tools_keep_their_existing_defaults() {
         // The seam must not widen: bash still asks under workspace-write,
-        // session_search stays a read tool, remember stays sanctioned.
+        // recall stays a read tool, remember stays sanctioned.
         let dir = tempfile::tempdir().unwrap();
         let e = build_engine_with(&vak_config::Config::default(), &[]).unwrap();
         let bash = e.evaluate(
@@ -10981,7 +10952,7 @@ mod webfetch_classification_tests {
             dir.path(),
         );
         assert!(matches!(bash, Decision::Ask { .. }));
-        for tool in ["session_search", "remember", "propose_skill"] {
+        for tool in ["recall", "remember", "propose_skill"] {
             let d = e.evaluate(
                 tool,
                 &serde_json::json!({}),

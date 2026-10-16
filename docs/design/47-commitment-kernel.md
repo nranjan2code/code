@@ -334,7 +334,7 @@ reading too weak to narrow capability is never too weak to raise caution,
 and "force push to the production branch" asks first whether or not its
 verb was understood. No reading, confident or not, removes a capability:
 admission is policy only (docs/design/41-capability-registry.md), and which
-admitted tools are loaded versus deferred behind `find_tools` follows each
+admitted tools are loaded versus deferred (called by name) follows each
 tool's own declaration, never the reading
 (docs/design/88-control-plane.md §12.1).
 
@@ -899,7 +899,7 @@ read its own commitments — and found five more, all fixed here:
   dependency as plain sentences.
 * The `commitments` capability needed an approver to read the Agent's own
   portfolio, so "what are you working on?" failed on an unattended surface;
-  it is a read tool now, like `session_search`. And "right now" beside the
+  it is a read tool now, like `recall`. And "right now" beside the
   agent's own state ("what commitments are you holding right now?") read as
   a live-data question; the agent's own state is local.
 * The verb table lacked common instructions (see *The reader*).

@@ -17,11 +17,6 @@ use crate::types::{AssistantMessage, ChatRequest, ContentBlock, Message, Role, S
 /// for message-level breakpoints named by `ChatRequest::cache`.
 const MAX_CACHE_BREAKPOINTS: usize = 4;
 
-/// Anthropic's server-side tool search tool (docs/design/68 §5/§11):
-/// prepended to `tools` whenever any tool in the request is deferred, so the
-/// model can discover a deferred schema without it ever entering the prefix.
-const TOOL_SEARCH_TOOL: &str = "tool_search_tool_regex_20251119";
-
 /// Beta flag for the opt-in fast-mode research preview (docs/design/68 §11
 /// "Anthropic" row / the Anthropic API "Fast Mode" quick reference): sent
 /// only alongside `"speed": "fast"`, and only for a model the capability
@@ -214,13 +209,7 @@ pub fn build_body(
         body["top_k"] = serde_json::json!(k);
     }
     if !request.tools.is_empty() {
-        let mut tools: Vec<Value> = Vec::with_capacity(request.tools.len() + 1);
-        if request.tools.iter().any(|t| t.defer) {
-            tools.push(serde_json::json!({
-                "type": TOOL_SEARCH_TOOL,
-                "name": "tool_search_tool_regex",
-            }));
-        }
+        let mut tools: Vec<Value> = Vec::with_capacity(request.tools.len());
         // The tools whose schemas the wire enforces, in their strict form
         // (docs/design/89-constrained-tool-arguments.md §4.2).
         let strict = if settings.strict_tools {
@@ -237,12 +226,6 @@ pub fn build_body(
             if let Some(schema) = strict {
                 tool["input_schema"] = schema;
                 tool["strict"] = serde_json::json!(true);
-            }
-            // A deferred tool never carries `cache_control`: its schema is
-            // never in the stable prefix, so there is nothing to mark
-            // cacheable (docs/design/68 §5/§11).
-            if t.defer {
-                tool["defer_loading"] = serde_json::json!(true);
             }
             tools.push(tool);
         }
@@ -665,10 +648,6 @@ impl Provider for AnthropicProvider {
         "anthropic"
     }
 
-    fn defers_tools(&self, _model: &str) -> bool {
-        true
-    }
-
     fn circuit_key(&self) -> String {
         crate::gate::route_identity(self.name(), &self.config.base_url, &self.config.api_key)
     }
@@ -1033,7 +1012,7 @@ async fn drive_stream<S>(
 mod build_body_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::types::{CacheBreakpoint, CacheHints, ToolDefinition};
+    use crate::types::{CacheBreakpoint, CacheHints};
 
     #[test]
     fn anthropic_capacity_parser_separates_input_output_and_request_windows() {
@@ -1186,43 +1165,6 @@ mod build_body_tests {
                 .iter()
                 .any(|b| b["type"] == "thinking")
         );
-    }
-
-    #[test]
-    fn deferred_tools_render_defer_loading_and_prepend_the_search_tool() {
-        let mut req = ChatRequest::new("claude-sonnet-4-5");
-        req.messages = vec![Message::user_text("hi")];
-        req.tools = vec![
-            ToolDefinition::new("core_tool", "always visible", serde_json::json!({})),
-            ToolDefinition::new("rare_tool", "rarely needed", serde_json::json!({})).deferred(),
-        ];
-        let body = build_body(&req, 8192, Default::default(), false).unwrap();
-        let tools = body["tools"].as_array().unwrap();
-        assert_eq!(tools[0]["type"], "tool_search_tool_regex_20251119");
-        let core = tools.iter().find(|t| t["name"] == "core_tool").unwrap();
-        assert!(core.get("defer_loading").is_none());
-        assert!(core.get("cache_control").is_none());
-        let rare = tools.iter().find(|t| t["name"] == "rare_tool").unwrap();
-        assert_eq!(rare["defer_loading"], true);
-        assert!(
-            rare.get("cache_control").is_none(),
-            "a deferred tool must never carry cache_control"
-        );
-    }
-
-    #[test]
-    fn no_deferred_tools_means_no_search_tool_is_sent() {
-        let mut req = ChatRequest::new("claude-sonnet-4-5");
-        req.messages = vec![Message::user_text("hi")];
-        req.tools = vec![ToolDefinition::new(
-            "core_tool",
-            "always visible",
-            serde_json::json!({}),
-        )];
-        let body = build_body(&req, 8192, Default::default(), false).unwrap();
-        let tools = body["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["name"], "core_tool");
     }
 
     #[test]

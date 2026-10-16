@@ -140,7 +140,7 @@ flowchart TB
     C["CONFIGURED — read every turn, changes when someone edits a layer<br/>Shared/project/surface/agents prompt files ·<br/>bot and chat prompt tiers · Agent definition"]
     P["PER-CAPABILITY — changes when the admitted set changes<br/>which contracts appear · skills list · MCP list ·<br/>More tools catalogue · Not-usable standing · tool schemas"]
     T["PER-TURN — computed once per turn, identical on every step<br/>turn_context time · intent note · stance ·<br/>work contract · workspace delta · conversation thread ·<br/>loaded vs deferred tools · working-set plan"]
-    X["PER-STEP — appended as the turn runs<br/>assistant steps · tool results · find_tools promotions ·<br/>control nudges · stop guards"]
+    X["PER-STEP — appended as the turn runs<br/>assistant steps · tool results · promotions (by name, grounded) ·<br/>control nudges · stop guards"]
     S --> C --> P --> T --> X
     S -. "prefix" .-> Prefix[(Stable prefix)]
     C -. "prefix" .-> Prefix
@@ -155,7 +155,7 @@ flowchart TB
 | Configured | `.vak/prompts/*.md`, `Bot.prompt`, `AllowlistEntry.prompt`, Agent prompt files, the saved Agent definition | prefix, read afresh every turn | `TurnCapabilitiesBound.system_prompt` (each turn, authoritative); `FrozenContract.prompt_layers` (admission snapshot) |
 | Per-capability | contracts present or absent, skills, MCP names, "More tools", standing | prefix, tool array | `TurnCapabilitiesBound` |
 | Per-turn | `<turn_context>`, `<intent>`, `<stance>`, `<work_contract>`, `<workspace_delta>`, `<conversation_thread>` | tail | `turn_context` activity, `Intent` entry, work/goal entries, `workspace_delta` activity |
-| Per-step | tool results, nudges, `find_tools` additions | messages after the directive, tool array | message entries, receipts |
+| Per-step | tool results, nudges, promoted tools | messages after the directive, tool array | message entries, receipts |
 
 ---
 
@@ -168,7 +168,7 @@ event). `prompts::seed(version)` substitutes `{{version}}` and splits it:
 | Seed block | Owner | Included when | Purpose |
 |---|---|---|---|
 | `identity` | user-editable (seed is the broadest layer) | always, unless a narrower layer replaces it | who the agent is; reply in the person's language; write for the named surface |
-| `capability_contract` | code | always | call only tools in this turn's schemas; `find_tools` for "More tools"; skills are documents; MCP only through `mcp`; ground and cite; search discovery rules; history and `recall` rules; runtime `<…>` blocks are guidance, not requests |
+| `capability_contract` | code | always | call the tools in this turn's schemas, or a "More tools" one by its name; skills are documents; MCP only through `mcp`; ground and cite; search discovery rules; history and `recall` rules; runtime `<…>` blocks are guidance, not requests |
 | `presentation_contract` | code | an `emit_*_card` tool is admitted | present card-shaped results through the matching card tool; leave final text empty when the cards answer fully unless the user asked for text outside them or a material caveat is needed; ordinary final text is projected as authored, and `Note:` has no special meaning; never invent card data |
 | `document_contract` | code | an admitted tool declares `PromptContract::Document` (`office_apply`) | Word, Excel, PowerPoint and PDF are read with `doc_read` and changed only with `office_apply`, producing a review draft |
 | `sandbox_contract` | code | an admitted tool declares `PromptContract::Sandbox` (`bash`) | run things rather than guess; scratch space; deliver files by writing them |
@@ -355,7 +355,7 @@ descriptions or schemas, a second copy of the skill list, memory notes,
 card payload examples, the time, the stance, the request, or anything
 about the conversation. Memory never becomes a prompt layer
 (`memory_notes_never_become_prompt_guardrails`); it is reached through
-`session_search` and `recall`.
+`recall`.
 
 ---
 
@@ -368,29 +368,26 @@ are the most precise text the model receives.
 flowchart LR
     Registry["Capability registry<br/>current epoch"] --> Admit["TurnCapabilities::build<br/>channel policy · reach · revocation<br/>(policy only)"]
     Admit --> Admitted["Admitted tools"]
-    Reading["Intent reading<br/>required_domains"] --> Surface["build_tool_surface"]
-    Predicted["predicted_card_tools<br/>from request text"] --> Surface
-    Admitted --> Surface
-    Surface --> Core["loaded: find_tools first, then core schemas"]
-    Surface --> Deferred["deferred: schemas marked defer"]
+    Admitted --> Surface["build_tool_surface<br/>declarations · carried · grounds held"]
+    Surface --> Core["loaded: core schemas"]
+    Surface --> Deferred["deferred: marked defer, never sent"]
     Admitted --> Catalogue["More tools catalogue<br/>(prefix)"]
     Core --> Array["ChatRequest.tools"]
-    Deferred --> Array
-    FindTools["find_tools call mid-turn"] -->|"load_discovered:<br/>flip defer, append new"| Array
+    Promote["call by name, grounded fact,<br/>required card (mid-turn)"] -->|"load_promoted:<br/>flip defer, append new"| Array
 ```
 
 - **Admission is policy only.** The reading never removes a capability
   (invariant 32). It decides which admitted tools are **loaded**.
 - **Loaded** (`capability::build_tool_surface`): tools that declare
-  `always_loaded` (`read`, `glob`, `grep`, `find_tools`, `recall`, `skill`,
-  `mcp`, `session_search`, `commitments`), tools whose `serves` meets the
-  reading's required domains, undeclared tools (fail open), and the card
-  tools the request text predicts. A disabled kernel or
+  `always_loaded` (`read`, `glob`, `grep`, `recall`, `remember`, `skill`,
+  `mcp`, `commitments`), undeclared tools (fail open), every card tool but a
+  grounded one, a grounded card once its fact is held, and tools an earlier
+  turn called. Which tools are loaded never follows the reading
+  (docs/design/88-control-plane.md §12.1). A disabled kernel or
   `slice_capabilities = false` loads everything.
-- **Deferred** tools still travel in the array marked deferred. On
-  Anthropic they ride `defer_loading` with the server-side tool search; on
-  other providers `tools_for_leg` withholds them until `find_tools`
-  promotes them (doc 68 §5 and §11).
+- **Deferred** tools travel in the array marked deferred and no wire is sent
+  one (`tools_for_leg`): the model calls a listed tool by its name and it is
+  promoted from then on (doc 68 §5).
 - **Order is frozen per turn** (`turn_tool_base`): names and order never
   move inside a turn; a promoted name is appended at the end.
 

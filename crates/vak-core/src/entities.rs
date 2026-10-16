@@ -4,7 +4,7 @@
 //! per workspace (and globally), each entity a Document named under the
 //! Agent's `entities/<hash>/ENTITIES.jsonl` (`vak_core::documents`).
 //!
-//! Entities participate in recall via `session_search` and can be inspected
+//! Entities are found through `recall` and can be inspected
 //! or updated across turns.
 
 use std::collections::BTreeMap;

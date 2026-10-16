@@ -1,20 +1,26 @@
-//! `recall`: reopen a past turn, presentation, or evidence result by id.
+//! `recall`: the one way to reach anything from before this turn
+//! (docs/design/68-context-engine.md §3, docs/design/23-memory.md).
 //!
-//! Part of docs/design/68-context-engine.md §3/§7/§10's evidence store: past
-//! turns are digested (or reduced to a card line) in the request, and this
-//! tool is how the model reverses that — full turn record, canonical
-//! presentation payload, or full tool-result content, optionally sliced by
-//! line range.
+//! Two verbs. `query` searches everything: this conversation's earlier
+//! turns first, then, where the runtime reaches them, other conversations,
+//! saved notes, the person's profile, followed sources and deliverables,
+//! each hit saying where it is from and, when it can be reopened, the exact
+//! `open` value that reopens it. `open` reopens one reference in a form the
+//! context already shows: `#3` (a turn of `<turns>`), `pres:<id>`,
+//! `ev:<id>`, `turn:<turn_id>` from a hit, or
+//! `conversation:<id>/turn:<turn_id>` for a turn of another conversation an
+//! attached artifact came from (plan M8.3b).
 //!
-//! `RecallTool` only carries the definition (name/schema/description): it
-//! has no session access (`ToolContext` carries none — AGENTS.md invariant
-//! 14's worker/broker boundary), so the agent loop intercepts `recall` calls
-//! by name before dispatch and answers them from the session directly,
-//! exactly as `emit_*_card` results are rewritten after `execute_batch`, but
-//! earlier — `recall` is never sent to a worker. `execute()` here exists
-//! only as a defensive fallback and must never be reachable in production.
-//! [`parse_recall_args`] and [`apply_range`] are the pure logic the loop
-//! reuses to validate arguments and slice evidence content.
+//! One tool replaced two (`recall` and `session_search`, 2026-10-16): asked
+//! for a detail three turns back, a small model chose the tool that cannot
+//! search this conversation 13 times in 16 (docs/audits/
+//! history-lookup-2026-10-16.md). A scope the model must pick is a mistake
+//! it can make; one search it cannot.
+//!
+//! `RecallTool` only carries the definition: it has no session access
+//! (`ToolContext` carries none, AGENTS.md invariant 14), so the agent loop
+//! answers `recall` calls before dispatch. [`parse_recall_args`],
+//! [`apply_range`] and [`apply_chars`] are the pure logic it uses.
 
 use crate::Fault;
 use async_trait::async_trait;
@@ -22,163 +28,155 @@ use serde_json::{Value, json};
 
 use crate::{Tool, ToolContext, ToolOutput};
 
-/// One parsed, validated `recall` call. Exactly one of the supported request
-/// shapes is ever produced by [`parse_recall_args`].
+/// Hits a search returns when the call names no limit.
+pub const DEFAULT_LIMIT: usize = 8;
+/// Most hits one search returns.
+pub const MAX_LIMIT: usize = 20;
+
+/// One parsed `recall` call.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecallRequest {
-    /// `{ turn }`: the 1-based turn number (`TurnIndex` order).
-    Turn(u64),
-    /// Stable directive entry ID, independent of display numbering.
-    TurnId(String),
-    /// Search compact records in the current conversation before reopening one.
+    /// `query`: search everything the runtime reaches.
     Search { query: String, limit: usize },
-    /// A search or a turn reopened in another conversation: one named by
-    /// an artifact attached in this conversation (plan M8.3b).
+    /// `open: "#3"`: a turn of this conversation by its `<turns>` number.
+    Turn(u64),
+    /// `open: "turn:<turn_id>"`: a turn of this conversation by its stable id.
+    TurnId(String),
+    /// `open: "pres:<id>"`: a presentation's canonical payload.
+    Presentation(String),
+    /// `open: "ev:<id>"`: a tool result in full, or the `lines` or `chars`
+    /// of it named.
+    Evidence {
+        id: String,
+        /// A 1-based inclusive line range.
+        lines: Option<(u64, u64)>,
+        /// A 0-based character range `[start, end)`, for reaching inside
+        /// one line longer than a window shows.
+        chars: Option<(u64, u64)>,
+    },
+    /// `open: "conversation:<id>/turn:<turn_id>"`: a turn of another
+    /// conversation, reachable only when an artifact attached here came
+    /// from it (the loop checks; Core checks its trash, Agent and audience).
     Elsewhere {
         conversation: String,
-        request: Box<RecallRequest>,
-    },
-    /// `{ presentation }`: a `Presentation` ledger-entry id.
-    Presentation(String),
-    /// `{ id, range? }`: an evidence id (tool_use_id), optionally sliced to
-    /// a 1-based inclusive line range.
-    Id {
-        id: String,
-        range: Option<(u64, u64)>,
-        /// A 0-based character range `[start, end)` over the whole result,
-        /// for reaching inside one line longer than a window shows.
-        chars: Option<(u64, u64)>,
+        turn_id: String,
     },
 }
 
-/// The request a `recall` call's arguments name. `conversation` turns a
-/// search or a `turn_id` reopen into one of another conversation.
+/// What `open` accepts, as the model is told when it sends something else.
+const OPEN_FORMS: &str = "open takes one reference as the context shows it: #3 (a turn), \
+pres:<id> (a card), ev:<id> (a tool result), turn:<turn_id> or \
+conversation:<id>/turn:<turn_id> (from a search hit)";
+
+/// The request a `recall` call's arguments name. `open` wins over `query`
+/// when both are sent: the query is then the reason for the reopening.
 pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
-    let request = parse_target(args)?;
-    let Some(conversation) = args
-        .get("conversation")
+    let open = text_arg(args, "open");
+    let query = text_arg(args, "query");
+    if let Some(open) = open {
+        return parse_open(open, args);
+    }
+    let Some(query) = query else {
+        return Err(
+            "send query (what to find from before this turn) or open (a reference to reopen); \
+             a request that does not refer back needs no recall"
+                .into(),
+        );
+    };
+    if query.chars().count() > 2048 {
+        return Err("query must be at most 2048 characters".into());
+    }
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map_or(DEFAULT_LIMIT, |n| (n as usize).clamp(1, MAX_LIMIT));
+    Ok(RecallRequest::Search {
+        query: query.into(),
+        limit,
+    })
+}
+
+/// A non-empty, trimmed string argument. Some providers send every optional
+/// property with an empty default; those count as absent.
+fn text_arg<'a>(args: &'a Value, name: &str) -> Option<&'a str> {
+    args.get(name)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
-    else {
-        return Ok(request);
-    };
-    if conversation.len() > 128 || conversation.contains(['/', '\\']) {
-        return Err("conversation is not a conversation id".into());
-    }
-    match request {
-        RecallRequest::Search { .. } | RecallRequest::TurnId(_) => Ok(RecallRequest::Elsewhere {
-            conversation: conversation.to_string(),
-            request: Box::new(request),
-        }),
-        _ => Err("conversation works with query or turn_id only".into()),
-    }
 }
 
-/// Validates a `recall` call's arguments: one of `query`, `turn_id`, `turn`,
-/// `presentation`, or `id` names what to recall; `range` is only meaningful
-/// with `id` but is not rejected when present alongside another field (the
-/// resolver simply ignores it). A `query` beside a precise target (`id`,
-/// `presentation`, `turn`, `turn_id`) is the reason for the recall, not a second
-/// target: the target is recalled. Refusing it left a model that named the
-/// evidence it wanted, and why, with nothing (found live, 2026-10-10).
-fn parse_target(args: &Value) -> Result<RecallRequest, String> {
-    // Some providers materialize every optional schema property with an
-    // empty default. Treat those placeholders as absent while retaining the
-    // exactly-one-target rule for meaningful values.
-    let turn = args.get("turn").and_then(Value::as_u64).filter(|n| *n > 0);
-    let presentation = args
-        .get("presentation")
-        .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
-        .map(str::to_string);
-    let id = args
-        .get("id")
-        .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
-        .map(str::to_string);
-    let query = args
-        .get("query")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let turn_id = args
-        .get("turn_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    if let Some(turn_id) = turn_id {
-        // A query beside it is the reason for the recall, as beside any
-        // precise target; only a second precise target is a contradiction.
-        if turn.is_some() || presentation.is_some() || id.is_some() {
-            return Err(
-                "turn_id cannot be combined with turn, presentation or id: name one of them".into(),
-            );
+fn parse_open(open: &str, args: &Value) -> Result<RecallRequest, String> {
+    let id = |s: &str| -> Result<String, String> {
+        let s = s.trim();
+        if s.is_empty() || s.len() > 128 || s.contains(char::is_whitespace) {
+            Err(OPEN_FORMS.into())
+        } else {
+            Ok(s.to_string())
         }
-        if turn_id.len() > 128 {
-            return Err("turn_id is too long".into());
-        }
-        return Ok(RecallRequest::TurnId(turn_id.into()));
+    };
+    let number = open.strip_prefix('#').unwrap_or(open);
+    if let Ok(n) = number.parse::<u64>() {
+        return if n > 0 {
+            Ok(RecallRequest::Turn(n))
+        } else {
+            Err(OPEN_FORMS.into())
+        };
     }
-    let precise = turn.is_some() || presentation.is_some() || id.is_some();
-    if let Some(query) = query.filter(|_| !precise) {
-        if query.chars().count() > 2048 {
-            return Err("query must be at most 2048 characters".into());
-        }
-        let limit = args
-            .get("limit")
-            .and_then(Value::as_u64)
-            .unwrap_or(8)
-            .clamp(1, 20) as usize;
-        return Ok(RecallRequest::Search {
-            query: query.into(),
-            limit,
+    if let Some(rest) = open.strip_prefix("ev:") {
+        return Ok(RecallRequest::Evidence {
+            id: id(rest)?,
+            lines: range_arg(args, "lines", |start, end| start > 0 && end >= start)?,
+            chars: range_arg(args, "chars", |start, end| end > start)?,
+        })
+        .and_then(|request| match &request {
+            RecallRequest::Evidence {
+                lines: Some(_),
+                chars: Some(_),
+                ..
+            } => Err("lines and chars cannot be combined".into()),
+            _ => Ok(request),
         });
     }
-    match (turn, presentation, id) {
-        (Some(turn), None, None) => Ok(RecallRequest::Turn(turn)),
-        (None, Some(presentation), None) => Ok(RecallRequest::Presentation(presentation)),
-        (None, None, Some(id)) => {
-            let range = match args.get("range") {
-                None | Some(Value::Null) => None,
-                Some(range) => {
-                    let start = range.get("start").and_then(Value::as_u64);
-                    let end = range.get("end").and_then(Value::as_u64);
-                    match (start, end) {
-                        (Some(0), Some(0)) => None,
-                        (Some(start), Some(end)) if start > 0 && end > 0 => Some((start, end)),
-                        _ => {
-                            return Err("'range' requires integer 'start' and 'end'".to_string());
-                        }
-                    }
-                }
-            };
-            let chars = match args.get("chars") {
-                None | Some(Value::Null) => None,
-                Some(chars) => {
-                    let start = chars.get("start").and_then(Value::as_u64);
-                    let end = chars.get("end").and_then(Value::as_u64);
-                    match (start, end) {
-                        (Some(0), Some(0)) => None,
-                        (Some(start), Some(end)) if end > start => Some((start, end)),
-                        _ => {
-                            return Err(
-                                "'chars' requires integer 'start' and a larger 'end'".to_string()
-                            );
-                        }
-                    }
-                }
-            };
-            if range.is_some() && chars.is_some() {
-                return Err("'range' and 'chars' cannot be combined".to_string());
-            }
-            Ok(RecallRequest::Id { id, range, chars })
+    if let Some(rest) = open.strip_prefix("pres:") {
+        return Ok(RecallRequest::Presentation(id(rest)?));
+    }
+    if let Some(rest) = open.strip_prefix("conversation:") {
+        let (conversation, turn) = rest.split_once("/turn:").ok_or(OPEN_FORMS)?;
+        if conversation.contains(['/', '\\']) {
+            return Err(OPEN_FORMS.into());
         }
-        _ => Err(if args.get("query").is_some() {
-            "'query' must be a non-empty description of the past subject or result to find; omit recall for a fresh or unrelated request, and use an exact turn_id, turn, presentation, or evidence id when available".to_string()
-        } else {
-            "exactly one non-empty target is required: query, turn_id, turn, presentation, or id; omit recall for a fresh or unrelated request".to_string()
-        }),
+        return Ok(RecallRequest::Elsewhere {
+            conversation: id(conversation)?,
+            turn_id: id(turn)?,
+        });
+    }
+    if let Some(rest) = open.strip_prefix("turn:") {
+        return match rest.trim().parse::<u64>() {
+            Ok(n) if n > 0 => Ok(RecallRequest::Turn(n)),
+            _ => Ok(RecallRequest::TurnId(id(rest)?)),
+        };
+    }
+    Err(OPEN_FORMS.into())
+}
+
+/// An optional `{start, end}` range argument; `{0, 0}` (a provider's empty
+/// default) counts as absent.
+fn range_arg(
+    args: &Value,
+    name: &str,
+    valid: fn(u64, u64) -> bool,
+) -> Result<Option<(u64, u64)>, String> {
+    let Some(range) = args.get(name).filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let start = range.get("start").and_then(Value::as_u64);
+    let end = range.get("end").and_then(Value::as_u64);
+    match (start, end) {
+        (Some(0), Some(0)) => Ok(None),
+        (Some(start), Some(end)) if valid(start, end) => Ok(Some((start, end))),
+        _ => Err(format!(
+            "{name} takes integer start and end, end not before start"
+        )),
     }
 }
 
@@ -205,10 +203,11 @@ pub fn apply_range(content: &str, range: Option<(u64, u64)>) -> String {
 /// whole and is never windowed again.
 pub const CHAR_RANGE_MAX: u64 = 29_000;
 
-/// A 0-based character range `[start, end)` of `content`, for the one line a
-/// window could not show. At most [`CHAR_RANGE_MAX`] characters; when more
-/// remains, a closing line names where to continue.
-pub fn apply_chars(content: &str, start: u64, end: u64) -> String {
+/// A 0-based character range `[start, end)` of tool result `id`'s
+/// `content`, for the one line a window could not show. At most
+/// [`CHAR_RANGE_MAX`] characters; when more remains, a closing line names
+/// the call that continues.
+pub fn apply_chars(id: &str, content: &str, start: u64, end: u64) -> String {
     let total = content.chars().count() as u64;
     if start >= total {
         return format!("[the result has {total} chars; nothing at {start}]");
@@ -221,7 +220,7 @@ pub fn apply_chars(content: &str, start: u64, end: u64) -> String {
         .collect();
     if end < total {
         format!(
-            "{slice}\n[chars {start}-{end} of {total}; recall the same id with chars start {end} for the rest]"
+            "{slice}\n[chars {start}-{end} of {total}; recall {{\"open\": \"ev:{id}\", \"chars\": {{\"start\": {end}, \"end\": {total}}}}} continues]"
         )
     } else {
         slice
@@ -236,6 +235,10 @@ impl Tool for RecallTool {
         "recall"
     }
 
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::reach(vak_permission::Reach::ReadStore)
+    }
+
     fn serves(&self) -> Vec<&str> {
         vec!["memory"]
     }
@@ -245,53 +248,35 @@ impl Tool for RecallTool {
     }
 
     fn description(&self) -> &str {
-        "Use only when the current request needs missing information from an earlier turn, even \
-         when it was many turns ago. Do not call for a fresh or unrelated request, and never call \
-         with an empty query. Search this \
-         conversation's past turns with a specific natural-language subject/referent query, then reopen a matching turn's full \
-         record, a presentation's canonical payload, or an evidence result (optionally by line \
-         range). Exactly one of query, turn_id, turn, presentation, or id. Old records describe what \
-         happened then; use fresh evidence for current conditions."
+        "Find something from before this turn that is not in front of you: an earlier turn of \
+         this conversation, another conversation, a note saved with remember, the person's \
+         profile, a source you follow or a file you made. Search with query, a specific \
+         subject; each hit says where it is from, and gives the open value that reopens it. \
+         Reopen with open: #3 (a turn), pres:<id> (a card), ev:<id> (a tool result), or a \
+         hit's turn:<id>. A request that does not refer back needs no recall. What a record \
+         says was true then; current facts need fresh evidence."
     }
 
     fn schema(&self) -> Value {
+        let range = |what: &str| {
+            json!({
+                "type": "object",
+                "description": what,
+                "properties": {
+                    "start": {"type": "integer", "description": "Where the range starts."},
+                    "end": {"type": "integer", "description": "Where the range ends."}
+                },
+                "required": ["start", "end"]
+            })
+        };
         json!({
             "type": "object",
             "properties": {
-                "turn_id": {"type": "string", "description": "Stable turn_id from a search result or selected reference; reopens that turn even when display numbering changes."},
-                "conversation": {"type": "string", "description": "With query or turn_id: a conversation named by an attached Library artifact, to search or reopen its turns instead of this conversation's."},
-                "query": {"type": "string", "minLength": 1, "description": "Required only when searching history: give a non-empty natural-language subject, entity, or artifact from an earlier turn. Never send an empty string. Do not call recall for fresh or unrelated requests. Returns compact candidate references, not verified facts."},
-                "limit": {"type": "integer", "description": "Search result count, default 8, maximum 20."},
-                "turn": {
-                    "type": "integer",
-                    "description": "Turn number (as shown in a <turns> card line) to reopen as its full record."
-                },
-                "presentation": {
-                    "type": "string",
-                    "description": "Presentation id (as shown in a card line's pres:<id>) to return the canonical payload for."
-                },
-                "id": {
-                    "type": "string",
-                    "description": "Evidence id (as shown in a card line's ev:<id>) to return the full tool result for."
-                },
-                "chars": {
-                    "type": "object",
-                    "description": "Optional 0-based character range [start, end), only meaningful with 'id'; reaches inside one very long line a window cut. At most 29000 characters per call.",
-                    "properties": {
-                        "start": {"type": "integer"},
-                        "end": {"type": "integer"}
-                    },
-                    "required": ["start", "end"]
-                },
-                "range": {
-                    "type": "object",
-                    "description": "Optional 1-based inclusive line range, only meaningful with 'id'.",
-                    "properties": {
-                        "start": {"type": "integer"},
-                        "end": {"type": "integer"}
-                    },
-                    "required": ["start", "end"]
-                }
+                "query": {"type": "string", "description": "What to find, as a specific subject: a name, a thing, a file, what was said."},
+                "open": {"type": "string", "description": "One reference to reopen, as the context or a hit shows it: #3, pres:<id>, ev:<id>, turn:<id> or conversation:<id>/turn:<id>."},
+                "lines": range("Optional, with an ev: reference: the 1-based lines to return, inclusive."),
+                "chars": range("Optional, with an ev: reference: the 0-based characters [start, end) to return, for one very long line; at most 29000."),
+                "limit": {"type": "integer", "description": "Optional, with query: how many hits, default 8, at most 20."}
             }
         })
     }
@@ -299,9 +284,7 @@ impl Tool for RecallTool {
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         // `recall` is answered by the agent loop before dispatch (it needs
         // session access this tool object never has); reaching here is a
-        // wiring bug, not a user-correctable error, but it is still
-        // reported as one so a stray dispatch fails loudly instead of
-        // silently returning nothing.
+        // wiring bug, still reported so a stray dispatch fails loudly.
         match parse_recall_args(args) {
             Ok(_) => ToolOutput::error(
                 Fault::Tool,
@@ -309,7 +292,7 @@ impl Tool for RecallTool {
             ),
             Err(message) => ToolOutput::error(
                 Fault::Shape,
-                format!(r#"{{"type":"invalid_arguments","message":"{message}"}}"#),
+                json!({"type": "invalid_arguments", "message": message}).to_string(),
             ),
         }
     }
@@ -320,180 +303,134 @@ impl Tool for RecallTool {
 mod tests {
     use super::*;
 
+    fn open(reference: &str) -> Result<RecallRequest, String> {
+        parse_recall_args(&json!({ "open": reference }))
+    }
+
     #[test]
-    fn parses_each_request_shape() {
+    fn open_reads_every_reference_the_context_shows() {
+        assert_eq!(open("#3").unwrap(), RecallRequest::Turn(3));
+        assert_eq!(open("3").unwrap(), RecallRequest::Turn(3));
+        assert_eq!(open("turn:3").unwrap(), RecallRequest::Turn(3));
         assert_eq!(
-            parse_recall_args(&json!({"turn": 3})).unwrap(),
-            RecallRequest::Turn(3)
+            open("turn:01a1-xyz").unwrap(),
+            RecallRequest::TurnId("01a1-xyz".into())
         );
         assert_eq!(
-            parse_recall_args(&json!({"presentation": "p1"})).unwrap(),
+            open("pres:p1").unwrap(),
             RecallRequest::Presentation("p1".into())
         );
         assert_eq!(
-            parse_recall_args(&json!({"id": "ev1"})).unwrap(),
-            RecallRequest::Id {
-                id: "ev1".into(),
-                range: None,
+            open("ev:call_7").unwrap(),
+            RecallRequest::Evidence {
+                id: "call_7".into(),
+                lines: None,
                 chars: None
             }
         );
         assert_eq!(
-            parse_recall_args(&json!({"id": "ev1", "range": {"start": 2, "end": 5}})).unwrap(),
-            RecallRequest::Id {
-                id: "ev1".into(),
-                range: Some((2, 5)),
-                chars: None
-            }
-        );
-    }
-
-    /// The call a model made on a deployed host: every property filled,
-    /// a real evidence id and a query saying what it wanted from it.
-    /// A query beside a `turn_id` is why the turn is wanted: the turn is
-    /// reopened, here and in another conversation. Refusing it left a model
-    /// that copied a search hit's turn_id, with its search words still in
-    /// the call, with nothing (2026-10-12).
-    #[test]
-    fn a_query_beside_a_turn_id_reopens_the_turn() {
-        assert_eq!(
-            parse_recall_args(&json!({"turn_id": "t-9", "query": "the Lisbon notes"})).unwrap(),
-            RecallRequest::TurnId("t-9".into())
-        );
-        assert_eq!(
-            parse_recall_args(
-                &json!({"turn_id": "t-9", "query": "the notes", "conversation": "c-1"})
-            )
-            .unwrap(),
+            open("conversation:s9/turn:t2").unwrap(),
             RecallRequest::Elsewhere {
-                conversation: "c-1".into(),
-                request: Box::new(RecallRequest::TurnId("t-9".into())),
+                conversation: "s9".into(),
+                turn_id: "t2".into()
             }
         );
-        assert!(parse_recall_args(&json!({"turn_id": "t-9", "turn": 3})).is_err());
-    }
-
-    #[test]
-    fn a_query_beside_an_evidence_id_recalls_the_evidence() {
-        let call = json!({
-            "chars": {"end": 10000, "start": 0}, "conversation": "", "id": "call_GX",
-            "limit": 8, "presentation": "", "query": "NIFTY Bank daily OHLC values",
-            "range": {"end": 0, "start": 0}, "turn": 0, "turn_id": ""
-        });
-        match parse_recall_args(&call).unwrap() {
-            RecallRequest::Id { id, .. } => assert_eq!(id, "call_GX"),
-            other => panic!("{other:?}"),
+        for wrong in [
+            "#0",
+            "pres:",
+            "ev:a b",
+            "conversation:s9",
+            "the Lisbon notes",
+        ] {
+            let refused = open(wrong).unwrap_err();
+            assert!(refused.contains("#3"), "{wrong}: {refused}");
         }
     }
 
     #[test]
-    fn a_character_range_reaches_inside_one_long_line() {
+    fn a_query_beside_open_is_the_reason_for_the_reopening() {
         assert_eq!(
-            parse_recall_args(&json!({"id": "ev1", "chars": {"start": 2000, "end": 9000}}))
-                .unwrap(),
-            RecallRequest::Id {
-                id: "ev1".into(),
-                range: None,
-                chars: Some((2_000, 9_000))
-            }
-        );
-        assert!(parse_recall_args(&json!({"id": "e", "chars": {"start": 5, "end": 5}})).is_err());
-        assert!(
-            parse_recall_args(&json!({"id": "e", "range": {"start": 1, "end": 2},
-                "chars": {"start": 0, "end": 5}}))
-            .is_err()
-        );
-        let line: String = ('a'..='z').cycle().take(100_000).collect();
-        let first = apply_chars(&line, 2_000, 90_000);
-        assert!(first.starts_with(&line[2_000..2_010]));
-        assert!(first.contains(&format!("chars 2000-{} of 100000", 2_000 + CHAR_RANGE_MAX)));
-        let last = apply_chars(&line, 99_990, 200_000);
-        assert_eq!(last, &line[99_990..]);
-        assert!(apply_chars("héllo wörld", 1, 4).starts_with("éll\n[chars 1-4 of 11"));
-        assert_eq!(apply_chars("héllo wörld", 6, 11), "wörld");
-    }
-
-    #[test]
-    fn stable_turn_targets_are_exclusive() {
-        assert_eq!(
-            parse_recall_args(&json!({"turn_id": "stable", "turn": 0, "query": ""})).unwrap(),
-            RecallRequest::TurnId("stable".into())
-        );
-        assert!(parse_recall_args(&json!({"turn_id": "stable", "id": "evidence"})).is_err());
-    }
-
-    #[test]
-    fn search_is_bounded_and_exclusive() {
-        assert_eq!(
-            parse_recall_args(&json!({"query": " Noida forecast ", "limit": 1000})).unwrap(),
-            RecallRequest::Search {
-                query: "Noida forecast".into(),
-                limit: 20
-            }
-        );
-        // A query beside a precise target is its reason, not a second target.
-        assert_eq!(
-            parse_recall_args(&json!({"query": "weather", "turn": 1})).unwrap(),
-            RecallRequest::Turn(1)
-        );
-        assert!(parse_recall_args(&json!({"query": "x".repeat(2049)})).is_err());
-        assert!(parse_recall_args(&json!({"query": " "})).is_err());
-    }
-
-    #[test]
-    fn rejects_zero_or_multiple_fields() {
-        assert!(parse_recall_args(&json!({})).is_err());
-        assert!(parse_recall_args(&json!({"turn": 1, "id": "x"})).is_err());
-        assert!(parse_recall_args(&json!({"id": "x", "range": {"start": 1}})).is_err());
-    }
-
-    #[test]
-    fn empty_search_returns_actionable_guidance() {
-        let error = parse_recall_args(&json!({"query": "  "})).unwrap_err();
-        assert!(error.contains("non-empty description"));
-        assert!(error.contains("fresh or unrelated request"));
-
-        let error = parse_recall_args(&json!({})).unwrap_err();
-        assert!(error.contains("omit recall"));
-    }
-
-    #[test]
-    fn ignores_provider_filled_optional_placeholders() {
-        let placeholders =
-            json!({"turn": 0, "presentation": "", "id": "", "range": {"start": 0, "end": 0}});
-        assert!(parse_recall_args(&placeholders).is_err());
-        let mut id_request = placeholders.clone();
-        id_request["id"] = json!("ev1");
-        assert_eq!(
-            parse_recall_args(&id_request).unwrap(),
-            RecallRequest::Id {
-                id: "ev1".into(),
-                range: None,
-                chars: None
-            }
-        );
-        let mut turn_request = placeholders;
-        turn_request["turn"] = json!(2);
-        assert_eq!(
-            parse_recall_args(&turn_request).unwrap(),
+            parse_recall_args(&json!({"open": "#2", "query": "the Lisbon notes"})).unwrap(),
             RecallRequest::Turn(2)
         );
     }
 
     #[test]
-    fn range_slices_by_line_and_clamps() {
-        let content = "a\nb\nc\nd\ne";
-        assert_eq!(apply_range(content, None), content);
-        assert_eq!(apply_range(content, Some((2, 3))), "b\nc");
-        assert_eq!(apply_range(content, Some((4, 100))), "d\ne");
-        assert_eq!(apply_range(content, Some((100, 200))), "");
+    fn lines_and_chars_slice_a_tool_result() {
+        assert_eq!(
+            parse_recall_args(&json!({"open": "ev:e", "lines": {"start": 2, "end": 5}})).unwrap(),
+            RecallRequest::Evidence {
+                id: "e".into(),
+                lines: Some((2, 5)),
+                chars: None
+            }
+        );
+        assert_eq!(
+            parse_recall_args(&json!({"open": "ev:e", "chars": {"start": 2000, "end": 9000}}))
+                .unwrap(),
+            RecallRequest::Evidence {
+                id: "e".into(),
+                lines: None,
+                chars: Some((2000, 9000))
+            }
+        );
+        assert!(
+            parse_recall_args(&json!({"open": "ev:e", "chars": {"start": 5, "end": 5}})).is_err()
+        );
+        assert!(
+            parse_recall_args(&json!({"open": "ev:e", "lines": {"start": 1, "end": 2},
+                "chars": {"start": 0, "end": 9}}))
+            .is_err()
+        );
+        assert!(
+            parse_recall_args(&json!({"open": "ev:e", "lines": {"start": 0, "end": 0}}))
+                .is_ok_and(|r| matches!(r, RecallRequest::Evidence { lines: None, .. }))
+        );
     }
 
-    #[tokio::test]
-    async fn execute_is_never_the_real_answer() {
-        let tool = RecallTool;
-        let ctx = ToolContext::new(std::path::PathBuf::from("."));
-        let out = tool.execute(&json!({"turn": 1}), &ctx).await;
-        assert!(out.is_error(), "execute() must never be a live recall path");
+    #[test]
+    fn search_is_bounded() {
+        assert_eq!(
+            parse_recall_args(&json!({"query": " Noida forecast ", "limit": 1000})).unwrap(),
+            RecallRequest::Search {
+                query: "Noida forecast".into(),
+                limit: MAX_LIMIT
+            }
+        );
+        assert!(parse_recall_args(&json!({"query": "x".repeat(2049)})).is_err());
+    }
+
+    #[test]
+    fn nothing_to_find_says_what_to_send() {
+        for empty in [
+            json!({}),
+            json!({"query": " "}),
+            json!({"query": "", "open": ""}),
+        ] {
+            let refused = parse_recall_args(&empty).unwrap_err();
+            assert!(
+                refused.contains("query") && refused.contains("open"),
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_character_range_continues_by_naming_the_call() {
+        let line = "x".repeat(100_000);
+        let first = apply_chars("e1", &line, 2_000, 90_000);
+        assert!(first.ends_with(
+            "[chars 2000-31000 of 100000; recall {\"open\": \"ev:e1\", \"chars\": {\"start\": 31000, \"end\": 100000}} continues]"
+        ));
+        assert_eq!(apply_chars("e1", &line, 99_990, 200_000).len(), 10);
+        assert!(apply_chars("e", "héllo wörld", 1, 4).starts_with("éll\n[chars 1-4 of 11"));
+        assert_eq!(apply_chars("e", "héllo wörld", 6, 11), "wörld");
+    }
+
+    #[test]
+    fn apply_range_clamps() {
+        assert_eq!(apply_range("a\nb\nc", Some((2, 9))), "b\nc");
+        assert_eq!(apply_range("a\nb\nc", Some((5, 9))), "");
+        assert_eq!(apply_range("a\nb", None), "a\nb");
     }
 }

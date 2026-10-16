@@ -359,7 +359,7 @@ async fn recall_reaches_inside_a_line_a_window_cut() {
         vec![ContentBlock::ToolUse {
             id: "r1".into(),
             name: "recall".into(),
-            input: serde_json::json!({"id": "t1", "chars": {"start": 29_980, "end": 30_020}}),
+            input: serde_json::json!({"open": "ev:t1", "chars": {"start": 29_980, "end": 30_020}}),
         }],
         StopReason::ToolUse,
     );

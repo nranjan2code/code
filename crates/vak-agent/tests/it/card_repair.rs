@@ -767,7 +767,7 @@ async fn a_card_refused_for_a_missing_file_is_withdrawn_and_a_gone_page_is_not()
 
 /// A card that shows what a command printed waits for a command
 /// (`Tool::grounded_in`): deferred until a call runs one, then promoted in
-/// place from the next step of the same turn, as a `find_tools` match is
+/// place from the next step of the same turn, as a tool called by name is
 /// (docs/design/68-context-engine.md §5).
 struct Runs;
 

@@ -89,8 +89,8 @@ against a hosted provider. The decisions the maintainer took at C0 are §12.
   (`Tool::command`); it changed something when its tool declares a file
   it writes, a delivered file or a workspace change; a code change is a
   declared write to a code path; and a call looked something up unless
-  its tool says it does not (`Tool::looks_up`: a card tool, `find_tools`
-  and `plan` do not). Core reads a plan from `Tool::planned`. The
+  its tool says it does not (`Tool::looks_up`: a card tool and `plan` do
+  not). Core reads a plan from `Tool::planned`. The
   `write | edit | patch | remember | propose_skill` and `edit | write |
   patch` lists, the `bash` name checks in the receipts and in the
   draft-copy screen, `looks_something_up` and `is_substantive_command`

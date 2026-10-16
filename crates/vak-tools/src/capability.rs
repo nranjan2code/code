@@ -743,7 +743,7 @@ impl CapabilityTool {
     }
 
     /// The kinds of work its skill says it serves (`serves:` in SKILL.md),
-    /// so the tool surface can defer it and `find_tools` rank it; none
+    /// so the tool surface can defer it until it is called by name; none
     /// declared, it is loaded every turn.
     pub fn with_serves(mut self, serves: Vec<String>) -> Self {
         self.serves = serves;

@@ -1037,7 +1037,7 @@ fn historical_tool_result_projects_as_a_trace_line_and_evidence_returns_it_whole
         })
         .expect("the closed turn keeps its tool_use/tool_result pair");
     assert!(
-        closed_result.contains("[evidence:call-1"),
+        closed_result.contains(&vak_session::turns::evidence_tag_start("call-1")),
         "the digest must name the evidence id: {closed_result}"
     );
     assert!(

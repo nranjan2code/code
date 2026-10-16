@@ -127,9 +127,9 @@ impl Tool for McpTool {
         // oneOf/anyOf. Keep the two actions explicit in descriptions, and
         // enforce call-only fields again in execute before touching a server.
         // The configured server names are declaration data, not a catalog
-        // probe, so exposing them here preserves lazy startup while making a
-        // `find_tools` result actionable for models that missed the separate
-        // prompt inventory.
+        // probe, so exposing them here preserves lazy startup while making
+        // the schema actionable for models that missed the separate prompt
+        // inventory.
         let servers = self.reachable_servers();
         let server_schema = if servers.is_empty() {
             serde_json::json!({

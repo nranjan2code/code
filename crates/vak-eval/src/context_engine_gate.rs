@@ -360,7 +360,7 @@ fn no_cut_invariant_holds(log: &SessionLog, index: &TurnIndex, plan: &WorkingSet
                 // The pair stays; the result is the digest tagged with the
                 // evidence id, never the raw content of a closed turn.
                 for trace in &card.did {
-                    let tag = format!("[evidence:{}", trace.evidence_id);
+                    let tag = vak_session::turns::evidence_tag_start(&trace.evidence_id);
                     let digested = derived_tool_results
                         .iter()
                         .any(|content| content.contains(&tag));

@@ -207,7 +207,10 @@ fn every_tool_result_is_verbatim_traced_or_covered_by_a_packet() {
     // ev-b: closed and kept — the pair stays, the result is the digest
     // naming the evidence id, not the raw content.
     let b = result_content("ev-b").expect("closed turn keeps its pair");
-    assert!(b.contains("[evidence:ev-b"), "{b}");
+    assert!(
+        b.contains(&vak_session::turns::evidence_tag_start("ev-b")),
+        "{b}"
+    );
 
     // ev-c: still open — verbatim.
     assert_eq!(result_content("ev-c").as_deref(), Some("result c"));

@@ -17,8 +17,7 @@ ask for what they want.
    plan a day, a trip or a project; work with tables and numbers; run
    things on a schedule ("remind me every Monday at 9"); learn an
    ability and keep it. Name only what this conversation can actually
-   reach: when unsure whether something is available, look with
-   `find_tools` before offering it.
+   reach: the tools in your schemas and those listed under "More tools".
 3. Offer one concrete next step they can say back in a sentence, never
    a menu of everything.
 4. Ask only for what is really missing, one question at a time.

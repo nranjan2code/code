@@ -20,7 +20,7 @@ pub struct RememberTool {
     pub session_id: String,
 }
 
-/// Remove one curated memory note after `session_search` identifies its
+/// Remove one curated memory note after `recall` identifies its
 /// stable id. Session ledgers remain append-only; this edits only MEMORY.md.
 pub struct ForgetMemoryTool {
     pub sessions_home: PathBuf,
@@ -49,14 +49,14 @@ impl vak_tools::Tool for ForgetMemoryTool {
     }
 
     fn description(&self) -> &str {
-        "Forget one saved memory note when the user asks to delete or forget it. First use session_search with the note's topic to identify the exact saved note; pass its returned memory/<id> or profile/<id> source id here. If the result is ambiguous, ask which note they mean. This removes the note from durable memory and future memory search; it does not erase the conversation that originally created it."
+        "Forget one saved memory note when the user asks to delete or forget it. First find the note with recall, by its topic; pass the memory/<id> or profile/<id> id its hit gives here. If the result is ambiguous, ask which note they mean. This removes the note from durable memory and future memory search; it does not erase the conversation that originally created it."
     }
 
     fn schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "note_id": {"type": "string", "description": "Exact memory/<id> or profile/<id> source id returned by session_search"}
+                "note_id": {"type": "string", "description": "The exact memory/<id> or profile/<id> id a recall hit gave."}
             },
             "required": ["note_id"]
         })
@@ -82,7 +82,7 @@ impl vak_tools::Tool for ForgetMemoryTool {
         } else {
             return vak_tools::ToolOutput::error(
                 Fault::Shape,
-                "note_id must be the exact memory/<id> or profile/<id> source id from session_search",
+                "note_id must be the exact memory/<id> or profile/<id> id a recall hit gave",
             );
         };
         match result {
@@ -216,8 +216,8 @@ impl vak_tools::Tool for RememberTool {
         "Keep a note for later conversations: whatever the person asks you to \
          remember (their name, a preference, a fact about them or their work), \
          and decisions worth knowing next time. Later conversations find it \
-         with session_search; the person can see, edit or forget it. When asked \
-         to forget a note, find its exact source id with session_search, then \
+         with recall; the person can see, edit or forget it. When asked to \
+         forget a note, find its exact id with recall, then \
          call forget_memory; do not replace it with a note saying not to \
          remember it."
     }
@@ -256,7 +256,7 @@ impl vak_tools::Tool for RememberTool {
             note,
         ) {
             Ok(note) => vak_tools::ToolOutput::ok(format!(
-                "remembered ({kind}{tag_suffix}) as memory/{}. It will surface in future session_search queries; use forget_memory with that source id if the user later asks to forget it.",
+                "remembered ({kind}{tag_suffix}) as memory/{}. recall finds it in later conversations; forget_memory takes that id if the person asks to forget it.",
                 note.id,
                 tag_suffix = if tag.is_empty() {
                     String::new()
@@ -366,7 +366,7 @@ impl vak_tools::Tool for ProposeSkillTool {
                            "description": format!("Optional: a folder you wrote for a skill with a program; its SKILL.md is written from name, description and instructions. {}", vak_tools::capability::FORMAT)},
                 "serves": {"type": "array", "items": {"type": "string"},
                            "description": format!(
-                               "Optional: the kinds of work it serves, so a later turn finds it with `find_tools` instead of loading it every turn: any of {}, or a word of your own",
+                               "Optional: the kinds of work it serves, so it is listed by name and loaded only when called, instead of every turn: any of {}, or a word of your own",
                                crate::capability::Domain::known().iter().map(|domain| domain.as_str().to_string()).collect::<Vec<_>>().join(", ")
                            )}
             },

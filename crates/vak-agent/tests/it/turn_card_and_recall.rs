@@ -429,8 +429,8 @@ async fn recall_by_id_returns_the_full_evidence_content() {
                 "t2",
                 "recall",
                 serde_json::json!({
-                    "id": "t1", "turn": 0, "presentation": "",
-                    "range": {"start": 0, "end": 0}
+                    "open": "ev:t1", "query": "",
+                    "lines": {"start": 0, "end": 0}
                 }),
             ),
             text_msg("done"),
@@ -525,15 +525,10 @@ async fn recall_query_discovers_old_work_and_logs_its_bounded_result() {
             _ => None,
         })
         .unwrap();
-    assert_eq!(result["matches"].as_array().unwrap().len(), 1);
-    assert_eq!(result["matches"][0]["turn"], 1);
-    assert_eq!(result["historical"], true);
-    assert!(
-        result["matches"][0]["record"]
-            .as_str()
-            .unwrap()
-            .contains("Noida")
-    );
+    let matches = result["this_conversation"].as_array().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert!(matches[0]["open"].as_str().unwrap().starts_with("turn:"));
+    assert!(matches[0]["record"].as_str().unwrap().contains("Noida"));
     assert!(session.derive_messages().iter().flat_map(|m| &m.content).any(|block|
         matches!(block, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "search-old")));
 }

@@ -1099,13 +1099,27 @@ fn strip_duplicate_fences(narration: &str, presentations: &[PresentationRecord])
     out
 }
 
-/// A content-aware summary of one result, ending with the fixed
-/// `[evidence:<id> — <n> chars; call recall to expand]` tag (docs/design/68
-/// §3). Never a character-count cut: the body is shape-driven, and only the
+/// The start of every evidence tag for tool result `id`: what a reader
+/// looks for to know a result was digested.
+pub fn evidence_tag_start(id: &str) -> String {
+    format!("[evidence ev:{id} \u{2014}")
+}
+
+/// The tag that ends a digested result (docs/design/68 §3): where the whole
+/// of tool result `id` is, and the `recall` call that returns it. The one
+/// wording for every digest, and for anything shaped like one.
+pub fn evidence_tag(id: &str, chars: usize) -> String {
+    format!(
+        "{} {chars} chars; recall {{\"open\": \"ev:{id}\"}} returns it]",
+        evidence_tag_start(id)
+    )
+}
+
+/// A content-aware summary of one result, ending with its [`evidence_tag`].
+/// Never a character-count cut: the body is shape-driven, and only the
 /// bash/text digests select by *line* count.
 pub fn evidence_digest(id: &str, evidence: &Evidence) -> String {
-    let chars = evidence.content.chars().count();
-    let tag = format!("[evidence:{id} \u{2014} {chars} chars; call recall to expand]");
+    let tag = evidence_tag(id, evidence.content.chars().count());
     if evidence.is_error {
         return format!("{}\n{tag}", evidence.content);
     }
@@ -1441,6 +1455,14 @@ pub struct TurnCard {
     pub provenance: vak_control::Provenance,
 }
 
+/// Tool-result references as `recall`'s `open` takes them: `ev:a ev:b`.
+fn evidence_refs(ids: &[&str]) -> String {
+    ids.iter()
+        .map(|id| format!("ev:{id}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl TurnCard {
     /// The text BM25 indexes this card by: `asked` + every presentation's
     /// title/digest + narration + trace tool names and args (docs/design/68
@@ -1462,16 +1484,14 @@ impl TurnCard {
     }
 
     /// The one-line `<turns>` rendering: `#<n> asked: … → did: search×2 →
-    /// research.synthesis "Sensex 15 Sep" [pres:a1; ev:9f2,9f3]`.
-    /// Addressed history uses a stable id, not an ordinal that changes with
-    /// the candidate set. This is also the exact string the planner costs.
+    /// research.synthesis "Sensex 15 Sep" [pres:a1; ev:9f2 ev:9f3]`. Every
+    /// reference is written as `recall`'s `open` takes it. Addressed history
+    /// uses a stable id (`turn:<id>`), not an ordinal that changes with the
+    /// candidate set. This is also the exact string the planner costs.
     pub fn addressed_message(&self) -> String {
         let line = self.line(0);
         let description = line.strip_prefix("#0 ").unwrap_or(&line);
-        format!(
-            "<turns>\n[turn_id:{}] {description}\n</turns>",
-            self.turn_id
-        )
+        format!("<turns>\n[turn:{}] {description}\n</turns>", self.turn_id)
     }
 
     pub fn line(&self, n: usize) -> String {
@@ -1486,7 +1506,7 @@ impl TurnCard {
                 let evidence_part = if evidence_ids.is_empty() {
                     String::new()
                 } else {
-                    format!("; ev:{}", evidence_ids.join(","))
+                    format!("; {}", evidence_refs(&evidence_ids))
                 };
                 format!(
                     "{} \"{}\" [pres:{}{evidence_part}]",
@@ -1505,7 +1525,7 @@ impl TurnCard {
                 if evidence.is_empty() {
                     format!("\"{narration}\"")
                 } else {
-                    format!("\"{narration}\" [ev:{}]", evidence.join(","))
+                    format!("\"{narration}\" [{}]", evidence_refs(&evidence))
                 }
             }
         };
@@ -1852,7 +1872,7 @@ mod tests {
             other => panic!("expected a tool result, got {other:?}"),
         };
         assert!(
-            search_result.contains("[evidence:call-1"),
+            search_result.contains(&evidence_tag_start("call-1")),
             "{search_result}"
         );
         assert!(search_result.contains("https://example.com/a"));
@@ -1944,7 +1964,9 @@ mod tests {
         let digest = evidence_digest("ev1", &search_ev);
         assert!(digest.contains("https://a"));
         assert!(digest.contains("https://b"));
-        assert!(digest.ends_with("[evidence:ev1 \u{2014} 65 chars; call recall to expand]"));
+        assert!(digest.ends_with(
+            "[evidence ev:ev1 \u{2014} 65 chars; recall {\"open\": \"ev:ev1\"} returns it]"
+        ));
 
         let bash_ev = Evidence {
             tool: "bash".into(),

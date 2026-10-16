@@ -104,7 +104,7 @@ never changes a call.
 ### 3.3 Found without the name
 
 "The notes you made last week" names no path. The data catalog already
-indexes artifacts (M8). `session_search` and `recall` return artifacts with
+indexes artifacts (M8). `recall` returns artifacts with
 their path and state, and `glob` lists pending drafts whose workspace path
 matches its pattern beside the workspace files, each marked as a draft. All
 of these are read loop-side or Core-side, so the worker never reaches the
@@ -231,8 +231,7 @@ turn or evidence id. In another conversation, `recall` reaches back only
 where the grants allow (M8.3b), and the note says when the origin is a
 conversation this one cannot open.
 
-The Agent reaches the same thing through `recall` and `session_search`
-(§3.3) and the note on every path it touches (§3.2). Whatever the person
+The Agent reaches the same thing through `recall` (§3.3) and the note on every path it touches (§3.2). Whatever the person
 does on the page, the next turn reads it, because both come from the
 record.
 

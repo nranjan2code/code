@@ -4,7 +4,7 @@ Status: **implemented** (data-architecture M6.5a to M6.5c, 2026-10-06; §9's
 security fix shipped 2026-09-27, `5426018f`): sources as Documents polled by
 their own trigger, Rust connectors parsed in the worker, the `intake/`
 chain with detection labels that never drop an item, the catalog's item
-nodes, `session_search` over items with held items closed to every Agent
+nodes, `recall` over items with held items closed to every Agent
 read, alerts into the Inbox, push intake, and the admin console's Sources
 and the client's Sources panel; the Python pipeline and `[feeds]` are
 deleted. It is the intake-and-retrieval facet of
@@ -174,7 +174,7 @@ The contract (already stated in `docs/design/51-feed-system.md` and 73/74, now e
 - **The agent gets a tool.** Intake content becomes reachable in a turn through
   one retrieval tool over the catalog. The cleanest shape is to **widen the
   existing recall** rather than add a fourth search: `session_search`
-  (`crates/vak-core/src/session_search.rs`) already merges transcripts, memory
+  (now `crates/vak-core/src/elsewhere.rs`) already merges transcripts, memory
   and entities — it gains catalog items as another source, or is renamed to a
   single `recall`/`knowledge_search` that the model reaches for by default
   (open decision D1, §10). Either way, "usable for various things" means the
@@ -259,6 +259,8 @@ connector.
   a single `recall` over transcripts + memory + entities + intake, or add a
   distinct `knowledge_search`. Recommendation: **one `recall`** — fewer tools
   measure better on small models, and "everything I know" is one question.
+  Done on 2026-10-16: `session_search` was folded into `recall`
+  (docs/audits/history-lookup-2026-10-16.md).
 - **D2 — connectors in Rust or worker-Python?** Rewrite the drivers in Rust
   (one language, no Python runtime dependency, easiest to sandbox), or keep the
   parsers as pinned worker-shipped Python behind the broker. Recommendation:

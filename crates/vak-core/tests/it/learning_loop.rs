@@ -170,7 +170,7 @@ async fn remember_propose_recall_promote_loop() {
         responses: Mutex::new(VecDeque::from(vec![
             tool_call(
                 "s1",
-                "session_search",
+                "recall",
                 serde_json::json!({"query": "deploy rollback"}),
             ),
             text("Recalled from memory."),
@@ -204,15 +204,15 @@ async fn remember_propose_recall_promote_loop() {
             ContentBlock::ToolResult { content, .. } => Some(content.clone()),
             _ => None,
         })
-        .find(|c| c.contains("hit(s)"))
+        .find(|c| c.contains("\"elsewhere\""))
         .expect("search result logged");
     assert!(
         search_output.contains("deploy-rollbacks"),
         "memory hit present: {search_output}"
     );
     assert!(
-        search_output.contains("memory"),
-        "role surfaces as memory: {search_output}"
+        search_output.contains("\"from\":\"saved note\""),
+        "the hit says it is a saved note: {search_output}"
     );
 
     // ---- Promotion closes the loop ---------------------------------------

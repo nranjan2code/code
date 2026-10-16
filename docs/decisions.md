@@ -7,6 +7,19 @@ maintainer decides something a later session might otherwise ask again or
 undo, in the same commit that records it. Do not ask again about anything
 listed here unless the maintainer reopens it.
 
+## 2026-10-16
+
+- One history tool and no discovery tool
+  (`docs/audits/history-lookup-2026-10-16.md`,
+  `docs/design/68-context-engine.md` §5): `recall` searches this
+  conversation, other conversations, notes, the profile, sources and
+  deliverables in one call (`session_search` removed); a "More tools"
+  entry is called by its name (`find_tools` removed); no wire is sent a
+  deferred tool, so Anthropic's `defer_loading` and tool search are not
+  used. Designs are rewritten, not patched, with no compatibility kept.
+- Cards that show only what a call produced load once the conversation
+  holds such a call (`docs/audits/grounded-cards-2026-10-15.md`).
+
 ## 2026-10-15
 
 - Scheduled work you can see (`docs/design/94-scheduled-work-you-can-see.md`

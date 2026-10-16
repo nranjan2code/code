@@ -512,7 +512,7 @@ async fn tool_roundtrip_executes_and_feeds_result_back() {
     assert_eq!(projected.len(), 4);
     assert!(projected.iter().any(|m| m.content.iter().any(|b| matches!(
         b,
-        ContentBlock::ToolResult { content, .. } if content.contains("[evidence:")
+        ContentBlock::ToolResult { content, .. } if content.contains("[evidence ev:")
     ))));
 }
 

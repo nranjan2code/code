@@ -357,7 +357,7 @@ async fn a_workers_card_is_shown_and_recallable_in_the_delegating_conversation()
         call(
             "r1",
             "recall",
-            serde_json::json!({"presentation": presentation_id}),
+            serde_json::json!({"open": format!("pres:{presentation_id}")}),
         ),
         text_msg("reviewed"),
     ]);
@@ -379,7 +379,7 @@ async fn an_over_long_result_is_windowed_in_the_request_and_whole_in_the_ledger(
         call(
             "r1",
             "recall",
-            serde_json::json!({"id": "b1", "range": {"start": 3000, "end": 3002}}),
+            serde_json::json!({"open": "ev:b1", "lines": {"start": 3000, "end": 3002}}),
         ),
         text_msg("found it"),
     ]);
@@ -400,7 +400,7 @@ async fn an_over_long_result_is_windowed_in_the_request_and_whole_in_the_ledger(
     assert!(carried.chars().count() <= vak_tools::RESULT_WINDOW_CHARS + 200);
     assert!(carried.starts_with("record 00001\n") && carried.ends_with("record 05000"));
     assert!(
-        carried.contains("omitted") && carried.contains("recall {\"id\": \"b1\""),
+        carried.contains("omitted") && carried.contains("recall {\"open\": \"ev:b1\""),
         "the window says what it left out and how to read it"
     );
     assert!(!carried.contains("record 03000"));

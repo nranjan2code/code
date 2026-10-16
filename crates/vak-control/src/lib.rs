@@ -635,9 +635,8 @@ pub struct StepContract {
     pub sampling: Sampling,
     /// The tools the request offers, by name, in request order.
     pub tools: Vec<String>,
-    /// Those of `tools` sent without their schema (reached with
-    /// `find_tools`, or deferred on the wire), so the record says what the
-    /// model could call at once.
+    /// Those of `tools` not sent this step (listed by name, loaded once
+    /// called), so the record says what the model could call at once.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deferred: Vec<String>,
     pub output: OutputForm,

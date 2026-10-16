@@ -52,8 +52,9 @@ Facts, read from the tree at `0ab1e4ffb`.
    ids a card was built from, within its own turn
    (`crates/vak-session/src/types.rs`).
 4. **Explicit retrieval.** `recall` reopens a turn, card or piece of evidence
-   by id (doc 68 §3). `session_search` and the data catalog search
-   other sessions by keyword. Both run only when the model calls them.
+   by id (doc 68 §3), and its search covers other sessions, notes and
+   sources through the data catalog by keyword. It runs only when the
+   model calls it.
 
 ### 2.2 Who reads what
 
@@ -64,7 +65,7 @@ Facts, read from the tree at `0ab1e4ffb`.
 | `derived_from` | `PresentationRecord` | `recall`, the card's own provenance |
 | Files a tool touched | inside `TurnCard.did[].args_digest` | planner relevance, only if the directive repeats the path's words |
 | Commitment per strand | `IntentRecord.strand_commitments` | commitments |
-| Other sessions | session ledgers, `vak-store` | `session_search`, when the model calls it |
+| Other sessions | session ledgers, `vak-store` | `recall`, when the model calls it |
 
 ### 2.3 The gaps
 
@@ -88,7 +89,7 @@ Facts, read from the tree at `0ab1e4ffb`.
   survives as a thread past a few dozen turns.
 - **G-g. Long-horizon recall is keyword search on request.** A related
   conversation from six months ago is found only if the model calls
-  `session_search` and the words happen to match.
+  `recall` and the words happen to match.
 
 ### 2.4 Identity audit
 

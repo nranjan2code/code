@@ -235,8 +235,8 @@ server is no longer invisible to the operator and present to the model.
    `write` or `edit` tool is dispatched and never depend on model compliance
    with a natural-language scope instruction.
 8. A turn's reading never removes a capability. It only chooses which
-   admitted tools are loaded; the rest are listed and one `find_tools` call
-   away, and a tool that declares no domains is always loaded.
+   admitted tools are loaded; the rest are listed and called by name, and a
+   tool that declares no domains is always loaded.
 9. A failure is never data. No observation may introduce a callable name,
    and no recorded failure may prevent the next demand from retrying once
    the pool's backoff has passed.
@@ -283,7 +283,7 @@ passed no contract, and invariant 31 forbids one from hiding a capability
 added mid-session), and the domain slice made a *prediction* into a
 *policy*: a capability a confident reading excluded was uncallable for the
 turn. Prediction now lives only in the surface below, where being wrong costs
-one `find_tools` call.
+one call by name.
 
 Outputs: `tool_names`, `descriptors` (the prompt and ledger projection),
 `mcp_tool_index` (bare MCP tool name → owning server, so the loop can repair
@@ -304,24 +304,27 @@ Every admitted tool is callable. The surface decides only which are *loaded*
 (full schema in the request) this turn, from each tool's own declaration on
 the `vak_tools::Tool` trait — the harness keeps no table of tool names:
 
-- `always_loaded()` — the orientation and discovery primitives (`read`,
-  `glob`, `grep`, `find_tools`, `recall`, `skill`, `mcp`, `session_search`,
-  `commitments`) are loaded on every turn;
+- `always_loaded()` — the orientation primitives and the tools a request in
+  plain conversation names (`read`, `glob`, `grep`, `recall`, `remember`,
+  `skill`, `mcp`, `commitments`) are loaded on every turn;
 - `serves()` — an undeclared tool (empty `serves`) is always loaded; a tool
-  that declares what it serves is deferred behind `find_tools` unless an
-  earlier turn of the session loaded it (deferring saves context, it is not
+  that declares what it serves is deferred, listed by name, unless an
+  earlier turn of the session called it (deferring saves context, it is not
   policy);
 - `presents_cards()` — every admitted presentation tool is loaded from the
-  first model call, on every provider. Its schema is the output vocabulary,
+  first model call, on every provider, except a grounded card
+  (`grounded_in`), which loads once the conversation holds the call it shows
+  (docs/design/68-context-engine.md §5). Its schema is the output vocabulary,
   not historical content or a requirement to emit a card, and no keyword
-  match or extra discovery call hides a shape.
+  match hides a shape.
 
 Everything else is deferred: named in the prompt's "More tools" catalogue
 (`tool_catalogue`: name and first sentence, sorted, a function of the
-admitted set only, so it is byte-stable in the cached prefix), and loaded by
-one `find_tools` call. A tool `find_tools` returns is promoted to a loaded
-definition on every provider (`vak_agent::load_discovered`); on Anthropic legs
-deferred tools additionally ride `defer_loading`. With
+admitted set only, so it is byte-stable in the cached prefix), and called by
+its name: the call's arguments are rewritten under its schema when the schema
+refuses them, and the tool is promoted to a loaded definition on every
+provider for the rest of the turn (`vak_agent::load_promoted`). No wire is
+sent a deferred tool. With
 `[intent] slice_capabilities = false` (or the kernel off) everything is
 loaded and there is no catalogue.
 

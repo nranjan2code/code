@@ -295,7 +295,7 @@ report the mismatch.
 
 No reading removes a tool (docs/design/88-control-plane.md §12.1): which
 admitted tools are loaded follows each tool's declaration, and a deferred
-one is one `find_tools` call away. An enforced restriction (a policy, a
+one is called by its name. An enforced restriction (a policy, a
 channel overlay, an envelope) remains in force for that admission; never
 mutate the active grant. New permissions, higher spending caps and irreversible actions
 still follow their existing human boundaries. Capability additions follow the
@@ -340,7 +340,7 @@ Keep permission admission separate from model context selection. Within an
 admitted epoch, show a compact catalog and load schemas through the canonical
 capability discovery path. Loading a schema from that already admitted catalog
 is progressive disclosure, not a new permission grant. This is built
-(`find_tools` over the "More tools" catalogue, docs/design/41-capability-registry.md),
+(a "More tools" entry called by its name, docs/design/41-capability-registry.md),
 and it replaced the intent slice rather than running beside it.
 
 Effect restrictions such as “review only” are enforced independently at the

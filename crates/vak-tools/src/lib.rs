@@ -16,7 +16,6 @@ pub mod doc_read;
 pub mod drafts;
 pub mod edit;
 pub mod egress;
-pub mod find_tools;
 pub mod glob;
 pub mod grep;
 #[cfg(target_os = "linux")]
@@ -41,7 +40,6 @@ use serde_json::Value;
 pub use arguments::{JsonFault, json_fault, read_arguments, unreadable};
 pub use context::ToolContext;
 pub use contract::validate_input;
-pub use find_tools::FindToolsTool;
 pub use plan::{PlanTool, parse_plan_args};
 pub use recall::{RecallRequest, RecallTool, apply_chars, apply_range, parse_recall_args};
 pub use sandbox_events::{SandboxEvent, SandboxEventSink};
@@ -250,7 +248,7 @@ pub struct CommandOutput {
 /// What a card shows that only a call in the conversation can have
 /// produced (docs/design/68-context-engine.md §5). A card tool that declares
 /// one is loaded once the conversation holds such a call, and promoted in
-/// place at the step one appears, as a `find_tools` match is; until then it
+/// place at the step one appears, as a tool called by name is; until then it
 /// is listed under "More tools". The facts are other tools' own records, so
 /// a tool added at runtime that runs, writes, retrieves or answers data
 /// brings its card with it.
@@ -471,8 +469,8 @@ pub trait Tool: Send + Sync {
     /// fetching a page, planning, discovery), and the ones a request in
     /// plain conversation names (remembering what the person says, finding
     /// it again). Every other tool that declares
-    /// a domain is one `find_tools` call away until a turn loads it, and then
-    /// stays loaded for the session (docs/design/88-control-plane.md §12.1).
+    /// a domain is listed by name and loaded once called, and then stays
+    /// loaded for the session (docs/design/88-control-plane.md §12.1).
     fn always_loaded(&self) -> bool {
         false
     }

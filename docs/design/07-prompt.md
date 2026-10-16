@@ -33,8 +33,8 @@ and the admitted capabilities afresh, so an edit applies from the next turn
 of every session; the prefix a turn sent is recorded in its
 `TurnCapabilitiesBound`. Code-owned tool
 descriptions and schemas remain the callable source of truth; skills are
-documents reached through `skill`, and deferred tools are loaded through
-`find_tools`.
+documents reached through `skill`, and a deferred tool under "More tools"
+is called by its name.
 
 The seed is guidance, not an enforcement boundary. The permission engine,
 tool broker and sandbox decide whether an effect may execute. Its guardrails
@@ -88,6 +88,18 @@ presentation update does not restore stale-context behavior.
 
 > **Historical record**: one note per change to the seed, newest first,
 > each true as of its version; the current wording is the seed itself.
+
+- 2026-10-16, the capability contract names one history tool and no
+  discovery tool (docs/audits/history-lookup-2026-10-16.md). "Load More
+  tools with `find_tools`" became "a tool under More tools, called by its
+  name", since `find_tools` is gone. The history bullet now says what is in
+  front of the model (`<turns>` shows the turn this request follows) and
+  that anything older, other conversations and saved notes are found with
+  `recall`; `session_search` is gone. The current-fact bullet says to use a
+  search tool when one is available instead of "discover" one. "Do not
+  substitute memory" became "never fill the gap with what you believe from
+  training", because "memory" also names the saved notes. Every rule the
+  history test pins survives.
 
 - 7.0.0-dev (data-architecture M3b slice 4): the sandbox line names
   `$TMPDIR` for scratch files instead of `.vak/scratch/`, which is now only

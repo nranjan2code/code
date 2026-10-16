@@ -1,6 +1,6 @@
 //! Learning-loop tool classification (docs/design/26-learning.md):
 //! journaling tools are sanctioned under workspace-write, denied by
-//! read-only; session_search is a read everywhere reads are allowed.
+//! read-only; recall is a read everywhere reads are allowed.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -39,11 +39,11 @@ fn remember_denied_in_read_only() {
 }
 
 #[test]
-fn session_search_is_a_read() {
+fn recall_is_a_read() {
     let engine = PermissionEngine::default().with_tools(support::built_in());
     for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
         let d = engine.evaluate(
-            "session_search",
+            "recall",
             &json!({"query": "x"}),
             mode,
             std::path::Path::new("/ws"),

@@ -51,9 +51,9 @@ thing that joins them:
 
 | Piece | Where it is today |
 |---|---|
-| Durable knowledge | `remember`, memory, `session_search` (doc 26) |
+| Durable knowledge | `remember`, memory, found through `recall` (doc 26) |
 | Written procedures | `propose_skill` → review → `SKILL.md` in the Shared layer (doc 26, `vak-core/src/learning.rs`) |
-| Finding what exists | capability registry and epochs (doc 41), `find_tools`, the data catalog (doc 73 §9) |
+| Finding what exists | capability registry and epochs (doc 41), the "More tools" catalogue, the data catalog (doc 73 §9) |
 | Running new code safely | the broker worker and its sandboxes (invariant 14, doc 25) |
 | Proof from running, not words | invariant 33 (`Observed` over `Asserted`) |
 | Versions, parents, Review, undo | the Library (doc 82), file state (doc 90), candidates (doc 54) |
@@ -105,7 +105,8 @@ Made by the maintainer on 2026-10-14 (`docs/decisions.md`):
   while answering requests. A scheduled automation also reads failure
   receipts and proposes fixes as reviewable candidates.
 - **D8 A compact index plus search.** The prompt carries one line per
-  capability the Agent can use; full schemas come through `find_tools`.
+  capability the Agent can use; a capability is called by its name and its
+  full schema then loads (since 2026-10-16; `find_tools` until then).
 
 Decided on the maintainer's delegation (2026-10-14, "make the best
 decisions"); the maintainer may reopen any of them:
@@ -295,7 +296,7 @@ next turn, and cards already drawn fall back to their block's renderer.
 
 ```
 request
-  │  the prompt's capability index (D8) + find_tools / catalog search
+  │  the prompt's capability index (D8) + recall / catalog search
   ▼
 reuse ── fits as is ─────────────────────────────▶ call it
   │ close
@@ -308,8 +309,8 @@ build: propose_skill with no parent                 ┘
                          receipts → measure → promote / fix / retire
 ```
 
-1. **Find.** The Agent reads the index; `find_tools` ranks capabilities
-   with the rest of the deferred set. The catalog finds a capability by
+1. **Find.** The Agent reads the index and calls a capability by its name.
+   The catalog finds a capability by
    what it does and where it came from (a new catalog source, §6).
 2. **Decide.** Reuse, extend or build is the model's choice, and it is
    recorded: the plan's deliverable names it. Extending is proposing
@@ -454,8 +455,8 @@ Every rule in AGENTS.md "The data rules" holds; the ones that bite here:
   description), built from the registry's epoch. It sits with the tool
   index in the byte-stable prefix and changes only when an epoch
   publishes, i.e. at a turn boundary (invariant 36).
-- Full schemas load through `find_tools`, as deferred tools do today
-  (`ToolSurface`). As built in E1a, a program's tool declares no `serves`
+- Full schemas load when the capability is called by its name, as every
+  deferred tool's does (`ToolSurface`, docs/design/68-context-engine.md §5). As built in E1a, a program's tool declares no `serves`
   domains, so `build_tool_surface` loads it on every turn (undeclared
   fails open); E4 carries the skill's `serves:` onto its tool so it
   defers. As built in E4: `propose_skill` takes `serves` (described from

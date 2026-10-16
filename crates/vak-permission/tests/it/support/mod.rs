@@ -25,7 +25,7 @@ pub fn built_in() -> Vec<(String, Declared)> {
             "bash",
             Declared::new(Reach::Command, Subject::Command("command")),
         ),
-        ("session_search", Declared::reach(Reach::ReadStore)),
+        ("recall", Declared::reach(Reach::ReadStore)),
         (
             "skill",
             Declared::new(Reach::ReadStore, Subject::Value("name")),

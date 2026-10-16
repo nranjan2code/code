@@ -9,7 +9,6 @@ use std::path::Path;
 use vak_core::Core;
 use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
-use vak_tools::Tool;
 
 fn header_for(id: &str, cwd: &Path) -> SessionHeader {
     SessionHeader {
@@ -137,30 +136,15 @@ async fn trashed_session_absent_from_every_search() {
         .await
         .unwrap();
     assert_eq!(res.status(), 200);
-    let search_tool = vak_core::session_search::SessionSearchTool {
+    let reach = vak_core::elsewhere::Elsewhere {
         catalog,
         audience: Default::default(),
         space: Some(vak_session::trace::local::space(&cwd).to_string()),
         trash: vak_config::scope::SharedScope::new(home.clone()),
         file: None,
     };
-    let ctx = vak_tools::ToolContext {
-        cwd: cwd.clone(),
-        cancel: tokio_util::sync::CancellationToken::new(),
-        sandbox: None,
-        sandbox_sink: None,
-        agent_id: None,
-        trace: None,
-        new_documents: Vec::new(),
-        executions: None,
-        provenance: vak_control::Provenance::NONE,
-    };
-    let tool_search = || async {
-        search_tool
-            .execute(&serde_json::json!({"query": "zanzibar"}), &ctx)
-            .await
-            .content
-    };
+    // What a turn's recall reaches beyond its own conversation.
+    let reach_search = || serde_json::to_string(&reach.search("zanzibar", 8).unwrap()).unwrap();
 
     // Every reader sees the session before it is trashed, so an absence
     // afterwards is the trash at work and not a reader that never saw it.
@@ -177,7 +161,7 @@ async fn trashed_session_absent_from_every_search() {
         assert!(mentions(&body, &gone), "{reader} before trash: {body}");
         assert!(mentions(&body, &kept), "{reader} before trash: {body}");
     }
-    assert!(tool_search().await.contains(&gone));
+    assert!(reach_search().contains(&gone));
     for path in [
         format!("/nodes/ses_{gone}"),
         format!("/lineage/ses_{gone}"),
@@ -216,9 +200,9 @@ async fn trashed_session_absent_from_every_search() {
         assert!(!mentions(&body, &gone), "{reader} after trash: {body}");
         assert!(mentions(&body, &kept), "{reader} after trash: {body}");
     }
-    let found = tool_search().await;
-    assert!(!found.contains(&gone), "session_search: {found}");
-    assert!(found.contains(&kept), "session_search: {found}");
+    let found = reach_search();
+    assert!(!found.contains(&gone), "recall: {found}");
+    assert!(found.contains(&kept), "recall: {found}");
 
     for path in [
         format!("/sessions/{gone}/transcript"),

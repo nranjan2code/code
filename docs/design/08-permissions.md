@@ -133,9 +133,10 @@ read from its reach unless it says otherwise (`provenance_of_reach`):
 | `Network`, `Integration` | untrusted |
 | `Display`, `Coordination`, `WritePath`, `Other` | nothing |
 
-Declared beyond their reach: `session_search` and `agent_network` hold both
-(the catalog indexes past results and intake items; another Agent writes
-what it read), `entity_record`, `entity_query` and `automations` hold
+Declared beyond their reach: `agent_network` holds both (another Agent
+writes what it read), and `recall` holds what it returned: this
+conversation's own labels, or both once its search reached other
+conversations, notes or followed sources, `entity_record`, `entity_query` and `automations` hold
 private, and `flow` holds both. A result adds what its own output says
 (`ToolOutput::provenance`): a connected account's result holds both (it is
 the owner's mail and a stranger's words), a `task` worker's result holds what
@@ -297,7 +298,7 @@ constrains *what the process can touch* even when allowed.
   workers. Their environment is empty except for `PATH` and variables
   explicitly declared in that server's trusted configuration. Restricted MCP
   servers have no network because they inherit the same sandbox policy.
-- `task` and `session_search` are broker-owned structured capabilities rather
+- `task` and `recall` are broker-owned structured capabilities rather
   than worker code: child agents receive brokered tool registries, while
   session search receives only its fixed session-index scope.
 - Static and dynamically planned Bash flow nodes evaluate the same permission

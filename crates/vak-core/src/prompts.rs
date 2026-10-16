@@ -340,7 +340,7 @@ pub struct RuntimeSections {
     /// Per-turn clock context; calendar reasoning must not rely on stale history.
     pub temporal: String,
     /// One line per deferred tool (docs/design/68-context-engine.md §5): no
-    /// schemas, just enough to know `find_tools` has more.
+    /// schemas, just enough to call one by name.
     pub tool_index: String,
 }
 
@@ -926,7 +926,9 @@ mod tests {
                 .unwrap()
                 .contains("Look before you act")
         );
-        assert!(contract.contains("find_tools"));
+        assert!(
+            contract.contains("called\n  by its name") || contract.contains("called by its name")
+        );
         assert!(contract.contains("follow the newest message"));
         assert!(
             sandbox.contains("sandbox"),
@@ -1123,11 +1125,11 @@ mod tests {
         );
         assert!(out.text.contains("Respond concisely."));
         for required in [
-            "omitted history stays searchable",
+            "`<turns>` shows the turn this request follows",
             "`recall`",
-            "however long ago",
+            "however long",
             "candidates, not proof",
-            "Do not call either for a fresh request",
+            "a fresh request needs no recall",
             "For a current fact with no known source URL",
             "Unavailable history differs from",
         ] {

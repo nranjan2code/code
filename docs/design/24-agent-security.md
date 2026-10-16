@@ -114,7 +114,7 @@ The patterns Vak takes from comparable systems:
   read allowlists instead of granting file-content reads across the host.
   Seatbelt allows global metadata traversal needed to reach approved roots,
   without granting arbitrary home or mounted-volume contents.
-- `task` and `session_search` remain broker-owned structured capabilities.
+- `task` and `recall` remain broker-owned structured capabilities.
   Task only creates governed child agents whose effectful tools are brokered;
   session search only queries the append-only session index. Workers do not
   receive the session store or orchestration handles.
