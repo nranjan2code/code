@@ -11,9 +11,9 @@ serves: documents, code-exec
    column's type, missing values, ranges and duplicate rows. Report
    what it finds that changes the answer (missing months, a number
    column with text in it, duplicates).
-2. Compute with a tool, never by eye: `data_query` for filtering,
-   grouping and totals over a table, `bash` with Python for anything
-   more. Keep the source file as it is; write results to a new file.
+2. Compute with a tool, never by eye: `bash` with Python for
+   filtering, grouping and totals over a table. Keep the source file as
+   it is; write results to a new file.
 3. Say every assumption, exclusion and unit: which rows you dropped and
    why, what a blank means, whether figures are estimates.
 4. Show results as cards: `emit_table_card` for records (rows are

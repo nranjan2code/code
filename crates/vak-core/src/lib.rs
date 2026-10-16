@@ -19,7 +19,6 @@ pub mod capability;
 pub mod checkpoints;
 pub mod commitments;
 pub mod custom_commands;
-pub mod data_engine;
 pub mod digest;
 pub mod discovery;
 pub mod entities;
@@ -4263,7 +4262,6 @@ impl Core {
                 core: Some(self.clone()),
             }));
         }
-        tools.push(Arc::new(data_engine::DataQueryTool));
         for emit_tool in presentation_tools::EmitCardTool::with_packs(&self.pack_kinds()) {
             tools.push(Arc::new(emit_tool));
         }

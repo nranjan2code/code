@@ -1,5 +1,9 @@
 ## Unreleased
 
+- The `data_query` tool is gone: it needed the whole table copied into
+  the call. Workbooks are read with `doc_read`, a CSV is profiled by the
+  `table-profile` ability, and sums and groupings are worked out with
+  Python in `bash`, which the data skill now says.
 - Memory is no longer copied behind your back: the consolidation pass
   that ran after every compaction, turning notes with words like
   "always" or "must" into duplicate "invariant" notes and guessing
