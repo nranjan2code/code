@@ -1005,6 +1005,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/diff", get(session_diff))
         .route("/sessions/{id}/receipts", get(session_receipts))
         .route("/sessions/{id}/decisions", get(session_decisions))
+        .route("/sessions/{id}/interface", get(session_interface))
         .route(
             "/sessions/{id}/work",
             get(session_work).post(session_work_command),
@@ -6952,6 +6953,52 @@ async fn session_receipts(
         Some(log) => Ok(Json(log.receipts().into_iter().cloned().collect())),
         None => Err(StatusCode::NOT_FOUND),
     }
+}
+
+/// The interface the session's last turn was bound to, as the ledger
+/// recorded it (`TurnCapabilitiesBound`: the system prompt, every admitted
+/// tool's definition and the "More tools" index), beside the capability set
+/// the serving Core publishes now, each capability with what it declares it
+/// serves. Read-only; what a coverage harness derives its cases from
+/// (docs/audits/capability-coverage-2026-10-16.md).
+async fn session_interface(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let handle = state.get(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let bound = {
+        let guard = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let log = guard.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+        let latest = log
+            .active_entries_rev()
+            .find_map(|entry| match &entry.payload {
+                vak_session::EntryPayload::TurnCapabilitiesBound(bound) => Some(bound.clone()),
+                _ => None,
+            });
+        latest.map(|bound| {
+            let interface = log
+                .object_text(&bound.interface)
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .unwrap_or(serde_json::Value::Null);
+            serde_json::json!({
+                "epoch": bound.epoch,
+                "capability_ids": bound.capability_ids,
+                "excluded_ids": bound.excluded_ids,
+                "core_tool_names": bound.core_tool_names,
+                "deferred_tool_names": bound.deferred_tool_names,
+                "interface": interface,
+            })
+        })
+    };
+    let set = handle.core.capability_registry().current().await;
+    let capabilities: Vec<&vak_core::capability::Capability> = set.all().collect();
+    Ok(Json(serde_json::json!({
+        "bound": bound,
+        "capabilities": capabilities,
+    })))
 }
 
 /// One step of a turn's explanation with the turn it belongs to.

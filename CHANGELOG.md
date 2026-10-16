@@ -1,5 +1,8 @@
 ## Unreleased
 
+- `GET /sessions/{id}/interface` shows what a conversation's last turn was
+  given: every tool with its schema, which were held back under "More
+  tools", and each installed capability with what it says it serves.
 - A proposed skill is no longer tagged "duplicate-of" by a word-overlap
   score picked in code; the review shows each proposal as written.
 - With only abilities installed, the skill loader no longer sits in every

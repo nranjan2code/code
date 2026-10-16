@@ -46,6 +46,12 @@ asset names. Never hand-merge them: resolve the source files, delete
   throws on the first failed check and returns `"<name>: ok"`. Check phone
   width too (375 px) and that `document.documentElement.scrollWidth` does
   not exceed the viewport.
+- **Capability coverage** (by hand, never in the gate): `python3
+  scripts/capability_coverage.py all` derives cases from every capability a
+  turn can admit on a fresh seeded home and scores each live turn from its
+  decisions and receipts, per route (`--route provider:model`). Use it to
+  judge a contract change across everything a turn reaches; a full Ollama
+  run takes hours. Method: docs/audits/capability-coverage-2026-10-16.md.
 - **A known flaky test**: `vak-flow`'s
   `chain_runs_with_substitution_and_merge` has failed once under full
   workspace load and passed in isolation. Rerun a failure in isolation

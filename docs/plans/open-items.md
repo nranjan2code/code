@@ -229,6 +229,20 @@ Carried over from 7.2.0:
   parts their own Status lines name. A later change keeps them true by the
   rule in `docs/README.md` ("Keeping it current").
 
+## Capability coverage (docs/audits/capability-coverage-2026-10-16.md)
+
+- [ ] Finish the Ollama run (`python3 scripts/capability_coverage.py run
+  --label base --singles 1`, then `replay` and `report`); stopped by the
+  maintainer after 8 of 135 cases on 2026-10-16.
+- [ ] Run a hosted route once the maintainer sets a key; until then no
+  finding can be read as contract (both routes) versus wire capability.
+- [ ] Review `scripts/capability_coverage/cases.json` (written by the
+  authoring session from the emitted prompts, unreviewed) and regenerate
+  it through a hosted route.
+- [ ] Investigate from the first cases: file calls naming invented
+  absolute paths (`read`'s `path` says "relative to cwd or absolute"), and
+  no instruction skill loaded in 6 of 6 skill turns.
+
 ## Card forms (docs/design/92)
 
 - A map, a board, a graph and a form to fill in are not built; places go in

@@ -1,0 +1,2995 @@
+{
+ "pairs": {
+  "pack:answer-layouts.at-a-glance+tool:emit_link_card": {
+   "digest": "6fe90168eda07858",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "pack:answer-layouts.at-a-glance",
+      "tool:emit_link_card"
+     ],
+     "text": "Give me the headline figures for the Golden Gate Bridge at a glance, and a link to its official website."
+    }
+   ]
+  },
+  "skill:code-review+tool:emit_list_card": {
+   "digest": "b87f587995c1becd",
+   "files": {
+    "calc.py": "def add(a, b):\n    return a + b\n\ndef divide(a, b):\n    return a / b\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:code-review",
+      "tool:emit_list_card"
+     ],
+     "text": "Review calc.py and give me the problems as a list."
+    }
+   ]
+  },
+  "skill:data-and-spreadsheets+tool:emit_markup_preview_card": {
+   "digest": "baf8abec98cddca3",
+   "files": {
+    "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:data-and-spreadsheets",
+      "tool:emit_markup_preview_card"
+     ],
+     "text": "Look at sales.csv and show me an HTML snippet of the totals per region, rendered."
+    }
+   ]
+  },
+  "skill:debugging+tool:emit_media_card": {
+   "digest": "c8640e1bcd65b6ab",
+   "files": {
+    "crash.py": "items = [1, 2, 3]\nprint(items[3])\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:debugging",
+      "tool:emit_media_card"
+     ],
+     "text": "Figure out why crash.py fails, and also show me this diagram of Python's error types: https://upload.wikimedia.org/wikipedia/commons/a/a9/Example.jpg"
+    }
+   ]
+  },
+  "skill:decide-between+tool:emit_sources_card": {
+   "digest": "9590d844b004f674",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:decide-between",
+      "tool:emit_sources_card"
+     ],
+     "text": "Help me choose between two pages for learning Rust, https://doc.rust-lang.org/book/ and https://www.rust-lang.org/learn, citing what each says."
+    }
+   ]
+  },
+  "skill:getting-started+tool:emit_stats_card": {
+   "digest": "dfe7967c071e659f",
+   "files": {
+    "a.txt": "a\n",
+    "b/c.txt": "c\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:getting-started",
+      "tool:emit_stats_card"
+     ],
+     "text": "I'm new here: tell me what you can do, and show me three key figures about this workspace (number of files, folders, total size)."
+    }
+   ]
+  },
+  "skill:how-to-guide+tool:emit_steps_card": {
+   "digest": "a2f64aeb63fde711",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:how-to-guide",
+      "tool:emit_steps_card"
+     ],
+     "text": "How do I set up a new printer on a home network? Steps please."
+    }
+   ]
+  },
+  "skill:plan-in-time+tool:emit_summary_card": {
+   "digest": "bbff7f5c24ffc2c0",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:plan-in-time",
+      "tool:emit_summary_card"
+     ],
+     "text": "Plan my Sunday around a 2pm football match and lead with the gist in two sentences."
+    }
+   ]
+  },
+  "skill:planning-and-organizing+tool:emit_table_card": {
+   "digest": "37a7f6d4087a37b6",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:planning-and-organizing",
+      "tool:emit_table_card"
+     ],
+     "text": "Organise a garage clear-out over two weekends and give me the tasks in a table with owner and date."
+    }
+   ]
+  },
+  "skill:research-and-sources+tool:emit_terminal_card": {
+   "digest": "01db91cf61241e2d",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:research-and-sources",
+      "tool:bash",
+      "tool:emit_terminal_card"
+     ],
+     "text": "Research what 'uname -a' reports and then run it here and show me the exact output."
+    }
+   ]
+  },
+  "skill:software-development+tool:emit_test_report_card": {
+   "digest": "3419d9640493983f",
+   "files": {
+    "calc.py": "def add(a, b):\n    return a + b\n",
+    "test_calc.py": "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n\ndef test_neg():\n    assert add(-1, 1) == 0\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:software-development",
+      "tool:bash",
+      "tool:emit_test_report_card"
+     ],
+     "text": "Add a subtract function to calc.py with a test, run the tests and show me the results."
+    }
+   ]
+  },
+  "skill:writing-and-editing+tool:forget_memory": {
+   "digest": "b114da8cb7eabfde",
+   "files": {
+    "letter.md": "hi all. we r moving offices next wk.\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "skill:writing-and-editing",
+      "tool:recall",
+      "tool:forget_memory"
+     ],
+     "text": "Tidy up the wording of letter.md, and forget the note you saved about my old job."
+    }
+   ]
+  },
+  "tool:automations+tool:glob": {
+   "digest": "0f341a8d743dc5d3",
+   "files": {
+    "a.log": "x\n",
+    "logs/b.log": "y\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:glob",
+      "tool:automations"
+     ],
+     "text": "Find the log files in this folder, and set up a reminder every Friday at 5pm to clear them out."
+    }
+   ]
+  },
+  "tool:bash+tool:grep": {
+   "digest": "49c3e28c51dabdb3",
+   "files": {
+    "plan.md": "The deadline is Friday.\nShip it.\n",
+    "x.txt": "nothing\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:grep",
+      "tool:bash"
+     ],
+     "text": "Find which file mentions 'deadline', then show me how many lines that file has."
+    }
+   ]
+  },
+  "tool:commitments+tool:mail_calendar": {
+   "digest": "0a37c78fbcc6ca34",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:commitments",
+      "tool:mail_calendar"
+     ],
+     "text": "What am I still waiting on you for, and do I have any meetings tomorrow?"
+    }
+   ]
+  },
+  "tool:date-calculator+tool:office_apply": {
+   "digest": "84d7e74bdb20a017",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:date-calculator",
+      "tool:office_apply"
+     ],
+     "text": "Work out the date 90 days from 1 February 2027 and put it in a new Word document deadline.docx."
+    }
+   ]
+  },
+  "tool:doc_read+tool:plan": {
+   "digest": "b41a2a462ae1b57b",
+   "files": {
+    "budget.csv": "name,team,hours\nAsha,design,32\nBen,build,41\nChen,build,38\nDara,design,29\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:plan",
+      "tool:doc_read"
+     ],
+     "text": "Read budget.csv and give me both a table of it and a short summary of what stands out."
+    }
+   ]
+  },
+  "tool:edit+tool:propose_skill": {
+   "digest": "65ca9ee09007bdd8",
+   "files": {
+    "notes.md": "# Garden plan\n\nTomatoes go in the south bed in May.\nWater the herbs every second day.\nOrder compost before April 10.\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:edit",
+      "tool:propose_skill"
+     ],
+     "text": "Change 'May' to 'June' in notes.md, and save the way you did it as a reusable procedure for future date fixes."
+    }
+   ]
+  },
+  "tool:emit_ability_chart_card+tool:read": {
+   "digest": "29051e1040d46646",
+   "files": {
+    "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:read",
+      "tool:table-profile",
+      "tool:emit_ability_chart_card"
+     ],
+     "text": "Read sales.csv, profile it, and chart the distinct values per column."
+    }
+   ]
+  },
+  "tool:emit_ability_table_card+tool:recall": {
+   "digest": "52dce2986071a53e",
+   "files": {
+    "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:recall",
+      "tool:table-profile",
+      "tool:emit_ability_table_card"
+     ],
+     "text": "Profile the CSV I mentioned last time and show its column profile as a table."
+    }
+   ]
+  },
+  "tool:emit_calendar_card+tool:remember": {
+   "digest": "01b860165a1213fe",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:remember",
+      "tool:emit_calendar_card"
+     ],
+     "text": "Remember I have yoga every Tuesday at 6pm, and show this week's sessions on a calendar starting Tue 20 Oct 2026."
+    }
+   ]
+  },
+  "tool:emit_callout_card+tool:skill": {
+   "digest": "e0e343c1fb147ebc",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:skill",
+      "tool:emit_callout_card"
+     ],
+     "text": "Help me write a resignation letter using your writing guidance, and flag the one thing I must not forget to include."
+    }
+   ]
+  },
+  "tool:emit_chart_card+tool:table-profile": {
+   "digest": "580db0e7c4ee30dd",
+   "files": {
+    "hours.csv": "name,team,hours\nAsha,design,32\nBen,build,41\nChen,build,38\nDara,design,29\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:table-profile",
+      "tool:emit_chart_card"
+     ],
+     "text": "Profile hours.csv, then chart the hours per person."
+    }
+   ]
+  },
+  "tool:emit_comparison_card+tool:task": {
+   "digest": "c6a69a16ca54c26e",
+   "files": {
+    "a.md": "# Garden plan\n\nTomatoes go in the south bed in May.\nWater the herbs every second day.\nOrder compost before April 10.\n",
+    "b.md": "# Garden plan v2\n\nTomatoes go in the east bed in June.\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:task",
+      "tool:emit_comparison_card"
+     ],
+     "text": "Get a helper to look into the two files a.md and b.md, then compare them side by side."
+    }
+   ]
+  },
+  "tool:emit_details_card+tool:webfetch": {
+   "digest": "84d2d473d5960ddf",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:webfetch",
+      "tool:emit_details_card"
+     ],
+     "text": "Fetch https://example.com and give me the key facts about that page."
+    }
+   ]
+  },
+  "tool:emit_diff_card+tool:workers": {
+   "digest": "91dd547e6e94fd3e",
+   "files": {
+    "hello.py": "print('hello')\n"
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:task",
+      "tool:workers",
+      "tool:emit_diff_card"
+     ],
+     "text": "Have a helper change 'hello' to 'hi' in hello.py, wait for it, and show me the change."
+    }
+   ]
+  },
+  "tool:emit_file_preview_card+tool:write": {
+   "digest": "e581b565280fe915",
+   "files": {},
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "turns": [
+    {
+     "path": [
+      "tool:write",
+      "tool:emit_file_preview_card"
+     ],
+     "text": "Write a tiny HTML page welcome.html with a heading 'Welcome' and preview it."
+    }
+   ]
+  }
+ },
+ "units": {
+  "pack:answer-layouts.at-a-glance": {
+   "digest": "ca32260b9f601603",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "pack:answer-layouts.at-a-glance"
+      ],
+      "text": "Show me the main figures for the Amazon river at a glance: length, basin area, average discharge."
+     },
+     {
+      "path": [],
+      "text": "Which of those figures would surprise most people, and why?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "pack:answer-layouts.at-a-glance"
+       ],
+       "text": "Give me the key numbers for Mount Everest at a glance: height, first ascent year, and the usual death-zone altitude."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "pack:answer-layouts.at-a-glance"
+       ],
+       "text": "Quick at-a-glance figures for the Moon: distance from Earth, diameter and how long one orbit takes."
+      }
+     ]
+    }
+   ]
+  },
+  "skill:code-review": {
+   "digest": "5660eefe8ccb4a58",
+   "followup": {
+    "files": {
+     "util.py": "import os\ndef read(p):\n    return open(p).read()\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "skill:code-review"
+      ],
+      "text": "Review util.py and list the problems you find."
+     },
+     {
+      "path": [],
+      "text": "Which of those problems should I fix first?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "calc.py": "def add(a, b):\n    return a + b\n\ndef divide(a, b):\n    return a / b\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "skill:code-review"
+       ],
+       "text": "Can you review calc.py before I merge it and tell me what could go wrong?"
+      }
+     ]
+    },
+    {
+     "files": {
+      "parser.py": "def parse(line):\n    k, v = line.split('=')\n    return {k: v}\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "skill:code-review"
+       ],
+       "text": "Please look over the change in parser.py for bugs or anything risky."
+      }
+     ]
+    }
+   ]
+  },
+  "skill:data-and-spreadsheets": {
+   "digest": "0e58d0d9d5816a71",
+   "followup": {
+    "files": {
+     "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "skill:data-and-spreadsheets"
+      ],
+      "text": "Analyse sales.csv and tell me which region grew most from January to February."
+     },
+     {
+      "path": [],
+      "text": "Now say the same thing in one sentence for my manager."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "skill:data-and-spreadsheets"
+       ],
+       "text": "Clean up sales.csv: there is a missing value, tell me what you would do with it and show the totals by region."
+      }
+     ]
+    },
+    {
+     "files": {
+      "hours.csv": "name,team,hours\nAsha,design,32\nBen,build,41\nChen,build,38\nDara,design,29\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "skill:data-and-spreadsheets"
+       ],
+       "text": "Explain what hours.csv tells me about how work is split between teams."
+      }
+     ]
+    }
+   ]
+  },
+  "skill:debugging": {
+   "digest": "0b28c26011c37a81",
+   "followup": {
+    "files": {
+     "app.py": "prices = [3, 4, 5]\ntotal = 0\nfor p in prices[1:]:\n    total += p\nprint(total)\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "skill:debugging"
+      ],
+      "text": "app.py prints the wrong total. Track down why."
+     },
+     {
+      "path": [],
+      "text": "Okay, what is the smallest fix?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "calc.py": "def add(a, b):\n    return a - b\n",
+      "test_calc.py": "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n\ndef test_neg():\n    assert add(-1, 1) == 0\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "skill:debugging"
+       ],
+       "text": "Running test_calc.py fails for me and I don't know why. Find out what is wrong."
+      }
+     ]
+    },
+    {
+     "files": {
+      "crash.py": "items = [1, 2, 3]\nprint(items[3])\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "skill:debugging"
+       ],
+       "text": "My script crash.py throws an error when I run it. Figure out the cause before changing anything."
+      }
+     ]
+    }
+   ]
+  },
+  "skill:decide-between": {
+   "digest": "640713bfed6e33f6",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "skill:decide-between"
+      ],
+      "text": "Help me decide between a gas and an induction hob for a small kitchen."
+     },
+     {
+      "path": [],
+      "text": "If running cost matters most, which one?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:decide-between"
+       ],
+       "text": "Should I get a Kindle or a Kobo for reading in bed? Help me choose."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:decide-between"
+       ],
+       "text": "I'm torn between taking the train or flying from London to Edinburgh. Lay out the choice."
+      }
+     ]
+    }
+   ]
+  },
+  "skill:getting-started": {
+   "digest": "7fc4d2c7f500cab1",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "skill:getting-started"
+      ],
+      "text": "First time using this, what's something useful I can try right now?"
+     },
+     {
+      "path": [],
+      "text": "Okay, let's do the first thing you suggested."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:getting-started"
+       ],
+       "text": "I just installed this. What can you actually do for me here?"
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:getting-started"
+       ],
+       "text": "I'm new to this app, where should I begin?"
+      }
+     ]
+    }
+   ]
+  },
+  "skill:how-to-guide": {
+   "digest": "ba2105be40000cb1",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "skill:how-to-guide"
+      ],
+      "text": "How do I re-pot a houseplant that has outgrown its pot?"
+     },
+     {
+      "path": [],
+      "text": "What did you say to do right after taking it out of the old pot?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:how-to-guide"
+       ],
+       "text": "How do I change a bike's inner tube?"
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:how-to-guide"
+       ],
+       "text": "Walk me through descaling a kettle with vinegar."
+      }
+     ]
+    }
+   ]
+  },
+  "skill:plan-in-time": {
+   "digest": "5a7ad9d6e5b12235",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "skill:plan-in-time"
+      ],
+      "text": "Lay out a schedule for a child's birthday party from 2pm to 5pm."
+     },
+     {
+      "path": [],
+      "text": "Push everything 30 minutes later."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:plan-in-time"
+       ],
+       "text": "Plan a relaxed Saturday in Lisbon for me, morning to evening."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:plan-in-time"
+       ],
+       "text": "Make me a four-week plan to get ready for a 5k run."
+      }
+     ]
+    }
+   ]
+  },
+  "skill:planning-and-organizing": {
+   "digest": "664479a508ce1e88",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "skill:planning-and-organizing"
+      ],
+      "text": "Make a plan for hosting six friends for dinner on Friday."
+     },
+     {
+      "path": [],
+      "text": "Which of those steps should I do tonight?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:planning-and-organizing"
+       ],
+       "text": "I want to move flat at the end of next month. Turn that into a practical plan with what to prepare."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:planning-and-organizing"
+       ],
+       "text": "Help me organise renewing my passport before a trip in eight weeks."
+      }
+     ]
+    }
+   ]
+  },
+  "skill:research-and-sources": {
+   "digest": "bb293ecfb15690bf",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "skill:research-and-sources"
+      ],
+      "text": "Look up when the next total solar eclipse visible from Europe is, with sources."
+     },
+     {
+      "path": [],
+      "text": "Which of your sources is the most authoritative?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:research-and-sources"
+       ],
+       "text": "Find out what the current guidance is on how much sleep teenagers need, with sources."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:research-and-sources"
+       ],
+       "text": "Research whether standing desks actually help back pain and show me where each claim comes from."
+      }
+     ]
+    }
+   ]
+  },
+  "skill:software-development": {
+   "digest": "50a10184ac86597c",
+   "followup": {
+    "files": {
+     "calc.py": "def add(a, b):\n    return a + b\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "skill:software-development"
+      ],
+      "text": "Add input validation to calc.add so it rejects strings."
+     },
+     {
+      "path": [],
+      "text": "What exactly did you verify?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "calc.py": "def add(a, b):\n    return a + b\n",
+      "test_calc.py": "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n\ndef test_neg():\n    assert add(-1, 1) == 0\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "skill:software-development"
+       ],
+       "text": "Add a multiply function to calc.py, following the style already there, and a test for it."
+      }
+     ]
+    },
+    {
+     "files": {
+      "text_utils.py": "# helpers for text\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "skill:software-development"
+       ],
+       "text": "Implement a small slugify(title) function in text_utils.py with a test."
+      }
+     ]
+    }
+   ]
+  },
+  "skill:writing-and-editing": {
+   "digest": "8ea93202785fb6b4",
+   "followup": {
+    "files": {
+     "notes.md": "# Garden plan\n\nTomatoes go in the south bed in May.\nWater the herbs every second day.\nOrder compost before April 10.\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "skill:writing-and-editing"
+      ],
+      "text": "Summarise notes.md in three bullet points."
+     },
+     {
+      "path": [],
+      "text": "Make the second bullet shorter."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "skill:writing-and-editing"
+       ],
+       "text": "Rewrite this to sound friendlier: 'Your request has been denied due to policy.'"
+      }
+     ]
+    },
+    {
+     "files": {
+      "letter.md": "hi team. so the move is next week. pls pack ur desks by thurs, movers come fri morning. thx\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "skill:writing-and-editing"
+       ],
+       "text": "Polish the draft in letter.md so it reads well, keep my voice."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:automations": {
+   "digest": "65efea9fbdf57a26",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:automations"
+      ],
+      "text": "Set a reminder for tomorrow at 7pm to call my sister."
+     },
+     {
+      "path": [
+       "tool:automations"
+      ],
+      "text": "Actually make it 8pm instead."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:automations"
+       ],
+       "text": "Remind me every weekday at 8am to drink a glass of water."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:automations"
+       ],
+       "text": "Every Monday at 9, send me a short summary of what's on my plate this week."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:bash": {
+   "digest": "9297b3fcd514f944",
+   "followup": {
+    "files": {
+     "notes.md": "# Garden plan\n\nTomatoes go in the south bed in May.\nWater the herbs every second day.\nOrder compost before April 10.\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:bash"
+      ],
+      "text": "Count how many lines are in notes.md using the shell."
+     },
+     {
+      "path": [
+       "tool:bash"
+      ],
+      "text": "And how many words?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:bash"
+       ],
+       "text": "How much free disk space does this machine have?"
+      }
+     ]
+    },
+    {
+     "files": {
+      "hello.py": "print('hello from the script')\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:bash"
+       ],
+       "text": "Run hello.py and tell me what it prints."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:commitments": {
+   "digest": "e8f8a880229148bd",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:commitments"
+      ],
+      "text": "List what's outstanding from our long-running work."
+     },
+     {
+      "path": [],
+      "text": "Which of those has been open the longest?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:commitments"
+       ],
+       "text": "What are you still working on for me, and is anything blocked?"
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:commitments"
+       ],
+       "text": "Is there anything you owe me that isn't finished yet?"
+      }
+     ]
+    }
+   ]
+  },
+  "tool:date-calculator": {
+   "digest": "e351724ff6c2eb30",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:date-calculator"
+      ],
+      "text": "How many days from 1 January 2027 to 14 February 2027?"
+     },
+     {
+      "path": [],
+      "text": "How many weeks is that?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:date-calculator"
+       ],
+       "text": "How many working days are there between 3 March 2027 and 21 April 2027?"
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:date-calculator"
+       ],
+       "text": "What date is 45 days after 18 November 2026, and what weekday is it?"
+      }
+     ]
+    }
+   ]
+  },
+  "tool:doc_read": {
+   "digest": "7866a279a14fa884",
+   "followup": {
+    "files": {
+     "settings.json": "{\"theme\": \"dusk\", \"font_size\": 15}\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:doc_read"
+      ],
+      "text": "Open settings.json and tell me what theme is set."
+     },
+     {
+      "path": [],
+      "text": "And the font size?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "budget.csv": "name,team,hours\nAsha,design,32\nBen,build,41\nChen,build,38\nDara,design,29\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:doc_read"
+       ],
+       "text": "What's in budget.csv? Show it to me as a table."
+      }
+     ]
+    },
+    {
+     "files": {
+      "config.yaml": "server:\n  host: 0.0.0.0\n  port: 8088\nlogging:\n  level: info\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:doc_read"
+       ],
+       "text": "Read config.yaml and tell me which port it uses."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:edit": {
+   "digest": "bd7e03e60a7e9387",
+   "followup": {
+    "files": {
+     "todo.txt": "- buy milk\n- post the parcel\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:edit"
+      ],
+      "text": "In todo.txt, replace 'buy milk' with 'buy oat milk'."
+     },
+     {
+      "path": [],
+      "text": "What does the file say now?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "notes.md": "# Garden plan\n\nTomatoes go in the south bed in May.\nWater the herbs every second day.\nOrder compost before April 10.\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:edit"
+       ],
+       "text": "In notes.md, change 'May' to 'June'."
+      }
+     ]
+    },
+    {
+     "files": {
+      "welcome.txt": "You will recieve a confirmation email shortly.\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:edit"
+       ],
+       "text": "Fix the typo 'recieve' in welcome.txt."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_ability_chart_card": {
+   "digest": "7851a89459476649",
+   "followup": {
+    "files": {
+     "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:table-profile",
+       "tool:emit_ability_chart_card"
+      ],
+      "text": "Profile sales.csv and chart missing values per column."
+     },
+     {
+      "path": [],
+      "text": "Which column has the most missing values?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:table-profile",
+        "tool:emit_ability_chart_card"
+       ],
+       "text": "Profile sales.csv and chart its columns by how many distinct values each has."
+      }
+     ]
+    },
+    {
+     "files": {
+      "hours.csv": "name,team,hours\nAsha,design,32\nBen,build,41\nChen,build,38\nDara,design,29\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:table-profile",
+        "tool:emit_ability_chart_card"
+       ],
+       "text": "Profile hours.csv and draw a chart of the columns and their distinct counts."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_ability_table_card": {
+   "digest": "791da8777dba88fb",
+   "followup": {
+    "files": {
+     "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:table-profile",
+       "tool:emit_ability_table_card"
+      ],
+      "text": "Profile sales.csv and put the per-column results in a table."
+     },
+     {
+      "path": [],
+      "text": "Which columns are numeric?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:table-profile",
+        "tool:emit_ability_table_card"
+       ],
+       "text": "Profile sales.csv and show the column profile as a table."
+      }
+     ]
+    },
+    {
+     "files": {
+      "hours.csv": "name,team,hours\nAsha,design,32\nBen,build,41\nChen,build,38\nDara,design,29\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:table-profile",
+        "tool:emit_ability_table_card"
+       ],
+       "text": "Give me a table of each column in hours.csv with its type, from a profile of the file."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_calendar_card": {
+   "digest": "35864b0d020ece64",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_calendar_card"
+      ],
+      "text": "Lay out the conference on a calendar: talks 9 Dec 2026 9:00-12:00, workshop 9 Dec 14:00-16:00, dinner 9 Dec 19:00."
+     },
+     {
+      "path": [],
+      "text": "Which one is the longest?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_calendar_card"
+       ],
+       "text": "Put these on a calendar: dentist Tue 14 Oct 2026 at 10:00, team lunch Thu 16 Oct 2026 at 12:30, flight Sat 18 Oct 2026 at 07:15."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_calendar_card"
+       ],
+       "text": "Show my week of 2 Nov 2026 as a schedule: gym Monday 7am, piano Wednesday 6pm, market Saturday 9am."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_callout_card": {
+   "digest": "8bb4ce9a8f97b395",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_callout_card"
+      ],
+      "text": "One warning I must not miss before jump-starting a car?"
+     },
+     {
+      "path": [],
+      "text": "Why is that the most important one?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_callout_card"
+       ],
+       "text": "Give me one important safety warning about using a chainsaw, set apart so I don't miss it."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_callout_card"
+       ],
+       "text": "What's the one tip I shouldn't forget when proofing bread dough?"
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_chart_card": {
+   "digest": "6d0650a3f738d1d8",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_chart_card"
+      ],
+      "text": "Plot website visitors per day: 120, 135, 98, 160, 210 for Mon to Fri."
+     },
+     {
+      "path": [],
+      "text": "Which day was the peak and by how much over the lowest?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_chart_card"
+       ],
+       "text": "Chart these monthly rainfall figures in mm: Jan 78, Feb 52, Mar 61, Apr 44, May 50."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_chart_card"
+       ],
+       "text": "Draw a chart of my running distance in km: Mon 5, Tue 0, Wed 7, Thu 3, Fri 10."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_comparison_card": {
+   "digest": "d0a2c05e64a7ada1",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_comparison_card"
+      ],
+      "text": "Compare e-books and paper books on price, portability and feel."
+     },
+     {
+      "path": [],
+      "text": "Which would you pick for a long trip?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_comparison_card"
+       ],
+       "text": "Compare tea and coffee side by side on caffeine, cost per cup and taste."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_comparison_card"
+       ],
+       "text": "Compare renting and buying a home on upfront cost, flexibility and long-term value."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_details_card": {
+   "digest": "446879684e7c9f9e",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_details_card"
+      ],
+      "text": "Key details on the Eiffel Tower: height, year built, architect."
+     },
+     {
+      "path": [],
+      "text": "How old is it now?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_details_card"
+       ],
+       "text": "Give me the key facts about Kyoto: country, population, best season to visit, famous for."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_details_card"
+       ],
+       "text": "Facts about the Raspberry Pi 5: CPU, RAM options, release year."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_diff_card": {
+   "digest": "e193432cef8967ff",
+   "followup": {
+    "files": {
+     "calc.py": "def add(a, b):\n    return a + b\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:edit",
+       "tool:emit_diff_card"
+      ],
+      "text": "Make add in calc.py also accept a third optional argument, then show the code change."
+     },
+     {
+      "path": [],
+      "text": "How many lines did that change add?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "calc.py": "def add(a, b):\n    return a + b\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:edit",
+        "tool:emit_diff_card"
+       ],
+       "text": "In calc.py rename the function add to sum_two and show me the change."
+      }
+     ]
+    },
+    {
+     "files": {
+      "hello.py": "print('hello')\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:edit",
+        "tool:emit_diff_card"
+       ],
+       "text": "Change the greeting in hello.py to 'Good morning' and show what changed."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_file_preview_card": {
+   "digest": "19ca8badd3aba7fc",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:write",
+       "tool:emit_file_preview_card"
+      ],
+      "text": "Create card.html, a simple birthday card page, and let me see it rendered."
+     },
+     {
+      "path": [
+       "tool:edit"
+      ],
+      "text": "Change the heading colour to blue."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:write",
+        "tool:emit_file_preview_card"
+       ],
+       "text": "Write a small HTML page bake.html announcing a bake sale on Saturday and show me a live preview of it."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:write",
+        "tool:emit_file_preview_card"
+       ],
+       "text": "Make a one-page HTML menu, menu.html, with three dishes, and preview it."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_link_card": {
+   "digest": "d2eb9428fe3b2c01",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_link_card"
+      ],
+      "text": "Share the link to the official Rust website."
+     },
+     {
+      "path": [],
+      "text": "What would I find on that page?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_link_card"
+       ],
+       "text": "Give me a link to the Python documentation home page."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_link_card"
+       ],
+       "text": "Show me the Wikipedia page for the Great Barrier Reef as a link."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_list_card": {
+   "digest": "b1aac2f391aafa8b",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_list_card"
+      ],
+      "text": "List six things to check before a long car journey."
+     },
+     {
+      "path": [],
+      "text": "Which of those is the most often forgotten?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_list_card"
+       ],
+       "text": "List what to pack for a weekend camping trip."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_list_card"
+       ],
+       "text": "Give me a list of five easy houseplants for a dark room."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_markup_preview_card": {
+   "digest": "4e44b5cd7eb40419",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_markup_preview_card"
+      ],
+      "text": "Show a preview of an HTML card with a title and a short paragraph."
+     },
+     {
+      "path": [
+       "tool:emit_markup_preview_card"
+      ],
+      "text": "Make the title bigger."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_markup_preview_card"
+       ],
+       "text": "Show me what a simple red 'Sign up' button looks like in HTML, rendered."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_markup_preview_card"
+       ],
+       "text": "Render a small HTML table of three fruits and their colours so I can see it."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_media_card": {
+   "digest": "33141acf43754104",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_media_card"
+      ],
+      "text": "Display the image at https://upload.wikimedia.org/wikipedia/commons/a/a9/Example.jpg"
+     },
+     {
+      "path": [],
+      "text": "What kind of file was that?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_media_card"
+       ],
+       "text": "Show me this picture: https://upload.wikimedia.org/wikipedia/commons/3/3f/Fronalpstock_big.jpg"
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_media_card"
+       ],
+       "text": "Play this audio clip for me: https://upload.wikimedia.org/wikipedia/commons/c/c8/Example.ogg"
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_sources_card": {
+   "digest": "0261b4c1bf388e16",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:webfetch",
+       "tool:emit_sources_card"
+      ],
+      "text": "Fetch https://www.python.org and summarise its main message with the source."
+     },
+     {
+      "path": [],
+      "text": "Quote the exact title of that page."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:webfetch",
+        "tool:emit_sources_card"
+       ],
+       "text": "Read https://www.rust-lang.org and tell me what it says Rust is for, citing the page."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:webfetch",
+        "tool:emit_sources_card"
+       ],
+       "text": "What does https://example.com say? Cite it."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_stats_card": {
+   "digest": "05700f1f03d1fac0",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_stats_card"
+      ],
+      "text": "Headline numbers please: revenue 48k, up 12%; costs 31k, down 4%."
+     },
+     {
+      "path": [],
+      "text": "What's the profit from those numbers?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_stats_card"
+       ],
+       "text": "Show these as key figures: 1,240 sign-ups, 18% conversion, 312 active today."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_stats_card"
+       ],
+       "text": "My month in numbers: 42 km run, 9 books read, 3 kg lost. Show them big."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_steps_card": {
+   "digest": "048e67adc67a633a",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_steps_card"
+      ],
+      "text": "Step-by-step: back up my phone photos to a computer."
+     },
+     {
+      "path": [],
+      "text": "Which step takes longest?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_steps_card"
+       ],
+       "text": "Steps to reset a home Wi-Fi router."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_steps_card"
+       ],
+       "text": "How do I make a cup of pour-over coffee, step by step?"
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_summary_card": {
+   "digest": "1d8c186ad1b7719f",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_summary_card"
+      ],
+      "text": "Briefly, is a heat pump a good idea in a mild climate?"
+     },
+     {
+      "path": [],
+      "text": "Why?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_summary_card"
+       ],
+       "text": "In short: is it worth learning to touch type as an adult?"
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_summary_card"
+       ],
+       "text": "Give me the bottom line on whether to replace or repair a five-year-old laptop with a dead battery."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_table_card": {
+   "digest": "b64219705f15a8ef",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:emit_table_card"
+      ],
+      "text": "Table of the first five elements with symbol and atomic number."
+     },
+     {
+      "path": [],
+      "text": "Which of those is a noble gas?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_table_card"
+       ],
+       "text": "A table of Mercury, Venus and Mars with their diameter and number of moons."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:emit_table_card"
+       ],
+       "text": "Make a table of three European capitals with their country and population."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_terminal_card": {
+   "digest": "5f2dc30632296b12",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:bash",
+       "tool:emit_terminal_card"
+      ],
+      "text": "Run 'echo hello && date' and show the output."
+     },
+     {
+      "path": [],
+      "text": "What date did it print?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "a.txt": "a\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:bash",
+        "tool:emit_terminal_card"
+       ],
+       "text": "Run 'ls -la' here and show me exactly what it printed."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:bash",
+        "tool:emit_terminal_card"
+       ],
+       "text": "Run python3 --version and show me the output."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:emit_test_report_card": {
+   "digest": "ca1cbf1d7ec32db2",
+   "followup": {
+    "files": {
+     "calc.py": "def add(a, b):\n    return a + b\n",
+     "test_calc.py": "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n\ndef test_neg():\n    assert add(-1, 1) == 0\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:bash",
+       "tool:emit_test_report_card"
+      ],
+      "text": "Run test_calc.py and show the test report."
+     },
+     {
+      "path": [],
+      "text": "How many tests were there?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "calc.py": "def add(a, b):\n    return a + b\n",
+      "test_calc.py": "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n\ndef test_neg():\n    assert add(-1, 1) == 0\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:bash",
+        "tool:emit_test_report_card"
+       ],
+       "text": "Run the tests in test_calc.py and show me the results."
+      }
+     ]
+    },
+    {
+     "files": {
+      "calc.py": "def add(a, b):\n    return a - b\n",
+      "test_calc.py": "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n\ndef test_neg():\n    assert add(-1, 1) == 0\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:bash",
+        "tool:emit_test_report_card"
+       ],
+       "text": "Run the test suite here and report which tests passed."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:forget_memory": {
+   "digest": "1a866b4ee34c0440",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:remember"
+      ],
+      "text": "Remember that my bike lock code is 4412."
+     },
+     {
+      "path": [
+       "tool:recall",
+       "tool:forget_memory"
+      ],
+      "text": "Actually, forget the bike lock code you saved."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:recall",
+        "tool:forget_memory"
+       ],
+       "text": "Please forget what you saved about my gym schedule."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:recall",
+        "tool:forget_memory"
+       ],
+       "text": "Delete the note you have about my old address."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:glob": {
+   "digest": "20bde124acab689c",
+   "followup": {
+    "files": {
+     "data/hours.csv": "name,team,hours\nAsha,design,32\nBen,build,41\nChen,build,38\nDara,design,29\n",
+     "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:glob"
+      ],
+      "text": "List every CSV file here."
+     },
+     {
+      "path": [],
+      "text": "Which of them is the biggest?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "a.md": "a\n",
+      "b.md": "b\n",
+      "notes/c.md": "c\n",
+      "x.txt": "x\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:glob"
+       ],
+       "text": "Which markdown files are in this folder?"
+      }
+     ]
+    },
+    {
+     "files": {
+      "README.md": "r\n",
+      "app.py": "pass\n",
+      "lib/util.py": "pass\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:glob"
+       ],
+       "text": "Find all the .py files in this project."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:grep": {
+   "digest": "3c665404934d0cb4",
+   "followup": {
+    "files": {
+     "log.txt": "Monday: started\n",
+     "plan.md": "Ship on Friday.\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:grep"
+      ],
+      "text": "Search the files for the word 'Friday'."
+     },
+     {
+      "path": [],
+      "text": "Open the file that had it and tell me the whole line."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "notes.md": "# Garden plan\n\nTomatoes go in the south bed in May.\nWater the herbs every second day.\nOrder compost before April 10.\n",
+      "todo.txt": "- buy compost\n- mow lawn\n",
+      "x.txt": "nothing\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:grep"
+       ],
+       "text": "Which files here mention 'compost'?"
+      }
+     ]
+    },
+    {
+     "files": {
+      "app.py": "# TODO: handle errors\nprint(1)\n",
+      "lib.py": "x = 1  # TODO later\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:grep"
+       ],
+       "text": "Find where TODO appears in the code."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:mail_calendar": {
+   "digest": "f8d051f17c5c0c6c",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:mail_calendar"
+      ],
+      "text": "Do I have any meetings on Friday?"
+     },
+     {
+      "path": [],
+      "text": "When is the first one?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:mail_calendar"
+       ],
+       "text": "What's on my calendar tomorrow?"
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:mail_calendar"
+       ],
+       "text": "Did I get any email from my landlord this week?"
+      }
+     ]
+    }
+   ]
+  },
+  "tool:office_apply": {
+   "digest": "d158dddc2b9d86eb",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:office_apply"
+      ],
+      "text": "Create a short PowerPoint, intro.pptx, with one slide titled 'Welcome'."
+     },
+     {
+      "path": [
+       "tool:office_apply"
+      ],
+      "text": "Add a second slide titled 'Agenda'."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:office_apply"
+       ],
+       "text": "Make me a new Word document invite.docx with a heading 'Summer Party' and one line with the date, 12 July."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:office_apply"
+       ],
+       "text": "Create a spreadsheet budget.xlsx with columns Item and Cost and two rows: Rent 900, Food 300."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:plan": {
+   "digest": "545c8ce07f93518a",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:plan"
+      ],
+      "text": "Write a list of breakfast ideas and a shopping table for them."
+     },
+     {
+      "path": [],
+      "text": "Add a summary at the top."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:plan"
+       ],
+       "text": "I need three things: a table of the planets' sizes, a chart of their moons, and a one-paragraph summary."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:plan"
+       ],
+       "text": "Give me a packing list, a day-by-day schedule and a budget table for a three-day trip to Rome."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:propose_skill": {
+   "digest": "95a7b8fbacf32ea2",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:propose_skill"
+      ],
+      "text": "Save a reusable way to write my weekly status update: wins, blockers, next week, in that order."
+     },
+     {
+      "path": [],
+      "text": "What did you call that procedure?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:propose_skill"
+       ],
+       "text": "That checklist we just used for reviewing invoices worked well. Save it so you can do it the same way next time: check the totals, the date, the VAT number."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:propose_skill"
+       ],
+       "text": "Keep this as a reusable procedure for later: when I say 'weekly tidy', list files older than 30 days and ask before deleting any."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:read": {
+   "digest": "ce94cffebcba5b26",
+   "followup": {
+    "files": {
+     "todo.txt": "- buy milk\n- post the parcel\n- call Sam\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:read"
+      ],
+      "text": "Open todo.txt for me."
+     },
+     {
+      "path": [],
+      "text": "What was the third item?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "notes.md": "# Garden plan\n\nTomatoes go in the south bed in May.\nWater the herbs every second day.\nOrder compost before April 10.\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:read"
+       ],
+       "text": "Show me what's in notes.md."
+      }
+     ]
+    },
+    {
+     "files": {
+      "hello.py": "for i in range(3):\n    print('hi', i)\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:read"
+       ],
+       "text": "What does hello.py do? Look at it."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:recall": {
+   "digest": "96f9690cb6a2c83a",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [],
+      "text": "My dog is called Pepper and she's three years old."
+     },
+     {
+      "path": [],
+      "text": "How old did I say my dog is?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:recall"
+       ],
+       "text": "What did we talk about last time about my holiday?"
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:recall"
+       ],
+       "text": "Earlier I told you my favourite restaurant, what was it?"
+      }
+     ]
+    }
+   ]
+  },
+  "tool:remember": {
+   "digest": "4d248ecab4bd8a0a",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:remember"
+      ],
+      "text": "Please remember my partner's birthday is 4 March."
+     },
+     {
+      "path": [],
+      "text": "What did you just save?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:remember"
+       ],
+       "text": "Remember that I'm allergic to peanuts."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:remember"
+       ],
+       "text": "Keep in mind for the future that I prefer metric units."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:skill": {
+   "digest": "38471928052a0918",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:skill"
+      ],
+      "text": "Help me plan a small garden project for spring using your planning approach."
+     },
+     {
+      "path": [],
+      "text": "What's the first step?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:skill"
+       ],
+       "text": "I need to write a careful apology email to a client for a missed deadline; use whatever guidance you have for good writing."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:skill"
+       ],
+       "text": "Help me research a question with proper sources: are electric cars cheaper to run than petrol?"
+      }
+     ]
+    }
+   ]
+  },
+  "tool:table-profile": {
+   "digest": "923bd44ab05d70a2",
+   "followup": {
+    "files": {
+     "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:table-profile"
+      ],
+      "text": "Profile sales.csv for me."
+     },
+     {
+      "path": [],
+      "text": "What's the total revenue?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "sales.csv": "region,month,units,revenue\nNorth,Jan,120,2400\nSouth,Jan,95,1900\nNorth,Feb,140,2800\nSouth,Feb,,2100\nEast,Feb,60,1200\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:table-profile"
+       ],
+       "text": "Profile sales.csv before I use it: rows, column types, missing values."
+      }
+     ]
+    },
+    {
+     "files": {
+      "hours.csv": "name,team,hours\nAsha,design,32\nBen,build,41\nChen,build,38\nDara,design,29\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:table-profile"
+       ],
+       "text": "Check hours.csv: how many rows, any duplicates, what range are the hours?"
+      }
+     ]
+    }
+   ]
+  },
+  "tool:task": {
+   "digest": "4b9182e7b063d820",
+   "followup": {
+    "files": {
+     "x.txt": "one two three\n",
+     "y.txt": "four five\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:task"
+      ],
+      "text": "Get a helper to count the words in every text file here and report back."
+     },
+     {
+      "path": [
+       "tool:workers"
+      ],
+      "text": "Is the helper done? What did it find?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "a.md": "# Garden plan\n\nTomatoes go in the south bed in May.\nWater the herbs every second day.\nOrder compost before April 10.\n",
+      "b.md": "# Recipes\n\nPancakes: flour, egg, milk.\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:task"
+       ],
+       "text": "In the background, have a helper go through all the .md files here and summarise each one, while I keep chatting."
+      }
+     ]
+    },
+    {
+     "files": {
+      "lib/a.py": "def a():\n    return 1\n",
+      "lib/b.py": "def b():\n    return 2\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:task"
+       ],
+       "text": "Hand off a separate piece of work: explore the lib folder and report what each file does."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:webfetch": {
+   "digest": "1d73b75306ca162f",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:webfetch"
+      ],
+      "text": "Read https://www.python.org and tell me the main headline."
+     },
+     {
+      "path": [],
+      "text": "Were there any links to downloads on it?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:webfetch"
+       ],
+       "text": "What does the page at https://example.com say?"
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:webfetch"
+       ],
+       "text": "Get the text from https://www.rust-lang.org and tell me the headline."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:workers": {
+   "digest": "ceed147e2fb2e26d",
+   "followup": {
+    "files": {
+     "a.txt": "1\n"
+    },
+    "turns": [
+     {
+      "path": [
+       "tool:task"
+      ],
+      "text": "Kick off a helper to list all the files here."
+     },
+     {
+      "path": [
+       "tool:workers"
+      ],
+      "text": "What did the helper report?"
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {
+      "notes.md": "# Garden plan\n\nTomatoes go in the south bed in May.\nWater the herbs every second day.\nOrder compost before April 10.\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:task",
+        "tool:workers"
+       ],
+       "text": "Start a helper to summarise notes.md, then check on how it's doing."
+      }
+     ]
+    },
+    {
+     "files": {
+      "a.txt": "1\n2\n",
+      "b.txt": "1\n"
+     },
+     "turns": [
+      {
+       "path": [
+        "tool:task",
+        "tool:workers"
+       ],
+       "text": "Have a helper count lines in every file here and wait for it to finish, then tell me the result."
+      }
+     ]
+    }
+   ]
+  },
+  "tool:write": {
+   "digest": "d461ca4ee9a61fef",
+   "followup": {
+    "files": {},
+    "turns": [
+     {
+      "path": [
+       "tool:write"
+      ],
+      "text": "Save a note called ideas.md with three blog post ideas."
+     },
+     {
+      "path": [
+       "tool:edit"
+      ],
+      "text": "Add a fourth idea to that file."
+     }
+    ]
+   },
+   "generator": "claude-opus-5-5, answering the emitted prompts in the authoring session",
+   "reviewed": false,
+   "single": [
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:write"
+       ],
+       "text": "Create a file shopping.txt with eggs, bread and apples on separate lines."
+      }
+     ]
+    },
+    {
+     "files": {},
+     "turns": [
+      {
+       "path": [
+        "tool:write"
+       ],
+       "text": "Write a short poem about autumn into poem.md."
+      }
+     ]
+    }
+   ]
+  }
+ }
+}
