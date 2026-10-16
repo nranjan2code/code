@@ -48,7 +48,11 @@ contract:
   wait in code and `limit.clamp(1, 20)` are numbers picked in code
   (AGENTS.md "No word lists, no tuned limits"; doc 88 §5a).
 - [ ] `mail_calendar` is loaded, and its long guardrail paragraph is in the
-  seed, on every turn with no account connected.
+  seed, on every turn with no account connected. Deferring it was tried
+  and reverted (2026-10-16): "what's on my calendar today?" reached it
+  16/16 loaded, 3/16 deferred, and drew a calendar card with no data
+  6/16 (docs/audits/tool-catalogue-2026-10-16.md §6). Its 7,486 chars
+  (18 % of tool bytes) need a design that keeps it findable.
 - [ ] `remember` writes a workspace note; a fact about the person (a name)
   is a profile fact, and the tool cannot write the profile. Found from
   another workspace only through `session_search` of that space.
@@ -84,6 +88,13 @@ contract:
   with the name in the carried card).
 - [ ] Measure whether the loop's regeneration repairs the invalid card
   arguments the replay counts (29 of 155 first steps).
+- [ ] "Total sales per region in sales.csv": after `read`, the next step
+  never computes (0/16 `bash`, with or without `data_query` listed;
+  8/16 answer with no call, live it called the data "truncated").
+- [x] Tool catalogue audit built (2026-10-16): consolidation's word lists
+  removed (O1), the entity store retired into `remember` (O2),
+  `data_query` removed (O3); `mail_calendar` deferral reverted (O5).
+  The audit's O4, O6 to O10 wait for the maintainer.
 
 ## Before the next release
 

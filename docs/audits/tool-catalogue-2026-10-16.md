@@ -255,3 +255,22 @@ relies on.
    (invariant 25: discovery only on demand).
 10. **Reflection's caps (O10).** Remove or move to `[control.limits]`
     with a shown default; decide with 1.
+
+## 6. Built (2026-10-16)
+
+The maintainer chose 1, 2, 3 and 5. Each was measured once by replaying a
+captured first request 16 times on the installed route, before and after
+the change (`/tmp/vak-live/measure/m345r`, `/tmp/vak-live/measure/ent`).
+
+| Change | Commit | Measurement | Result |
+|---|---|---|---|
+| 1. Consolidation removed | cd3b6cab3 | none on the turn path (it ran after compaction, its result discarded) | kept |
+| 3. `data_query` removed | 6d084cde8 | step after `read` of a CSV, with and without its catalogue line | kept: 0/16 called it before; both variants 0/16 `bash`, 4 vs 8 no call |
+| 5. `mail_calendar` deferred | 849708e4f | "what's on my calendar today?" | **reverted** (c0dcc4439): 16/16 → 3/16 reach it; 6/16 drew an empty calendar card |
+| 2. Entity store retired | 9a3e9cfda | `remember` and `far` without the `entity_record` line | kept: remember first 8 → 7, far to recall 10 → 8, no call 0 → 4, within noise at n=16 |
+
+Change 5 measured what it cost: the tool bytes fell 42,584 → 35,098 chars,
+and the model stopped finding the tool. It stays loaded until a design
+keeps it findable (open-items "Installed route failures"). Change 3 found
+an older gap: after reading a CSV the next step does not compute, with or
+without `data_query`.

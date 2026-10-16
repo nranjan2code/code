@@ -45,20 +45,22 @@ progress lines."
 
 ## Where things stand
 
-**Next (2026-10-16): the maintainer picks which tool changes to build.**
-The tool audit is written and committed: docs/audits/tool-catalogue-
-2026-10-16.md (every built-in tool with its declarations and surface,
-every mechanism runs can add, overlaps O1 to O10, a ranked proposal of ten
-changes with blast radius and what must not break). Nothing is built yet;
-build only what the maintainer approves, one measurement per change
-(method and scripts: docs/audits/history-lookup-2026-10-16.md,
-/tmp/vak-live; dev server `vak-inv-live` on 8915 behind `ollama-capture`).
-Strongest findings: consolidation promotes notes by a word list and copies
-them (O1); `entity_record` declares no reach and asks where `remember`
-does not (O2); `data_query` parses in the Core process with inline data
-(O3); an ability is listed as both a skill and a tool under "a skill name
-is never a tool name" (O4, from code, not yet measured); `mail_calendar`
-is 18 % of every request's tool bytes with no account (O5).
+**Next (2026-10-16): the remaining tool-audit items, when the maintainer
+chooses.** docs/audits/tool-catalogue-2026-10-16.md §5 ranks them; §6
+says what was built. Built and pushed: consolidation's word lists removed
+(O1), the entity store retired so `remember` is the one memory writer
+(O2), `data_query` removed (O3). Tried and reverted: deferring
+`mail_calendar` (O5), because the calendar question stopped reaching it
+(16/16 to 3/16). Not built, the maintainer's call: O4 (an ability listed
+as skill and tool), O6 (ability cards with no ability), O7 (one web
+reader), O8 (one index, a design question), O9, O10. Two open lines from
+the measurements are in open-items "Installed route failures":
+`mail_calendar`'s size needs a design that keeps it findable, and a CSV
+question never computes after `read`. The full gate has not run on these
+four commits (targeted tests only, by the maintainer's rule); run it
+before a release. Method: replay a captured first request 16 times
+before and after (`scripts/measure_tool_form.py replay`, captures in
+/tmp/vak-live/capture via `ollama-capture` + `vak-inv-live` on 8915).
 
 **Done 2026-10-16 (pushed):** `session_search` and `entity_query` folded
 into `recall`; `find_tools` removed (tools called by name); Anthropic
