@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Every request is smaller: the mail and calendar tool, the largest one,
+  is no longer sent in full on every turn; it is listed under "More
+  tools" and loads the first time it is called.
 - The `data_query` tool is gone: it needed the whole table copied into
   the call. Workbooks are read with `doc_read`, a CSV is profiled by the
   `table-profile` ability, and sums and groupings are worked out with

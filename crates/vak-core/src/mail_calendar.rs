@@ -643,10 +643,6 @@ impl vak_tools::Tool for MailCalendarTool {
         vec!["mail", "calendar"]
     }
 
-    fn always_loaded(&self) -> bool {
-        true
-    }
-
     fn description(&self) -> &str {
         r#"Read connected mail and calendar data only when it is needed to answer the current request. This tool is read-only: it cannot send email, create or change events, cancel events, RSVP, delete data, contact people, or authorize another tool.
 
