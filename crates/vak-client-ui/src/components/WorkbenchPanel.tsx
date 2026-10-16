@@ -21,6 +21,7 @@ import {
 import * as api from "../api";
 import { watchCoworking } from "../streamHub";
 import Icon from "./Icon";
+import ActivitySteps, { hasActivitySteps } from "./ActivitySteps";
 import Sheet from "./Sheet";
 import OfficeChangeList from "./OfficeChangeList";
 import OfficeView from "./OfficeView";
@@ -1048,8 +1049,12 @@ export default function WorkbenchPanel() {
         </div>
       </Show>
 
+      <Show when={tab() === "execution"}>
+        <ActivitySteps sessionId={activeId()} />
+      </Show>
+
       {/* Main Content */}
-      <Show when={executions().length === 0 && !selectedArtifact()}>
+      <Show when={executions().length === 0 && !selectedArtifact() && !(tab() === "execution" && hasActivitySteps(activeId()))}>
         <div class="workbench-empty-state">
           <Icon name={tab() === "artifacts" ? "file" : "history"} size={32} />
           <Show when={workbenchLoadError()}>

@@ -4830,6 +4830,21 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
   background: color-mix(in srgb, var(--red) 8%, transparent);
 }
 
+.activity-steps { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); border-bottom: 1px solid var(--border-soft); overflow-y: auto; max-height: 45vh; }
+.activity-turn { display: flex; flex-direction: column; gap: var(--space-2); }
+.activity-request { margin: 0; color: var(--muted); font-size: var(--fs-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.activity-step { display: grid; grid-template-columns: 18px 1fr; align-items: start; column-gap: var(--space-2); color: var(--text-soft); }
+.activity-step[data-state="running"] .activity-label, .activity-step[data-state="waiting"] .activity-label { color: var(--text); }
+.activity-mark { display: inline-flex; align-items: center; justify-content: center; height: 20px; color: var(--muted); }
+.activity-step[data-state="failed"] .activity-mark { color: var(--live-ink); }
+.activity-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 3px var(--live-wash); animation: pulse 1.8s ease-in-out infinite; }
+.activity-step[data-state="waiting"] .activity-dot { animation: none; }
+.activity-label { line-height: 20px; overflow-wrap: anywhere; }
+.activity-detail { grid-column: 2; font-size: var(--fs-meta); color: var(--muted); }
+.activity-detail summary { cursor: pointer; }
+.activity-detail p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .activity-dot { animation: none; } }
 .workbench-empty-state {
   display: flex;
   flex-direction: column;

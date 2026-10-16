@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Details → Activity shows what each turn did, newest first, in plain
+  words: thinking, every call with its state ("Showed a table card",
+  "Planned: …", "Looked back in the conversation", refusals with why),
+  approvals, questions and workers, live from the moment a turn starts.
+  The conversation itself still shows only the answer.
 - An answer shown as cards ends with its cards: every card says whether
   the answer goes on after it, and when the last card of a step says it is
   done (and the plan has nothing left), the turn ends there instead of

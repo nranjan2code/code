@@ -401,9 +401,8 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
    and readers of a run's last words read recorded messages. Measured on
    the dev route and compared with the OpenAI route; §7 lists what is open
    (a connected-accounts rollup for `mail_calendar`, composition skills
-   that only some models fetch, plan as the answer's outline). Next: the
-   Details Activity steps view (the server already reports plan, card and
-   recall calls), then doc 96 Q3, whose two design questions (no rollup
+   that only some models fetch, plan as the answer's outline). The Details
+   Activity steps view is built. Next: doc 96 Q3, whose two design questions (no rollup
    over a session ledger; how `choose` becomes a directive) wait on the
    maintainer. The proposed live-turn design for cards (draw recorded
    cards while the run goes on, one quiet "Preparing" line, a staggered

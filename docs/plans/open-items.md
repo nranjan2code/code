@@ -284,9 +284,11 @@ Carried over from 7.2.0:
   - [ ] Composition skills (`answer-layouts`) reach only a model that calls
     the skill loader; the small route never does (doc 97 §7).
   - [ ] Whether the plan should be the answer's outline (doc 97 §7).
-  - [ ] Details → Activity lists only sandbox executions, so a turn of model
-    steps, plan and card calls shows "No activity yet" while it runs. The
-    loop's own calls (plan, cards, recall) send no `ToolCallStart`.
+  - [x] Details → Activity lists only sandbox executions (fixed: it shows
+    each turn's steps; plan, card and recall calls report start and end).
+  - [ ] A card refused in an earlier turn reads "Used emit chart card" in
+    Activity: no card was recorded for it and the client has only the
+    tool's name.
   - [ ] A page bound to its data: a Library artifact of composed cards
     whose new version an automation's run produces, shared through grants.
   - [ ] Decide whether `ui://` HTML resources from MCP servers are drawn

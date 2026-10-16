@@ -1263,7 +1263,7 @@ function draftingShell(card: DraftingCard): JSX.Element {
   const form = card.block.replace(/_/g, " ");
   return <div class="answer-block" data-block={card.block}>
     <div class="card-drafting" role="status" data-call={card.id}>
-      <span class="card-drafting-line">Drawing a {form}</span>
+      <span class="card-drafting-line">Drawing a {form} card</span>
       <span class="card-drafting-bar" aria-hidden="true" />
       <span class="card-drafting-bar short" aria-hidden="true" />
     </div>
