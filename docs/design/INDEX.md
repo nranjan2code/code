@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 3 proposal, 17 in progress, 56 implemented, 3 reference, 8 superseded, 4 historical.
+Counts: 4 proposal, 17 in progress, 56 implemented, 3 reference, 8 superseded, 4 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -100,3 +100,4 @@ Counts: 3 proposal, 17 in progress, 56 implemented, 3 reference, 8 superseded, 4
 | [93-self-evolving-capabilities.md](93-self-evolving-capabilities.md) | 93-self-evolving-capabilities.md | implemented | E1 to E9 built and checked live (2026-10-14 to 2026-10-15) |
 | [94-scheduled-work-you-can-see.md](94-scheduled-work-you-can-see.md) | 94-scheduled-work-you-can-see.md | implemented | 2026-10-15: S0 to S5 built (the owner's time zone, delivery into the conversation, plain words and the picker, the tool's change, pause, resume and run_now by name, the card in chat, the Automations page) |
 | [95-one-capability-index.md](95-one-capability-index.md) | 95-one-capability-index.md | proposal | (2026-10-16): written from the tool catalogue audit (docs/audits/tool-catalogue-2026-10-16.md, O8) |
+| [96-answer-projection-gaps.md](96-answer-projection-gaps.md) | 96 — Answer projection gaps | proposal | (2026-10-16): written from a review of what an answer can do on screen |

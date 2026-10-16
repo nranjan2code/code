@@ -257,8 +257,9 @@ Carried over from 7.2.0:
 - The next release reads no presentation library saved before this change
   (old primitive names): it is a major version under invariant 29, and the
   dev and installed data homes are set up again.
-- Answer projection review (2026-10-16), each item a proposal for the
-  maintainer, none started:
+- Answer projection review (2026-10-16), staged in
+  docs/design/96-answer-projection-gaps.md (Q1 to Q3, P1 to P6), each a
+  proposal for the maintainer, none started:
   - [ ] No live controls: a `controls` form of typed inputs with outputs
     written in a closed set of pure expressions evaluated in the client,
     and a worked example the builder checks. No code runs.
