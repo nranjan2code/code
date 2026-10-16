@@ -93,6 +93,18 @@ Type `CandidateRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
 
+## card_action
+
+Type `CardActionRecord` in `crates/vak-session/src/card_actions.rs`. Class: ledger. Stored in: `sessions`. Version: 1.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `presentation_id` | `String` | yes | The `Presentation` entry the action was taken on. |
+| `action` | `CardActionKind` | yes |  |
+| `values` | `CardActionValues` | yes |  |
+| `trace` | `Option<TraceKey>` | no |  |
+| `actor` | `Option<PrincipalId>` | no |  |
+
 ## commitment_event
 
 Type `Event` in `crates/vak-commit/src/ledger.rs`. Class: ledger. Stored in: `commitments`. Version: 1.

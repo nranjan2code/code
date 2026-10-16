@@ -208,7 +208,16 @@ export interface OutputItem {
   content: OutputContent;
   provenance?: OutputProvenance | null;
   actions: OutputAction[];
+  /** A card's state as the person's actions left it (docs/design/96, Q3). */
+  card_state?: CardState | null;
   fallback_text: string;
+}
+
+export interface CardState {
+  /** Items of a checkable list ticked now, by place. */
+  marked?: number[];
+  /** The option chosen last. */
+  chosen?: string;
 }
 
 export interface ResultOutcome {

@@ -625,6 +625,7 @@ impl DeliveryPacket {
         });
         for (index, output) in cards.into_iter().enumerate() {
             timeline.items.push(OutputItem {
+                card_state: None,
                 id: format!("{}/card/{index}", self.job_id),
                 timestamp: String::new(),
                 turn_id: self.job_id.clone(),
@@ -825,7 +826,7 @@ fn presentation_for_job(job: &DeliveryJob) -> Option<OutputTimeline> {
                     result.id
                 ));
             }
-            OutputItem {
+            OutputItem { card_state: None,
                 id: format!("{}/{}", job.job_id, result.id),
                 timestamp: String::new(),
                 turn_id: job.job_id.clone(),

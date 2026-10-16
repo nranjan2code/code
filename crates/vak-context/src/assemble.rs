@@ -201,6 +201,9 @@ pub fn compose_tail(tail: &TailInput, sections: &TailSections) -> String {
     if let Some(thread) = &sections.thread {
         push_block(&mut out, thread);
     }
+    if let Some(marks) = &sections.card_marks {
+        push_block(&mut out, marks);
+    }
     out
 }
 

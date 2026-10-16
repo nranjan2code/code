@@ -87,6 +87,10 @@ pub struct OutputItem {
     pub provenance: Option<OutputProvenance>,
     #[serde(default)]
     pub actions: Vec<crate::DeliveryAction>,
+    /// A card's state as the person's actions left it: ticked items, the
+    /// option chosen (docs/design/96-answer-projection-gaps.md, Q3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_state: Option<vak_session::card_actions::CardState>,
     pub fallback_text: String,
 }
 

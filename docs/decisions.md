@@ -9,6 +9,11 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-16
 
+- Card actions (doc 96 Q3): the marks a turn's tail carries are read from
+  the conversation's own `CardAction` entries since the previous
+  directive, like the other tail sections, rather than a rollup Document
+  (a session ledger is not a record chain); a choice starts its turn with
+  a user message whose metadata names the `CardAction` entry.
 - Cards end the answer by declaration
   (`docs/design/97-cards-end-the-answer.md`): every card takes a required
   `then` (`more` or `done`), and a step of accepted cards whose last card

@@ -355,3 +355,62 @@ fn only_the_latest_turns_presentations_count_for_it() {
     assert_eq!(latest.len(), 1);
     assert_eq!(latest[0].turn_id, second.id);
 }
+
+/// Ticks made on a card after a turn reach the next turn in its tail
+/// (`<card_marks>`), read from the `CardAction` entries between the two
+/// directives, and fold into the card's state; ticks from an older span are
+/// not carried again (docs/design/96, Q3).
+#[test]
+fn card_marks_reach_the_next_turn_and_fold_into_the_card_state() {
+    use vak_session::card_actions::{
+        CardActionKind, CardActionRecord, CardActionValues, card_states,
+    };
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("marks.jsonl"), header()).unwrap();
+    let first = log
+        .append_message(MessageRecord {
+            message: Message::user_text("packing list"),
+            meta: None,
+        })
+        .unwrap();
+    let mut list = record_for(&first.id, "t1", "unused");
+    list.title = "Packing".into();
+    let card = log.append_presentation(list).unwrap();
+    let tick = |index: usize, label: &str, checked: bool| CardActionRecord {
+        presentation_id: card.id.clone(),
+        action: CardActionKind::Mark,
+        values: CardActionValues::Item {
+            index,
+            label: label.into(),
+            checked,
+        },
+        trace: None,
+        actor: Some(vak_session::trace::local::local_owner()),
+    };
+    log.append_card_action(tick(0, "Passport", true)).unwrap();
+    log.append_card_action(tick(1, "Charger", true)).unwrap();
+    log.append_card_action(tick(1, "Charger", false)).unwrap();
+    log.append_message(MessageRecord {
+        message: Message::user_text("what is left?"),
+        meta: None,
+    })
+    .unwrap();
+    let marks = log
+        .tail_sections(None)
+        .card_marks
+        .expect("marks in the tail");
+    assert_eq!(
+        marks,
+        "<card_marks>\nOn “Packing” the person ticked “Passport”; unticked “Charger”.\n</card_marks>"
+    );
+    let state = card_states(log.chain_to_root()).remove(&card.id).unwrap();
+    assert_eq!(state.marked, vec![0]);
+
+    // The next directive carries nothing older.
+    log.append_message(MessageRecord {
+        message: Message::user_text("thanks"),
+        meta: None,
+    })
+    .unwrap();
+    assert_eq!(log.tail_sections(None).card_marks, None);
+}

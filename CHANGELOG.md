@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Ticks on a checkable list are kept: they survive a reload, and the next
+  turn knows what you ticked. "Use this" on a step's choice starts the
+  turn with your choice as your message, naming the card, instead of
+  putting a sentence in the composer.
 - Details → Activity shows what each turn did, newest first, in plain
   words: thinking, every call with its state ("Showed a table card",
   "Planned: …", "Looked back in the conversation", refusals with why),

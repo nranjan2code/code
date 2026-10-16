@@ -4,8 +4,14 @@ import { renderMarkdown } from "../../md";
 /** A stored card payload: the form's fields, as the host built them. */
 export type Payload = Record<string, unknown>;
 
-/** Lets a steps card's choice be sent back as the person's pick. */
-export const PresentationInteractionContext = createContext<{ onOptionSelect(label: string): void }>();
+/** What a person can do on a card, recorded as card actions
+ *  (docs/design/96, Q3): choose an option, which starts a turn, or tick an
+ *  item, whose state `marked` holds. */
+export const PresentationInteractionContext = createContext<{
+  onOptionSelect(label: string): void;
+  marked: number[];
+  onMark(index: number, label: string, checked: boolean): Promise<boolean>;
+}>();
 /** The conversation a card belongs to: a preview reads its files from that
  *  conversation's folder, which is its Agent's own. */
 export const PresentationSessionContext = createContext<string | undefined>();

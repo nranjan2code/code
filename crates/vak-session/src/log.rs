@@ -23,6 +23,10 @@ pub struct TailSections {
     /// `workspace_delta` activity the host recorded for this turn, so the
     /// bytes the model saw are the bytes in the ledger.
     pub workspace: Option<String>,
+    /// The card items the person ticked or unticked since the turn before
+    /// this one, read from the `CardAction` entries between the two
+    /// directives (docs/design/96, Q3).
+    pub card_marks: Option<String>,
 }
 
 fn intent_continues_threads(
@@ -812,6 +816,15 @@ impl SessionLog {
     ) -> Result<Entry, SessionError> {
         let parent = self.tail_id.clone();
         self.append(Entry::new(parent, EntryPayload::CallEffect(record)))
+    }
+
+    /// Appends what a person did on a card (docs/design/96, Q3).
+    pub fn append_card_action(
+        &mut self,
+        record: crate::card_actions::CardActionRecord,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::CardAction(record)))
     }
 
     /// Appends one control-plane decision (audit; never model-visible).
@@ -3098,7 +3111,32 @@ impl SessionLog {
             work_contract: self.tail_work_contract(),
             thread: self.tail_conversation_thread(plan),
             workspace: self.tail_workspace_delta(),
+            card_marks: self.tail_card_marks(),
         }
+    }
+
+    /// The marks made between the previous directive and this turn's.
+    fn tail_card_marks(&self) -> Option<String> {
+        let chain = self.chain_to_root();
+        let directives: Vec<usize> = chain
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| entry.is_directive().then_some(index))
+            .collect();
+        let current = *directives.last()?;
+        let previous = directives.iter().rev().nth(1).copied().unwrap_or(0);
+        let title_of = |id: &str| {
+            chain
+                .iter()
+                .find_map(|entry| match &entry.payload {
+                    EntryPayload::Presentation(record) if entry.id == id => {
+                        Some(record.title.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default()
+        };
+        crate::card_actions::marks_block(chain[previous..current].iter().copied(), title_of)
     }
 
     /// The `data.section = "workspace_delta"` activity this turn recorded.

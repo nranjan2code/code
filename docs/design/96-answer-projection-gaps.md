@@ -1,11 +1,7 @@
 # 96 — Answer projection gaps
 
-Status: in progress (2026-10-16): Q1 and Q2 are built; Q3 and P1 to P6
-are open. Written from a review of what an answer can do on screen. Builds on docs/design/92-card-forms.md (the
-forms), docs/design/87-composed-answers.md (composition),
-docs/design/66-immersive-artifact-canvas.md (the Canvas and preview
-isolation) and docs/design/86-model-plans-runtime-checks.md (the plan and
-its receipts). Every stage is open for the maintainer's decision.
+Status: in progress (2026-10-16): Q1, Q2 and Q3 are built; P1 to P6 are
+open. Written from a review of what an answer can do on screen.
 
 ## 1. What is wrong
 
@@ -145,6 +141,26 @@ Done when: a chosen option starts a turn whose transcript shows the
 choice; ticks survive a reload and a second surface; `derive_messages()`
 reconstructs both; the composer receives no text; a guest without access
 is refused through the real layers.
+
+Built (2026-10-16), with two decisions of the maintainer. A session
+ledger is not a record chain, so no rollup Document can fold it: the
+next turn's `<card_marks>` block is read from the `CardAction` entries
+between the previous directive and this turn's, as the other tail
+sections are read (`TailSections::card_marks`). A choice records its
+`CardAction` and starts the turn through the ordinary run path with a
+user message whose `MessageMeta::card_action` names that entry; its words
+are `card_actions::choice_text`, and the route returns them so a client
+shows the person's message. Card actions are the owner's alone: a guest
+is refused behind `require_bearer` and `enforce_participant_audience`. A
+choice names a comparison's option or a steps card's choice (the steps
+card is where "Use this" is drawn); a tick names a checkable list's item
+by place and label, and anything else is refused with what does not
+fit. While a turn runs the ledger is the agent's, so an action then is
+refused and the client puts a tick back. The projection serves each
+card's state as `OutputItem::card_state`. Verified live on the dev route:
+a tick survives a reload and the next turn's answer named the ticked
+item; a choice is verified through the HTTP test only, since no live
+turn drew a steps card with choices.
 
 ### P1 A controls form
 

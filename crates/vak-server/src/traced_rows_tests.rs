@@ -65,6 +65,17 @@ fn records() -> Vec<Record> {
                 "step": "session", "session_id": "s",
             }),
         ),
+        record::<vak_session::card_actions::CardActionRecord>(
+            "CardActionRecord",
+            "crates/vak-session/src/card_actions.rs",
+            "ledger",
+            "sessions",
+            serde_json::json!({
+                "presentation_id": "01920000-0000-7000-8000-000000000001",
+                "action": "mark",
+                "values": {"kind": "item", "index": 0, "label": "Passport", "checked": true},
+            }),
+        ),
         record::<vak_session::cursors::CursorGap>(
             "CursorGap",
             "crates/vak-session/src/cursors.rs",
@@ -267,7 +278,7 @@ fn every_ledger_row_type_is_traced() {
     let total = names.len();
     names.dedup();
     assert_eq!(total, names.len(), "row type names are unique");
-    assert_eq!(total, 19);
+    assert_eq!(total, 20);
 
     let mut declared = 0;
     for entry in std::fs::read_dir(workspace_root().join("crates"))
@@ -307,7 +318,7 @@ fn every_ledger_row_type_is_traced() {
 /// and writes it out again (the assertion lives in `record`).
 #[test]
 fn every_ledger_row_type_names_its_actor() {
-    assert_eq!(records().len(), 19);
+    assert_eq!(records().len(), 20);
 }
 
 struct Field {

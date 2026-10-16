@@ -57,6 +57,7 @@ mod auth_identity;
 mod automations;
 mod bus;
 mod canvas;
+mod card_actions;
 mod catalog_api;
 mod channels;
 mod client_events;
@@ -1233,6 +1234,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/launch/logs", get(launch_logs))
         .route("/sessions/{id}/run", post(run_prompt))
         .route("/sessions/{id}/steering", post(send_steering))
+        .route("/sessions/{id}/card-actions", post(card_actions::post))
         .route("/sessions/{id}/compact", post(compact_session))
         .route("/sessions/{id}/cancel", post(cancel_run))
         .route("/sessions/{id}/pause", post(pause_run))
@@ -4784,7 +4786,8 @@ fn summarize_jsonl(
                 vak_session::EntryPayload::TurnCard(_) => {}
                 vak_session::EntryPayload::EvidenceBody(_)
                 | vak_session::EntryPayload::CallEffect(_)
-                | vak_session::EntryPayload::Decision(_) => {}
+                | vak_session::EntryPayload::Decision(_)
+                | vak_session::EntryPayload::CardAction(_) => {}
                 vak_session::EntryPayload::ContextSelection(_) => {}
             }
         }
@@ -4819,6 +4822,10 @@ struct RoutingEnvelope {
 #[derive(serde::Deserialize)]
 struct RunBody {
     prompt: String,
+    /// The `CardAction` entry this run's directive was started by; set by
+    /// the card-actions route, never by a client (docs/design/96, Q3).
+    #[serde(skip)]
+    card_action: Option<String>,
     /// The client can show a worker's question and take an answer
     /// (`GET /sessions/{id}/questions`). Off unless the client says so.
     #[serde(default)]
@@ -5576,6 +5583,14 @@ async fn run_prompt(
         TurnStart::Managed(expanded_prompt.clone())
     } else if automatic {
         TurnStart::Auto(expanded_prompt.clone())
+    } else if let Some(card_action) = body.card_action.clone() {
+        TurnStart::Message(Box::new(vak_session::MessageRecord {
+            message: vak_llm::Message::user_text(expanded_prompt.clone()),
+            meta: Some(vak_session::MessageMeta {
+                card_action: Some(card_action),
+                ..Default::default()
+            }),
+        }))
     } else if body.attachments.is_empty() && attached.is_empty() && artifacts.is_empty() {
         TurnStart::message(vak_llm::Message::user_text(expanded_prompt.clone()))
     } else {
@@ -22976,6 +22991,274 @@ mod sandbox_promotion_tests {
             writer.office_workspaces("s-writer")
         );
         assert!(!writer.sandbox_records().starts_with(core.scope().root()));
+    }
+
+    struct CardChoiceAnswers {
+        capacity_key: String,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for CardChoiceAnswers {
+        fn name(&self) -> &str {
+            "card-choice"
+        }
+
+        fn rate_limit_key(&self) -> String {
+            self.capacity_key.clone()
+        }
+
+        async fn stream(
+            &self,
+            _request: vak_llm::types::ChatRequest,
+            _cancel: CancellationToken,
+        ) -> Result<vak_llm::EventStream, vak_llm::LlmError> {
+            let done = vak_llm::types::AssistantMessage {
+                content: vec![vak_llm::ContentBlock::text("Noted.")],
+                stop_reason: vak_llm::types::StopReason::EndTurn,
+                usage: vak_llm::types::Usage::default(),
+                model: "card-choice".into(),
+                response_id: None,
+                applied: None,
+            };
+            let (mut sink, rx) = vak_llm::stream::channel(8);
+            sink.push(vak_llm::stream::StreamEvent::Start {
+                partial: done.clone(),
+            });
+            sink.close_message(done).await;
+            Ok(rx)
+        }
+    }
+
+    /// A tick is recorded and served as the card's state; a choice is
+    /// recorded and starts a turn whose directive names it; a guest is
+    /// refused through the real layers (docs/design/96, Q3).
+    #[tokio::test]
+    async fn card_actions_are_recorded_drawn_and_owner_only() {
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            dir.path().to_path_buf(),
+        ));
+        core.set_provider_instance(Arc::new(CardChoiceAnswers {
+            capacity_key: format!("card-choice:{}", uuid::Uuid::now_v7()),
+        }));
+        let mut log = seed_session_at(&core, "session-cards", core.cwd());
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::user_text("Plan my trip"),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::assistant(vec![
+                vak_llm::ContentBlock::ToolUse {
+                    id: "c1".into(),
+                    name: "emit_list_card".into(),
+                    input: serde_json::json!({}),
+                },
+                vak_llm::ContentBlock::ToolUse {
+                    id: "c2".into(),
+                    name: "emit_steps_card".into(),
+                    input: serde_json::json!({}),
+                },
+            ]),
+            meta: None,
+        })
+        .unwrap();
+        let turn_id = log.current_turn().unwrap_or_default().to_string();
+        let card = |tool_use_id: &str, semantic_type: &str, payload: serde_json::Value| {
+            vak_session::types::PresentationRecord {
+                turn_id: turn_id.clone(),
+                source: vak_session::types::PresentationSource::ToolCall {
+                    tool_use_id: tool_use_id.into(),
+                },
+                semantic_type: semantic_type.into(),
+                skill_id: format!("vak.{semantic_type}"),
+                skill_version: "1".into(),
+                schema_version: 2,
+                payload_digest: vak_session::types::payload_digest(&payload),
+                payload,
+                derived_from: Vec::new(),
+                title: String::new(),
+                identity_digest: String::new(),
+                block: None,
+            }
+        };
+        let list = log
+            .append_presentation(card(
+                "c1",
+                "list",
+                serde_json::json!({"title": "Packing", "checkable": true,
+                    "items": [{"label": "Passport"}, {"label": "Charger"}]}),
+            ))
+            .unwrap();
+        let steps = log
+            .append_presentation(card(
+                "c2",
+                "steps",
+                serde_json::json!({"title": "Route", "steps": [{"label": "Pick a city",
+                    "choices": [{"label": "Lisbon"}, {"label": "Porto"}]}]}),
+            ))
+            .unwrap();
+        drop(log);
+        let state = AppState::new(core);
+        let guest = "card-guest-secret";
+        coworking::invite(
+            &coworking::grants(&state),
+            coworking::AudienceGrant {
+                grant_id: coworking::test_grant_id("grant-cards"),
+                principal_id: "person-cards".into(),
+                display_name: "Asha".into(),
+                conversation_id: "session-cards".into(),
+                audience_id: "local".into(),
+                capabilities: vec!["read".into(), "message".into()],
+                token_hash: coworking::token_hash(guest),
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                trace: None,
+                actor: None,
+            },
+        )
+        .unwrap();
+        let app = Router::new()
+            .route("/sessions/{id}/card-actions", post(card_actions::post))
+            .route("/sessions/{id}/presentation", get(presentation_snapshot))
+            .with_state(state.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                enforce_participant_audience,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                AuthPolicy {
+                    token: "operator-secret".into(),
+                    home: dir.path().into(),
+                    shared: dir.path().into(),
+                    trusted_hosts: Vec::new(),
+                    public_url: None,
+                    browser_sessions: web::BrowserSessions::default(),
+                },
+                require_bearer,
+            ));
+        let action = |bearer: &str, body: serde_json::Value| {
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/sessions/session-cards/card-actions")
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {bearer}"),
+                )
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap()
+        };
+        let read = |response: axum::response::Response| async move {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default()
+        };
+        let tick = serde_json::json!({"presentation_id": list.id, "action": "mark",
+            "values": {"kind": "item", "index": 1, "label": "Charger", "checked": true}});
+
+        // A guest of the conversation is refused, through the real layers.
+        let refused = app
+            .clone()
+            .oneshot(action(guest, tick.clone()))
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+
+        // A tick that names the wrong item is refused; the right one is
+        // recorded and served as the card's state.
+        let wrong = serde_json::json!({"presentation_id": list.id, "action": "mark",
+            "values": {"kind": "item", "index": 1, "label": "Passport", "checked": true}});
+        let mismatch = app
+            .clone()
+            .oneshot(action("operator-secret", wrong))
+            .await
+            .unwrap();
+        assert_eq!(mismatch.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let marked = app
+            .clone()
+            .oneshot(action("operator-secret", tick))
+            .await
+            .unwrap();
+        assert_eq!(marked.status(), StatusCode::OK);
+        assert_eq!(
+            read(marked).await["state"]["marked"],
+            serde_json::json!([1])
+        );
+        let snapshot = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/sessions/session-cards/presentation")
+                    .header(axum::http::header::AUTHORIZATION, "Bearer operator-secret")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let timeline = read(snapshot).await;
+        let drawn = timeline["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["provenance"]["presentation_id"] == list.id.as_str())
+            .unwrap();
+        assert_eq!(drawn["card_state"]["marked"], serde_json::json!([1]));
+
+        // A choice starts a turn whose directive is the person's choice and
+        // names the card action it came from.
+        let choose = serde_json::json!({"presentation_id": steps.id, "action": "choose",
+            "values": {"kind": "option", "label": "Porto"}});
+        let chosen = app
+            .clone()
+            .oneshot(action("operator-secret", choose))
+            .await
+            .unwrap();
+        assert!(chosen.status().is_success(), "{}", chosen.status());
+        assert_eq!(
+            read(chosen).await["directive"],
+            "I choose “Porto” from “Route”."
+        );
+        let handle = state.get("session-cards").unwrap();
+        let mut directive = None;
+        for _ in 0..200 {
+            if let Some(log) = handle.session.lock().unwrap().as_ref() {
+                directive =
+                    log.chain_to_root()
+                        .into_iter()
+                        .find_map(|entry| match &entry.payload {
+                            vak_session::EntryPayload::Message(record)
+                                if record
+                                    .meta
+                                    .as_ref()
+                                    .and_then(|meta| meta.card_action.as_ref())
+                                    .is_some() =>
+                            {
+                                Some((
+                                    record.message.text_content(),
+                                    record.meta.clone().unwrap().card_action.unwrap(),
+                                ))
+                            }
+                            _ => None,
+                        });
+            }
+            if directive.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let (text, action_id) = directive.expect("the choice started a turn");
+        assert_eq!(text, "I choose “Porto” from “Route”.");
+        let handle_log = handle.session.lock().unwrap();
+        if let Some(log) = handle_log.as_ref() {
+            assert!(log.chain_to_root().iter().any(|entry| entry.id == action_id
+                && matches!(entry.payload, vak_session::EntryPayload::CardAction(_))));
+        }
     }
 
     fn seed_session_at(

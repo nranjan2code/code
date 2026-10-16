@@ -486,6 +486,7 @@ pub(crate) fn append_sandbox_artifacts(
             continue;
         }
         timeline.items.push(OutputItem {
+            card_state: None,
             id,
             timestamp,
             turn_id: turn_id.clone(),
@@ -1034,6 +1035,7 @@ fn snapshot_inner(
                             payload: card.payload.clone(),
                         };
                         timeline.items.push(OutputItem {
+                            card_state: None,
                             id: format!("{}-scheduled-{index}", entry.id),
                             timestamp: entry.ts.to_rfc3339(),
                             turn_id: turn_id.clone(),
@@ -1116,6 +1118,7 @@ fn snapshot_inner(
                                     .and_then(|value| value.split('|').nth(3)),
                             );
                             timeline.items.push(OutputItem {
+                                card_state: None,
                                 id: format!("{}-text-{index}", entry.id),
                                 timestamp: entry.ts.to_rfc3339(),
                                 turn_id: turn_id.clone(),
@@ -1304,6 +1307,7 @@ fn snapshot_inner(
                                 )
                             {
                                 timeline.items.push(OutputItem {
+                                    card_state: None,
                                     id: format!("{}-adaptive", entry.id),
                                     timestamp: entry.ts.to_rfc3339(),
                                     turn_id: turn_id.clone(),
@@ -1330,6 +1334,7 @@ fn snapshot_inner(
                             let recovered = failed && successful_runs.contains(&current_turn);
                             let detail = result.map(|(content, _)| content.clone());
                             timeline.items.push(OutputItem {
+                                card_state: None,
                                 id: id.clone(),
                                 timestamp: entry.ts.to_rfc3339(),
                                 turn_id: turn_id.clone(),
@@ -1504,6 +1509,7 @@ fn snapshot_inner(
                                         )
                                     });
                                     timeline.items.push(OutputItem {
+                                        card_state: None,
                                         id: item_id,
                                         timestamp: entry.ts.to_rfc3339(),
                                         turn_id: turn_id.clone(),
@@ -1538,6 +1544,7 @@ fn snapshot_inner(
                                     data.insert("path".into(), path.clone());
                                 }
                                 timeline.items.push(OutputItem {
+                                    card_state: None,
                                     id: if n == 0 {
                                         format!("{id}-artifact")
                                     } else {
@@ -1683,6 +1690,19 @@ fn snapshot_inner(
         }
     }
     timeline.items = deduplicated;
+    // Each card's state as the person's actions left it (docs/design/96,
+    // Q3), keyed by the Presentation entry the actions name.
+    let mut states = vak_session::card_actions::card_states(session.chain_to_root());
+    for item in &mut timeline.items {
+        if let Some(id) = item
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.presentation_id.as_ref())
+            && let Some(state) = states.remove(id)
+        {
+            item.card_state = Some(state);
+        }
+    }
     timeline.answers = answer_outlines(session, &timeline.items);
     timeline.cursor = chain_cursor(session);
     log_turns_with_no_visible_answer(session_id, &timeline);
@@ -2261,6 +2281,7 @@ fn activity_item(
         Vec::new()
     };
     OutputItem {
+        card_state: None,
         id: activity.activity_id.clone(),
         timestamp: timestamp.into(),
         turn_id: turn_id.into(),
@@ -2289,6 +2310,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
     match event {
         AgentEvent::TurnStart { turn } => Some(OutputStreamEvent::ItemStarted {
             item: OutputItem {
+                card_state: None,
                 id: "live-assistant".into(),
                 timestamp: now,
                 turn_id: format!("turn-{turn}"),
@@ -2379,6 +2401,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
             size_bytes,
         }) => Some(OutputStreamEvent::ItemStarted {
             item: OutputItem {
+                card_state: None,
                 id: format!("artifact-{execution_id}-{path}"),
                 timestamp: now,
                 turn_id: format!("sandbox-{execution_id}"),
@@ -2516,6 +2539,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
             reason,
         } => Some(OutputStreamEvent::ItemStarted {
             item: OutputItem {
+                card_state: None,
                 id: id.clone(),
                 timestamp: now,
                 turn_id: "live".into(),
@@ -2700,6 +2724,7 @@ fn live_item(
     fallback_text: String,
 ) -> OutputItem {
     OutputItem {
+        card_state: None,
         id,
         timestamp,
         turn_id: "live".into(),
@@ -3170,6 +3195,7 @@ mod tests {
 
         let mut timeline = OutputTimeline::empty("session-1");
         timeline.items.push(OutputItem {
+            card_state: None,
             id: "tool-call-1".into(),
             timestamp: "2026-09-20T10:00:00+00:00".into(),
             turn_id: "turn-7".into(),
@@ -3193,6 +3219,7 @@ mod tests {
             fallback_text: String::new(),
         });
         timeline.items.push(OutputItem {
+            card_state: None,
             id: "result-1".into(),
             timestamp: "2026-09-20T10:00:01+00:00".into(),
             turn_id: "turn-7".into(),
@@ -3288,6 +3315,7 @@ mod tests {
             .enumerate()
         {
             timeline.items.push(OutputItem {
+                card_state: None,
                 id: format!("call-1-artifact-{n}"),
                 timestamp: "2026-10-14T10:00:00+00:00".into(),
                 turn_id: "turn-6".into(),
@@ -3480,6 +3508,7 @@ mod tests {
             .expect("event sidecar");
         let mut timeline = OutputTimeline::empty("session-1");
         timeline.items.push(OutputItem {
+            card_state: None,
             id: "write-1-artifact".into(),
             timestamp: "2026-09-20T10:00:00+00:00".into(),
             turn_id: "turn-1".into(),
@@ -3564,6 +3593,7 @@ mod tests {
     #[test]
     fn repeated_writes_keep_one_latest_artifact_per_turn_and_path() {
         let artifact = |id: &str, turn: &str, path: &str| OutputItem {
+            card_state: None,
             id: id.into(),
             timestamp: "2026-09-23T00:00:00Z".into(),
             turn_id: turn.into(),
@@ -3604,6 +3634,7 @@ mod tests {
     #[test]
     fn scratch_artifacts_dedupe_by_relative_path_per_turn() {
         let artifact = |id: &str, path: &str, execution: &str| OutputItem {
+            card_state: None,
             id: id.into(),
             timestamp: "2026-09-23T00:00:00Z".into(),
             turn_id: "turn-1".into(),

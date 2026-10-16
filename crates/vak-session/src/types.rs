@@ -437,6 +437,10 @@ pub struct MessageMeta {
     /// automation's own words, the answer its run's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scheduled: Option<ScheduledMeta>,
+    /// The `CardAction` entry this directive was started by: the person
+    /// chose an option on a card (docs/design/96, Q3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_action: Option<String>,
 }
 
 /// Which automation run a delivered turn came from.
@@ -1092,6 +1096,11 @@ pub enum EntryPayload {
     /// never model-visible; a correction reaches the model only as the
     /// control message rendered from it.
     Decision(vak_control::Decision),
+    /// What a person did on a card: chose an option or ticked an item
+    /// (docs/design/96-answer-projection-gaps.md, Q3). Not model-visible by
+    /// itself: a choice reaches the model as the directive that names it,
+    /// a tick in the next turn's `<card_marks>` tail block.
+    CardAction(crate::card_actions::CardActionRecord),
 }
 
 /// One effect of one tool call, named by the call's id.

@@ -31,6 +31,8 @@ import {
   openInLibrary,
   openAbilitySheet,
   type DraftingCard,
+  appendUser,
+  setNotice,
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
@@ -1146,15 +1148,26 @@ function PresentationFeedback(props: { sessionId: string; semanticType: string; 
   </section>;
 }
 
-function optionInteractionFor(sessionId?: string, resultId?: string) {
-  if (!sessionId || !resultId) return undefined;
-  return { onOptionSelect: (label: string) => {
-    setReplyTarget({ sessionId, resultId, label: `option “${label}”` });
-    window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `Use “${label}” in this plan and show me the whole updated plan.`, mode: "append" } }));
-  } };
+/** A card's actions, recorded on the card (docs/design/96, Q3): a choice
+ *  starts a turn whose directive is the person's message; a tick changes
+ *  the card's state. The composer is left alone. */
+function cardInteractionFor(sessionId?: string, presentationId?: string, state?: import("../types").CardState | null) {
+  if (!sessionId || !presentationId) return undefined;
+  return {
+    onOptionSelect: (label: string) => {
+      void api.postCardAction(sessionId, { presentation_id: presentationId, action: "choose", values: { kind: "option", label } })
+        .then((result) => { if (result.directive) appendUser(sessionId, result.directive); })
+        .catch((error) => setNotice({ kind: "error", text: error instanceof Error ? error.message : String(error) }));
+    },
+    marked: state?.marked ?? [],
+    onMark: (index: number, label: string, checked: boolean) =>
+      api.postCardAction(sessionId, { presentation_id: presentationId, action: "mark", values: { kind: "item", index, label, checked } })
+        .then(() => true)
+        .catch((error) => { setNotice({ kind: "error", text: error instanceof Error ? error.message : String(error) }); return false; }),
+  };
 }
 
-export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; resultId?: string; presentationId?: string }) {
+export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; resultId?: string; presentationId?: string; cardState?: import("../types").CardState | null }) {
   const [showOriginal, setShowOriginal] = createSignal(false);
   const fallback = () => props.fallback && !parseVakFence(props.fallback)
     ? <MarkdownView text={props.fallback} />
@@ -1164,7 +1177,7 @@ export function StructuredView(props: { output: import("../types").StructuredOut
       <Show when={showOriginal() && showOperatorChrome()} fallback={
         <>
           <PresentationSessionContext.Provider value={props.sessionId}>
-            <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
+            <PresentationInteractionContext.Provider value={cardInteractionFor(props.sessionId, props.presentationId, props.cardState)}>
               <div class="presentation-content"><StructuredRenderer output={props.output} /></div>
             </PresentationInteractionContext.Provider>
           </PresentationSessionContext.Provider>
@@ -1375,8 +1388,8 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       if (!item.content.document) return null;
       return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></AssistantMessage>;
     }
-    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} />;
-    if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} />;
+    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} cardState={item.card_state} />;
+    if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} cardState={item.card_state} />;
     if (item.kind === "error") {
       if (item.content.type === "error" && item.content.message === "max_turns") {
         return <section class="semantic-recovery" role="status">
@@ -1580,11 +1593,11 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
   );
 }
 
-export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string; sessionId?: string; resultId?: string }) {
+export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string; sessionId?: string; resultId?: string; presentationId?: string; cardState?: import("../types").CardState | null }) {
   return (
     <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>
       <PresentationSessionContext.Provider value={props.sessionId}>
-        <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
+        <PresentationInteractionContext.Provider value={cardInteractionFor(props.sessionId, props.presentationId, props.cardState)}>
           <PackTree node={props.tree.root} />
         </PresentationInteractionContext.Provider>
       </PresentationSessionContext.Provider>

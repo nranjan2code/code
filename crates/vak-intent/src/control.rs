@@ -151,7 +151,7 @@ impl ControlKind {
 }
 
 /// A `<tag>…</tag>` block the runtime derives into a model-visible message.
-pub const CONTEXT_BLOCK_TAGS: [&str; 10] = [
+pub const CONTEXT_BLOCK_TAGS: [&str; 11] = [
     "conversation_thread",
     "context_summary",
     "intent",
@@ -162,6 +162,7 @@ pub const CONTEXT_BLOCK_TAGS: [&str; 10] = [
     "runtime_guidance",
     "scratchpad",
     "workspace_delta",
+    "card_marks",
 ];
 
 /// A marker line inside other text (a tool result or a stop guard's reason).

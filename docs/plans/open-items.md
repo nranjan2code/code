@@ -263,10 +263,13 @@ Carried over from 7.2.0:
   - [ ] No live controls: a `controls` form of typed inputs with outputs
     written in a closed set of pure expressions evaluated in the client,
     and a worked example the builder checks. No code runs.
-  - [ ] A comparison's "Use this" puts a fixed English sentence in the
-    composer (`optionInteractionFor`, `PresentationRenderer.tsx`), and a
-    checkable list's ticks are lost on reload. Both should become a typed
-    `CardAction` session entry: model-visible, steering, never permission.
+  - [x] "Use this" put a fixed sentence in the composer and a list's ticks
+    were lost on reload (Q3: `CardAction` entries; a choice starts a turn,
+    ticks reach the next turn's tail).
+  - [ ] A choice ("Use this") is verified through the HTTP test only: no
+    live turn on the dev route drew a steps card with choices.
+  - [ ] A card action while a turn runs is refused (the ledger is the
+    agent's then); the client puts a tick back without saying why.
   - [x] A card shows nothing until its call is complete and valid (Q2:
     `CardDrafting` and the empty card shell). On the dev route a tool call
     arrives whole, so the shell stands only while the call is checked.

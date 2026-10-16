@@ -68,17 +68,26 @@ export function StepsForm(props: { payload: Payload }) {
 export function ListForm(props: { payload: Payload }) {
   const p = () => props.payload;
   const checkable = () => p().checkable === true;
+  const interaction = useContext(PresentationInteractionContext);
+  // Ticks are card actions (docs/design/96, Q3): drawn from the card's
+  // state, changed here at once, and put back if the change is refused.
+  const [marked, setMarked] = createSignal<number[]>(interaction?.marked ?? []);
+  const toggle = (index: number, label: string, checked: boolean) => {
+    const before = marked();
+    setMarked(checked ? [...before.filter((at) => at !== index), index] : before.filter((at) => at !== index));
+    if (interaction) void interaction.onMark(index, label, checked).then((recorded) => { if (!recorded) setMarked(before); });
+  };
   return (
     <Card form="list" label={p().label} title={p().title}>
       <ul class="list" classList={{ "is-checkable": checkable() }}>
-        <For each={records(p().items)}>{(item) => {
+        <For each={records(p().items)}>{(item, index) => {
           const body = (
             <span class="list-body">
               <span class="list-label"><Linked label={text(item.label) ?? ""} url={text(item.url)} /></span>
               <Show when={text(item.detail)}>{(detail) => <Prose class="list-detail" text={detail()} />}</Show>
             </span>
           );
-          return <li><Show when={checkable()} fallback={body}><label class="list-check"><input type="checkbox" />{body}</label></Show></li>;
+          return <li><Show when={checkable()} fallback={body}><label class="list-check"><input type="checkbox" checked={marked().includes(index())} onChange={(event) => toggle(index(), text(item.label) ?? "", event.currentTarget.checked)} />{body}</label></Show></li>;
         }}</For>
       </ul>
     </Card>
