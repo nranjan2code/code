@@ -89,6 +89,12 @@ pub enum ClientEvent {
         name: String,
         args_json: String,
     },
+    /// A card call has started; the client draws an empty shell of `block`
+    /// until the call ends (docs/design/96-answer-projection-gaps.md, Q2).
+    CardDrafting {
+        id: String,
+        block: String,
+    },
     ToolCallEnd {
         id: String,
         name: String,
@@ -171,6 +177,7 @@ pub(crate) fn project(event: AgentEvent) -> Option<ClientEvent> {
             name,
             args_json,
         }),
+        AgentEvent::CardDrafting { id, block } => Some(ClientEvent::CardDrafting { id, block }),
         AgentEvent::ToolCallEnd {
             id,
             name,
@@ -313,6 +320,10 @@ mod tests {
             name: "read".into(),
             args_json: "{}".into(),
         });
+        kept(AgentEvent::CardDrafting {
+            id: "t2".into(),
+            block: "table".into(),
+        });
         kept(AgentEvent::ToolCallEnd {
             id: "t1".into(),
             name: "read".into(),
@@ -393,6 +404,22 @@ mod tests {
             chunk: "hi".into(),
         }));
         kept(AgentEvent::DraftDiscarded { turn: 2 });
+    }
+
+    #[test]
+    fn a_drafting_card_projects_its_call_and_form_and_nothing_else() {
+        let json = serde_json::to_value(
+            project(AgentEvent::CardDrafting {
+                id: "call-7".into(),
+                block: "table".into(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"CardDrafting": {"id": "call-7", "block": "table"}})
+        );
     }
 
     #[test]

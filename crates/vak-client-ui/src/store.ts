@@ -853,6 +853,19 @@ const [stoppingMap, setStoppingMap] = createStore<Record<string, boolean>>({});
 const [usageBySession, setUsageBySession] = createStore<Record<string, Usage>>({});
 const [presentationBySession, setPresentationBySession] = createStore<Record<string, OutputTimeline | null>>({});
 const [presentationErrors, setPresentationErrors] = createStore<Record<string, string | null>>({});
+/** Card calls still being written, by session: only that a call started and
+ *  the form its tool declares (docs/design/96-answer-projection-gaps.md, Q2). */
+export type DraftingCard = { id: string; block: string };
+const [draftingBySession, setDraftingBySession] = createStore<Record<string, DraftingCard[]>>({});
+
+export function draftingOf(id: string | null): DraftingCard[] {
+  return id ? draftingBySession[id] ?? [] : [];
+}
+
+function settleDrafting(id: string, call?: string) {
+  if (!draftingBySession[id]?.length) return;
+  setDraftingBySession(id, (cards) => (call === undefined ? [] : cards.filter((card) => card.id !== call)));
+}
 
 // ---- selectors -------------------------------------------------------------
 
@@ -1257,7 +1270,12 @@ export function applyEvent(
       isError: false,
       preview: null,
     });
+  } else if ("CardDrafting" in ev) {
+    if (b === "main") setDraftingBySession(id, (cards) => [...(cards ?? []).filter((card) => card.id !== ev.CardDrafting.id), ev.CardDrafting]);
   } else if ("ToolCallEnd" in ev) {
+    // A refused card leaves no shell; a recorded one keeps it until the card
+    // itself reaches the timeline (`DraftingCards`).
+    if (b === "main" && ev.ToolCallEnd.is_error) settleDrafting(id, ev.ToolCallEnd.id);
     patchById(b, id, ev.ToolCallEnd.id, (it) =>
       it.kind === "tool"
         ? {
@@ -1342,6 +1360,7 @@ export function applyEvent(
       return [...list.slice(0, at), ...list.slice(at + 1)];
     });
   } else if ("RunFinished" in ev) {
+    if (b === "main") settleDrafting(id);
     markRunning(id, false, b);
     noteRetry(id, false);
     // Close every in-flight item. A finished run cannot still have a tool

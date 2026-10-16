@@ -1996,6 +1996,10 @@ impl Tool for EmitCardTool {
         true
     }
 
+    fn card_block(&self) -> Option<&str> {
+        Some(self.shape.form)
+    }
+
     fn output_of_command(&self) -> Option<vak_tools::CommandOutput> {
         self.shape.output_of_command
     }

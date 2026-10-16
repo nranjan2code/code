@@ -4,6 +4,9 @@
   `--vak-fg`, `--vak-muted`, `--vak-accent`, `--vak-rule`, `--vak-font`,
   `--vak-font-mono`, `--vak-radius`) and its colour scheme, so generated
   markup can match every theme; switching theme redraws an open preview.
+- While a card is being written, its answer shows an empty card of that
+  form ("Drawing a table") where the plan puts it; the card takes its
+  place, and a refused card leaves nothing behind.
 - `GET /sessions/{id}/interface` shows what a conversation's last turn was
   given: every tool with its schema, which were held back under "More
   tools", and each installed capability with what it says it serves.

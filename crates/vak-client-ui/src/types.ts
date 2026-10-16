@@ -316,6 +316,7 @@ export type ClientEvent =
   | { TextDelta: { delta: string } }
   | { ThinkingDelta: { delta: string } }
   | { ToolCallStart: { id: string; name: string; args_json: string } }
+  | { CardDrafting: { id: string; block: string } }
   | {
       ToolCallEnd: { id: string; name: string; is_error: boolean; result_preview: string | null };
     }

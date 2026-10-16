@@ -214,6 +214,14 @@ pub enum AgentEvent {
         name: String,
         args_json: String,
     },
+    /// A call of a tool that presents cards has started streaming; `block`
+    /// is the form its tool declares (`Tool::card_block`). It shows only that
+    /// the call started: no argument is carried, nothing is recorded, and
+    /// nothing reaches a model (docs/design/96-answer-projection-gaps.md, Q2).
+    CardDrafting {
+        id: String,
+        block: String,
+    },
     ToolCallEnd {
         id: String,
         name: String,
@@ -1039,6 +1047,37 @@ impl Approver for AutoDeny {
 
 /// Compact JSON preview of a tool input; capped so UI surfaces never
 /// absorb unbounded payloads.
+/// A call the loop answers itself (`plan`, a card, `recall`) is reported to
+/// the surfaces like any tool's, so a run's steps show every call it made.
+async fn loop_call_started(events: &mpsc::Sender<AgentEvent>, call: &PendingToolCall) {
+    let _ = events
+        .send(AgentEvent::ToolCallStart {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            args_json: args_preview(&call.input),
+        })
+        .await;
+}
+
+async fn loop_call_ended(
+    events: &mpsc::Sender<AgentEvent>,
+    call: &PendingToolCall,
+    output: &ToolRunOutput,
+) {
+    let (is_error, result_preview) = match output {
+        ToolRunOutput::Ok(_) => (false, None),
+        ToolRunOutput::Err(_, message) => (true, Some(message.clone())),
+    };
+    let _ = events
+        .send(AgentEvent::ToolCallEnd {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            is_error,
+            result_preview,
+        })
+        .await;
+}
+
 fn args_preview(input: &Value) -> String {
     let json = serde_json::to_string(input).unwrap_or_else(|_| "{}".into());
     truncate_chars(&json, ARGS_PREVIEW_LIMIT)
@@ -5371,6 +5410,19 @@ impl Agent {
                             cancel.cancel();
                             continue;
                         }
+                        if let StreamEvent::ToolUseStart { id, name, .. } = &ev
+                            && let Some(block) = self
+                                .tool_named(name)
+                                .filter(|tool| tool.presents_cards())
+                                .and_then(|tool| tool.card_block())
+                        {
+                            let _ = events
+                                .send(AgentEvent::CardDrafting {
+                                    id: id.clone(),
+                                    block: block.to_string(),
+                                })
+                                .await;
+                        }
                         if !pending.is_empty() {
                             queue_stream_event(&mut pending, ev);
                             continue;
@@ -5617,6 +5669,7 @@ impl Agent {
         let mut results =
             Vec::with_capacity(recall_calls.len() + plan_calls.len() + card_calls.len());
         for call in plan_calls {
+            loop_call_started(events, &call).await;
             let output = match vak_tools::parse_plan_args(&call.input) {
                 Ok(plan) => {
                     let listed = plan
@@ -5650,12 +5703,17 @@ impl Agent {
                         .to_string(),
                 ),
             };
+            loop_call_ended(events, &call, &output).await;
             results.push((call.id, output));
         }
         // After the plan: a card in the same step as its plan is checked
         // against that plan.
         for call in card_calls {
+            loop_call_started(events, &call).await;
             let (output, verdict) = self.show_card(&call).await;
+            // Also ends the call's drafting shell: a recorded card takes its
+            // place, a refused one leaves nothing (docs/design/96, Q2).
+            loop_call_ended(events, &call, &output).await;
             self.record_decisions(vec![
                 vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(verdict))
                     .with(vak_control::Evidence::Call(call.id.clone())),
@@ -5665,6 +5723,7 @@ impl Agent {
         }
         let mut history_misses = HashSet::new();
         for call in recall_calls {
+            loop_call_started(events, &call).await;
             let output = match self.resolve_recall(&call.input, cancel).await {
                 Ok((content, labels)) => {
                     {
@@ -5697,6 +5756,7 @@ impl Agent {
                     )
                 }
             };
+            loop_call_ended(events, &call, &output).await;
             results.push((call.id, output));
         }
         results.extend(self.execute_batch_inner(calls, cancel, events).await);

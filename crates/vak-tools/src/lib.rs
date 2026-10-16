@@ -362,6 +362,13 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// The form a card this tool shows is drawn as (`StructuredOutput.block`),
+    /// for a tool that presents cards of one form. The client draws an empty
+    /// shell of it while a call is written.
+    fn card_block(&self) -> Option<&str> {
+        None
+    }
+
     /// The kinds of card this tool shows (`semantic_type`s), for a tool that
     /// presents cards: the answer document offers each as a kind of block
     /// (docs/design/87-composed-answers.md §2). By default the ones its

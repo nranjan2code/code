@@ -3063,6 +3063,11 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
    the answer is wide enough. */
 .answer-section { display: contents; }
 .answer-block { grid-column: 1 / -1; min-width: 0; }
+.card-drafting { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface); }
+.card-drafting-line { color: var(--muted); font-size: var(--fs-meta); }
+.card-drafting-bar { display: block; height: 12px; width: 72%; border-radius: 6px; background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hover) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.5s ease-in-out infinite; }
+.card-drafting-bar.short { width: 44%; }
+@media (prefers-reduced-motion: reduce) { .card-drafting-bar { animation: none; } }
 @container (min-width: 560px) {
   .answer-block[data-paired] { grid-column: span 1; }
 }

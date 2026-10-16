@@ -100,4 +100,4 @@ Counts: 3 proposal, 18 in progress, 56 implemented, 3 reference, 8 superseded, 4
 | [93-self-evolving-capabilities.md](93-self-evolving-capabilities.md) | 93-self-evolving-capabilities.md | implemented | E1 to E9 built and checked live (2026-10-14 to 2026-10-15) |
 | [94-scheduled-work-you-can-see.md](94-scheduled-work-you-can-see.md) | 94-scheduled-work-you-can-see.md | implemented | 2026-10-15: S0 to S5 built (the owner's time zone, delivery into the conversation, plain words and the picker, the tool's change, pause, resume and run_now by name, the card in chat, the Automations page) |
 | [95-one-capability-index.md](95-one-capability-index.md) | 95-one-capability-index.md | proposal | (2026-10-16): written from the tool catalogue audit (docs/audits/tool-catalogue-2026-10-16.md, O8) |
-| [96-answer-projection-gaps.md](96-answer-projection-gaps.md) | 96 — Answer projection gaps | in progress | (2026-10-16): Q1 is built |
+| [96-answer-projection-gaps.md](96-answer-projection-gaps.md) | 96 — Answer projection gaps | in progress | (2026-10-16): Q1 and Q2 are built |

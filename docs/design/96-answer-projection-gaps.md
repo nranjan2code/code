@@ -1,7 +1,7 @@
 # 96 — Answer projection gaps
 
-Status: in progress (2026-10-16): Q1 is built; Q2, Q3 and P1 to P6 are
-open. Written from a review of what an answer can do on screen. Builds on docs/design/92-card-forms.md (the
+Status: in progress (2026-10-16): Q1 and Q2 are built; Q3 and P1 to P6
+are open. Written from a review of what an answer can do on screen. Builds on docs/design/92-card-forms.md (the
 forms), docs/design/87-composed-answers.md (composition),
 docs/design/66-immersive-artifact-canvas.md (the Canvas and preview
 isolation) and docs/design/86-model-plans-runtime-checks.md (the plan and
@@ -104,6 +104,19 @@ doc 66 §3.1 says what the frame receives.
 Done when: on the dev route a long table call shows its shell within a
 second of the call starting, the recorded card takes its place, a refused
 call leaves no shell, and a test in `client_events` covers the projection.
+
+Built (2026-10-16). The block is `Tool::card_block`, which a card tool
+declares as its form. A card call is the loop's own (`show_card`) and sent
+no `ToolCallEnd`; it now sends one when the call is checked, so a refusal
+removes its shell at once. A recorded card's shell stays until the card
+with that call's `tool_call_id` is in the timeline, because the card is
+projected after the call ends. Only the conversation's live turn draws
+shells: the chat mounts one timeline per turn, and each would otherwise
+draw them. Measured live: one shell per call, replaced by its card. On the
+dev route the native Ollama chat API delivers a tool call whole, so
+`ToolUseStart` arrives with the arguments complete and the shell stands only
+while the call is checked; a route that streams arguments shows it while
+they are written.
 
 ### Q3 Card actions as records
 

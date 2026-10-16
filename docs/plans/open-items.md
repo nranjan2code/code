@@ -259,7 +259,7 @@ Carried over from 7.2.0:
   dev and installed data homes are set up again.
 - Answer projection review (2026-10-16), staged in
   docs/design/96-answer-projection-gaps.md (Q1 to Q3, P1 to P6), each a
-  Q1 built 2026-10-16:
+  Q1 and Q2 built 2026-10-16:
   - [ ] No live controls: a `controls` form of typed inputs with outputs
     written in a closed set of pure expressions evaluated in the client,
     and a worked example the builder checks. No code runs.
@@ -267,9 +267,9 @@ Carried over from 7.2.0:
     composer (`optionInteractionFor`, `PresentationRenderer.tsx`), and a
     checkable list's ticks are lost on reload. Both should become a typed
     `CardAction` session entry: model-visible, steering, never permission.
-  - [ ] A card shows nothing until its call is complete and valid. While
-    its arguments stream, show a placeholder in the shell of the form the
-    call names, never a partial card.
+  - [x] A card shows nothing until its call is complete and valid (Q2:
+    `CardDrafting` and the empty card shell). On the dev route a tool call
+    arrives whole, so the shell stands only while the call is checked.
   - [x] Markup previews get none of the theme's tokens (Q1).
   - [ ] Serve pinned vendored libraries from the preview origin, keeping
     `connect-src` closed (P3).
