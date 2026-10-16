@@ -56,9 +56,8 @@ as skill and tool), O6 (ability cards with no ability), O7 (one web
 reader), O8 (one index, a design question), O9, O10. Two open lines from
 the measurements are in open-items "Installed route failures":
 `mail_calendar`'s size needs a design that keeps it findable, and a CSV
-question never computes after `read`. The full gate has not run on these
-four commits (targeted tests only, by the maintainer's rule); run it
-before a release. Method: replay a captured first request 16 times
+question never computes after `read`. The full gate passed on them
+(2026-10-16, after a rustfmt fix). Method: replay a captured first request 16 times
 before and after (`scripts/measure_tool_form.py replay`, captures in
 /tmp/vak-live/capture via `ollama-capture` + `vak-inv-live` on 8915).
 

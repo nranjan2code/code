@@ -79,12 +79,10 @@ impl Elsewhere {
         let scope = vak_catalog::Scope {
             space: self.space.clone(),
             kinds: Some(
-                [
-                    "session", "turn", "call", "memory", "item", "artifact",
-                ]
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
+                ["session", "turn", "call", "memory", "item", "artifact"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
             ),
         };
         catalog.catch_up().map_err(|e| e.to_string())?;

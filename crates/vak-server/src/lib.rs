@@ -3065,9 +3065,7 @@ async fn search_sessions(
                 Some("memory") => vec!["memory"],
                 Some("item") => vec!["item"],
                 Some("artifact") => vec!["artifact"],
-                _ => vec![
-                    "session", "turn", "call", "memory", "item", "artifact",
-                ],
+                _ => vec!["session", "turn", "call", "memory", "item", "artifact"],
             }
             .into_iter()
             .map(str::to_string)

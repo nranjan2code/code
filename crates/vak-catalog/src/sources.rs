@@ -65,9 +65,7 @@ impl Source {
             | Self::Lifecycle(dir)
             | Self::Erasures(dir)
             | Self::Grants(dir) => chain_has_more(dir, from),
-            Self::Trigger(path)
-            | Self::IntakeSource(path)
-            | Self::Memory { path, .. } => {
+            Self::Trigger(path) | Self::IntakeSource(path) | Self::Memory { path, .. } => {
                 vak_session::documents::version_count(path) as u64 > from.frames
             }
         }

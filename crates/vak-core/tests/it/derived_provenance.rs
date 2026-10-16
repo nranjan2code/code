@@ -59,5 +59,4 @@ fn derived_writes_record_provenance() {
             turn: Some("trn-3".into())
         })
     );
-
 }
