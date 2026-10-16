@@ -1934,7 +1934,7 @@ function MemoryView() {
   // Core immediately (docs/design/23-memory.md) — no restart needed, and
   // no other flag is touched by this call.
   const toggleMemoryFlag = async (
-    key: "memory_search_enabled" | "memory_write_enabled" | "memory_reflection" | "memory_skill_proposals",
+    key: "memory_search_enabled" | "memory_write_enabled" | "memory_skill_proposals",
     next: boolean,
   ) => {
     setTogglingFlag(key);
@@ -1984,7 +1984,7 @@ function MemoryView() {
   };
 
   const flagCards: Array<{
-    key: "memory_search_enabled" | "memory_write_enabled" | "memory_reflection" | "memory_skill_proposals";
+    key: "memory_search_enabled" | "memory_write_enabled" | "memory_skill_proposals";
     on: () => boolean;
     setHere: () => boolean;
     title: string;
@@ -1992,8 +1992,7 @@ function MemoryView() {
   }> = [
     { key: "memory_search_enabled", on: () => configData()?.memory?.search_enabled ?? false, setHere: () => layer()?.memory?.search_enabled === true, title: "Search past sessions", desc: "Lets Vakyartha look up earlier conversations mid-run." },
     { key: "memory_write_enabled", on: () => configData()?.memory?.write_enabled ?? false, setHere: () => layer()?.memory?.write_enabled === true, title: "Write notes", desc: "Lets Vakyartha save what it learns mid-run, not just what you add here." },
-    { key: "memory_reflection", on: () => configData()?.memory?.reflection ?? false, setHere: () => layer()?.memory?.reflection === true, title: "Reflect after each run", desc: "A short pass proposing notes/skills from what just happened." },
-    { key: "memory_skill_proposals", on: () => configData()?.memory?.skill_proposals ?? false, setHere: () => layer()?.memory?.skill_proposals === true, title: "Propose skills", desc: "Lets reflection suggest new skills for you to review." },
+    { key: "memory_skill_proposals", on: () => configData()?.memory?.skill_proposals ?? false, setHere: () => layer()?.memory?.skill_proposals === true, title: "Propose skills", desc: "Lets Vakyartha suggest new skills for you to review." },
   ];
 
   return (
@@ -5687,7 +5686,7 @@ function approverOptions(policy: GatewayApprovalPolicy): string[] {
 ///
 /// This is the setting that was readable everywhere and writable nowhere.
 /// With `deny` — the default — every `Ask` on a chat surface is a foregone
-/// denial, so `webfetch`, `browse`, and every MCP server are dropped from
+/// denial, so `webfetch` and every MCP server are dropped from
 /// the turn before the model sees them, and the only remedy the system
 /// could print was "edit config.toml by hand and restart".
 function ApprovalForwarding() {

@@ -126,7 +126,7 @@ async fn setup() -> (Router, Arc<Hung>, tempfile::TempDir) {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
     )
     .unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();

@@ -274,3 +274,23 @@ and the model stopped finding the tool. It stays loaded until a design
 keeps it findable (open-items "Installed route failures"). Change 3 found
 an older gap: after reading a CSV the next step does not compute, with or
 without `data_query`.
+
+### The rest (2026-10-16)
+
+The maintainer then asked for O4, O6 to O10. O8 is a design question and
+is written as a proposal (docs/design/95-one-capability-index.md); O10
+became the removal of reflection, the maintainer's choice over moving its
+numbers into configuration. Each built change was replayed 16 times
+before and after on the installed route, on variants of real captured
+requests (`/tmp/vak-live/measure/o467`).
+
+| Change | Measurement | Result |
+|---|---|---|
+| O4. An ability listed once, as a tool | "how many days from 2026-10-16 to 2026-12-25?" with `date-calculator` installed | kept: the `skill` detour 12 → 4; the ability called directly 2 → 3; the freed calls spread to `recall` (4) and others. No gain in direct use |
+| O6. Ability cards only with an ability | the `followup` turn | kept: `emit_ability_*` called 0 → 0 |
+| O7. `browse` folded into `webfetch` (`render`) | "what is on the front page of https://news.ycombinator.com right now?" | kept: `webfetch` first 14 → 14; the stale "discover a search tool" sentence gone |
+| O9. `agent_network` declares its reach | none (the declaration matches what the default gave) | kept: explicit `Other`, a host-local broker, not `Network` |
+| O10. Reflection removed | none on the turn path (opt-in, off by default, after the turn) | kept: `remember` and `propose_skill` are the only writers |
+
+`propose_skill`'s duplicate screen keeps its own Jaccard threshold (0.55),
+a number picked in code; it is listed in open-items.

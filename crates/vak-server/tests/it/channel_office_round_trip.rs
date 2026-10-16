@@ -112,7 +112,7 @@ async fn round_trip(
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
+        "[gateway]\nchat_allowlist_open = true\n",
     )
     .unwrap();
     vak_config::paths::isolate_home_for_tests();
@@ -325,7 +325,7 @@ async fn the_telegram_bridge_sends_the_edited_workbook_back() {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n[gateway]\nchat_allowlist = [\"telegram:4242\"]\n",
+        "[gateway]\nchat_allowlist = [\"telegram:4242\"]\n",
     )
     .unwrap();
     vak_config::paths::isolate_home_for_tests();

@@ -62,7 +62,7 @@ diagrams and worked scenarios.
 | **Step** | One model call inside a turn. A turn with three tool rounds has four steps. | `vak-agent` loop |
 | **Working-set plan** | Which closed turns are sent `Full`, as one-line `Card`s, or inside a `Packet` summary. | `vak_context::planner`, `vak_session::WorkingSetPlan` |
 | **Control message (nudge)** | A user-role message the runtime authors (`[grounding-check]: …`), tagged structurally. | `vak_intent::control::ControlKind` |
-| **Side dispatch** | Any model call that is not a step of the main turn: classifier, compaction, handoff, audit, reflection, contract author, planner, capacity probe. | §14 |
+| **Side dispatch** | Any model call that is not a step of the main turn: classifier, compaction, handoff, audit, contract author, planner, capacity probe. | §14 |
 
 ---
 
@@ -151,7 +151,7 @@ flowchart TB
 
 | Lifetime | Examples | Where it lands | Recorded in |
 |---|---|---|---|
-| Static | seed, `Surface::prompt_section` texts, `EpistemicStance::guideline_prompt`, `ControlKind` nudge bodies, `COMPACTION_SYSTEM`, `AUDIT_SYSTEM`, `HANDOFF_SYSTEM`, `CONTRACT_AUTHOR_SYSTEM`, `PLANNER_SYSTEM`, reflection's `system_prompt()` | prefix, tail, nudges, side dispatches | the binary's version (`FrozenContract.app_version`) and every entry that carries the rendered text |
+| Static | seed, `Surface::prompt_section` texts, `EpistemicStance::guideline_prompt`, `ControlKind` nudge bodies, `COMPACTION_SYSTEM`, `AUDIT_SYSTEM`, `HANDOFF_SYSTEM`, `CONTRACT_AUTHOR_SYSTEM`, `PLANNER_SYSTEM` | prefix, tail, nudges, side dispatches | the binary's version (`FrozenContract.app_version`) and every entry that carries the rendered text |
 | Configured | `.vak/prompts/*.md`, `Bot.prompt`, `AllowlistEntry.prompt`, Agent prompt files, the saved Agent definition | prefix, read afresh every turn | `TurnCapabilitiesBound.system_prompt` (each turn, authoritative); `FrozenContract.prompt_layers` (admission snapshot) |
 | Per-capability | contracts present or absent, skills, MCP names, "More tools", standing | prefix, tool array | `TurnCapabilitiesBound` |
 | Per-turn | `<turn_context>`, `<intent>`, `<stance>`, `<work_contract>`, `<workspace_delta>`, `<conversation_thread>` | tail | `turn_context` activity, `Intent` entry, work/goal entries, `workspace_delta` activity |
@@ -644,7 +644,6 @@ flowchart LR
     Turn --> Audit["Completion auditor<br/>(goal mode)"]
     Turn --> Author["Managed contract author"]
     Turn --> Planner["Flow planner"]
-    After["After a session"] --> Reflect["Reflection<br/>memory + skill proposals"]
     Bind["Model bind"] --> Probe["Capacity probe"]
 ```
 
@@ -656,7 +655,6 @@ flowchart LR
 | Completion audit | `AUDIT_SYSTEM`: judge each criterion on transcript evidence only; claims are not evidence | objective, criteria, `<transcript>`, `<workspace_delta>` | strict JSON verdicts | thinking left on (parsed 6/6 vs 3/6) | `crates/vak-agent/src/goal.rs` |
 | Managed contract author | `CONTRACT_AUTHOR_SYSTEM`: the exact JSON shape, criterion kinds, owners | the request | `AuthoredContract` JSON | | `crates/vak-agent/src/lib.rs` |
 | Flow planner | `PLANNER_SYSTEM`: one fenced TOML DAG, approval nodes before effects | tool catalogue + task | TOML flow | | `crates/vak-flow/src/planner.rs` |
-| Reflection | `reflection::system_prompt()`: persist only durable, stated or confirmed facts; never credentials; at most 2 notes | recent conversation tail (newest 12,000 chars) | notes and an optional skill proposal | | `crates/vak-core/src/reflection.rs` |
 | Capacity probe | none | turn-shaped filler, then "Call the probe_ack tool now…" | a `probe_ack` call or not | 32 tokens, majority of three | `crates/vak-context/src/capacity.rs` |
 
 Two main-turn prompts are also authored by the runtime rather than a

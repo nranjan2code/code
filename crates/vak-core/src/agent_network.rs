@@ -91,6 +91,13 @@ impl vak_tools::Tool for AgentNetworkTool {
         "agent_network"
     }
 
+    /// It crosses into another Agent's workspace through the host broker,
+    /// which no narrower reach names: read-only mode denies it and
+    /// workspace-write asks.
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::reach(vak_permission::Reach::Other)
+    }
+
     /// Its results can hold the owner's data and words someone else wrote
     /// (docs/design/08-permissions.md "Provenance"): another
     /// Agent writes what it read.

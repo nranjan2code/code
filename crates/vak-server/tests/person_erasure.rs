@@ -78,7 +78,7 @@ async fn spawn_gateway(
     let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
         cwd.join(".vak/config.toml"),
-        "permission_mode = \"full-access\"\n[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
+        "permission_mode = \"full-access\"\n[gateway]\nchat_allowlist_open = true\n",
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();

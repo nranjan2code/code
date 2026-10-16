@@ -74,7 +74,7 @@ async fn gateway_inbound_carries_images_to_the_model() {
     let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
+        "[gateway]\nchat_allowlist_open = true\n",
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();

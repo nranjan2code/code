@@ -395,8 +395,7 @@ pub fn set_home_override(path: &std::path::Path) {
 /// `load_with_trust` reads the operator's real Shared layer
 /// (`~/vak-home/.vak/config.toml` and the real Shared secret scope), so a
 /// personal setting silently changes what the test exercises — a real MCP server
-/// gets advertised, `[memory] reflection = true` consumes a scripted
-/// provider response, a real provider key makes an "unconfigured" case
+/// gets advertised, a real provider key makes an "unconfigured" case
 /// pass. Tests were reading the developer's machine.
 ///
 /// Idempotent per process: the first call wins and later ones return the

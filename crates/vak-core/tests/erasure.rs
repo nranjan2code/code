@@ -56,7 +56,7 @@ fn core(cwd: &std::path::Path) -> Core {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
     )
     .unwrap();
     let core = Core::new_with_trust(cwd.to_path_buf(), true).unwrap();

@@ -75,11 +75,7 @@ async fn project_erasure_leaves_the_folder() {
     let (gone_dir, kept_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     // The owner's own files and settings in the project's folder.
     std::fs::create_dir_all(gone_dir.path().join(".vak")).unwrap();
-    std::fs::write(
-        gone_dir.path().join(".vak/config.toml"),
-        "[memory]\nreflection = false\n",
-    )
-    .unwrap();
+    std::fs::write(gone_dir.path().join(".vak/config.toml"), "").unwrap();
     std::fs::write(gone_dir.path().join("report.md"), "the owner's report").unwrap();
     let gone = Core::new_with_trust(gone_dir.path().to_path_buf(), true).unwrap();
     let kept = Core::new_with_trust(kept_dir.path().to_path_buf(), true).unwrap();

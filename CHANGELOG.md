@@ -1,5 +1,19 @@
 ## Unreleased
 
+- "Learn from conversations" is gone: the optional pass after a run that
+  asked a second model call for notes and skill drafts, filtered by
+  numbers picked in code, is removed with its `[memory] reflection`
+  setting. Notes and skills are written only when Vakyartha calls
+  `remember` or `propose_skill` in the conversation. An `agent_network`
+  call now states its permission instead of falling to the default.
+- One tool reads a web page: `browse` is folded into `webfetch`, which
+  takes `render` to run a page's script in a local headless browser when
+  `[tools] browse` is on. Its description no longer tells the model to
+  look for a search tool first, a step that no longer exists.
+- An ability is listed once, as a tool, rather than also among the
+  skills under a line saying a skill is never a tool.
+- The two cards filled from an ability's answer are offered only when an
+  ability is there to answer.
 - One place for what Vakyartha remembers: the separate "people and
   things" store is gone, with its tool, the `/entities` routes, `vak
   entities` and the "People and things" search filter. Notes kept with

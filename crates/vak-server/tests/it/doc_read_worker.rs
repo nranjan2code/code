@@ -153,11 +153,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::create_dir_all(workspace.join(".vak")).unwrap();
     std::fs::create_dir_all(&home).unwrap();
-    std::fs::write(
-        workspace.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n",
-    )
-    .unwrap();
+    std::fs::write(workspace.join(".vak/config.toml"), "").unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = vak_core::Core::new_with_trust(workspace.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home));

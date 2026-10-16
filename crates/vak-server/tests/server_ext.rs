@@ -60,17 +60,10 @@ async fn spawn_secured(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
-    // Isolate from the developer's real global config: layered config
-    // loads $HOME/.config/vak/config.toml, and a personal
-    // `[memory] reflection = true` would make the post-turn reflection
-    // seam consume scripted provider responses mid-test.
+    // An empty project layer: the test's settings come from it alone.
     let project = cwd.join(".vak");
     std::fs::create_dir_all(&project).unwrap();
-    std::fs::write(
-        project.join("config.toml"),
-        "[memory]\nreflection = false\n",
-    )
-    .unwrap();
+    std::fs::write(project.join("config.toml"), "").unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
@@ -1947,7 +1940,7 @@ async fn the_first_task_is_read_only_even_in_a_full_access_workspace() {
     // Make the workspace as permissive as it can be.
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "permission_mode = \"full-access\"\n[memory]\nreflection = false\n",
+        "permission_mode = \"full-access\"\n",
     )
     .unwrap();
     client

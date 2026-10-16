@@ -94,7 +94,7 @@ async fn spawn_gateway(
     let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
         cwd.join(".vak/config.toml"),
-        "permission_mode = \"full-access\"\n[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
+        "permission_mode = \"full-access\"\n[gateway]\nchat_allowlist_open = true\n",
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
@@ -134,7 +134,7 @@ async fn spawn_gateway_bare(
     let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
         cwd.join(".vak/config.toml"),
-        "permission_mode = \"full-access\"\n[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
+        "permission_mode = \"full-access\"\n[gateway]\nchat_allowlist_open = true\n",
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
@@ -722,10 +722,7 @@ async fn empty_chat_allowlist_denies_by_default() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     let _ = std::fs::create_dir_all(cwd.join(".vak"));
-    let _ = std::fs::write(
-        cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n",
-    );
+    let _ = std::fs::write(cwd.join(".vak/config.toml"), "");
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));

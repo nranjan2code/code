@@ -121,7 +121,7 @@ async fn run_turns() -> Measured {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
     )
     .unwrap();
     for n in 0..=TURNS {

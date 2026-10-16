@@ -371,7 +371,7 @@ and workspace-scope enforcement as desktop and gateway clients.
   WorkspaceWrite / FullAccess with consequences stated), gateway status,
   index rebuild, sign out.
 - **Memory** — workspace and global profile notes with provenance, inline
-  amend/explicit forget, effective search/write/reflection status, and a
+  amend/explicit forget, effective search/write status, and a
   confirmed cleanup action for abandoned lock/temp artifacts.
 
 The Operations Center's mutation contract is deliberately auditable. Service

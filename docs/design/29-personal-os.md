@@ -54,7 +54,7 @@ delivery applies. (The inline TUI this table once listed was withdrawn;
 | Doctor/health | `vak doctor`, `/doctor` | Services panel diagnostics section | — |
 | Backup export/import | `vak backup …` | Settings: folder picker → export/import buttons | — |
 | Weekly digest | `vak digest` | Digest card | scheduled digest as an ordinary task (`deliver_to`) |
-| webfetch / browse | approval prompt + transcript (url shown) | approval queue w/ URL shown | forwarded gates per doc 22 rules |
+| webfetch (and its `render`) | approval prompt + transcript (url shown) | approval queue w/ URL shown | forwarded gates per doc 22 rules |
 | Skill curation | `vak skills list` (duplicate flags) | Learning page duplicate badges + merge review | — |
 | Inbox | `vak inbox list/show/ack/count` | InboxPage + bell badge + ack/ack-all | entries mirror every delivery (single chokepoint) |
 | Heartbeat | `vak inbox` | inbox kind chip + native notification while hidden | URGENT findings push; everything else parks |
@@ -87,7 +87,7 @@ outside the process.
 
 ## Non-negotiables carried over
 
-- Invariant 1: USER.md recall, webfetch/browse output, digest data reaching a
+- Invariant 1: USER.md recall, webfetch output, digest data reaching a
   model all arrive as logged session entries. Nothing ambient.
 - Invariant 2: sessions untouched; memory notes and skill proposals are
   Documents outside the ledger, read and changed through the app, the CLI

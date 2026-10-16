@@ -105,7 +105,7 @@ async fn editing_an_agent_changes_the_next_turn_of_its_open_conversation() {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
     )
     .unwrap();
     vak_config::paths::isolate_home_for_tests();
@@ -188,7 +188,7 @@ async fn a_paused_agent_refuses_its_next_turn_and_resumes_when_active() {
     std::fs::create_dir_all(base.join(".vak")).unwrap();
     std::fs::write(
         base.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
     )
     .unwrap();
     vak_config::paths::isolate_home_for_tests();

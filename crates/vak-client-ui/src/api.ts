@@ -1404,7 +1404,6 @@ export interface ConfigPatch {
   approval_mode?: string;
   memory_search_enabled?: boolean;
   memory_write_enabled?: boolean;
-  memory_reflection?: boolean;
   memory_skill_proposals?: boolean;
   theme?: string;
   inherit_mcp?: boolean;
@@ -1483,7 +1482,7 @@ export function getPrivacyConfigLayer(scope: "user" | "workspace", agent?: strin
   permission_mode?: string | null;
   approval_mode?: string | null;
   permissions?: { allow?: string[]; ask?: string[]; deny?: string[] };
-  memory?: { search_enabled?: boolean | null; write_enabled?: boolean | null; reflection?: boolean | null; skill_proposals?: boolean | null };
+  memory?: { search_enabled?: boolean | null; write_enabled?: boolean | null; skill_proposals?: boolean | null };
 }> {
   const path = scope === "user" ? "/config/global" : "/config/workspace";
   return req(withAgent(path, agent));

@@ -147,7 +147,7 @@ fn config_with_modes(toml_body: &str, permission_mode: &str, approval_mode: &str
          chat_allowlist_open = true\n\
          {toml_body}\n\n\
          [memory]\n\
-         reflection = false\n"
+         "
     )
 }
 

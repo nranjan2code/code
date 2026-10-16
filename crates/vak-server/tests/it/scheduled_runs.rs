@@ -312,11 +312,7 @@ fn space(
     let dir = tempfile::tempdir().unwrap();
     let ws = dir.path().join("ws");
     std::fs::create_dir_all(ws.join(".vak")).unwrap();
-    std::fs::write(
-        ws.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n",
-    )
-    .unwrap();
+    std::fs::write(ws.join(".vak/config.toml"), "").unwrap();
     if git {
         git_seed(&ws);
     }

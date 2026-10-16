@@ -78,9 +78,7 @@ async fn spawn_gateway(allowlist: &[&str]) -> String {
         .map(|k| format!("\"{k}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    let config = format!(
-        "[memory]\nreflection = false\n[gateway]\nenabled = true\nchat_allowlist = [{list}]\n"
-    );
+    let config = format!("[gateway]\nenabled = true\nchat_allowlist = [{list}]\n");
     let _ = std::fs::write(cwd.join(".vak/config.toml"), &config);
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();

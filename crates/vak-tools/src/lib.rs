@@ -43,7 +43,7 @@ pub use contract::validate_input;
 pub use plan::{PlanTool, parse_plan_args};
 pub use recall::{RecallRequest, RecallTool, apply_chars, apply_range, parse_recall_args};
 pub use sandbox_events::{SandboxEvent, SandboxEventSink};
-pub use webbrowse::WebBrowseTool;
+pub use webbrowse::Renderer;
 pub use webfetch::WebFetchTool;
 pub use window::{LINE_WINDOW_CHARS, RESULT_WINDOW_CHARS, bounded, window};
 

@@ -65,7 +65,7 @@ async fn approved_entry_routes_to_its_own_workspace_core() {
     let _ = std::fs::create_dir_all(default_cwd.join(".vak"));
     let _ = std::fs::write(
         default_cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = false\n",
+        "[gateway]\nchat_allowlist_open = false\n",
     );
     let core = Core::new_with_trust(default_cwd.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(

@@ -88,7 +88,6 @@ entity matches. There is one scorer for each and no surface keeps its own.
 [memory]
 search_enabled = true   # default; false removes the tool from the loop
 write_enabled = true    # expose remember when permissions also allow it
-reflection = false     # post-run best-effort proposals when enabled
 skill_proposals = true # expose propose_skill when permitted
 ```
 
@@ -114,14 +113,13 @@ All durable-memory writes use a per-store lock and atomic temp-file replacement;
 append, amend, and forget are bounded and reject control characters in header
 metadata. Server and desktop search use the same curated-document ranking as
 the agent tool, including stored provenance timestamps. Channel overlays are
-applied after the complete tool set is assembled, and background reflection is
-skipped in read-only or channel-denied contexts.
+applied after the complete tool set is assembled.
 Retention is conservative: age alone never deletes a durable note. `vak memory
 clean` removes only abandoned lock/temp artifacts and empty workspace
 directories; stale knowledge is removed explicitly with `forget` or amended in
 place. There is no consolidation pass of any kind (removed 2026-10-16,
-docs/design/26-learning.md); reflection
-is bounded to at most two deduplicated proposals after a clean completion.
+docs/design/26-learning.md), and no post-run reflection (removed the
+same day).
 
 ## Phases
 

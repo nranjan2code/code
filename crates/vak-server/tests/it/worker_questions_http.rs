@@ -104,7 +104,7 @@ async fn a_worker_question_is_listed_answered_once_and_reaches_the_worker() {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
     )
     .unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
@@ -245,7 +245,7 @@ async fn a_client_that_cannot_show_questions_ends_the_question_at_once() {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
     )
     .unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();

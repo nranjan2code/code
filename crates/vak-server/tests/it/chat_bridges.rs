@@ -75,7 +75,7 @@ async fn spawn_gateway(allow_key: &str, reply: &str) -> String {
     let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
         cwd.join(".vak/config.toml"),
-        format!("[memory]\nreflection = false\n\n[gateway]\nchat_allowlist = [\"{allow_key}\"]\n"),
+        format!("[gateway]\nchat_allowlist = [\"{allow_key}\"]\n"),
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd, true).unwrap();

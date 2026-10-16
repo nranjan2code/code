@@ -92,7 +92,7 @@ async fn no_undeclared_paths_any_root() {
     std::fs::create_dir_all(workspace.path().join(".vak")).unwrap();
     std::fs::write(
         workspace.path().join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
     )
     .unwrap();
     let big: String = (0..4000).map(|n| format!("item {n}\n")).collect();

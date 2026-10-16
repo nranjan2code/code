@@ -45,21 +45,21 @@ progress lines."
 
 ## Where things stand
 
-**Next (2026-10-16): the remaining tool-audit items, when the maintainer
-chooses.** docs/audits/tool-catalogue-2026-10-16.md §5 ranks them; §6
-says what was built. Built and pushed: consolidation's word lists removed
-(O1), the entity store retired so `remember` is the one memory writer
-(O2), `data_query` removed (O3). Tried and reverted: deferring
-`mail_calendar` (O5), because the calendar question stopped reaching it
-(16/16 to 3/16). Not built, the maintainer's call: O4 (an ability listed
-as skill and tool), O6 (ability cards with no ability), O7 (one web
-reader), O8 (one index, a design question), O9, O10. Two open lines from
-the measurements are in open-items "Installed route failures":
-`mail_calendar`'s size needs a design that keeps it findable, and a CSV
-question never computes after `read`. The full gate passed on them
-(2026-10-16, after a rustfmt fix). Method: replay a captured first request 16 times
-before and after (`scripts/measure_tool_form.py replay`, captures in
-/tmp/vak-live/capture via `ollama-capture` + `vak-inv-live` on 8915).
+**Next (2026-10-16): the tool audit is built; doc 95 waits for the
+maintainer.** docs/audits/tool-catalogue-2026-10-16.md §6 says what was
+built, reverted and measured: consolidation removed (O1), the entity
+store retired (O2), `data_query` removed (O3), an ability listed once
+(O4), ability cards only with an ability (O6), `browse` folded into
+`webfetch`'s `render` (O7), `agent_network`'s reach declared (O9),
+reflection removed (O10). `mail_calendar` deferral was reverted (O5,
+16/16 to 3/16). O8, one capability index, is a proposal:
+docs/design/95-one-capability-index.md, for the maintainer to decide.
+Open lines from the measurements are in open-items "Installed route
+failures" (mail_calendar's size, a CSV question that never computes, the
+`skill` tool with only abilities, propose_skill's Jaccard threshold).
+Method: replay a captured first request 16 times before and after
+(`scripts/measure_tool_form.py replay`; captures in /tmp/vak-live/capture
+via `ollama-capture` + `vak-inv-live` on 8915).
 
 **Done 2026-10-16 (pushed):** `session_search` and `entity_query` folded
 into `recall`; `find_tools` removed (tools called by name); Anthropic

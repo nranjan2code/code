@@ -1360,10 +1360,9 @@ export default function Settings() {
     ? {
         search_enabled: privacyLayer()?.memory?.search_enabled ?? true,
         write_enabled: privacyLayer()?.memory?.write_enabled ?? true,
-        reflection: privacyLayer()?.memory?.reflection ?? false,
         skill_proposals: privacyLayer()?.memory?.skill_proposals ?? true,
       }
-    : config()?.memory ?? { search_enabled: true, write_enabled: true, reflection: false, skill_proposals: true };
+    : config()?.memory ?? { search_enabled: true, write_enabled: true, skill_proposals: true };
   const privacyRules = () => scope() === "user"
     ? {
         allow: privacyLayer()?.permissions?.allow ?? [],
@@ -1928,7 +1927,7 @@ export default function Settings() {
   };
 
   const changeMemoryPolicy = async (
-    key: "memory_search_enabled" | "memory_write_enabled" | "memory_reflection" | "memory_skill_proposals",
+    key: "memory_search_enabled" | "memory_write_enabled" | "memory_skill_proposals",
     value: boolean,
   ) => {
     try {
@@ -1941,7 +1940,6 @@ export default function Settings() {
           ...current.memory,
           search_enabled: key === "memory_search_enabled" ? value : current.memory?.search_enabled,
           write_enabled: key === "memory_write_enabled" ? value : current.memory?.write_enabled,
-          reflection: key === "memory_reflection" ? value : current.memory?.reflection,
           skill_proposals: key === "memory_skill_proposals" ? value : current.memory?.skill_proposals,
         },
       } : current);
@@ -1951,7 +1949,6 @@ export default function Settings() {
           ...current.memory,
           search_enabled: key === "memory_search_enabled" ? value : current.memory.search_enabled,
           write_enabled: key === "memory_write_enabled" ? value : current.memory.write_enabled,
-          reflection: key === "memory_reflection" ? value : current.memory.reflection,
           skill_proposals: key === "memory_skill_proposals" ? value : current.memory.skill_proposals,
         },
       } : current);
@@ -2275,7 +2272,6 @@ export default function Settings() {
                 <p class="settings-group-copy">{scope() === "user" ? "Choose what every agent can remember and learn by default. An agent can set its own choices." : "Choose what this agent can remember and learn. Unset choices inherit Shared."}</p>
                 <Row title="Recall saved notes" description="Let the agent search its saved memory while responding."><Switch label="Recall saved notes" checked={privacyMemory().search_enabled} onChange={(value) => void changeMemoryPolicy("memory_search_enabled", value)} /></Row>
                 <Row title="Save useful details" description="Allow the agent to add useful facts to its own memory."><Switch label="Save useful details" checked={privacyMemory().write_enabled} onChange={(value) => void changeMemoryPolicy("memory_write_enabled", value)} /></Row>
-                <Row title="Learn from conversations" description="Reflect on completed conversations to find useful details to remember."><Switch label="Learn from conversations" checked={privacyMemory().reflection} onChange={(value) => void changeMemoryPolicy("memory_reflection", value)} /></Row>
                 <Row title="Suggest new skills" description="Allow memory to propose reusable skills for review."><Switch label="Suggest new skills" checked={privacyMemory().skill_proposals} onChange={(value) => void changeMemoryPolicy("memory_skill_proposals", value)} /></Row>
               </section>
               <section class="settings-group"><h3>When to ask</h3>

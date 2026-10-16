@@ -5,14 +5,11 @@ Status: implemented in 2.0.0
 
 ```mermaid
 flowchart LR
-    A[Agent run] --> B{Tool or post-run reflection}
+    A[Agent run] --> B{Tool the model calls}
     B --> C[remember]
     B --> D[propose_skill]
-    B --> E[Bounded reflection proposals]
     C --> F[Workspace MEMORY.md]
-    E --> F
     D --> G[Skill review queue]
-    E --> G
     F --> H[recall curated hit]
     G --> I{Human review}
     I -- Promote --> J[Discoverable SKILL.md]
@@ -25,10 +22,12 @@ defaulting to `fact`; the lower-level store also accepts `note` and
 `procedural`. It writes a block with timestamp and originating session id
 through `memory::append_note`. `ProposeSkillTool` writes a draft to the review
 queue; it does not install a skill. Permission and channel capability checks
-apply before either effect. A clean gateway completion can also run bounded
-reflection, deduplicating near-identical notes and sending skill drafts
-through the same human queue. Reflection is best effort and does not alter
-the reply.
+apply before either effect. These two tools, called by the model in the
+turn, are the only writers. Post-run reflection (an auxiliary model call
+after a clean completion that wrote up to two notes and a skill draft,
+deduplicated by a Jaccard threshold) was removed on 2026-10-16: a second
+writer beside them, ruled by numbers picked in code
+(docs/audits/tool-catalogue-2026-10-16.md, O10).
 
 There is no consolidation pass. One existed (`vak memory consolidate`,
 `POST /memory/consolidate`, and a call after every compaction): it copied a
@@ -71,8 +70,7 @@ run completes ── model decides something is worth keeping
    every later FrozenContract.
 4. **No standing prompt injection.** Nothing is injected into prompts by the
    note store; recall flows through `recall`, whose search ranks memory
-   blocks against transcripts. When enabled, post-run reflection makes an
-   additional model call after a clean gateway completion.
+   blocks against transcripts.
 
 ## Storage
 
@@ -142,10 +140,6 @@ skill_proposals  = true   # propose_skill available; queue always reviewable
 Local-only and workspace-scoped, hence not privileged — but ReadOnly mode
 still denies both tools outright.
 
-Reflection is an effectful write path, not an exception to permissions: it is
-skipped in `ReadOnly` mode, honors channel tool overlays, and applies through
-the same guarded memory/proposal repository used by the interactive tools.
-
 ### Worker ownership and termination
 
 Each delegated agent receives its own child session ledger and context window,
@@ -157,12 +151,12 @@ restart, so partial work is auditable and searchable. The live registry is
 ephemeral; terminated children are removed from it even if their future is
 aborted, and a process crash naturally clears the registry while preserving
 the ledger. A child that dies before calling `remember` contributes no durable
-memory and is not auto-promoted by reflection.
+memory.
 
 ## Phases
 
 | Phase | Delivers | Exit criterion |
 |---|---|---|
 | **L0 (this)** | memory store + parser, search boost, both tools, engine classification, promotion endpoints + CLI, config flags | unit roundtrips incl. hand-edited files; search outranks transcripts; e2e: agent remembers mid-run, a later run recalls it citing memory; promote→discovery loop closes; fmt/clippy/tests green |
-| **L1 ✅** | Post-run reflection (`[memory] reflection = true`): auxiliary model call after clean gateway completions proposes ≤2 notes + optional skill draft; Jaccard dedup (≥0.55) against existing MEMORY.md bounds growth; skill drafts land in the same human-gated review queue; detached best-effort — never affects the reply | parser/dedup/e2e tests: near-duplicate second run writes 0 notes; invalid entries don't consume slots |
+| **L1 (removed 2026-10-16)** | Post-run reflection (`[memory] reflection = true`): auxiliary model call after clean gateway completions proposes ≤2 notes + optional skill draft; Jaccard dedup (≥0.55) against existing MEMORY.md bounds growth; skill drafts land in the same human-gated review queue; detached best-effort — never affects the reply | parser/dedup/e2e tests: near-duplicate second run writes 0 notes; invalid entries don't consume slots |
 | **L2 ✅** | Desktop Settings ▸ Learning page: proposal queue with Promote/Reject + memory-note viewer (tag/kind/session provenance), 8 s polling while open; TUI `/services` ships alongside in the same ops pass | tsc/vite clean; hermetic gateway fixtures keep scripted flows deterministic |

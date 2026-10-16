@@ -41,11 +41,31 @@ const SCREEN_PORT: u16 = 80;
 /// `worker_exe`.
 pub struct WebFetchTool {
     worker_exe: PathBuf,
+    /// The headless browser behind `render`, when rendering is on
+    /// (`[tools] browse`); absent, the argument is not offered.
+    renderer: Option<crate::webbrowse::Renderer>,
+    description: String,
 }
 
+const DESCRIPTION: &str = "Fetch a known URL over HTTP(S) with GET; this does not search the web or turn a search-results page into reliable facts. Blocks loopback/private/link-local targets, follows at most 3 redirects, downloads at most 8 MiB, accepts only text/json/xml content types, and never sends credentials. Returns a status line, then the body: an HTML page as its readable text (headings, paragraphs, lists, table rows; scripts, navigation and forms left out and counted), or with format \"links\" its links, or with \"source\" its HTML. Other content types come back as they are.";
+
+const RENDER: &str = " With render, the page is first run in a local headless browser with a fresh profile, so content its JavaScript builds is there; the browser's own redirects and subresources are not screened.";
+
 impl WebFetchTool {
-    pub fn new(worker_exe: PathBuf) -> Self {
-        Self { worker_exe }
+    /// `render` offers the `render` argument, run by a local headless
+    /// browser.
+    pub fn new(worker_exe: PathBuf, render: bool) -> Self {
+        let renderer = render.then(|| crate::webbrowse::Renderer::new(worker_exe.clone()));
+        let description = if render {
+            format!("{DESCRIPTION}{RENDER}")
+        } else {
+            DESCRIPTION.to_string()
+        };
+        Self {
+            worker_exe,
+            renderer,
+            description,
+        }
     }
 }
 
@@ -242,18 +262,25 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch a known URL over HTTP(S) with GET; this does not search the web or turn a search-results page into reliable facts. To locate current sources, discover an available search tool first. Blocks loopback/private/link-local targets, follows at most 3 redirects, downloads at most 8 MiB, accepts only text/json/xml content types, and never sends credentials. Returns a status line, then the body: an HTML page as its readable text (headings, paragraphs, lists, table rows; scripts, navigation and forms left out and counted), or with format \"links\" its links, or with \"source\" its HTML. Other content types come back as they are."
+        &self.description
     }
 
     fn schema(&self) -> Value {
-        serde_json::json!({
+        let mut schema = serde_json::json!({
             "type": "object",
             "properties": {
                 "url": {"type": "string", "description": "Absolute http(s) URL to fetch"},
                 "format": PageFormat::schema()
             },
             "required": ["url"]
-        })
+        });
+        if self.renderer.is_some() {
+            schema["properties"]["render"] = serde_json::json!({
+                "type": "boolean",
+                "description": "Run the page's JavaScript in a local headless browser first, for a page whose content a script builds. Leave it out for an ordinary page."
+            });
+        }
+        schema
     }
 
     fn claims(&self, _args: &Value) -> ResourceClaims {
@@ -272,6 +299,15 @@ impl Tool for WebFetchTool {
             Ok(format) => format,
             Err(error) => return ToolOutput::error(Fault::Shape, error),
         };
+        if args.get("render").and_then(Value::as_bool) == Some(true) {
+            return match &self.renderer {
+                Some(renderer) => renderer.render(args, ctx).await,
+                None => ToolOutput::error(
+                    Fault::Shape,
+                    "render is not offered here: rendering is turned off ([tools] browse)",
+                ),
+            };
+        }
         tokio::select! {
             _ = ctx.cancel.cancelled() => ToolOutput::error(Fault::Cancelled, "fetch cancelled"),
             out = self.run(url, format) => out,
@@ -539,7 +575,7 @@ mod tests {
     use crate::context::shared_ctx;
 
     fn tool() -> WebFetchTool {
-        WebFetchTool::new(PathBuf::from("/nonexistent/vak-tool-worker"))
+        WebFetchTool::new(PathBuf::from("/nonexistent/vak-tool-worker"), false)
     }
 
     #[test]

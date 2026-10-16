@@ -243,7 +243,7 @@ Two roots hold an Agent's things, and they are different directories:
 
 1. **Private Agent state (`vak_config::paths::agent_home`)**:
    - `Core::scope()` is the Agent's scope (`vak_config::scope::AgentScope`), rooted at `<data home>/agents/<agent_id>/`.
-   - Each Agent's session logs, memory notes (`append_note`), reflection entries and skill proposals stay isolated.
+   - Each Agent's session logs, memory notes (`append_note`) and skill proposals stay isolated.
    - Admission locks are acquired per-agent and per-session, ensuring that turns running on one Agent never block or stall turns running on another Agent.
 
 2. **Execution state (`vak_config::scope::execution_dir`)**:

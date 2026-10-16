@@ -87,9 +87,7 @@ async fn spawn_gateway(allowlist_open: bool, provider: Arc<Recording>) -> String
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        format!(
-            "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = {allowlist_open}\n"
-        ),
+        format!("[gateway]\nchat_allowlist_open = {allowlist_open}\n"),
     )
     .unwrap();
     let core = Core::new_with_trust(cwd, true).unwrap();

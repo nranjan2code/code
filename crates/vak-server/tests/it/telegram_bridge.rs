@@ -142,7 +142,7 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
     let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[gateway]\nchat_allowlist = [\"telegram:4242\"]\n",
+        "[gateway]\nchat_allowlist = [\"telegram:4242\"]\n",
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
@@ -261,7 +261,7 @@ async fn bridge_survives_outage_window_and_resumes_cursor() {
     let _ = std::fs::create_dir_all(cwd.join(".vak"));
     let _ = std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[gateway]\nchat_allowlist = [\"telegram:1\"]\n",
+        "[gateway]\nchat_allowlist = [\"telegram:1\"]\n",
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();

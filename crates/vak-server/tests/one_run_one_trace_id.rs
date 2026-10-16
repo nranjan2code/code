@@ -98,7 +98,7 @@ async fn one_run_one_trace_id() {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "permission_mode = \"full-access\"\n[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = true\n",
+        "permission_mode = \"full-access\"\n[gateway]\nchat_allowlist_open = true\n",
     )
     .unwrap();
     std::fs::write(cwd.join("README.md"), "# readme\n").unwrap();

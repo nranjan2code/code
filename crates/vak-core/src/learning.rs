@@ -651,7 +651,7 @@ pub fn reject(scope: &vak_config::scope::AgentScope, cwd: &Path, id: &str) -> Re
 
 // ---- duplicate screening (docs/design/29-personal-os.md P5) -----------------
 
-/// Same bar as reflection's note dedup — skill pollution is the same failure
+/// Skill pollution is the failure
 /// mode at proposal time.
 const SKILL_DEDUP_THRESHOLD: f32 = 0.55;
 
@@ -668,10 +668,28 @@ pub fn duplicate_of(
     existing
         .iter()
         .find(|(name, body)| {
-            crate::reflection::jaccard(&format!("{name}\n{body}"), &candidate)
-                >= SKILL_DEDUP_THRESHOLD
+            jaccard(&format!("{name}\n{body}"), &candidate) >= SKILL_DEDUP_THRESHOLD
         })
         .map(|(name, _)| name.clone())
+}
+
+fn tokens(text: &str) -> std::collections::HashSet<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.chars().count() >= 3)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Jaccard similarity over word sets.
+fn jaccard(a: &str, b: &str) -> f32 {
+    let (a, b) = (tokens(a), tokens(b));
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let inter = a.intersection(&b).count() as f32;
+    let union = a.union(&b).count() as f32;
+    inter / union
 }
 
 /// Frontmatter key persisted on flagged proposals; consumers' parsers skip
@@ -1045,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn reflection_authored_draft_is_screened_on_review_without_stacking() {
+    fn a_queued_draft_is_screened_on_review_without_stacking() {
         vak_config::paths::isolate_home_for_tests();
         let (_dir, home, cwd) = temp_home_cwd();
         seed_accepted_skill(
@@ -1055,7 +1073,6 @@ mod tests {
             "pause before rollback so the deploy script can finish",
         );
 
-        // Exact write format of the reflection queue entry point.
         let dir = proposals_dir(&vak_config::scope::AgentScope::new(&home), &cwd);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("aaa111.md");

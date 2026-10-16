@@ -3821,17 +3821,6 @@ async fn execute_turn_chain(
                             cards,
                         });
                     }
-                    // Background reflection seam (docs/design/29 P1): the
-                    // shared best-effort pass over the just-settled leg. It
-                    // runs strictly after the reply above was handed over so
-                    // delivery never waits on it, and while this chain still
-                    // owns the ledger — a second in-process handle cannot
-                    // take the file lock. Bounded by the operator's
-                    // `request_timeout_secs` inside the call; failures
-                    // collapse into the outcome envelope.
-                    if !err && core.config().memory.reflection {
-                        log_gateway_reflection(core.reflect_after_turn(&log, "").await);
-                    }
                     (Some(log), short_summary(&text), err)
                 }
                 Err(e) => {
@@ -4144,40 +4133,6 @@ pub(crate) async fn deliver_webhook_packet(
         last_error.landed = crate::delivery::Landed::Unknown;
     }
     Err(last_error)
-}
-
-/// Reflection outcome reporting for chat surfaces: the success line keeps
-/// its historical format; config-driven and raced-out skips are routine and
-/// stay silent so a busy gateway does not spam its own log.
-fn log_gateway_reflection(outcome: vak_core::reflection::ReflectionOutcome) {
-    use vak_core::reflection::ReflectionOutcome as R;
-    match outcome {
-        R::Reflected {
-            notes_added,
-            skills_proposed,
-        } => {
-            if notes_added > 0 || skills_proposed {
-                tracing::info!(
-                    kind = "reflection",
-                    count = notes_added,
-                    outcome = if skills_proposed {
-                        "skill_queued"
-                    } else {
-                        "notes_only"
-                    },
-                    "reflection persisted notes"
-                );
-            }
-        }
-        R::Skipped { reason } => match reason {
-            "already-in-flight" | "reflection-disabled" | "memory-writes-disabled" => {}
-            other => tracing::info!(
-                kind = "reflection",
-                outcome = other,
-                "reflection was skipped"
-            ),
-        },
-    }
 }
 
 #[cfg(test)]
@@ -5001,7 +4956,7 @@ mod tests {
 
     #[test]
     fn allowlist_route_resolves_the_configured_agent_identity() {
-        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let (_dir, core) = core_with_config("");
         std::fs::write(
             core.cwd().join(".vak/agents.json"),
             serde_json::json!([{
@@ -5040,7 +4995,7 @@ mod tests {
 
     #[test]
     fn bot_agent_identity_resolves_when_chat_inherits_bot() {
-        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let (_dir, core) = core_with_config("");
         std::fs::write(
             core.cwd().join(".vak/agents.json"),
             serde_json::json!([{
@@ -5185,7 +5140,7 @@ mod tests {
 
     #[test]
     fn paused_agent_route_fails_closed_before_core_creation() {
-        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let (_dir, core) = core_with_config("");
         std::fs::write(
             core.cwd().join(".vak/agents.json"),
             serde_json::json!([{
@@ -5240,7 +5195,7 @@ mod tests {
     /// refused with a reason, never run in the gateway's default workspace.
     #[test]
     fn a_chat_whose_space_has_no_folder_here_is_refused() {
-        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let (_dir, core) = core_with_config("");
         let gw = GatewayState::load(&core, true);
         gw.allowlist_approve(
             &core,
@@ -5267,7 +5222,7 @@ mod tests {
 
     #[test]
     fn allowlist_approve_deny_revoke_roundtrip() {
-        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let (_dir, core) = core_with_config("");
         let gw = GatewayState::load(&core, true);
 
         // Unknown key: approve creates an allowed entry with the explicit
@@ -5316,9 +5271,7 @@ mod tests {
     fn inbound_resolve_creates_one_pending_entry_not_duplicated() {
         // An explicit project `chat_allowlist` overrides a developer's own
         // global config.toml so the seeded starting state is deterministic.
-        let (_dir, core) = core_with_config(
-            "[memory]\nreflection = false\n[gateway]\nchat_allowlist = [\"testonly:0\"]\n",
-        );
+        let (_dir, core) = core_with_config("[gateway]\nchat_allowlist = [\"testonly:0\"]\n");
         let gw = GatewayState::load(&core, true);
 
         let first = gw.allowlist_resolve_inbound(&core, "telegram:99", "hello there", None);
@@ -5353,9 +5306,8 @@ mod tests {
     /// capability, not just the UI to configure it.
     #[test]
     fn bot_scoped_key_inherits_approval_from_already_allowed_legacy_key() {
-        let (_dir, core) = core_with_config(
-            "[memory]\nreflection = false\n[gateway]\nchat_allowlist = [\"telegram:8846301562\"]\n",
-        );
+        let (_dir, core) =
+            core_with_config("[gateway]\nchat_allowlist = [\"telegram:8846301562\"]\n");
         let gw = GatewayState::load(&core, true);
         let legacy = gw.allowlist_get("telegram:8846301562").unwrap();
         assert_eq!(legacy.status, AllowlistStatus::Allowed);
@@ -5418,7 +5370,7 @@ mod tests {
     /// same as any other never-seen chat.
     #[test]
     fn bot_scoped_key_starts_pending_when_no_legacy_approval_exists() {
-        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let (_dir, core) = core_with_config("");
         let gw = GatewayState::load(&core, true);
         let decision =
             gw.allowlist_resolve_inbound(&core, "telegram:555:NewBot", "hi", Some("NewBot"));
@@ -5439,9 +5391,7 @@ mod tests {
 
     #[test]
     fn inbound_resolve_dispatches_allowed_and_denied_keys() {
-        let (_dir, core) = core_with_config(
-            "[memory]\nreflection = false\n[gateway]\nchat_allowlist = [\"testonly:0\"]\n",
-        );
+        let (_dir, core) = core_with_config("[gateway]\nchat_allowlist = [\"testonly:0\"]\n");
         let gw = GatewayState::load(&core, true);
 
         // Allowed key dispatches normally.
@@ -5472,7 +5422,7 @@ mod tests {
 
     #[test]
     fn first_seen_text_is_truncated() {
-        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let (_dir, core) = core_with_config("");
         let gw = GatewayState::load(&core, true);
         let long = "x".repeat(FIRST_SEEN_TEXT_MAX_CHARS + 50);
         gw.allowlist_resolve_inbound(&core, "telegram:200", &long, None);
@@ -5485,7 +5435,7 @@ mod tests {
 
     #[tokio::test]
     async fn permission_revoke_denies_forwarded_gates_for_session() {
-        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let (_dir, core) = core_with_config("");
         let gw = GatewayState::load(&core, true);
         let mut receivers = Vec::new();
         for id in ["gate-a", "gate-b", "other"] {
@@ -5507,7 +5457,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_ambiguous_or_empty_gate_code_resolves_nothing() {
-        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let (_dir, core) = core_with_config("");
         let gw = GatewayState::load(&core, true);
         let _a = gw.register_gate("018f-aaaa-a1b2c3", "s1");
         let _b = gw.register_gate("018f-bbbb-d4b2c3", "s1");

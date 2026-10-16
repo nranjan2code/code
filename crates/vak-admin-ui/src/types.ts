@@ -238,7 +238,6 @@ export interface ConfigInfo {
     search_enabled: boolean;
     write_enabled: boolean;
     skill_proposals: boolean;
-    reflection: boolean;
   };
 }
 
@@ -870,7 +869,6 @@ export interface ConfigLayer {
   memory: {
     search_enabled?: boolean | null;
     write_enabled?: boolean | null;
-    reflection?: boolean | null;
     skill_proposals?: boolean | null;
   };
   work: {

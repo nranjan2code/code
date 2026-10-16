@@ -1598,9 +1598,6 @@ async fn run_exec(
         }
     };
 
-    // The runner consumes `core`; keep a handle for the post-turn
-    // reflection seam.
-    let reflection_core = core.clone();
     let runner = tokio::spawn(async move {
         let fut = async {
             if let Some(objective) = goal.as_deref() {
@@ -1793,8 +1790,8 @@ async fn run_exec(
         }
     }
 
-    let (outcome, session) = match runner.await {
-        Ok(Ok((o, session))) => (o, Some(session)),
+    let outcome = match runner.await {
+        Ok(Ok((o, _session))) => o,
         Ok(Err(e)) => {
             eprintln!("error: {e}");
             return 2;
@@ -1823,16 +1820,6 @@ async fn run_exec(
         }
         return 1;
     }
-    // Post-turn reflection seam (docs/design/29 P1): the final assistant
-    // text is already committed to the ledger, so no extra tail is passed.
-    // The call is bounded by the operator's `request_timeout_secs`, so a
-    // stuck auxiliary stream cannot hang the exit.
-    if let Some(session) = session.as_ref() {
-        let outcome = reflection_core.reflect_after_turn(session, "").await;
-        if let Some(line) = exec_reflection_line(&outcome) {
-            eprintln!("{line}");
-        }
-    }
     if let Some(wt) = created_worktree {
         eprintln!(
             "▸ worktree kept for inspection: {} (branch {}) — remove with git worktree remove",
@@ -1845,21 +1832,6 @@ async fn run_exec(
 
 fn timestamp_id() -> String {
     uuid::Uuid::now_v7().to_string()
-}
-
-/// Footnote line for a post-turn reflection outcome: one dim line when the
-/// pass persisted something or was skipped for a reason worth acting on
-/// (budget), silent otherwise.
-fn exec_reflection_line(outcome: &vak_core::reflection::ReflectionOutcome) -> Option<String> {
-    match outcome {
-        vak_core::reflection::ReflectionOutcome::Reflected { notes_added, .. } => {
-            Some(format!("· reflected: {notes_added} note(s)"))
-        }
-        vak_core::reflection::ReflectionOutcome::Skipped { reason: "budget" } => {
-            Some("· reflection skipped: budget cap reached".to_string())
-        }
-        _ => None,
-    }
 }
 
 /// `vak config permissions` — the whole permission answer in one place.
@@ -2817,52 +2789,6 @@ async fn run_telegram(server: String, token_flag: Option<String>, bot_id: Option
         Err(e) => {
             eprintln!("error: {e}");
             1
-        }
-    }
-}
-
-#[cfg(test)]
-mod reflection_line_tests {
-    use super::exec_reflection_line;
-
-    #[test]
-    fn reflected_outcomes_get_a_footnote_even_at_zero_notes() {
-        let line = exec_reflection_line(&vak_core::reflection::ReflectionOutcome::Reflected {
-            notes_added: 2,
-            skills_proposed: false,
-        });
-        assert_eq!(line.as_deref(), Some("· reflected: 2 note(s)"));
-        assert_eq!(
-            exec_reflection_line(&vak_core::reflection::ReflectionOutcome::Reflected {
-                notes_added: 0,
-                skills_proposed: true,
-            })
-            .as_deref(),
-            Some("· reflected: 0 note(s)")
-        );
-    }
-
-    #[test]
-    fn budget_skips_are_actionable_and_other_skips_silent() {
-        assert_eq!(
-            exec_reflection_line(&vak_core::reflection::ReflectionOutcome::Skipped {
-                reason: "budget"
-            })
-            .as_deref(),
-            Some("· reflection skipped: budget cap reached")
-        );
-        for quiet in [
-            "reflection-disabled",
-            "already-in-flight",
-            "reflect-call-failed",
-        ] {
-            assert_eq!(
-                exec_reflection_line(&vak_core::reflection::ReflectionOutcome::Skipped {
-                    reason: quiet
-                }),
-                None,
-                "{quiet} must stay silent"
-            );
         }
     }
 }

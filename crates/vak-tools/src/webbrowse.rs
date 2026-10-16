@@ -1,11 +1,10 @@
-//! Headless-browser DOM render tool: drives a locally installed
+//! The renderer behind `webfetch`'s `render`: drives a locally installed
 //! Chromium-family browser as a child process and returns the JavaScript-
-//! rendered DOM (docs/design/29-personal-os.md, sibling of webfetch P4).
-//!
-//! Permission posture matches webfetch exactly (Ask in restricted modes,
-//! Allow under FullAccess or an explicit rule) and is applied downstream by
-//! the registry/permission engine; this tool performs no permission checks
-//! itself. Credentials are never sent: fresh throwaway profile, no cookie
+//! rendered DOM (docs/design/29-personal-os.md P4). It is no tool of its
+//! own: one reader of a URL, `webfetch`, carries webfetch's permission and
+//! provenance, and the model says whether the page needs its script run
+//! (docs/audits/tool-catalogue-2026-10-16.md, O7). It performs no
+//! permission checks itself. Credentials are never sent: fresh throwaway profile, no cookie
 //! reuse, no auth material.
 //!
 //! Sandbox posture: unlike Bash, no Seatbelt/Landlock command wrapper is
@@ -24,25 +23,23 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::webfetch::ssrf_guard;
-use crate::{ResourceClaims, Tool, ToolContext, ToolOutput};
+use crate::{ToolContext, ToolOutput};
 
 const DEFAULT_WAIT_MS: u64 = 4000;
-const MAX_WAIT_MS: u64 = 10_000;
 const TOTAL_TIMEOUT_SECS: u64 = 20;
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(TOTAL_TIMEOUT_SECS);
 const BROWSER_ENV: &str = "VAK_BROWSER";
 
 /// Renders a page; its DOM is read as text in the tool worker at
 /// `worker_exe`.
-pub struct WebBrowseTool {
+pub struct Renderer {
     worker_exe: std::path::PathBuf,
 }
 
-impl WebBrowseTool {
+impl Renderer {
     pub fn new(worker_exe: std::path::PathBuf) -> Self {
         Self { worker_exe }
     }
@@ -114,13 +111,6 @@ fn discover_browser() -> Result<PathBuf, String> {
     select_browser(&default_candidates())
 }
 
-fn clamp_wait_ms(raw: Option<i64>) -> u64 {
-    match raw {
-        Some(n) if n > 0 => u64::try_from(n).unwrap_or(MAX_WAIT_MS).min(MAX_WAIT_MS),
-        _ => DEFAULT_WAIT_MS,
-    }
-}
-
 fn assemble_args(wait_ms: u64, url: &str, profile_dir: &Path) -> Vec<String> {
     vec![
         "--headless=new".to_string(),
@@ -186,49 +176,9 @@ fn basename(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-#[async_trait]
-impl Tool for WebBrowseTool {
-    fn permission(&self) -> vak_permission::Declared {
-        vak_permission::Declared::reach(vak_permission::Reach::Network)
-    }
-
-    fn fetched(&self, args: &Value) -> Option<String> {
-        args.get("url").and_then(Value::as_str).map(str::to_string)
-    }
-
-    fn name(&self) -> &str {
-        "browse"
-    }
-
-    fn serves(&self) -> Vec<&str> {
-        vec!["web", "live-data"]
-    }
-
-    fn description(&self) -> &str {
-        "Render a URL in a locally installed headless Chromium-family browser, so content built by JavaScript is there. Applies the same private-range blocklist as webfetch to the requested host, runs with a fresh throwaway profile (never sends credentials), and caps runtime at 20s. Returns a header line, then the rendered page as its readable text, or with format \"links\" its links, or with \"source\" its DOM. In-browser redirects are not re-screened in v1."
-    }
-
-    fn schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "url": {"type": "string", "description": "Absolute http(s) URL to render"},
-                "wait_ms": {"type": "integer", "description": "Virtual-time budget in milliseconds (default 4000, capped at 10000; values <= 0 fall back to the default)"},
-                "format": crate::webfetch::PageFormat::schema()
-            },
-            "required": ["url"]
-        })
-    }
-
-    fn claims(&self, _args: &Value) -> ResourceClaims {
-        ResourceClaims {
-            exclusive: false,
-            read_only: true,
-            paths: Vec::new(),
-        }
-    }
-
-    async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
+impl Renderer {
+    /// Render `args.url` and read it in the `format` asked for.
+    pub async fn render(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         if args.get("url").and_then(Value::as_str).is_none() {
             return ToolOutput::error(Fault::Shape, "missing required parameter: url");
         }
@@ -236,13 +186,13 @@ impl Tool for WebBrowseTool {
             return ToolOutput::error(Fault::Shape, error);
         }
         tokio::select! {
-            _ = ctx.cancel.cancelled() => ToolOutput::error(Fault::Cancelled, "browse cancelled"),
+            _ = ctx.cancel.cancelled() => ToolOutput::error(Fault::Cancelled, "render cancelled"),
             out = self.run(args, ctx) => out,
         }
     }
 }
 
-impl WebBrowseTool {
+impl Renderer {
     async fn run(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         // Unwrap-free re-extraction after the execute() pre-check keeps this
         // method total even when called directly in tests.
@@ -250,7 +200,7 @@ impl WebBrowseTool {
             Some(r) => r,
             None => return ToolOutput::error(Fault::Shape, "missing required parameter: url"),
         };
-        let wait_ms = clamp_wait_ms(args.get("wait_ms").and_then(Value::as_i64));
+        let wait_ms = DEFAULT_WAIT_MS;
 
         let url = match parse_target(raw) {
             Ok(u) => u,
@@ -470,19 +420,9 @@ mod tests {
     }
 
     #[test]
-    fn wait_ms_clamping_matches_contract() {
-        assert_eq!(clamp_wait_ms(None), 4000);
-        assert_eq!(clamp_wait_ms(Some(0)), 4000);
-        assert_eq!(clamp_wait_ms(Some(-5)), 4000);
-        assert_eq!(clamp_wait_ms(Some(15000)), 10000);
-        assert_eq!(clamp_wait_ms(Some(2500)), 2500);
-        assert_eq!(clamp_wait_ms(Some(i64::MAX)), 10000);
-    }
-
-    #[test]
     fn arg_assembly_carries_fixed_flags_profile_budget_then_url() {
         let profile = Path::new("/tmp/fake-profile");
-        let args = assemble_args(clamp_wait_ms(Some(15000)), "https://example.com/", profile);
+        let args = assemble_args(10000, "https://example.com/", profile);
         assert_eq!(
             args,
             vec![
@@ -496,7 +436,7 @@ mod tests {
                 "https://example.com/".to_string(),
             ]
         );
-        let default_args = assemble_args(clamp_wait_ms(None), "https://example.com/", profile);
+        let default_args = assemble_args(DEFAULT_WAIT_MS, "https://example.com/", profile);
         assert!(default_args.contains(&"--virtual-time-budget=4000".to_string()));
     }
 
@@ -522,8 +462,8 @@ mod tests {
         ];
         let ctx = shared_ctx(std::path::Path::new("."));
         for (url, class) in cases {
-            let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
-                .execute(&serde_json::json!({"url": url}), &ctx)
+            let out = Renderer::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
+                .render(&serde_json::json!({"url": url}), &ctx)
                 .await;
             assert!(out.is_error(), "expected {url} to be blocked");
             assert!(
@@ -537,14 +477,14 @@ mod tests {
     #[tokio::test]
     async fn unsupported_scheme_rejected_before_any_spawn() {
         let ctx = shared_ctx(std::path::Path::new("."));
-        let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
-            .execute(&serde_json::json!({"url": "file:///etc/passwd"}), &ctx)
+        let out = Renderer::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
+            .render(&serde_json::json!({"url": "file:///etc/passwd"}), &ctx)
             .await;
         assert!(out.is_error());
         assert!(out.content.contains("scheme"), "{}", out.content);
 
-        let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
-            .execute(&serde_json::json!({}), &ctx)
+        let out = Renderer::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
+            .render(&serde_json::json!({}), &ctx)
             .await;
         assert!(out.is_error());
         assert!(out.content.contains("missing required parameter"));
@@ -568,8 +508,8 @@ mod tests {
             return;
         }
         let ctx = shared_ctx(std::path::Path::new("."));
-        let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
-            .execute(
+        let out = Renderer::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
+            .render(
                 &serde_json::json!({"url": "https://example.com/", "wait_ms": 2000}),
                 &ctx,
             )

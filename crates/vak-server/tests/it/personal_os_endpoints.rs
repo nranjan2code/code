@@ -75,11 +75,7 @@ async fn spawn_server(config_toml: &str) -> Server {
     let cwd = dir.path().to_path_buf();
     let project = cwd.join(".vak");
     std::fs::create_dir_all(&project).unwrap();
-    std::fs::write(
-        project.join("config.toml"),
-        format!("[memory]\nreflection = false\n{config_toml}"),
-    )
-    .unwrap();
+    std::fs::write(project.join("config.toml"), config_toml).unwrap();
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();

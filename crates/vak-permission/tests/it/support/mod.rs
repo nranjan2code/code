@@ -36,7 +36,6 @@ pub fn built_in() -> Vec<(String, Declared)> {
         ("forget_memory", Declared::reach(Reach::Learning)),
         ("propose_skill", Declared::reach(Reach::Learning)),
         ("webfetch", Declared::reach(Reach::Network)),
-        ("browse", Declared::reach(Reach::Network)),
         ("mail_calendar_send", Declared::reach(Reach::Network)),
         (
             "mail_calendar_event_create",

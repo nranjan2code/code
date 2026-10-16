@@ -176,11 +176,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     let temp = tempfile::tempdir().unwrap();
     let cwd = temp.path().join("workspace");
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
-    std::fs::write(
-        cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n",
-    )
-    .unwrap();
+    std::fs::write(cwd.join(".vak/config.toml"), "").unwrap();
     let core = vak_core::Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(
         temp.path().join("sessions-home"),
@@ -929,11 +925,7 @@ async fn browser_fixture() {
     let temp = tempfile::tempdir().unwrap();
     let cwd = temp.path().join("workspace");
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
-    std::fs::write(
-        cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n",
-    )
-    .unwrap();
+    std::fs::write(cwd.join(".vak/config.toml"), "").unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(
         temp.path().join("sessions"),

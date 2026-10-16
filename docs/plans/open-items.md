@@ -94,7 +94,14 @@ contract:
 - [x] Tool catalogue audit built (2026-10-16): consolidation's word lists
   removed (O1), the entity store retired into `remember` (O2),
   `data_query` removed (O3); `mail_calendar` deferral reverted (O5).
-  The audit's O4, O6 to O10 wait for the maintainer.
+  Then O4, O6, O7, O9 built, O10 by removing reflection, O8 written as
+  a proposal (docs/design/95-one-capability-index.md, maintainer's call).
+- [ ] `propose_skill`'s duplicate screen decides by a Jaccard threshold
+  picked in code (`learning::SKILL_DEDUP_THRESHOLD`, 0.55).
+- [ ] With every skill a program, the `skill` tool is still admitted and
+  loaded (its enum holds the abilities' names); the date question still
+  calls it 4/16. Whether it should be admitted only for instruction
+  skills is not decided.
 
 ## Before the next release
 

@@ -264,7 +264,7 @@ therefore bound to the exact server instance the operator is already watching.
 ## Test isolation convention
 
 Fixtures that drive gateway turns must be hermetic against the developer's
-global config (which may legitimately enable `reflection = true`): write a
+global config: write a
 project `.vak/config.toml` disabling learning flags and construct
 `Core::new_with_trust(.., true)`. See any `tests/*.rs` spawn helper using
 the HERMETIC pattern.

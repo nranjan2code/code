@@ -21,8 +21,6 @@ mod loaded_tools;
 mod mcp_env_interp;
 mod permissions_local;
 mod recall_reach;
-mod reflection;
-mod reflection_seam;
 mod side_ledger_trace;
 mod state_registry;
 mod turn_path_reads_flat;

@@ -64,6 +64,19 @@ pub fn build_tool_surface(
     surface
 }
 
+/// Drop a card that shows what a tool that answers data answered
+/// (`Grounds::Answered`) when no tool of the turn answers data: its fact can
+/// never come to be held, so every call of it could only be refused. Read
+/// from the tools' own declarations (`Tool::grounded_in`,
+/// `Tool::answers_data`), never their names; an ability admitted later
+/// brings the card back at the next turn (invariant 31).
+pub fn drop_ungroundable(tools: &mut Vec<Arc<dyn vak_tools::Tool>>) {
+    let answers = tools.iter().any(|tool| tool.answers_data());
+    if !answers {
+        tools.retain(|tool| tool.grounded_in() != Some(vak_tools::Grounds::Answered));
+    }
+}
+
 /// The prompt's catalogue of admitted tools that may defer: one line each,
 /// name and first sentence, no schema. Presentation tools are already loaded
 /// and callers exclude them. The catalogue depends only on what is admitted
@@ -105,6 +118,7 @@ mod tests {
         always: bool,
         card: bool,
         grounded: Option<vak_tools::Grounds>,
+        answers: bool,
     }
 
     #[async_trait::async_trait]
@@ -133,6 +147,9 @@ mod tests {
         fn grounded_in(&self) -> Option<vak_tools::Grounds> {
             self.grounded
         }
+        fn answers_data(&self) -> bool {
+            self.answers
+        }
     }
 
     fn tool(name: &'static str, serves: &'static [&'static str]) -> Arc<dyn vak_tools::Tool> {
@@ -142,6 +159,7 @@ mod tests {
             always: false,
             card: false,
             grounded: None,
+            answers: false,
         })
     }
 
@@ -153,6 +171,7 @@ mod tests {
                 always: true,
                 card: false,
                 grounded: None,
+                answers: false,
             }),
             tool("bash", &["code-exec"]),
             tool("webfetch", &["web", "live-data"]),
@@ -163,8 +182,41 @@ mod tests {
                 always: false,
                 card: true,
                 grounded: None,
+                answers: false,
             }),
         ]
+    }
+
+    #[test]
+    fn a_card_of_answered_data_needs_a_tool_that_answers() {
+        let answered = |name| -> Arc<dyn vak_tools::Tool> {
+            Arc::new(Fake {
+                name,
+                serves: &[],
+                always: false,
+                card: true,
+                grounded: Some(vak_tools::Grounds::Answered),
+                answers: false,
+            })
+        };
+        let mut tools = fixture();
+        tools.push(answered("emit_answered_card"));
+        drop_ungroundable(&mut tools);
+        assert!(tools.iter().all(|tool| tool.name() != "emit_answered_card"));
+        assert!(tools.iter().any(|tool| tool.name() == "emit_chart_card"));
+
+        let mut tools = fixture();
+        tools.push(answered("emit_answered_card"));
+        tools.push(Arc::new(Fake {
+            name: "an_ability",
+            serves: &["documents"],
+            always: false,
+            card: false,
+            grounded: None,
+            answers: true,
+        }));
+        drop_ungroundable(&mut tools);
+        assert!(tools.iter().any(|tool| tool.name() == "emit_answered_card"));
     }
 
     fn names(defs: &[ToolDefinition]) -> Vec<&str> {
@@ -210,6 +262,7 @@ mod tests {
             always: false,
             card: true,
             grounded: Some(vak_tools::Grounds::Ran),
+            answers: false,
         }));
         let fresh = build_tool_surface(&tools, true, &BTreeSet::new(), &BTreeSet::new());
         assert!(names(&fresh.deferred).contains(&"emit_terminal_card"));

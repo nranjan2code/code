@@ -5218,11 +5218,9 @@ type SettleResult = (Option<SessionLog>, String, bool);
 /// `send_steering`) and the gateway (`gateway::execute_turn_chain`).
 /// `start` runs as the first leg; `settle` performs the surface-specific
 /// bookkeeping for each leg's outcome — durable activity + presentation
-/// snapshot + hub summary for HTTP, reply channel + rendered text +
-/// reflection logging for the gateway — and returns the ledger to continue
-/// with (reflection itself stays inside `settle`, since the two surfaces
-/// react to its outcome differently; see `http_settle` and
-/// `gateway::execute_turn_chain`). After settling, steering queued in the
+/// snapshot + hub summary for HTTP, reply channel + rendered text for
+/// the gateway — and returns the ledger to continue with (see
+/// `http_settle` and `gateway::execute_turn_chain`). After settling, steering queued in the
 /// meantime is drained and merged into a continuation leg via
 /// [`continue_or_release`] — under the same lock that decides whether the
 /// ledger goes back to `handle.session` — rather than being silently
@@ -5359,15 +5357,6 @@ async fn http_settle(
                 live_presentation_snapshot(&handle.core, &run_id, &session_log);
             hub.emit_agent_summary(&summary, Some(run_id.clone()));
             catalog_session_later(&handle.core, session_log.path());
-            // Background reflection seam (docs/design/29 P1): after the
-            // summary is recorded and while this leg still owns the ledger
-            // (a second in-process handle cannot take the file lock).
-            // Bounded by the operator's `request_timeout_secs` inside the
-            // call; the result is deliberately ignored — a completed run
-            // never fails on reflection.
-            if !is_error && handle.core.config().memory.reflection {
-                let _ = handle.core.reflect_after_turn(&session_log, "").await;
-            }
             (Some(session_log), summary, is_error)
         }
         Err(e) => {
@@ -17099,7 +17088,6 @@ async fn get_config(
         "memory": {
             "search_enabled": core.effective_memory_search_enabled(),
             "write_enabled": core.effective_memory_write_enabled(),
-            "reflection": core.effective_memory_reflection(),
             "skill_proposals": core.effective_memory_skill_proposals(),
         },
         "bell": cfg.ui.bell,
@@ -17184,7 +17172,6 @@ fn config_layer_response(
         "memory": {
             "search_enabled": layer.memory.search_enabled,
             "write_enabled": layer.memory.write_enabled,
-            "reflection": layer.memory.reflection,
             "skill_proposals": layer.memory.skill_proposals,
         },
         "work": {
@@ -17431,8 +17418,6 @@ struct ConfigPatch {
     memory_search_enabled: Option<bool>,
     #[serde(default)]
     memory_write_enabled: Option<bool>,
-    #[serde(default)]
-    memory_reflection: Option<bool>,
     #[serde(default)]
     memory_skill_proposals: Option<bool>,
     #[serde(default)]
@@ -17981,14 +17966,12 @@ async fn patch_config_scope(
     }
     if body.memory_search_enabled.is_some()
         || body.memory_write_enabled.is_some()
-        || body.memory_reflection.is_some()
         || body.memory_skill_proposals.is_some()
     {
         let persisted = if global {
             vak_config::persist_global_memory_prefs(
                 body.memory_search_enabled,
                 body.memory_write_enabled,
-                body.memory_reflection,
                 body.memory_skill_proposals,
             )
         } else {
@@ -17996,14 +17979,13 @@ async fn patch_config_scope(
                 core.cwd(),
                 body.memory_search_enabled,
                 body.memory_write_enabled,
-                body.memory_reflection,
                 body.memory_skill_proposals,
             )
         };
         if persisted.is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        // `apply_persisted_memory` sets all four flags at once, so fields
+        // `apply_persisted_memory` sets all three flags at once, so fields
         // this PATCH didn't mention keep their current effective value
         // rather than reverting to whatever was on disk before.
         core.apply_persisted_memory(
@@ -18011,16 +17993,13 @@ async fn patch_config_scope(
                 .unwrap_or_else(|| core.effective_memory_search_enabled()),
             body.memory_write_enabled
                 .unwrap_or_else(|| core.effective_memory_write_enabled()),
-            body.memory_reflection
-                .unwrap_or_else(|| core.effective_memory_reflection()),
             body.memory_skill_proposals
                 .unwrap_or_else(|| core.effective_memory_skill_proposals()),
         );
         changes.push(format!(
-            "memory(search={}, write={}, reflection={}, skill_proposals={})",
+            "memory(search={}, write={}, skill_proposals={})",
             core.effective_memory_search_enabled(),
             core.effective_memory_write_enabled(),
-            core.effective_memory_reflection(),
             core.effective_memory_skill_proposals(),
         ));
     }
@@ -22640,8 +22619,7 @@ mod configuration_control_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         assert!(core.effective_memory_search_enabled(), "default is on");
 
-        vak_config::persist_project_memory_prefs(dir.path(), Some(false), None, None, None)
-            .unwrap();
+        vak_config::persist_project_memory_prefs(dir.path(), Some(false), None, None).unwrap();
         core.refresh_persisted_preferences().unwrap();
 
         assert!(
@@ -27053,11 +27031,7 @@ mod scheduler_state_tests {
     ) -> AppState {
         vak_config::paths::isolate_home_for_tests();
         std::fs::create_dir_all(ws.join(".vak")).unwrap();
-        std::fs::write(
-            ws.join(".vak/config.toml"),
-            "[memory]\nreflection = false\n",
-        )
-        .unwrap();
+        std::fs::write(ws.join(".vak/config.toml"), "").unwrap();
         let core = Core::new_with_trust(ws.to_path_buf(), true)
             .unwrap()
             .with_agent_identity(agent);

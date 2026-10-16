@@ -55,7 +55,6 @@ pub mod mail_calendar;
 pub mod presentation_store;
 pub mod prompts;
 pub mod reach;
-pub mod reflection;
 pub mod routing;
 pub mod sandbox_docker;
 pub mod security_events;
@@ -580,7 +579,6 @@ struct CoreInner {
     /// always takes the latest persisted value.
     memory_search_enabled_override: std::sync::Mutex<Option<bool>>,
     memory_write_enabled_override: std::sync::Mutex<Option<bool>>,
-    memory_reflection_override: std::sync::Mutex<Option<bool>>,
     memory_skill_proposals_override: std::sync::Mutex<Option<bool>>,
     /// Same no-pin, always-take-latest shape as the memory overrides above.
     workers_override: std::sync::Mutex<Option<bool>>,
@@ -1493,7 +1491,6 @@ impl Core {
             theme_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
             memory_search_enabled_override: std::sync::Mutex::new(None),
             memory_write_enabled_override: std::sync::Mutex::new(None),
-            memory_reflection_override: std::sync::Mutex::new(None),
             memory_skill_proposals_override: std::sync::Mutex::new(None),
             workers_override: std::sync::Mutex::new(None),
             work_override: std::sync::Mutex::new(None),
@@ -2832,7 +2829,7 @@ impl Core {
     /// Live-effective `[memory]` toggles (docs/design/23-memory.md): a
     /// PATCH-applied override when one has been set this process's
     /// lifetime, else whatever was persisted at construction/last refresh.
-    /// Every tool-registration and reflection call site must read through
+    /// Every tool-registration call site must read through
     /// these, never `self.inner.config.memory.*` directly, or a live PATCH
     /// would silently do nothing until the process restarts.
     pub fn effective_memory_search_enabled(&self) -> bool {
@@ -2843,11 +2840,6 @@ impl Core {
     pub fn effective_memory_write_enabled(&self) -> bool {
         Self::read_override(&self.inner.memory_write_enabled_override)
             .unwrap_or(self.inner.config.memory.write_enabled)
-    }
-
-    pub fn effective_memory_reflection(&self) -> bool {
-        Self::read_override(&self.inner.memory_reflection_override)
-            .unwrap_or(self.inner.config.memory.reflection)
     }
 
     pub fn effective_memory_skill_proposals(&self) -> bool {
@@ -2863,7 +2855,6 @@ impl Core {
         &self,
         search_enabled: bool,
         write_enabled: bool,
-        reflection: bool,
         skill_proposals: bool,
     ) {
         Self::write_override(
@@ -2874,7 +2865,6 @@ impl Core {
             &self.inner.memory_write_enabled_override,
             Some(write_enabled),
         );
-        Self::write_override(&self.inner.memory_reflection_override, Some(reflection));
         Self::write_override(
             &self.inner.memory_skill_proposals_override,
             Some(skill_proposals),
@@ -2897,7 +2887,8 @@ impl Core {
             .unwrap_or(self.inner.config.tools.web_fetch)
     }
 
-    /// Whether headless browse is available right now — live-effective.
+    /// Whether `webfetch` may render a page in a headless browser right
+    /// now (its `render` argument) — live-effective.
     pub fn effective_browse(&self) -> bool {
         Self::read_override(&self.inner.browse_override).unwrap_or(self.inner.config.tools.browse)
     }
@@ -2969,8 +2960,7 @@ impl Core {
             // field — the latter ignores `set_shared_scope` (the SDK
             // seam tests/embedded runtimes use to relocate storage), so
             // the ledger would silently keep writing to the original
-            // location. The reflection call site already got this right;
-            // the per-turn call site this replaces did not.
+            // location.
             sessions_home,
             &finops,
             day_budget,
@@ -3090,7 +3080,6 @@ impl Core {
         self.apply_persisted_memory(
             config.memory.search_enabled,
             config.memory.write_enabled,
-            config.memory.reflection,
             config.memory.skill_proposals,
         );
         self.apply_persisted_workers(config.workers);
@@ -3655,6 +3644,7 @@ impl Core {
                 tools.push(program.clone());
             }
         }
+        capability::drop_ungroundable(&mut tools);
         // A grounded card waits for its fact (`Tool::grounded_in`), so it is
         // listed; every other card is always loaded.
         tools.retain(|tool| {
@@ -3816,8 +3806,7 @@ impl Core {
         // Memory never writes a prompt layer. A note — however it was
         // classified, and whoever wrote it — is found through `recall`,
         // never promoted into guardrails: the model's own
-        // `remember` and reflection both write notes, so
-        // anything else would let an inbound message author a permanent
+        // `remember` writes notes, so anything else would let an inbound message author a permanent
         // instruction (invariant 28) and grow the cached prefix without bound.
         if !project.is_empty() {
             // A project layer is untrusted config until the user says
@@ -4258,11 +4247,7 @@ impl Core {
         if self.effective_web_fetch() {
             tools.push(Arc::new(vak_tools::WebFetchTool::new(
                 self.tool_worker_exe(),
-            )));
-        }
-        if self.effective_browse() {
-            tools.push(Arc::new(vak_tools::WebBrowseTool::new(
-                self.tool_worker_exe(),
+                self.effective_browse(),
             )));
         }
         // Inter-agent messaging, only while an operator has authorized this
@@ -7053,8 +7038,24 @@ impl Core {
         } else {
             String::new()
         };
+        // A skill whose program is this turn's tool is listed once, as that
+        // tool: the Skills list says a skill name is never a tool name.
+        let program_names: std::collections::BTreeSet<&str> = programs
+            .iter()
+            .map(|program| program.name())
+            .filter(|name| !turn_capabilities.tool_names.contains(*name))
+            .collect();
+        let prompt_capabilities: Vec<CapabilityDescriptor> = turn_capabilities
+            .descriptors
+            .iter()
+            .filter(|descriptor| {
+                descriptor.kind != CapabilityKind::Skill
+                    || !program_names.contains(descriptor.name.as_str())
+            })
+            .cloned()
+            .collect();
         let (turn_resolution, turn_temporal) =
-            self.resolve_prompt_parts(&turn_capabilities.descriptors, &tool_catalogue);
+            self.resolve_prompt_parts(&prompt_capabilities, &tool_catalogue);
         cfg.system_prefix = turn_resolution.text;
         cfg.tail = vak_agent::TailInput {
             temporal: turn_temporal.trim().to_string(),
@@ -7573,6 +7574,7 @@ impl Core {
                 tools.push(program);
             }
         }
+        capability::drop_ungroundable(&mut tools);
         // A tool any turn of this conversation called stays loaded
         // (docs/design/88-control-plane.md §12.1), read from the ledger so a
         // restart or another process serving it changes nothing.
@@ -9099,7 +9101,7 @@ mod channel_mcp_network_tests {
     }
 
     /// Memory never writes a prompt layer (invariant 28): a note the model or
-    /// reflection wrote — whatever its kind — stays recallable memory and
+    /// a person wrote — whatever its kind — stays recallable memory and
     /// never becomes a guardrail in every future prompt.
     #[tokio::test]
     async fn memory_notes_never_become_prompt_guardrails() {
@@ -9647,14 +9649,6 @@ mod learned_rule_tests {
             )
             .is_none()
         );
-        assert!(
-            scoped_allow_rule(
-                "browse",
-                built_in_declared("browse"),
-                &json!({ "url": "https://x" })
-            )
-            .is_none()
-        );
     }
 
     #[test]
@@ -9915,8 +9909,7 @@ pub fn plugin_store(cwd: &std::path::Path, user: bool) -> vak_plugin::PluginStor
 /// from configuration alone.
 pub fn built_in_declarations() -> Vec<(String, vak_permission::Declared)> {
     let mut built_in = vak_tools::brokered_tools(PathBuf::new(), &[]);
-    built_in.push(Arc::new(vak_tools::WebFetchTool::new(PathBuf::new())));
-    built_in.push(Arc::new(vak_tools::WebBrowseTool::new(PathBuf::new())));
+    built_in.push(Arc::new(vak_tools::WebFetchTool::new(PathBuf::new(), true)));
     let cards = presentation_tools::EmitCardTool::all();
     let mut declared = declarations(built_in.iter().map(|tool| tool.as_ref()));
     declared.extend(declarations(
@@ -10097,168 +10090,6 @@ pub fn hook_def(
         failure_mode,
         refusal: None,
     })
-}
-
-impl Core {
-    /// Background reflection seam (docs/design/29 P1): after a completed
-    /// turn on ANY surface, offer one auxiliary-model reflection pass.
-    ///
-    /// Contract: background reflection is best-effort by design. It never
-    /// blocks or fails a completed turn — every unhappy path collapses into
-    /// [`reflection::ReflectionOutcome::Skipped`] with a static reason,
-    /// never `Err`. Dispatch is budget-admitted BEFORE any provider call
-    /// through the same gate path runs use, so reflection can never bypass
-    /// a day/run cap; concurrent turns over the same session tail collapse
-    /// to a single pass via an in-flight marker; and all reflection logic
-    /// is the shared implementation in [`crate::reflection`] (no fork).
-    pub async fn reflect_after_turn(
-        &self,
-        session: &SessionLog,
-        final_text: &str,
-    ) -> reflection::ReflectionOutcome {
-        if !self.effective_memory_reflection() {
-            return reflection::ReflectionOutcome::Skipped {
-                reason: "reflection-disabled",
-            };
-        }
-        if !self.effective_memory_write_enabled() {
-            return reflection::ReflectionOutcome::Skipped {
-                reason: "memory-writes-disabled",
-            };
-        }
-        if matches!(
-            self.effective_permission_mode(),
-            vak_config::PermissionMode::ReadOnly
-        ) {
-            return reflection::ReflectionOutcome::Skipped {
-                reason: "permission-mode-read-only",
-            };
-        }
-        if !self.memory_write_allowed() {
-            return reflection::ReflectionOutcome::Skipped {
-                reason: "memory-write-not-authorized",
-            };
-        }
-        let sid = session
-            .header()
-            .map(|h| h.session_id.clone())
-            .unwrap_or_default();
-        let Ok(provider) = self.provider() else {
-            return reflection::ReflectionOutcome::Skipped {
-                reason: "provider-unready",
-            };
-        };
-        // One pass per session tail at a time, across every surface in
-        // this process.
-        let Some(_in_flight) = reflection::InFlightGuard::acquire(&sid) else {
-            return reflection::ReflectionOutcome::Skipped {
-                reason: "already-in-flight",
-            };
-        };
-
-        // Reflection distils what the user and model said. A runtime nudge
-        // is neither, and rendered as `user: …` it would be memorised as a
-        // user statement.
-        let control_entries: std::collections::HashSet<String> = session
-            .derive_transcript()
-            .into_iter()
-            .filter(|item| item.control.is_some())
-            .map(|item| item.entry_id)
-            .collect();
-        let mut tail = String::new();
-        for (entry_id, m) in session.message_chain() {
-            if control_entries.contains(&entry_id) {
-                continue;
-            }
-            tail.push_str(&reflection::render_message(m.role, &m.content));
-        }
-        if !final_text.is_empty() {
-            let block = vak_llm::ContentBlock::text(final_text.to_string());
-            tail.push_str(&reflection::render_message(
-                vak_llm::Role::Assistant,
-                &[block],
-            ));
-        }
-
-        // Budget admission before any dispatch — the same CoreSpendGate
-        // path that admits run turns, so caps bind identically here.
-        let f = self.effective_finops();
-        if f.max_run_usd.is_some() || f.max_day_usd.is_some() || !f.price_overrides.is_empty() {
-            // The session's own gate, not a fresh one — so a reflection
-            // pass is admitted against the SAME run/day budget the
-            // session's turns have already been spending from.
-            let gate = self.spend_gate_for(&sid);
-            let probe = vak_llm::Message {
-                role: vak_llm::Role::User,
-                content: vec![vak_llm::ContentBlock::text(tail.clone())],
-            };
-            let est_profile = vak_context::capacity::CapacityProfile::from_metadata_only(
-                self.inner.config.context_window,
-                self.inner.config.max_tokens.map_or(0, u64::from),
-                "reflection-estimate".to_string(),
-                std::time::SystemTime::now(),
-            );
-            let est = est_profile.estimate_tokens(
-                reflection::system_prompt().len() as u64 + probe.text_content().len() as u64,
-            );
-            let model = self.effective_model();
-            let provider_name = self.effective_provider();
-            let check = vak_agent::SpendCheck {
-                model: &model,
-                provider: &provider_name,
-                session_id: &sid,
-                est_input_tokens: est,
-                planned_output_tokens: u64::from(reflection::MAX_TOKENS),
-            };
-            if vak_agent::SpendGate::authorize(gate.as_ref(), &check)
-                .await
-                .is_err()
-            {
-                return reflection::ReflectionOutcome::Skipped { reason: "budget" };
-            }
-        }
-
-        let model = self.effective_model();
-        let provider_route = self.effective_provider();
-        let proposals = match reflection::propose(
-            provider,
-            &provider_route,
-            &model,
-            &tail,
-            (self.inner.config.request_timeout_secs > 0)
-                .then(|| std::time::Duration::from_secs(self.inner.config.request_timeout_secs)),
-            CancellationToken::new(),
-        )
-        .await
-        {
-            Ok(p) => p,
-            Err(_) => {
-                return reflection::ReflectionOutcome::Skipped {
-                    reason: "reflect-call-failed",
-                };
-            }
-        };
-        if proposals.notes.is_empty() && proposals.skill.is_none() {
-            return reflection::ReflectionOutcome::Reflected {
-                notes_added: 0,
-                skills_proposed: false,
-            };
-        }
-        let home = self.scope().into_root();
-        let mut proposals = proposals;
-        if !self.channel_tool_allowed("propose_skill") {
-            proposals.skill = None;
-        }
-        match reflection::apply(home.as_path(), self.cwd(), &sid, None, &proposals) {
-            Ok((notes_added, skills_proposed)) => reflection::ReflectionOutcome::Reflected {
-                notes_added,
-                skills_proposed,
-            },
-            Err(_) => reflection::ReflectionOutcome::Skipped {
-                reason: "apply-failed",
-            },
-        }
-    }
 }
 
 fn load_permissions_local(cwd: &std::path::Path) -> Vec<String> {
@@ -10770,7 +10601,8 @@ mod webfetch_classification_tests {
     fn no_rule_outside_fullaccess_asks_fullaccess_allows() {
         let cfg = vak_config::Config::default();
         for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
-            for tool in ["webfetch", "browse"] {
+            {
+                let tool = "webfetch";
                 let d = decide(&cfg, &[], mode, tool);
                 assert!(
                     matches!(d, Decision::Ask { .. }),
@@ -10778,7 +10610,8 @@ mod webfetch_classification_tests {
                 );
             }
         }
-        for tool in ["webfetch", "browse"] {
+        {
+            let tool = "webfetch";
             let d = decide(&cfg, &[], PermissionMode::FullAccess, tool);
             assert!(
                 matches!(d, Decision::Allow),
@@ -10831,53 +10664,6 @@ mod webfetch_classification_tests {
             let d = decide(&cfg, &[], mode, "webfetch");
             assert!(matches!(d, Decision::Ask { .. }), "{mode:?}: {d:?}");
         }
-    }
-
-    #[test]
-    fn browse_shares_the_full_webfetch_mode_matrix() {
-        // Same family, same posture: restricted modes Ask by default,
-        // FullAccess allows, blanket allow lifts the Ask, blanket deny
-        // denies even under FullAccess, and an explicit ?ask is honored
-        // everywhere.
-        let base = vak_config::Config::default();
-        for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
-            let d = decide(&base, &[], mode, "browse");
-            assert!(matches!(d, Decision::Ask { .. }), "{mode:?}: {d:?}");
-        }
-        let d = decide(&base, &[], PermissionMode::FullAccess, "browse");
-        assert!(matches!(d, Decision::Allow), "FullAccess: {d:?}");
-
-        let mut allowed = vak_config::Config::default();
-        allowed.allow.push("browse".into());
-        for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
-            let d = decide(&allowed, &[], mode, "browse");
-            assert!(
-                matches!(d, Decision::Allow),
-                "allow rule in {mode:?}: {d:?}"
-            );
-        }
-
-        let mut denied = vak_config::Config::default();
-        denied.deny.push("-browse".into());
-        for mode in [
-            PermissionMode::ReadOnly,
-            PermissionMode::WorkspaceWrite,
-            PermissionMode::FullAccess,
-        ] {
-            let d = decide(&denied, &[], mode, "browse");
-            assert!(
-                matches!(d, Decision::Deny { .. }),
-                "-browse in {mode:?}: {d:?}"
-            );
-        }
-
-        let mut asked = vak_config::Config::default();
-        asked.ask.push("?browse".into());
-        let d = decide(&asked, &[], PermissionMode::FullAccess, "browse");
-        assert!(
-            matches!(d, Decision::Ask { .. }),
-            "?browse under FullAccess: {d:?}"
-        );
     }
 
     #[test]
@@ -10953,7 +10739,8 @@ mod webfetch_classification_tests {
         let cfg = vak_config::Config::default();
         for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
             let engine = build_engine_with(&cfg, &[]).unwrap();
-            for tool in ["webfetch", "browse"] {
+            {
+                let tool = "webfetch";
                 let decision =
                     engine.evaluate(tool, &serde_json::json!({}), to_mode(mode), dir.path());
                 let Decision::Ask { source, .. } = decision else {
@@ -11231,7 +11018,7 @@ mod capability_reach_tests {
             ..Default::default()
         });
         let engine = build_engine_with(core.config(), &core.channel_permission_rules()).unwrap();
-        for tool in ["bash", "read", "webfetch", "browse", "mcp"] {
+        for tool in ["bash", "read", "webfetch", "mcp"] {
             let decision =
                 engine.evaluate(tool, &serde_json::json!({}), Mode::WorkspaceWrite, &cwd);
             assert!(
@@ -11322,6 +11109,13 @@ mod capability_reach_tests {
         assert!(prompt.contains("Fix: fix the SKILL.md frontmatter"));
     }
 
+    fn webfetch_renders(core: &Core) -> bool {
+        core.scoped_tools(&ToolScope::default())
+            .iter()
+            .find(|tool| tool.name() == "webfetch")
+            .is_some_and(|tool| tool.schema()["properties"].get("render").is_some())
+    }
+
     #[test]
     fn tools_and_commitment_overrides_are_dynamic() {
         let dir = workspace("");
@@ -11331,21 +11125,26 @@ mod capability_reach_tests {
         assert!(core.effective_web_fetch());
         assert!(core.effective_browse());
         assert!(core.tool_names().contains(&"webfetch".to_string()));
-        assert!(core.tool_names().contains(&"browse".to_string()));
+        assert!(webfetch_renders(&core));
 
         // Apply dynamic tool toggle: disable both
         core.apply_persisted_tools(false, false);
         assert!(!core.effective_web_fetch());
         assert!(!core.effective_browse());
         assert!(!core.tool_names().contains(&"webfetch".to_string()));
-        assert!(!core.tool_names().contains(&"browse".to_string()));
 
         // Toggle back
         core.apply_persisted_tools(true, true);
         assert!(core.effective_web_fetch());
         assert!(core.effective_browse());
         assert!(core.tool_names().contains(&"webfetch".to_string()));
-        assert!(core.tool_names().contains(&"browse".to_string()));
+        assert!(webfetch_renders(&core));
+
+        // Rendering off leaves the plain fetch
+        core.apply_persisted_tools(true, false);
+        assert!(core.tool_names().contains(&"webfetch".to_string()));
+        assert!(!webfetch_renders(&core));
+        core.apply_persisted_tools(true, true);
 
         // Toggle commitment
         core.apply_persisted_commitment(true);

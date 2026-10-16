@@ -738,7 +738,6 @@ export const BUILTIN_TOOLS: AccessOption[] = [
   { value: "edit", label: "Edit files", hint: "edit" },
   { value: "bash", label: "Run shell commands", hint: "bash" },
   { value: "webfetch", label: "Fetch a web page", hint: "webfetch" },
-  { value: "browse", label: "Browse the web", hint: "browse" },
 ];
 
 export const MATCHER_TOOLS: MatcherTool[] = BUILTIN_TOOLS.map((t) => ({

@@ -74,11 +74,7 @@ async fn spawn_server(config_toml: &str) -> Server {
     let dir = Arc::new(tempfile::tempdir().unwrap());
     let cwd = dir.path().join("ws");
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
-    std::fs::write(
-        cwd.join(".vak/config.toml"),
-        format!("[memory]\nreflection = false\n{config_toml}"),
-    )
-    .unwrap();
+    std::fs::write(cwd.join(".vak/config.toml"), config_toml).unwrap();
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd, true).unwrap();

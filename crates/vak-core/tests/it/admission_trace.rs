@@ -58,7 +58,7 @@ fn core(dir: &tempfile::TempDir) -> Core {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
     )
     .unwrap();
     vak_config::paths::isolate_home_for_tests();

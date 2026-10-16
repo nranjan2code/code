@@ -133,11 +133,7 @@ async fn spawn_full(
     let dir = Arc::new(tempfile::tempdir().unwrap());
     let ws = dir.path().join("ws");
     std::fs::create_dir_all(ws.join(".vak")).unwrap();
-    std::fs::write(
-        ws.join(".vak/config.toml"),
-        format!("[memory]\nreflection = false\n{config_toml}"),
-    )
-    .unwrap();
+    std::fs::write(ws.join(".vak/config.toml"), config_toml).unwrap();
     git_seed(&ws);
 
     let home = dir.path().join("home");

@@ -207,7 +207,6 @@ allows.
 | Every tool call in the agent loop: built-in, plugin, skill and loop-owned tools (`plan`, `task`, `recall`), cards included | strict tools where the wire enforces them (§4.2); regeneration under the tool's schema when unreadable (§4.3) |
 | An MCP server's tool, called through the `mcp` broker | regeneration against the tool's discovered `inputSchema` (`Tool::call_schema`); the broker's own schema has a free `arguments` object, so it has no strict form |
 | The completion judge's verdicts (`goal::audit_request`) | schema-bound output; the lenient reader stays |
-| Post-turn reflection's proposals (`reflection.rs`) | schema-bound output; the lenient reader stays |
 | A managed-work contract (`/until-done`, `AuthoredContract`) | not yet: its schema would be a second copy of the session's work types; to derive from the types themselves |
 | The flow planner, compaction and handoff | read no JSON from the model's text; nothing to constrain |
 

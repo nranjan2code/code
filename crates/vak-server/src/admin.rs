@@ -633,7 +633,6 @@ pub(crate) async fn get_config_admin(
             "search_enabled": cfg.memory.search_enabled,
             "write_enabled": cfg.memory.write_enabled,
             "skill_proposals": cfg.memory.skill_proposals,
-            "reflection": cfg.memory.reflection,
         },
         // The session list at `/admin/api/sessions` spans every project the
         // store indexes, but archive/delete/run/steer on a session only

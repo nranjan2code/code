@@ -89,11 +89,7 @@ async fn spawn_full_seeded(
     let dir = Arc::new(tempfile::tempdir().unwrap());
     let ws = dir.path().join("ws");
     std::fs::create_dir_all(ws.join(".vak")).unwrap();
-    std::fs::write(
-        ws.join(".vak/config.toml"),
-        format!("[memory]\nreflection = false\n{config_toml}"),
-    )
-    .unwrap();
+    std::fs::write(ws.join(".vak/config.toml"), config_toml).unwrap();
 
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();

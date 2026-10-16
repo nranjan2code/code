@@ -547,9 +547,7 @@ cut a research card's call off at exactly 4,096 tokens. An unknown window
   `max_tokens` is the request's budget, else the model's published maximum.
   Side requests (compaction summary, goal judge and handoff, flow planner,
   work-contract author) carry no cap of their own; the judge runs with
-  thinking on, which counts against `num_predict`. Reflection keeps a small
-  output budget because the spend gate plans this unrequested call against
-  it.
+  thinking on, which counts against `num_predict`.
 - No assumed window either. `[agent] context_window` and `max_tokens` are
   operator caps with no default. A model that publishes no window (OpenAI
   does not) has `declared_window: None`: the prompt ceiling is then the

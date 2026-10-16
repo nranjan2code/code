@@ -104,7 +104,7 @@ async fn a_working_turn_sees_the_workspace_delta_and_a_question_does_not() {
     // The stop gate is off: this test is about the tail, and a scripted
     // provider cannot produce the execution receipt a verify turn owes.
     let (core, cwd, provider) = core_with_provider(
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
         vec![text("hello"), text("it is a note"), text("checked")],
     );
     // The model steps of one turn: every request whose last message is the
@@ -211,7 +211,7 @@ async fn a_working_turn_sees_the_workspace_delta_and_a_question_does_not() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_unsupported_modality_fails_typed_instead_of_dropping_the_image() {
     let (core, _cwd) = core_with(
-        "[memory]\nreflection = false\n\n[route]\nmodality_hints = [\"vision\"]\n",
+        "[route]\nmodality_hints = [\"vision\"]\n",
         vec![text("I see nothing")],
     );
     let session = core.start_session().await.unwrap();
@@ -248,7 +248,7 @@ async fn an_unsupported_modality_fails_typed_instead_of_dropping_the_image() {
     }
 
     // With no hints declared, every leg is assumed capable and the turn runs.
-    let (core, _cwd) = core_with("[memory]\nreflection = false\n", vec![text("I see a cat")]);
+    let (core, _cwd) = core_with("", vec![text("I see a cat")]);
     let session = core.start_session().await.unwrap();
     let (tx, _rx) = tokio::sync::mpsc::channel(64);
     let prompt = vak_llm::Message {
@@ -280,10 +280,7 @@ async fn an_unsupported_modality_fails_typed_instead_of_dropping_the_image() {
 /// sees them as open threads.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn strands_are_recorded_and_become_open_threads() {
-    let (core, _cwd) = core_with(
-        "[memory]\nreflection = false\n",
-        vec![text("done"), text("done again")],
-    );
+    let (core, _cwd) = core_with("", vec![text("done"), text("done again")]);
     let session = core.start_session().await.unwrap();
     let (tx, _rx) = tokio::sync::mpsc::channel(64);
     let (_, session) = core
@@ -363,7 +360,7 @@ async fn strands_are_recorded_and_become_open_threads() {
 /// back to it through its trace key.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn one_turn_one_id_from_intent_to_side_ledgers() {
-    let (core, cwd) = core_with("[memory]\nreflection = false\n", vec![text("two files")]);
+    let (core, cwd) = core_with("", vec![text("two files")]);
     let session = core.start_session().await.unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(64);
     tokio::spawn(async move { while rx.recv().await.is_some() {} });
@@ -534,7 +531,7 @@ async fn a_deferred_gate_reaches_the_inbox_and_suspends_the_commitment() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_commitment_context_follows_the_commitment_not_the_words() {
     let (core, _cwd) = core_with(
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
         (0..8).map(|_| text("noted")).collect(),
     );
     let contexts = |session: &vak_session::SessionLog| -> Vec<vak_intent::ContextProfile> {
@@ -593,7 +590,7 @@ async fn a_turns_facts_come_from_its_decisions() {
         applied: None,
     };
     let (core, _cwd) = core_with(
-        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        "[stop_policy]\nenabled = false\n",
         vec![call, text("done"), text("done")],
     );
     let session = core.start_session().await.unwrap();
