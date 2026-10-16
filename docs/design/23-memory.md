@@ -115,7 +115,8 @@ skipped in read-only or channel-denied contexts.
 Retention is conservative: age alone never deletes a durable note. `vak memory
 clean` removes only abandoned lock/temp artifacts and empty workspace
 directories; stale knowledge is removed explicitly with `forget` or amended in
-place. There is no automatic “dream”/overnight consolidation pass; reflection
+place. There is no consolidation pass of any kind (removed 2026-10-16,
+docs/design/26-learning.md); reflection
 is bounded to at most two deduplicated proposals after a clean completion.
 
 ## Phases

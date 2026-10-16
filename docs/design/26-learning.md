@@ -30,12 +30,13 @@ reflection, deduplicating near-identical notes and sending skill drafts
 through the same human queue. Reflection is best effort and does not alter
 the reply.
 
-`vak_core::consolidation::consolidate_memory` is a separate, explicitly
-invoked workspace pass. It promotes repeated or modal procedural notes to
-`invariant` notes, reports conflicts among notes sharing a tag, and distills
-structured entity records from certain fact patterns. It uses deterministic
-text rules, so its conflict report is a lead for human review, not proof of a
-contradiction. It is not an overnight job and does not promote skills.
+There is no consolidation pass. One existed (`vak memory consolidate`,
+`POST /memory/consolidate`, and a call after every compaction): it copied a
+note as an `invariant` note when its text held "always", "never", "must" or
+"invariant", called two notes contradictory from a list of word pairs, and
+distilled entities from `fact` notes. Each was a word rule, and the copies
+only duplicated what `recall` already found; it was removed on 2026-10-16
+(docs/audits/tool-catalogue-2026-10-16.md, O1).
 
 Closes pillars M2 (memory write-path) and G5 (self-improving skills behind
 review). The point is a closed loop: experience becomes durable knowledge.

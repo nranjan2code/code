@@ -245,7 +245,7 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: CheckpointAction,
     },
-    /// Durable memory notes for this workspace: list / add / forget / amend / consolidate
+    /// Durable memory notes for this workspace: list / add / forget / amend
     Memory {
         #[command(subcommand)]
         action: Option<MemoryAction>,
@@ -1006,8 +1006,6 @@ pub(crate) enum MemoryAction {
         #[arg(long)]
         profile: bool,
     },
-    /// Run autonomous memory consolidation: promotes recurring procedures to invariants and detects conflicts
-    Consolidate,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1547,14 +1545,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_consolidate_and_entities_and_export_commands_parse() {
-        assert!(matches!(
-            parse(&["memory", "consolidate"]),
-            Command::Memory {
-                action: Some(MemoryAction::Consolidate),
-            }
-        ));
-
+    fn memory_entities_and_export_commands_parse() {
         assert!(matches!(
             parse(&["entities"]),
             Command::Entities { action: None }

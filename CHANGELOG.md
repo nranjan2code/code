@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Memory is no longer copied behind your back: the consolidation pass
+  that ran after every compaction, turning notes with words like
+  "always" or "must" into duplicate "invariant" notes and guessing
+  contradictions from word pairs, is gone, with `vak memory consolidate`
+  and its server route.
 - Asking Vakyartha to remember something works on the first step: the
   remember tool is loaded on every turn (it was one tool-discovery call
   away, described as a note "about this workspace"), and it says it keeps

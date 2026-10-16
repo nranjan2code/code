@@ -1463,7 +1463,6 @@ fn router_with_state(state: AppState) -> Router {
         .route("/voice/speak", post(voice::voice_speak))
         .route("/voice/providers", get(voice::voice_providers))
         .route("/memory", get(list_memory).post(append_memory))
-        .route("/memory/consolidate", post(consolidate_memory_route))
         .route(
             "/memory/{note_id}",
             axum::routing::patch(amend_memory_note).delete(forget_memory_note),
@@ -2600,26 +2599,6 @@ async fn list_memory(
         }
     }
     Json(serde_json::json!({ "notes": blocks })).into_response()
-}
-
-async fn consolidate_memory_route(
-    State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let core = scoped_core!(&state, None, q.agent.as_deref());
-    match core.consolidate_memory() {
-        Ok(report) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(&report).unwrap_or_default()),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err })),
-        )
-            .into_response(),
-    }
 }
 
 #[derive(serde::Deserialize)]

@@ -18,7 +18,6 @@ pub mod baseline;
 pub mod capability;
 pub mod checkpoints;
 pub mod commitments;
-pub mod consolidation;
 pub mod custom_commands;
 pub mod data_engine;
 pub mod digest;
@@ -3819,7 +3818,7 @@ impl Core {
         // Memory never writes a prompt layer. A note — however it was
         // classified, and whoever wrote it — is found through `recall`,
         // never promoted into guardrails: the model's own
-        // `remember` and background consolidation both write notes, so
+        // `remember` and reflection both write notes, so
         // anything else would let an inbound message author a permanent
         // instruction (invariant 28) and grow the cached prefix without bound.
         if !project.is_empty() {
@@ -8562,9 +8561,6 @@ impl Core {
                 CompactOutcome::failed(format!("compaction write failed: {e}")),
             );
         }
-        // Semantic memory & entity distillation: distill learned invariants,
-        // domain procedural rules, and semantic entities before older history fades.
-        let _ = self.consolidate_memory();
         let _ = session.append_receipt(receipt);
         let after = plan_now(&session).spent;
         (
@@ -9115,7 +9111,7 @@ mod channel_mcp_network_tests {
     }
 
     /// Memory never writes a prompt layer (invariant 28): a note the model or
-    /// consolidation wrote — whatever its kind — stays recallable memory and
+    /// reflection wrote — whatever its kind — stays recallable memory and
     /// never becomes a guardrail in every future prompt.
     #[tokio::test]
     async fn memory_notes_never_become_prompt_guardrails() {
@@ -10274,13 +10270,6 @@ impl Core {
                 reason: "apply-failed",
             },
         }
-    }
-
-    /// Run self-supervised memory consolidation across episodic notes:
-    /// promotes recurring procedures into immutable invariants, detects conflicts,
-    /// and distills structured entity records.
-    pub fn consolidate_memory(&self) -> Result<consolidation::ConsolidationReport, String> {
-        consolidation::consolidate_memory(self.scope().root(), self.cwd())
     }
 }
 
