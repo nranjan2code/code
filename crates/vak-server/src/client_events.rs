@@ -178,6 +178,8 @@ pub(crate) fn project(event: AgentEvent) -> Option<ClientEvent> {
             args_json,
         }),
         AgentEvent::CardDrafting { id, block } => Some(ClientEvent::CardDrafting { id, block }),
+        // Recorded cards reach a client through the presentation stream.
+        AgentEvent::CardRecorded { .. } => None,
         AgentEvent::ToolCallEnd {
             id,
             name,
@@ -323,6 +325,26 @@ mod tests {
         kept(AgentEvent::CardDrafting {
             id: "t2".into(),
             block: "table".into(),
+        });
+        dropped(AgentEvent::CardRecorded {
+            tool_use_id: "t2".into(),
+            presentation_id: "p2".into(),
+            record: Box::new(vak_session::types::PresentationRecord {
+                turn_id: "u1".into(),
+                source: vak_session::types::PresentationSource::ToolCall {
+                    tool_use_id: "t2".into(),
+                },
+                semantic_type: "table".into(),
+                skill_id: String::new(),
+                skill_version: String::new(),
+                schema_version: 2,
+                payload: serde_json::json!({}),
+                payload_digest: String::new(),
+                derived_from: Vec::new(),
+                title: String::new(),
+                identity_digest: String::new(),
+                block: None,
+            }),
         });
         kept(AgentEvent::ToolCallEnd {
             id: "t1".into(),

@@ -30,7 +30,6 @@ import {
   sessions,
   openInLibrary,
   openAbilitySheet,
-  type DraftingCard,
   appendUser,
   setNotice,
 } from "../store";
@@ -1216,7 +1215,6 @@ function blockOf(item: OutputItem): string {
 function composeAnswer(
   entries: { item: OutputItem; node: JSX.Element }[],
   outline: import("../types").AnswerOutline | undefined,
-  drafting: DraftingCard[] = [],
 ): JSX.Element {
   const paired = new Set<string>();
   const block = (entry: { item: OutputItem; node: JSX.Element }) => (
@@ -1229,19 +1227,9 @@ function composeAnswer(
   const first = entries.find((entry) => blockOf(entry.item) === "summary");
   const lead = first ? [first] : [];
   const body = entries.filter((entry) => entry !== first);
-  // A card still being written takes the first planned section of its form
-  // that nothing has delivered yet, else it follows the sections.
-  const claimed = new Map<string, DraftingCard[]>();
-  const unplaced: DraftingCard[] = [];
-  for (const card of drafting) {
-    const section = (outline?.sections ?? []).find((section) =>
-      section.form === card.block && section.items.length === 0 && !claimed.has(section.name));
-    if (section) claimed.set(section.name, [card]);
-    else unplaced.push(card);
-  }
   const sections = (outline?.sections ?? [])
-    .map((section) => ({ name: section.name, entries: body.filter((entry) => section.items.includes(entry.item.id)), drafting: claimed.get(section.name) ?? [] }))
-    .filter((section) => section.entries.length > 0 || section.drafting.length > 0);
+    .map((section) => ({ name: section.name, entries: body.filter((entry) => section.items.includes(entry.item.id)) }))
+    .filter((section) => section.entries.length > 0);
   const placed = new Set(sections.flatMap((section) => section.entries.map((entry) => entry.item.id)));
   // A row holds two blocks: one placed beside a block already in a row
   // takes the full width.
@@ -1256,34 +1244,51 @@ function composeAnswer(
   });
   return <>
     {lead.map(block)}
-    {sections.map((section) => <section class="answer-section" aria-label={section.name}>{section.entries.map(block)}{section.drafting.map(draftingShell)}</section>)}
+    {sections.map((section) => <section class="answer-section" aria-label={section.name}>{section.entries.map(block)}</section>)}
     {body.filter((entry) => !placed.has(entry.item.id)).map(block)}
-    {unplaced.map(draftingShell)}
   </>;
 }
 
-/** The cards a running turn is still writing, for a turn the timeline does
- *  not hold yet (docs/design/96-answer-projection-gaps.md, Q2). */
-export function DraftingCards(props: { drafting: DraftingCard[] }) {
-  return <Show when={props.drafting.length > 0}>
-    <div class="primary-result-material" aria-label="Cards being drawn">{composeAnswer([], undefined, props.drafting)}</div>
-  </Show>;
+/** When cards mounted, so cards that land together come in one after
+ *  another rather than all at once. */
+const cardArrivals: number[] = [];
+
+function arrivalDelay(): number {
+  const now = performance.now();
+  while (cardArrivals.length && now - cardArrivals[0] > 400) cardArrivals.shift();
+  cardArrivals.push(now);
+  return (cardArrivals.length - 1) * 90;
 }
 
-/** An empty card of the form a call is writing. Nothing from the call's
- *  arguments is drawn; the recorded card takes its place when the call ends. */
-function draftingShell(card: DraftingCard): JSX.Element {
-  const form = card.block.replace(/_/g, " ");
-  return <div class="answer-block" data-block={card.block}>
-    <div class="card-drafting" role="status" data-call={card.id}>
-      <span class="card-drafting-line">Drawing a {form} card</span>
-      <span class="card-drafting-bar" aria-hidden="true" />
-      <span class="card-drafting-bar short" aria-hidden="true" />
-    </div>
-  </div>;
+/** A running turn's answer as it forms (docs/design/96, live turn): each
+ *  card as soon as it is recorded, coming in as it lands; the plan's
+ *  progress is the presence wheel's (`AgentPresence`, `livePlan`). The
+ *  settled turn replaces it. */
+export function LiveAnswer(props: { sessionId: string }) {
+  // A card already settled in the timeline belongs to its turn, not to this one.
+  const cards = () => {
+    const items = presentationOf(props.sessionId)?.items ?? [];
+    const settled = new Set(items.filter((item) => item.provenance?.source !== "live_event")
+      .map((item) => item.provenance?.presentation_id).filter(Boolean));
+    return items.filter((item) => item.provenance?.source === "live_event" && item.kind === "card"
+      && item.content.type === "structured" && !settled.has(item.provenance?.presentation_id));
+  };
+  return <>
+    <Show when={cards().length > 0}>
+      <div class="primary-result-material live-answer" aria-label="Answer so far">
+        <For each={cards()}>{(item) => (
+          <div class="answer-block card-arrive" style={{ "animation-delay": `${arrivalDelay()}ms` }} data-block={blockOf(item) || undefined}>
+            <Show when={item.content.type === "structured" && item.content.output}>{(output) =>
+              <StructuredView output={output()} fallback={item.fallback_text} sessionId={props.sessionId} presentationId={item.provenance?.presentation_id ?? undefined} />}
+            </Show>
+          </div>
+        )}</For>
+      </div>
+    </Show>
+  </>;
 }
 
-function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allowContinuation: boolean; outline?: import("../types").AnswerOutline; drafting?: DraftingCard[] }) {
+function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allowContinuation: boolean; outline?: import("../types").AnswerOutline }) {
   const continuationPrompt = () => {
     // The original request and completed tool receipts are already in the
     // append-only ledger. Repeating its imperative text here causes the intent
@@ -1586,9 +1591,6 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       >
         <For each={blocks()}>{(node) => node}</For>
       </Show>
-      <Show when={(props.drafting ?? []).length > 0}>
-        <div class="primary-result-material" aria-label="Cards being drawn">{composeAnswer([], props.outline, props.drafting)}</div>
-      </Show>
     </section>
   );
 }
@@ -1605,10 +1607,7 @@ export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRende
   );
 }
 
-export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean; drafting?: DraftingCard[] }) {
-  // A shell stands until the card its call recorded is in the timeline.
-  const waiting = () => (props.drafting ?? []).filter((card) =>
-    !props.timeline.items.some((item) => item.provenance?.tool_call_id === card.id));
+export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean }) {
   // The automations a turn made or changed (docs/design/94 §5), read again
   // whenever the conversation grows, so a card follows its record.
   const [fetchedAutomations, { refetch: refetchAutomations }] = createResource(
@@ -1652,8 +1651,7 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
         item.turn_id === id && !(props.hideUser && item.role === "user")), undefined, { equals: sameItems });
       const outline = createMemo(() => props.timeline.answers?.find((answer) => answer.turn_id === id));
       return <>
-        <Turn id={id} items={items()} outline={outline()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false}
-          drafting={id === turns().at(-1) ? waiting() : undefined} />
+        <Turn id={id} items={items()} outline={outline()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />
         <For each={automationsOf(id)}>{(trigger) => <AutomationCard trigger={trigger} zone={ownerZone()} onChanged={() => void refetchAutomations()} />}</For>
       </>;
     }}</For>

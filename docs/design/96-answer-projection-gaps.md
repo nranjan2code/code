@@ -1,7 +1,8 @@
 # 96 — Answer projection gaps
 
-Status: in progress (2026-10-16): Q1, Q2 and Q3 are built; P5 (the map
-form) is built but not yet seen in a live turn; P1 to P4 and P6 are open. Written from a review of what an answer can do on screen.
+Status: in progress (2026-10-16): Q1, Q2 and Q3 are built, Q2's card
+shell superseded by live cards and the plan wheel; P5 (the map form) is
+built but not yet seen in a live turn; P1 to P4 and P6 are open. Written from a review of what an answer can do on screen.
 
 ## 1. What is wrong
 
@@ -113,6 +114,33 @@ dev route the native Ollama chat API delivers a tool call whole, so
 `ToolUseStart` arrives with the arguments complete and the shell stands only
 while the call is checked; a route that streams arguments shows it while
 they are written.
+
+Superseded (2026-10-16), at the maintainer's direction: the shell is gone.
+What shows while a turn runs is the answer itself and the plan's progress.
+- `AgentEvent::CardRecorded` is sent after `show_card` records a card,
+  carrying the recorded `PresentationRecord` (never rebuilt from the
+  call's arguments). `projection::live_event` maps it to a live card item
+  (`live-card-<presentation id>`, source `live_event`); `client_events`
+  drops it, because a card reaches a client through the presentation
+  stream.
+- The client's `LiveAnswer` draws each such card in the running turn as it
+  lands, fading and rising in one after another (none under reduced
+  motion). A card already settled in the timeline under the same
+  presentation id is not drawn again; the settled turn replaces the live
+  answer.
+- The plan's progress is the header presence wheel (`AgentPresence`,
+  `livePlan`): an arc below the chip from 3 to 9 o'clock, parts not yet
+  shown on the right, the next at 6 o'clock, parts shown moving left, with
+  the active part and "n of m done" beneath. No separate line in the chat.
+- `CardDrafting` stays as the Details steps' sign that a card is being
+  written.
+
+Measured live on 2026-10-16 (dev server, a planned three- and four-card
+turn with commands between cards): each card appeared when recorded,
+seconds before the turn settled; the wheel went 0, 1, 2 of 3 done as they
+landed; a second turn on the same page drew none of the first turn's cards.
+Open: a page reloaded mid-turn shows the turn's earlier cards only when it
+settles, because live cards travel only on the event stream.
 
 ### Q3 Card actions as records
 

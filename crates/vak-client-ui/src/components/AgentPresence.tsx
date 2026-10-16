@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { agentForSession, setAgentPickerOpen, setAgentPickerTab } from "../store";
 import * as api from "../api";
 import AgentMark from "./AgentMark";
+import { livePlan } from "../livePlan";
 
 export default function AgentPresence(props: { sessionId: string | null; working: boolean }) {
   const [hovered, setHovered] = createSignal(false);
@@ -28,6 +29,17 @@ export default function AgentPresence(props: { sessionId: string | null; working
         ...waiting.map((item) => ({ label: item.title, state: "blocked" as const, detail: live.items[item.item_id]?.blocker || live.items[item.item_id]?.status.replaceAll("_", " ") || "Waiting" })),
         ...upcoming.map((item) => ({ label: item.title, state: "next" as const, detail: "Up next" })),
       ];
+    }
+    // The running turn's plan: parts its cards delivered move left, the
+    // next is centred, the rest wait on the right (docs/design/96).
+    const plan = props.working ? livePlan(props.sessionId) : undefined;
+    if (plan?.length) {
+      const next = plan.findIndex((part) => !part.delivered);
+      return plan.map((part, index) => ({
+        label: part.label,
+        state: part.delivered ? "done" as const : index === next ? "active" as const : "next" as const,
+        detail: part.delivered ? "Shown" : index === next ? "Preparing" : "Up next",
+      }));
     }
     const criteria = current()?.criteria ?? [];
     const done = criteria.filter((criterion) => criterion.result?.kind === "passed");
@@ -76,7 +88,7 @@ export default function AgentPresence(props: { sessionId: string | null; working
       const within = list.slice(0, index).filter((item) => item.state === "next" || item.state === "blocked").length;
       angle = ((nextCount - within) / (nextCount + 1)) * Math.PI / 2;
     }
-    return { x: 74 + 64 * Math.cos(angle), y: 74 - 64 * Math.sin(angle) };
+    return { x: 74 + 64 * Math.cos(angle), y: 8 + 64 * Math.sin(angle) };
   };
   createEffect(() => {
     if (!props.working) { setHovered(false); setSelected(null); setWorkProjection(null); }
@@ -98,8 +110,8 @@ export default function AgentPresence(props: { sessionId: string | null; working
       </button>
       <Show when={props.working && hovered() && stages().length > 0}>
         <div class="commitment-wheel-popover" role="group" aria-label="Commitment progress">
-          <svg class="commitment-wheel" viewBox="0 0 148 82" aria-label="Upcoming commitments start on the right, active work is centered, and completed items move left along an upward arc">
-            <path class="commitment-wheel-track" d="M 138 74 A 64 64 0 0 0 10 74" />
+          <svg class="commitment-wheel" viewBox="0 0 148 82" aria-label="Upcoming commitments start on the right, active work is centered, and completed items move left along an arc below">
+            <path class="commitment-wheel-track" d="M 138 8 A 64 64 0 0 1 10 8" />
             <For each={stages()}>{(stage, index) => {
               const position = () => point(index());
               return <circle class={`commitment-wheel-dot ${stage.state}`} cx={position().x} cy={position().y} r="4.5" tabIndex="0"
@@ -107,6 +119,13 @@ export default function AgentPresence(props: { sessionId: string | null; working
                 onPointerEnter={() => setSelected(index())} onFocus={() => setSelected(index())} onBlur={() => setSelected(null)} />;
             }}</For>
           </svg>
+          <Show when={selected() === null && stages().find((stage) => stage.state === "active")}>{(active) => {
+            const done = () => stages().filter((stage) => stage.state === "done").length;
+            return <div class="commitment-wheel-caption" aria-live="polite">
+              <strong>{active().label}</strong>
+              <span>{stages().length > 1 ? `${done()} of ${stages().length} done` : active().detail}</span>
+            </div>;
+          }}</Show>
           <Show when={selected() !== null && stages()[selected()!]}>{(stage) => {
             const p = point(selected()!);
             return <div class="commitment-wheel-tip" style={{ left: `${Math.max(4, Math.min(98, (p.x / 148) * 100))}%` }}>

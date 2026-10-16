@@ -2308,6 +2308,50 @@ fn activity_item(
 pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputStreamEvent> {
     let now = chrono::Utc::now().to_rfc3339();
     match event {
+        // A card as recorded, drawn while the run goes on; the settled
+        // snapshot replaces it (docs/design/96, live turn).
+        AgentEvent::CardRecorded {
+            tool_use_id,
+            presentation_id,
+            record,
+        } => {
+            let output = vak_delivery::StructuredOutput {
+                semantic_type: record.semantic_type.clone(),
+                block: record.block.clone().unwrap_or_else(|| {
+                    if vak_delivery::is_form(&record.semantic_type) {
+                        record.semantic_type.clone()
+                    } else {
+                        String::new()
+                    }
+                }),
+                schema_version: u16::try_from(record.schema_version).unwrap_or(u16::MAX),
+                skill_id: record.skill_id.clone(),
+                skill_version: record.skill_version.clone(),
+                payload: record.payload.clone(),
+            };
+            Some(OutputStreamEvent::ItemStarted {
+                item: OutputItem {
+                    card_state: None,
+                    id: format!("live-card-{presentation_id}"),
+                    timestamp: now,
+                    turn_id: "live".into(),
+                    role: OutputRole::Tool,
+                    kind: OutputKind::Card,
+                    status: OutputStatus::Succeeded,
+                    outcome: None,
+                    fallback_text: structured_markdown(&output),
+                    content: OutputContent::Structured { output },
+                    provenance: Some(OutputProvenance {
+                        session_id: Some(session_id.into()),
+                        entry_id: None,
+                        tool_call_id: Some(tool_use_id),
+                        source: Some("live_event".into()),
+                        presentation_id: Some(presentation_id),
+                    }),
+                    actions: Vec::new(),
+                },
+            })
+        }
         AgentEvent::TurnStart { turn } => Some(OutputStreamEvent::ItemStarted {
             item: OutputItem {
                 card_state: None,

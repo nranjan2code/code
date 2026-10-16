@@ -10,6 +10,10 @@
   draws the file; it was empty before. A web image or video shows in the
   desktop app too, where it was refused. When web images are off, or the
   file cannot be read, the card says so instead of standing empty.
+- While a turn runs, its cards appear in the conversation as each one is
+  ready, instead of all at once at the end. Hovering "Working" shows the
+  plan as an arc under the agent: what is shown moves left, what is being
+  prepared sits at the bottom with its name and how many parts are done.
 - Ticks on a checkable list are kept: they survive a reload, and the next
   turn knows what you ticked. "Use this" on a step's choice starts the
   turn with your choice as your message, naming the card, instead of
@@ -28,9 +32,6 @@
   `--vak-fg`, `--vak-muted`, `--vak-accent`, `--vak-rule`, `--vak-font`,
   `--vak-font-mono`, `--vak-radius`) and its colour scheme, so generated
   markup can match every theme; switching theme redraws an open preview.
-- While a card is being written, its answer shows an empty card of that
-  form ("Drawing a table") where the plan puts it; the card takes its
-  place, and a refused card leaves nothing behind.
 - `GET /sessions/{id}/interface` shows what a conversation's last turn was
   given: every tool with its schema, which were held back under "More
   tools", and each installed capability with what it says it serves.

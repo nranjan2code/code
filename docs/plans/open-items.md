@@ -259,7 +259,7 @@ Carried over from 7.2.0:
   dev and installed data homes are set up again.
 - Answer projection review (2026-10-16), staged in
   docs/design/96-answer-projection-gaps.md (Q1 to Q3, P1 to P6), each a
-  Q1 and Q2 built 2026-10-16:
+  Q1 to Q3 built 2026-10-16:
   - [ ] No live controls: a `controls` form of typed inputs with outputs
     written in a closed set of pure expressions evaluated in the client,
     and a worked example the builder checks. No code runs.
@@ -284,6 +284,12 @@ Carried over from 7.2.0:
   - [x] A card shows nothing until its call is complete and valid (Q2:
     `CardDrafting` and the empty card shell). On the dev route a tool call
     arrives whole, so the shell stands only while the call is checked.
+  - [x] The shell is superseded: recorded cards are drawn live in the
+    running turn (`CardRecorded`, `LiveAnswer`) and the plan's progress is
+    the presence wheel (2026-10-16).
+  - [ ] A page reloaded mid-turn shows that turn's earlier cards only when
+    it settles: live cards travel only on the event stream, and the
+    running turn's snapshot does not carry them.
   - [x] Markup previews get none of the theme's tokens (Q1).
   - [ ] Serve pinned vendored libraries from the preview origin, keeping
     `connect-src` closed (P3).

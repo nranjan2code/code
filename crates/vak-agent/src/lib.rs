@@ -222,6 +222,14 @@ pub enum AgentEvent {
         id: String,
         block: String,
     },
+    /// A card was recorded: its `Presentation` entry, as written, so a
+    /// surface can draw it while the run goes on. Never rebuilt from the
+    /// call's arguments; the settled snapshot is authoritative.
+    CardRecorded {
+        tool_use_id: String,
+        presentation_id: String,
+        record: Box<vak_session::types::PresentationRecord>,
+    },
     ToolCallEnd {
         id: String,
         name: String,
@@ -5798,8 +5806,32 @@ impl Agent {
         for call in card_calls {
             loop_call_started(events, &call).await;
             let (output, verdict) = self.show_card(&call).await;
-            // Also ends the call's drafting shell: a recorded card takes its
-            // place, a refused one leaves nothing (docs/design/96, Q2).
+            if matches!(output, ToolRunOutput::Ok(_)) {
+                let recorded = self
+                    .session
+                    .lock()
+                    .await
+                    .presentations()
+                    .into_iter()
+                    .rev()
+                    .find(|(_, record)| {
+                        matches!(&record.source,
+                            vak_session::types::PresentationSource::ToolCall { tool_use_id }
+                                if *tool_use_id == call.id)
+                    })
+                    .map(|(entry_id, record)| (entry_id, record.clone()));
+                if let Some((presentation_id, record)) = recorded {
+                    let _ = events
+                        .send(AgentEvent::CardRecorded {
+                            tool_use_id: call.id.clone(),
+                            presentation_id,
+                            record: Box::new(record),
+                        })
+                        .await;
+                }
+            }
+            // Also tells a surface the call is no longer being written
+            // (docs/design/96, Q2).
             loop_call_ended(events, &call, &output).await;
             self.record_decisions(vec![
                 vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(verdict))

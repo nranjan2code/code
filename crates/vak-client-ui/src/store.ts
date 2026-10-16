@@ -854,7 +854,7 @@ const [usageBySession, setUsageBySession] = createStore<Record<string, Usage>>({
 const [presentationBySession, setPresentationBySession] = createStore<Record<string, OutputTimeline | null>>({});
 const [presentationErrors, setPresentationErrors] = createStore<Record<string, string | null>>({});
 /** Card calls still being written, by session: only that a call started and
- *  the form its tool declares (docs/design/96-answer-projection-gaps.md, Q2). */
+ *  the form its tool declares, for the Details steps (docs/design/96, Q2). */
 export type DraftingCard = { id: string; block: string };
 const [draftingBySession, setDraftingBySession] = createStore<Record<string, DraftingCard[]>>({});
 
@@ -1273,8 +1273,7 @@ export function applyEvent(
   } else if ("CardDrafting" in ev) {
     if (b === "main") setDraftingBySession(id, (cards) => [...(cards ?? []).filter((card) => card.id !== ev.CardDrafting.id), ev.CardDrafting]);
   } else if ("ToolCallEnd" in ev) {
-    // A refused card leaves no shell; a recorded one keeps it until the card
-    // itself reaches the timeline (`DraftingCards`).
+    // A refused card is no longer being drawn.
     if (b === "main" && ev.ToolCallEnd.is_error) settleDrafting(id, ev.ToolCallEnd.id);
     patchById(b, id, ev.ToolCallEnd.id, (it) =>
       it.kind === "tool"

@@ -385,34 +385,12 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-0. Answers on screen (2026-10-16). Committed: doc 96 Q1 (4d30a2f98),
-   Q2 (d1066827c), doc 97 cards end the answer (e30a68764), Details
-   Activity steps view, doc 96 Q3 card actions. UNCOMMITTED in the
-   working tree, built but not yet verified or gated: the live-turn
-   design the maintainer approved. Server: `AgentEvent::CardRecorded`
-   (vak-agent, sent after `show_card` records a card, carrying the
-   recorded `PresentationRecord`), mapped by `projection::live_event` to a
-   live card item (`live-card-<presentation id>`, source `live_event`;
-   `project_frame` re-stamps its turn id to the live turn), dropped by
-   `client_events::project`. Client: `LiveAnswer` (PresentationRenderer)
-   draws those cards in ChatPane's running turn, each fading and rising in
-   (`.card-arrive`, staggered by `arrivalDelay`, none under reduced
-   motion); the Q2 per-card shells (`DraftingCards`, `draftingShell`,
-   composeAnswer's drafting) are removed. The plan's progress is shown in
-   the header presence wheel (`AgentPresence.tsx`, original design from
-   20af51753): `livePlan` (src/livePlan.ts) reads the turn's plan call
-   and which parts a card delivered; the wheel shows delivered parts left,
-   the next centred, the rest right, with a readable caption inside the
-   arc (active part, "n of m done") and dots that glide
-   (`.commitment-wheel-caption`, transitions on cx/cy). The maintainer
-   rejected a separate "Preparing" line in the chat. To finish: verify
-   live (a planned multi-card turn: cards appear while the run goes on;
-   hover the "Working" chip: parts and caption readable, dots move as
-   cards land; 1440x900 and 390x844, light and dark); run the full gate;
-   add a `CardRecorded` case to client_events'
-   `every_variant_is_kept_or_dropped_on_purpose`; update doc 96 (Q2's
-   shell is superseded by live cards plus the wheel; say so in its Status
-   and Q2 section), CHANGELOG Unreleased, open-items; commit; push.
+0. Answers on screen (2026-10-16). Done and committed: doc 96 Q1, Q2,
+   Q3, doc 97 cards end the answer, Details Activity steps, and the live
+   turn: recorded cards drawn as they land (`CardRecorded`, `LiveAnswer`)
+   and the plan's progress on the presence wheel, an arc below the chip
+   from 3 to 9 o'clock with the caption beneath (doc 96 Q2 "Superseded").
+   Open: a page reloaded mid-turn shows earlier cards only at settle.
    Follow-ups the maintainer asked for, each its own session: (a) check
    the media card really shows its image or video in the app and fix
    what does not; (b) a map card (doc 96 P5) designed to be intuitive:
