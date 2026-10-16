@@ -59,6 +59,7 @@ its name:
 | `callout` | one thing not to miss | alert, tip, warning |
 | `sources` | findings tied to the sources they came from | research, news, evidence |
 | `calendar` | events placed on dates and times | calendar, availability |
+| `map` | places on the earth: apart, a route in order, or an area (doc 96 P5) | places that were a list with links |
 | `link` | a link with its title | link preview |
 | `media` | an image, video or audio | media.* |
 | `file_preview` | a workspace HTML/UI file | ui.preview |
@@ -88,8 +89,8 @@ Rules:
   padding, optional heading, no hover unless it acts. Card body text is the
   conversation's reading size; prose is held to ~70ch.
 
-Not built: a map, a board, a graph and a form to fill in. Places go in a
-`list` or `details` with a link; a decision the person makes goes through
+Not built: a board, a graph and a form to fill in. Places go in a `map`
+(added 2026-10-16, docs/design/96-answer-projection-gaps.md P5); a decision the person makes goes through
 the existing approval and option flows. Each is added only when real
 turns show a shape the forms above cannot carry (`docs/plans/open-items.md`).
 

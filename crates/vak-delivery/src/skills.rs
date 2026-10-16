@@ -31,6 +31,7 @@ pub const FORMS: &[&str] = &[
     "callout",
     "sources",
     "calendar",
+    "map",
     "link",
     "media",
     "file_preview",
@@ -702,6 +703,34 @@ pub fn validate_form(form: &str, payload: &Value) -> Check {
             }
             Ok(())
         }
+        "map" => {
+            card.only(&["title", "connect", "places"])?;
+            card.optional_text("title")?;
+            card.one_of("connect", &["none", "route", "area"])?;
+            let places = card.records("places", false)?;
+            for place in &places {
+                place.only(&["label", "latitude", "longitude", "detail"])?;
+                place.text("label")?;
+                place.optional_text("detail")?;
+                for (key, limit) in [("latitude", 90.0), ("longitude", 180.0)] {
+                    if !place
+                        .fields
+                        .get(key)
+                        .and_then(Value::as_f64)
+                        .is_some_and(|degrees| degrees.is_finite() && degrees.abs() <= limit)
+                    {
+                        return Err(place.err(format!(
+                            "`{key}` must be a number of degrees from -{limit} to {limit}"
+                        )));
+                    }
+                }
+            }
+            match (text_of(payload, "connect"), places.len()) {
+                ("route", 0..2) => Err(card.err("a route needs at least two places")),
+                ("area", 0..3) => Err(card.err("an area needs at least three places")),
+                _ => Ok(()),
+            }
+        }
         "link" => {
             card.only(&["url", "title", "description", "site_name", "image_url"])?;
             card.text("url")?;
@@ -1055,6 +1084,28 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
                 });
             }
         }
+        "map" => {
+            match text_of(p, "connect") {
+                "route" => lines.push("A route through these places, in order:".into()),
+                "area" => lines.push("An area with these corners, in order:".into()),
+                _ => {}
+            }
+            for (index, place) in items(p, "places").iter().enumerate() {
+                let detail = text_of(place, "detail");
+                lines.push(format!(
+                    "{}. {} ({}, {}){}",
+                    index + 1,
+                    text_of(place, "label"),
+                    shown(&place["latitude"]),
+                    shown(&place["longitude"]),
+                    if detail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {detail}")
+                    }
+                ));
+            }
+        }
         "link" => {
             lines.push(format!("[{}]({})", text_of(p, "title"), text_of(p, "url")));
             if !text_of(p, "description").is_empty() {
@@ -1180,6 +1231,9 @@ mod tests {
             "calendar" => {
                 json!({"events": [{"title": "Standup", "date": "2026-10-15", "start": "09:00"}]})
             }
+            "map" => json!({"connect": "route", "places": [
+                {"label": "Station", "latitude": 18.5286, "longitude": 73.8746},
+                {"label": "Fort", "latitude": 18.5195, "longitude": 73.8553, "detail": "Gates at 9"}]}),
             "link" => json!({"url": "https://a.example", "title": "A"}),
             "media" => json!({"format": "image", "url": "https://a.example/a.png", "alt": "A"}),
             "file_preview" => json!({"artifact_path": "index.html"}),
@@ -1252,6 +1306,18 @@ mod tests {
         assert!(refused(
             "comparison",
             json!({"options": [{"name": "Only"}]})
+        ));
+        assert!(refused(
+            "map",
+            json!({"connect": "route", "places": [{"label": "A", "latitude": 1, "longitude": 2}]})
+        ));
+        assert!(refused(
+            "map",
+            json!({"connect": "none", "places": [{"label": "A", "latitude": 91, "longitude": 2}]})
+        ));
+        assert!(refused(
+            "map",
+            json!({"connect": "none", "places": [{"label": "A", "latitude": "1", "longitude": 2}]})
         ));
         assert!(refused(
             "media",

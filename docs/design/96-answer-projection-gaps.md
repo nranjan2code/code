@@ -1,7 +1,7 @@
 # 96 — Answer projection gaps
 
-Status: in progress (2026-10-16): Q1, Q2 and Q3 are built; P1 to P6 are
-open. Written from a review of what an answer can do on screen.
+Status: in progress (2026-10-16): Q1, Q2 and Q3 are built; P5 (the map
+form) is built but not yet seen in a live turn; P1 to P4 and P6 are open. Written from a review of what an answer can do on screen.
 
 ## 1. What is wrong
 
@@ -42,7 +42,7 @@ code on 2026-10-16:
    result only. AGENTS.md forbids adopting a third-party UI bridge, so this
    is a decision, not a defect.
 7. **No place on a map.** Doc 92 deferred a map form until real turns
-   need it; places go in a list or details card with a link.
+   need it; places go in a list or details card with a link (P5).
 8. **Format choice is not measured.** The plan check (doc 86) measures
    whether planned parts were delivered, never whether a card helped.
 
@@ -235,10 +235,70 @@ The maintainer chooses, recorded in docs/decisions.md:
 
 ### P5 A map form
 
-Only when logged turns show places forced into lists. Places with
-coordinates drawn without network tiles (a schematic of points and
-order), or tiles behind an owner-granted network allowance declared like
-an MCP server's hosts (invariant 13).
+Asked for by the maintainer on 2026-10-16: places drawn so they are easy
+to read, with no network by default. Choices settled with the maintainer
+the same day (docs/decisions.md): tiles reach the screen through
+vak-server, the tile source is an editable template with OpenStreetMap as
+its default, and coordinates are the model's own.
+
+**The form.** `map`: places on the earth, where they are relative to each
+other, a route through them in order, or an area they outline. Its card
+tool, `emit_map_card`, takes flat arguments:
+
+- `connect` (required): `none` (separate places), `route` (a path through
+  the places in the order given, at least two) or `area` (the places are
+  the corners of one area, in order around it, at least three). A short
+  enumerated value first sets the call's syntax (doc 30 §30.1 rule 5).
+- `places` (required): each `{label, position, detail?}`. `position` is
+  one text field, decimal degrees `"18.5204, 73.8567"` (latitude first),
+  so no record ends in a number (rule 7). `fill_defaults` reads a place
+  sent with numeric `latitude` and `longitude` into `position`; the
+  builder refuses a position it cannot read, or one out of range, with
+  the shape it wants.
+- `title` (optional).
+
+The stored card is `{title?, connect, places: [{label, latitude,
+longitude, detail?}]}`; `validate_form` checks the ranges and the counts
+`connect` needs. Its text form numbers the places with their coordinates
+and says how they connect. Coordinates are what the model wrote, like any
+other fact in a card; the card says positions are as given.
+
+**Drawn with no network.** The client projects the places with Web
+Mercator (so tiles line up when they are on) fitted to the card's measured
+width, and draws on a plain surface:
+
+- each place as a numbered marker with its label beside it where it fits
+  without overlapping another, and always in the legend below the map;
+- a route as a line through the markers in order, an area as a filled
+  outline;
+- a scale bar in round lengths (1, 2 or 5 × 10ⁿ metres or kilometres)
+  measured at the map's centre latitude, and a north mark;
+- in the legend, each place's detail, and for a route each leg's
+  straight-line distance and the total, for an area its approximate size.
+
+Nothing is cut by a count; text is the card's reading size at every width.
+
+**Tiles only behind the owner's allowance.** `[maps]` in the Shared layer:
+`tiles = false`, `tile_url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"`,
+`attribution = "© OpenStreetMap contributors"`. The section is privileged:
+a project layer cannot set it, trusted or not, and nothing turns it on but
+the owner's Settings switch ("Map tiles", off for new installs, naming the
+host it will reach and that each map sends its area there). With tiles on,
+the client asks `GET /maps/tiles/{z}/{x}/{y}`; the server refuses unless
+the allowance is on, reads the template afresh, checks `z`, `x` and `y`,
+fetches only the template's own host behind webfetch's address guard with
+no cookie and no referrer, accepts only an image, and returns it for the
+client to draw under the projection with the attribution. A tile that
+fails leaves the plain map, never an error in the answer. Places are the
+owner's data and leave the machine only through this switch (invariants
+13, 34, 43): the allowance is the owner's explicit decision, never read
+from a request.
+
+Done when: the form is in every list that must agree (`FORMS`, the card
+tool, `validate_form` and `structured_markdown`, `Primitive`, the client's
+`FORMS`), the shape tests pass, the tile route refuses while the switch is
+off, and a real turn draws a map in the running app at 1440 × 900 and
+390 × 844, light and dark, with tiles off and on.
 
 ### P6 Measuring format choice
 

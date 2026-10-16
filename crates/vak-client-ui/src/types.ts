@@ -470,6 +470,8 @@ export interface ConfigSnapshot {
   max_turns: number;
   /** The owner's time zone (docs/design/94 §6): what schedules mean. */
   owner?: { timezone: string; timezone_set: boolean; host_timezone: string; abilities_go_live?: boolean };
+  /** `[maps]` from the Shared layer: the owner's allowance for map tiles. */
+  maps?: MapSettings;
   intent_evidence_max_age_secs?: number;
   permission_mode: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
   /// How an `Ask` decision is resolved. Separate from the permission mode:
@@ -740,3 +742,6 @@ export interface VoiceProviderDescriptor {
 export interface VoiceProvidersResponse {
   providers: VoiceProviderDescriptor[];
 }
+
+/** `[maps]` (docs/design/96 P5): street tiles under a map card, off unless the owner turns them on. */
+export interface MapSettings { tiles: boolean; tile_url: string; attribution: string }

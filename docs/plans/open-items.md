@@ -263,6 +263,17 @@ Carried over from 7.2.0:
   - [ ] No live controls: a `controls` form of typed inputs with outputs
     written in a closed set of pure expressions evaluated in the client,
     and a worked example the builder checks. No code runs.
+  - [ ] A map form (P5) is built (`emit_map_card`, `[maps]` tile
+    allowance, `/maps/tiles`) but no real turn has drawn one yet: on the
+    dev route the model spent the turn looking coordinates up on the web
+    (Wikipedia guesses 404, Google 403) instead of giving the ones it
+    knows. Closes when the tool's description lets it write known
+    coordinates and a live turn draws a map at 1440×900 and 390×844, light
+    and dark, tiles off and on.
+  - [ ] webfetch gets 403 from Google where curl with the same User-Agent
+    gets 200 (also over HTTP/1.1): reqwest with rustls is refused, so the
+    cause is likely the TLS fingerprint, not a header. Not investigated
+    further.
   - [x] "Use this" put a fixed sentence in the composer and a list's ticks
     were lost on reload (Q3: `CardAction` entries; a choice starts a turn,
     ticks reach the next turn's tail).

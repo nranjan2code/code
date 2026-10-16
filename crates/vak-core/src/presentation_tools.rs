@@ -1090,6 +1090,92 @@ fn build_calendar(args: &Map<String, Value>) -> Result<Value, String> {
     Ok(Value::Object(payload))
 }
 
+// ---- map ---------------------------------------------------------------------
+
+fn map_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "connect": one_of(&["none", "route", "area"], "How the places connect: none for separate places, route for a path through them in the order given (two or more), area for the corners of one area in order around it (three or more)."),
+            "title": string(TITLE),
+            "places": list_of(
+                "The places, in order for a route or an area.",
+                serde_json::json!({
+                    "label": string("The place's name, short."),
+                    "position": string("Its latitude and longitude in decimal degrees, latitude first, separated by a comma (18.5204, 73.8567). South and west are negative."),
+                    "detail": string("Optional. One line about it.")
+                }),
+                &["label", "position"],
+            )
+        }),
+        &["connect", "places"],
+    )
+}
+
+/// Decimal degrees written `latitude, longitude`, each in range.
+fn position(text: &str) -> Option<(f64, f64)> {
+    let (latitude, longitude) = text.split_once(',')?;
+    let latitude: f64 = latitude.trim().parse().ok()?;
+    let longitude: f64 = longitude.trim().parse().ok()?;
+    (latitude.is_finite()
+        && longitude.is_finite()
+        && latitude.abs() <= 90.0
+        && longitude.abs() <= 180.0)
+        .then_some((latitude, longitude))
+}
+
+fn build_map(args: &Map<String, Value>) -> Result<Value, String> {
+    let mut places = Vec::new();
+    for (at, place) in records(args, "places").iter().enumerate() {
+        if text(place, "label").is_empty() {
+            return Err(format!("places[{at}].label is empty"));
+        }
+        let Some((latitude, longitude)) = position(text(place, "position")) else {
+            return Err(format!(
+                "places[{at}].position must be latitude and longitude in decimal degrees, latitude first: \"18.5204, 73.8567\""
+            ));
+        };
+        let mut built = copy(
+            place.as_object().unwrap_or(&Map::new()),
+            &["label", "detail"],
+        );
+        built.insert("latitude".into(), Value::from(latitude));
+        built.insert("longitude".into(), Value::from(longitude));
+        places.push(Value::Object(built));
+    }
+    if places.is_empty() {
+        return Err("`places` is empty: give each place with its label and position".into());
+    }
+    let mut payload = copy(args, &["title", "connect"]);
+    payload.insert("places".into(), Value::Array(places));
+    Ok(Value::Object(payload))
+}
+
+/// A place sent with numeric `latitude` and `longitude` is the same place
+/// with its `position`.
+fn fill_map(fields: &mut Map<String, Value>) {
+    let Some(Value::Array(places)) = fields.get_mut("places") else {
+        return;
+    };
+    for place in places.iter_mut().filter_map(Value::as_object_mut) {
+        if place.contains_key("position") {
+            continue;
+        }
+        let degrees = |key: &str| match place.get(key) {
+            Some(Value::Number(n)) => n.as_f64(),
+            Some(Value::String(text)) => text.trim().parse().ok(),
+            _ => None,
+        };
+        if let (Some(latitude), Some(longitude)) = (degrees("latitude"), degrees("longitude")) {
+            place.remove("latitude");
+            place.remove("longitude");
+            place.insert(
+                "position".into(),
+                Value::String(format!("{latitude}, {longitude}")),
+            );
+        }
+    }
+}
+
 // ---- link and media ----------------------------------------------------------
 
 fn link_fields() -> Value {
@@ -1613,6 +1699,14 @@ const SHAPES: &[CardShape] = &[
         fill_nothing,
     ),
     shape(
+        "map",
+        "emit_map_card",
+        "Places on a map: where they are relative to each other, a route through them in order, or an area they outline. Give each place's latitude and longitude.",
+        map_fields,
+        build_map,
+        fill_map,
+    ),
+    shape(
         "link",
         "emit_link_card",
         "A preview of one web page: its URL and title.",
@@ -1789,6 +1883,9 @@ fn fixture_for(form: &str) -> Value {
         "calendar" => {
             serde_json::json!({"events": [{"title": "Morning standup with the team", "date": "2026-10-15", "start": "09:00", "end": "09:15"}]})
         }
+        "map" => serde_json::json!({"connect": "route", "places": [
+            {"label": "Pune Station", "position": "18.5286, 73.8746"},
+            {"label": "Shaniwar Wada", "position": "18.5195, 73.8553", "detail": "Opens at 8"}]}),
         "link" => serde_json::json!({"url": "https://example.com/page", "title": "Page"}),
         "media" => {
             serde_json::json!({"format": "image", "url": "https://example.com/a.png", "alt": "A chart"})
@@ -2288,6 +2385,12 @@ pub fn identity_digest(kind: &str, payload: &Value) -> String {
             .map(|e| format!("{} {}", text(e, "date"), text(e, "title")))
             .collect();
         format!("title: {title} | events: {}", events.join(","))
+    } else if has("places") {
+        format!(
+            "title: {title} | connect: {} | places: {}",
+            text(payload, "connect"),
+            labels(payload, "places", "label")
+        )
     } else if has("steps") {
         format!(
             "title: {title} | steps: {}",
@@ -2921,6 +3024,40 @@ mod tests {
             )
             .unwrap_err()
             .contains("HH:MM")
+        );
+    }
+
+    #[test]
+    fn a_map_reads_positions_and_refuses_what_it_cannot_place() {
+        let payload = built(
+            "emit_map_card",
+            json!({"connect": "none", "places": [
+                {"label": "A", "position": " -33.8568 , 151.2153 "},
+                {"label": "B", "latitude": 51.5, "longitude": "-0.12"}
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(payload["places"][0]["latitude"], json!(-33.8568));
+        assert_eq!(payload["places"][1]["longitude"], json!(-0.12));
+        for bad in ["Sydney", "151.2, 95.0", "33.8 S, 151.2 E"] {
+            assert!(
+                built(
+                    "emit_map_card",
+                    json!({"connect": "none", "places": [{"label": "A", "position": bad}]})
+                )
+                .unwrap_err()
+                .contains("decimal degrees"),
+                "{bad}"
+            );
+        }
+        assert!(
+            built(
+                "emit_map_card",
+                json!({"connect": "area", "places": [
+                    {"label": "A", "position": "1, 1"}, {"label": "B", "position": "1, 2"}]})
+            )
+            .unwrap_err()
+            .contains("at least three")
         );
     }
 

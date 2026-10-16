@@ -50,6 +50,7 @@ const samples: Record<string, Record<string, unknown>> = {
   callout: { tone: "warning", text: "The 2026 index reports data through 2025." },
   sources: { sources: [{ title: "AI Index 2026", url: "https://example.com/index", finding: "Adoption reached 88%.", source_name: "Stanford HAI", published_at: "2026-04-01" }] },
   calendar: { events: [{ title: "Standup", date: "2026-10-15", start: "09:00", end: "09:15" }, { title: "Review", date: "2026-10-16", location: "Room 2" }] },
+  map: { connect: "route", places: [{ label: "Pune Station", latitude: 18.5286, longitude: 73.8746 }, { label: "Shaniwar Wada", latitude: 18.5195, longitude: 73.8553, detail: "Opens at 8" }, { label: "Aga Khan Palace", latitude: 18.5524, longitude: 73.9015 }] },
   link: { url: "https://example.com/result", title: "Result", description: "Open the supporting result." },
   media: { format: "image", url: "https://example.com/media.png", alt: "Example media" },
   file_preview: { artifact_path: "index.html", title: "Preview" },

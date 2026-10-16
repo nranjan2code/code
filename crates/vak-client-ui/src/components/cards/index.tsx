@@ -1,6 +1,7 @@
 import { For, Show, type JSX } from "solid-js";
 import type { AdaptiveRenderNode } from "../../types";
 import ChartCard from "./Chart";
+import MapCard from "./Map";
 import { DiffForm, LinkForm, MediaForm, PreviewForm, TerminalForm, TestReportForm } from "./code";
 import {
   CalendarForm, CalloutForm, ComparisonForm, DetailsForm, ListForm, SourcesForm, StatsForm, StepsForm,
@@ -24,6 +25,7 @@ const FORMS: Record<string, (props: { payload: Payload }) => JSX.Element> = {
   callout: CalloutForm,
   sources: SourcesForm,
   calendar: CalendarForm,
+  map: MapCard,
   link: LinkForm,
   media: MediaForm,
   file_preview: PreviewForm,

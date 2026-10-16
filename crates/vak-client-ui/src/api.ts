@@ -1447,6 +1447,18 @@ export function putOwnerSettings(settings: { timezone?: string | null; abilities
   return req("/config/owner", { method: "PUT", body: JSON.stringify(settings) });
 }
 
+export function putMapSettings(settings: { tiles?: boolean; tile_url?: string; attribution?: string }): Promise<import("./types").MapSettings> {
+  return req("/config/maps", { method: "PUT", body: JSON.stringify(settings) });
+}
+
+/** One street tile for a map card, through the server, which refuses it
+ *  unless the owner allowed tiles. */
+export async function mapTile(z: number, x: number, y: number): Promise<string> {
+  const response = await authFetch(`/maps/tiles/${z}/${x}/${y}.png`);
+  if (!response.ok) throw new Error(`tile ${response.status}`);
+  return URL.createObjectURL(await response.blob());
+}
+
 export function patchEvidencePolicy(seconds: number, scope: "user" | "workspace"): Promise<{ saved: boolean; seconds: number }> {
   return req("/config/intent/evidence", { method: "POST", body: JSON.stringify({ seconds, scope }) });
 }

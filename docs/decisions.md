@@ -9,6 +9,12 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-16
 
+- The map form (`docs/design/96-answer-projection-gaps.md` P5): places
+  are drawn with no network by default; map tiles reach the screen only
+  through vak-server's tile route, only while the owner's `[maps] tiles`
+  switch (Shared layer, privileged, off by default) is on; the tile source
+  is an editable template, OpenStreetMap by default; coordinates are the
+  model's own, with no geocoding step.
 - Card actions (doc 96 Q3): the marks a turn's tail carries are read from
   the conversation's own `CardAction` entries since the previous
   directive, like the other tail sections, rather than a rollup Document

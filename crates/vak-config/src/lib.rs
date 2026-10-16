@@ -192,6 +192,9 @@ pub struct FileConfig {
     pub plugins: PluginSettings,
     #[serde(default)]
     pub voice: Option<VoiceSettings>,
+    /// `[maps]`: read from the Shared layer alone ([`shared_maps`]).
+    #[serde(default)]
+    pub maps: MapsSettings,
     /// Per-provider tuning knobs (docs/design/68-context-engine.md §8).
     /// NOT privileged: these only shape a provider's own request body.
     #[serde(default)]
@@ -884,6 +887,99 @@ pub struct OwnerSettings {
     /// (docs/design/93-self-evolving-capabilities.md §5). Unset, yes. A
     /// narrower layer can only turn it off.
     pub abilities_go_live: Option<bool>,
+}
+
+/// `[maps]`: whether a map card may draw street tiles, and from where
+/// (docs/design/96-answer-projection-gaps.md P5). The owner's allowance: it
+/// is read from the Shared layer alone, never a project's, and nothing
+/// turns it on but the owner.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct MapsSettings {
+    pub tiles: Option<bool>,
+    pub tile_url: Option<String>,
+    pub attribution: Option<String>,
+}
+
+/// The tile source a map card uses while tiles are on.
+pub const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+pub const DEFAULT_TILE_ATTRIBUTION: &str = "© OpenStreetMap contributors";
+
+/// `[maps]` as it applies: tiles off unless the owner turned them on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MapsResolved {
+    pub tiles: bool,
+    pub tile_url: String,
+    pub attribution: String,
+}
+
+/// Why a tile address template cannot be used, or `None` when it can: an
+/// `https` address naming a host, with `{z}`, `{x}` and `{y}` in its path.
+pub fn tile_url_problem(template: &str) -> Option<&'static str> {
+    let Some(rest) = template.strip_prefix("https://") else {
+        return Some("a tile address must start with https://");
+    };
+    let host = rest.split(['/', '?']).next().unwrap_or_default();
+    if host.is_empty() || host.contains(['{', '}', '@']) {
+        return Some("a tile address must name its host");
+    }
+    if ["{z}", "{x}", "{y}"].iter().any(|part| !rest.contains(part)) {
+        return Some("a tile address must contain {z}, {x} and {y}");
+    }
+    None
+}
+
+/// `[maps]` from the Shared layer, read afresh: what the owner allowed.
+/// A template that cannot be used leaves tiles off.
+pub fn shared_maps() -> MapsResolved {
+    let settings = global_path()
+        .filter(|path| path.is_file())
+        .and_then(|path| parse_file(&path).ok())
+        .map(|(file, _)| file.maps)
+        .unwrap_or_default();
+    let tile_url = settings
+        .tile_url
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| DEFAULT_TILE_URL.into());
+    let attribution = settings
+        .attribution
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| DEFAULT_TILE_ATTRIBUTION.into());
+    MapsResolved {
+        tiles: settings.tiles == Some(true) && tile_url_problem(&tile_url).is_none(),
+        tile_url,
+        attribution,
+    }
+}
+
+/// Write `[maps]` in the Shared layer at `path`. `Some` sets a key; an
+/// empty template or attribution removes it, so the default applies.
+pub fn persist_maps(
+    path: PathBuf,
+    tiles: Option<bool>,
+    tile_url: Option<&str>,
+    attribution: Option<&str>,
+) -> Result<(), ConfigError> {
+    update_config_file(&path, |document| {
+        let maps = child_table(document, "maps", &path)?;
+        if let Some(tiles) = tiles {
+            maps.insert("tiles".into(), toml::Value::Boolean(tiles));
+        }
+        for (key, value) in [("tile_url", tile_url), ("attribution", attribution)] {
+            match value.map(str::trim) {
+                Some("") => {
+                    maps.remove(key);
+                }
+                Some(value) => {
+                    maps.insert(key.into(), toml::Value::String(value.into()));
+                }
+                None => {}
+            }
+        }
+        Ok(())
+    })
 }
 
 /// Opt-in update awareness (docs/design/29-personal-os.md P3). A `None`
@@ -2898,6 +2994,14 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     if pp.is_file() && !is_global_workspace {
         let (mut fc, w) = parse_file(&pp)?;
         warnings.extend(w);
+        if fc.maps.tiles.is_some() || fc.maps.tile_url.is_some() || fc.maps.attribution.is_some()
+        {
+            fc.maps = MapsSettings::default();
+            warnings.push(
+                "project .vak/config.toml sets [maps]; map tiles are the owner's choice and are read from the shared settings alone"
+                    .into(),
+            );
+        }
         if !trust_project {
             // A repository must not be able to configure itself into
             // execution power on first run. Restrictive keys (deny/ask)
@@ -3587,6 +3691,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "probe",
     "lifecycle",
     "providers",
+    "maps",
 ];
 const KNOWN_PLUGINS_KEYS: &[&str] = &[
     "enabled",
@@ -3877,6 +3982,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             if !KNOWN_SANDBOX_KEYS.contains(&key.as_str()) {
                 out.push(format!(
                     "{}: unknown sandbox key 'sandbox.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(t) = top.get("maps").and_then(toml::Value::as_table) {
+        for key in t.keys() {
+            if !["tiles", "tile_url", "attribution"].contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown maps key 'maps.{key}' (ignored)",
                     path.display()
                 ));
             }
@@ -5434,6 +5549,32 @@ mod tests {
                 .reasoning,
             Reasoning::Off
         );
+    }
+
+    #[test]
+    fn a_project_cannot_turn_map_tiles_on_even_when_trusted() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[maps]\ntiles = true\ntile_url = \"https://tiles.example/{z}/{x}/{y}.png\"\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert!(cfg.warnings.iter().any(|w| w.contains("[maps]")));
+        assert!(!shared_maps().tiles || global_path().is_some_and(|g| g.is_file()));
+    }
+
+    #[test]
+    fn a_tile_address_names_its_host_and_its_three_parts() {
+        assert_eq!(tile_url_problem(DEFAULT_TILE_URL), None);
+        for bad in [
+            "http://tile.example/{z}/{x}/{y}.png",
+            "https:///{z}/{x}/{y}.png",
+            "https://{s}.tile.example/{z}/{x}/{y}.png",
+            "https://tile.example/{z}/{x}.png",
+            "https://user@tile.example/{z}/{x}/{y}.png",
+        ] {
+            assert!(tile_url_problem(bad).is_some(), "{bad}");
+        }
     }
 
     #[test]

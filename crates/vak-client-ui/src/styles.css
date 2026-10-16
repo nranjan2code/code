@@ -6743,6 +6743,24 @@ code.ic[data-previewable="true"]:hover {
 .chart-area { opacity: .14; }
 .chart-data summary { cursor: pointer; color: var(--text-soft); font-size: var(--fs-control); }
 .chart-data .card-table { margin-top: var(--space-2); }
+.map-frame { min-width: 0; overflow: hidden; border-radius: calc(var(--radius) - 4px); }
+.map-frame svg { display: block; font-family: var(--content); font-size: var(--fs-control); }
+.map-ground { fill: color-mix(in srgb, var(--accent) 5%, var(--surface-raised)); }
+html[data-theme="dark"] .map-tiles, html[data-theme="frosted-dark"] .map-tiles, html[data-theme="contrast"] .map-tiles { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); }
+.map-route { fill: none; stroke: var(--chart-1); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.map-area { fill: color-mix(in srgb, var(--chart-1) 14%, transparent); stroke: var(--chart-1); stroke-width: 2; stroke-linejoin: round; }
+.map-marker circle { fill: var(--chart-1); stroke: var(--surface); stroke-width: 2; }
+.map-marker text { fill: var(--on-accent); font-size: var(--fs-caption); font-weight: 650; font-variant-numeric: tabular-nums; }
+.map-label { fill: var(--text); font-weight: 550; paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+.map-north path { fill: var(--text-soft); }
+.map-north text, .map-scale text, .map-attribution { fill: var(--text-soft); font-size: var(--fs-caption); paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
+.map-scale path { fill: none; stroke: var(--text-soft); stroke-width: 2; }
+.map-legend { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.map-legend li { display: flex; align-items: flex-start; gap: var(--space-3); }
+.map-badge { flex: none; display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--chart-1); color: var(--on-accent); font-size: var(--fs-caption); font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.map-place { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); min-width: 0; }
+.map-place > span { color: var(--text-soft); }
+.map-leg { color: var(--muted); font-size: var(--fs-control); font-variant-numeric: tabular-nums; }
 
 .pack-row { display: flex; flex-wrap: wrap; gap: var(--space-4); }
 .pack-stack, .pack-group { display: grid; gap: var(--space-3); }

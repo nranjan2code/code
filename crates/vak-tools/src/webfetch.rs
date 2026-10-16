@@ -337,6 +337,33 @@ pub async fn guarded_get(
     headers: &[(&str, String)],
     max_bytes: usize,
 ) -> Result<Fetched, String> {
+    guarded_get_as(raw, headers, max_bytes, content_type_allowed, true).await
+}
+
+/// One image by GET under the same guard, from `raw`'s own host only: no
+/// redirect is followed, and the answer must be a PNG, JPEG or WebP image.
+/// The map card's tiles come this way (docs/design/96 P5).
+pub async fn guarded_get_image(raw: &str, max_bytes: usize) -> Result<Fetched, String> {
+    guarded_get_as(raw, &[], max_bytes, image_type_allowed, false).await
+}
+
+fn image_type_allowed(content_type: &str) -> bool {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    matches!(mime.as_str(), "image/png" | "image/jpeg" | "image/webp")
+}
+
+async fn guarded_get_as(
+    raw: &str,
+    headers: &[(&str, String)],
+    max_bytes: usize,
+    allowed: fn(&str) -> bool,
+    follow_redirects: bool,
+) -> Result<Fetched, String> {
     let url = parse_target(raw)?;
     let Some(host) = url.host_str().map(str::to_string) else {
         return Err("invalid url: missing host".into());
@@ -345,7 +372,16 @@ pub async fn guarded_get(
         .await
         .map_err(|e| format!("address screening failed: {e}"))?
         .map_err(|rejection| rejection.to_string())?;
-    let client = build_client().map_err(|e| format!("client build failed: {e}"))?;
+    let client = if follow_redirects {
+        build_client()
+    } else {
+        reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(TOTAL_TIMEOUT)
+            .build()
+    }
+    .map_err(|e| format!("client build failed: {e}"))?;
     let mut request = client.get(url);
     for (name, value) in headers {
         request = request.header(*name, value);
@@ -376,7 +412,7 @@ pub async fn guarded_get(
             body: Vec::new(),
         });
     }
-    if !content_type_allowed(content_type.as_str()) {
+    if !allowed(content_type.as_str()) {
         let shown = if content_type.is_empty() {
             "missing"
         } else {

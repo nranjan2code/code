@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Places can be shown on a map: numbered markers with their names, a
+  route through them in order or an area they outline, a scale and a
+  north mark, with each place's details and the distances below. Maps are
+  drawn plain, with nothing sent anywhere. Street tiles under them come
+  only when you turn on Settings → General → Map tiles, which names the
+  server each map's area is sent to.
 - Ticks on a checkable list are kept: they survive a reload, and the next
   turn knows what you ticked. "Use this" on a step's choice starts the
   turn with your choice as your message, naming the card, instead of

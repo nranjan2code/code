@@ -74,6 +74,7 @@ mod inbox;
 mod intake;
 mod library;
 mod mail_calendar;
+mod maps;
 mod office_workspace;
 mod operations;
 mod preview;
@@ -1356,6 +1357,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/config", get(get_config).patch(patch_config))
         .route("/config/intent/evidence", post(patch_evidence_policy))
         .route("/config/owner", axum::routing::put(put_owner_settings))
+        .route("/config/maps", axum::routing::put(maps::put_settings))
+        .route("/maps/tiles/{z}/{x}/{y}", get(maps::tile))
         .route(
             "/config/global",
             get(get_global_config_layer).patch(patch_global_config),
@@ -17109,7 +17112,7 @@ async fn get_config(
         "host_timezone": vak_core::triggers::host_timezone(),
         "abilities_go_live": core.abilities_go_live(),
     });
-    Json(serde_json::json!({
+    let mut snapshot = serde_json::json!({
         "provider": route.provider,
         "model": route.model,
         "bedrock_region": core.effective_bedrock_region(),
@@ -17194,7 +17197,9 @@ async fn get_config(
             "cwd": core.cwd(),
         },
         "warnings": cfg.warnings,
-    }))
+    });
+    snapshot["maps"] = serde_json::json!(vak_config::shared_maps());
+    Json(snapshot)
     .into_response()
 }
 

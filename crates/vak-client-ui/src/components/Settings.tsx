@@ -44,6 +44,7 @@ import type { SettingsPageId } from "../store";
 import { themeChoices } from "../theme";
 import type { ConfigSnapshot, SessionSummary, Trigger } from "../types";
 import * as api from "../api";
+import { setMapSettings } from "../mapSettings";
 import { interfaceFonts, contentFonts, codeFonts } from "../typography";
 import { watchConfig } from "../streamHub";
 import { relTime } from "../time";
@@ -1847,6 +1848,19 @@ export default function Settings() {
     }
   };
 
+  const tileHost = () => {
+    try { return new URL((config()?.maps?.tile_url ?? "").replace(/[{}]/g, "")).host; } catch { return "the tile server"; }
+  };
+  const saveMaps = async (change: { tiles?: boolean; tile_url?: string }) => {
+    try {
+      setMapSettings(await api.putMapSettings(change));
+      await load();
+      if (change.tiles !== undefined) setNotice({ kind: "info", text: change.tiles ? `Maps now draw street tiles from ${tileHost()}.` : "Maps are drawn plain again; nothing is sent for them." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not save: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+
   const saveAbilitiesGoLive = async (live: boolean) => {
     try {
       await api.putOwnerSettings({ abilities_go_live: live });
@@ -2019,6 +2033,10 @@ export default function Settings() {
                 <Row title="Your time zone" description={`What “9 AM” means in reminders and automations, wherever Vakyartha runs. Automatic uses this computer's: ${config()?.owner?.host_timezone ?? "…"}.`}><select aria-label="Your time zone" value={config()?.owner?.timezone_set ? config()?.owner?.timezone : ""} onChange={(event) => void saveTimezone(event.currentTarget.value || null)}><option value="">Automatic ({config()?.owner?.host_timezone ?? "…"})</option><For each={timeZones()}>{(zone) => <option value={zone}>{zone.replaceAll("_", " ")}</option>}</For></select></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
                 <Row title="Show technical details" description="Folders, file paths, IDs, tool output and the technical settings pages. Changes what you see, never what an agent may do."><Switch label="Show technical details" checked={technicalDetails()} onChange={(value) => setTechnicalDetails(value)} /></Row>
+                <Row title="Map tiles" description={`Draw street maps under the places in answers, from ${tileHost()}. Each map you open sends the area it shows to that server. Off, places are drawn on a plain map and nothing is sent.`}><Switch label="Map tiles" checked={config()?.maps?.tiles ?? false} onChange={(value) => void saveMaps({ tiles: value })} /></Row>
+                <Show when={technicalDetails()}>
+                  <Row title="Map tile address" description="An https address with {z}, {x} and {y}. Leave it empty for OpenStreetMap's."><input class="settings-input" aria-label="Map tile address" value={config()?.maps?.tile_url ?? ""} onChange={(event) => void saveMaps({ tile_url: event.currentTarget.value })} /></Row>
+                </Show>
                 <Row title="Presentation styles" description="Choose how Vakyartha presents different kinds of results."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationCatalog().reduce((count, group) => count + group.types.length, 0)} available`}</span></Row>
                 <Row title="Share presentation styles" description="Export your styles or import a collection."><span class="settings-actions"><button class="settings-button" onClick={() => void exportPresentationPack()}>Export</button><label class="settings-button">Import<input type="file" accept="application/json,.json" hidden onChange={importPresentationPack} /></label></span></Row>
                 <Show when={!presentationLibrary.loading && (presentationLibrary()?.definitions.length ?? 0) > 0}>
