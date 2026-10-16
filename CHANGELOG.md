@@ -1,4 +1,8 @@
-## Unreleased
+## 8.4.0 — 2026-10-16
+
+Answers come in as they are made, cards can show places on a map, and a
+media card shows workspace files. Additive within 8.x: no purge, the
+data baseline stays 8.0.
 
 - Places can be shown on a map: numbered markers with their names, a
   route through them in order or an area they outline, a scale and a
