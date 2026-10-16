@@ -8,40 +8,31 @@ history keeps them); every note of theirs that is still true is under
 
 "Continue in /Users/nisheethranjan/Projects/Vak/code on main. Read
 AGENTS.md first (especially 'The data rules', 'No word lists, no tuned
-limits', 'A tool's permission is what it declares', 'Investigating a
-failure' and 'Verification before every commit'), then
-docs/plans/handover-2026-10-14-night.md whole.
+limits', 'Investigating a failure' and 'Verification before every
+commit'), then this handover's 'Next' item 0 and
+docs/design/96-answer-projection-gaps.md and
+docs/design/97-cards-end-the-answer.md.
 
-Run `git status` and `git log --oneline -8`. If the newest commit is not
-'Handover: 8.3.0 released and installed', read 'Where things stand' and finish what
-it says is unfinished. Stage only your own paths; keep only `main`; check `git show
---stat` before every push. We are on a Claude Code Pro plan, so keep
-token use to what the task needs: read with grep and line ranges, never
-whole large files; batch independent commands; filter command output;
-run the full gate once per finished step, in the background, using
-`scripts/gate.sh --changed` while working; commit each verified step;
-tick docs/plans/open-items.md; and rewrite this handover's prompt and
-'Where things stand' before the session's limit. The maintainer is the
-only user: rewrite a wrong design or screen rather than patch it.
+Run `git status` and `git log --oneline -8`. The newest commit should be
+'Doc 96 Q3: card actions as records'. The working tree holds the
+UNCOMMITTED live-turn work (Next item 0): verify it live, run the full
+gate, record it, commit, push. Then propose the two follow-ups as their
+own sessions (Next item 0). Stage only your own paths; keep only `main`.
+We are on a Claude Code Pro plan: read with grep and line ranges, batch
+commands, run the full gate in the background once per finished step,
+and rewrite this prompt and 'Next' before the session's limit. The
+maintainer is the only user: rewrite a wrong design rather than patch
+it, never blame the model, and ask on open design choices.
 
-Self-evolving capabilities (doc 93) are implemented, E1 to E9. What is
-left is in docs/plans/open-items.md 'Self-evolving capabilities' (the
-open lines: an Agent asking before proposing a new version (observed,
-nothing in Vak asks it), ability history lost before E6a on the
-installed home (data only; fixed for new versions), Node dependencies
-(designed when needed)) and the release questions under 'Next', which are
-the maintainer's to decide; ask before cutting a release. 8.2.0 is
-released and tagged; installed fresh on this Mac (purged); `vak setup` is
-the maintainer's next step; AWS waits for the maintainer.
-
-Live runs: the installed home (8.2.0, fresh; once the maintainer has
-run setup with the OpenAI key) may be used sparingly: launch entry `vak-e3-live` (a dev server on port 8907 in
-/tmp/vak-live/e3 against the real home; token in
-/tmp/vak-live/test-gateway-token; /tmp/vak-live/turn.sh with PORT=8907
-for a new conversation, /tmp/vak-live/turn-same.sh <session> for a
-follow-up). For the local model, launch entry `vak-e1-live` (port 8905,
-throwaway VAK_HOME, PATCH /config to ollama qwen3.5:4b-mlx). Short
-progress lines."
+Live runs: launch entry `vak-e1-live` (port 8905, VAK_HOME
+/tmp/vak-live/e1-home, Ollama qwen3.5:4b-mlx; sign-in link
+http://127.0.0.1:8905/app?token=<contents of /tmp/vak-live/test-gateway-token>).
+For a second route use `vak exec --provider openai-responses --model
+gpt-6-luna` in a /tmp workspace (per-run override; the installed route
+stays the local model; sparingly). After a client change: `npm run
+build` in crates/vak-client-ui, then `cargo build -p vak -p vak-server
+--bins` (BOTH binaries; the dev server runs `vak`), then restart the
+server. Short progress lines."
 
 ## Where things stand
 
@@ -394,17 +385,41 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-0. Answers on screen (2026-10-16). Doc 96 Q1 and Q2 are committed
-   (4d30a2f98, d1066827c). Doc 97 (cards end the answer) is built: every
-   card takes `then: more | done`, a step of accepted cards whose last
-   card said `done` ends the turn, the turn closes on its recorded ending,
-   and readers of a run's last words read recorded messages. Measured on
-   the dev route and compared with the OpenAI route; §7 lists what is open
-   (a connected-accounts rollup for `mail_calendar`, composition skills
-   that only some models fetch, plan as the answer's outline). The Details
-   Activity steps view and doc 96 Q3 (card actions) are built. The proposed live-turn design for cards (draw recorded
-   cards while the run goes on, one quiet "Preparing" line, a staggered
-   reveal) also waits on the maintainer.
+0. Answers on screen (2026-10-16). Committed: doc 96 Q1 (4d30a2f98),
+   Q2 (d1066827c), doc 97 cards end the answer (e30a68764), Details
+   Activity steps view, doc 96 Q3 card actions. UNCOMMITTED in the
+   working tree, built but not yet verified or gated: the live-turn
+   design the maintainer approved. Server: `AgentEvent::CardRecorded`
+   (vak-agent, sent after `show_card` records a card, carrying the
+   recorded `PresentationRecord`), mapped by `projection::live_event` to a
+   live card item (`live-card-<presentation id>`, source `live_event`;
+   `project_frame` re-stamps its turn id to the live turn), dropped by
+   `client_events::project`. Client: `LiveAnswer` (PresentationRenderer)
+   draws those cards in ChatPane's running turn, each fading and rising in
+   (`.card-arrive`, staggered by `arrivalDelay`, none under reduced
+   motion); the Q2 per-card shells (`DraftingCards`, `draftingShell`,
+   composeAnswer's drafting) are removed. The plan's progress is shown in
+   the header presence wheel (`AgentPresence.tsx`, original design from
+   20af51753): `livePlan` (src/livePlan.ts) reads the turn's plan call
+   and which parts a card delivered; the wheel shows delivered parts left,
+   the next centred, the rest right, with a readable caption inside the
+   arc (active part, "n of m done") and dots that glide
+   (`.commitment-wheel-caption`, transitions on cx/cy). The maintainer
+   rejected a separate "Preparing" line in the chat. To finish: verify
+   live (a planned multi-card turn: cards appear while the run goes on;
+   hover the "Working" chip: parts and caption readable, dots move as
+   cards land; 1440x900 and 390x844, light and dark); run the full gate;
+   add a `CardRecorded` case to client_events'
+   `every_variant_is_kept_or_dropped_on_purpose`; update doc 96 (Q2's
+   shell is superseded by live cards plus the wheel; say so in its Status
+   and Q2 section), CHANGELOG Unreleased, open-items; commit; push.
+   Follow-ups the maintainer asked for, each its own session: (a) check
+   the media card really shows its image or video in the app and fix
+   what does not; (b) a map card (doc 96 P5) designed to be intuitive:
+   places drawn without network tiles by default, tiles only behind an
+   owner-granted allowance. Open from doc 97 §7: a connected-accounts
+   rollup for `mail_calendar`, composition skills only some models fetch,
+   the plan as the answer's outline.
 1. Doc 93 E6 rest, then E7 to E9 (doc 93 §11), each with the full gate and a
    live turn; tick `docs/plans/open-items.md` and the doc's Status.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are
