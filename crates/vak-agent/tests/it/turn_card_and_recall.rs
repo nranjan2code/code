@@ -371,8 +371,17 @@ async fn a_card_replacing_no_card_of_this_answer_is_refused_with_its_ids() {
         &dir,
         "replaces-unknown",
         vec![
-            tool_call_msg("c1", "emit_chart_card", chart("First", None)),
-            tool_call_msg("c2", "emit_chart_card", chart("Second", Some("not-a-card"))),
+            // One step: c1 is shown before c2 is checked, so c2's refusal
+            // names it (a step of accepted cards alone ends the turn).
+            {
+                let mut step = tool_call_msg("c1", "emit_chart_card", chart("First", None));
+                step.content.push(ContentBlock::ToolUse {
+                    id: "c2".into(),
+                    name: "emit_chart_card".into(),
+                    input: chart("Second", Some("not-a-card")),
+                });
+                step
+            },
             text_msg("Above."),
         ],
         vec![Arc::new(FakeEmitChartCard)],

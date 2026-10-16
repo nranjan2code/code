@@ -273,6 +273,20 @@ Carried over from 7.2.0:
   - [x] Markup previews get none of the theme's tokens (Q1).
   - [ ] Serve pinned vendored libraries from the preview origin, keeping
     `connect-src` closed (P3).
+- Found live 2026-10-16 while checking Q1 and Q2:
+  - [x] After a card call returns "Shown to the user", the next step wrote
+    the card's content again as text (or sent the card again). Cause: the
+    step itself, not the prompt, result, thinking or sampling; every card
+    now says `then: more | done` and the turn ends on `done`
+    (docs/design/97-cards-end-the-answer.md).
+  - [ ] `mail_calendar` (18% of tool bytes) loaded only when an account is
+    connected needs a connected-accounts rollup (doc 97 §7).
+  - [ ] Composition skills (`answer-layouts`) reach only a model that calls
+    the skill loader; the small route never does (doc 97 §7).
+  - [ ] Whether the plan should be the answer's outline (doc 97 §7).
+  - [ ] Details → Activity lists only sandbox executions, so a turn of model
+    steps, plan and card calls shows "No activity yet" while it runs. The
+    loop's own calls (plan, cards, recall) send no `ToolCallStart`.
   - [ ] A page bound to its data: a Library artifact of composed cards
     whose new version an automation's run produces, shared through grants.
   - [ ] Decide whether `ui://` HTML resources from MCP servers are drawn

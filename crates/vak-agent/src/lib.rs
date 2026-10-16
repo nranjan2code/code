@@ -438,6 +438,9 @@ pub struct AgentConfig {
     /// of this run starts holding it (docs/design/08-permissions.md
     /// "Provenance"). `NONE` for a run nobody delegated.
     pub inherited_provenance: vak_control::Provenance,
+    /// A delegated worker's run: its text is its report to the run that
+    /// delegated it, so a step of cards never ends its turn on its own.
+    pub reports_to_parent: bool,
     /// Run once per run, when the first call that may change the workspace
     /// is accepted and before it runs (`Tool::changes_workspace`): the host
     /// checkpoints the workspace here.
@@ -624,6 +627,7 @@ impl AgentConfig {
             steps: vak_control::StepDefaults::shipped(),
             envelope_check: None,
             inherited_provenance: vak_control::Provenance::NONE,
+            reports_to_parent: false,
             before_effect: None,
             presentation_rebuild: None,
             history_recall: None,
@@ -1545,11 +1549,16 @@ impl Agent {
         // request would fold this one into it (invariant 1: model-visible
         // means logged).
         if let TurnOutcome::Completed { response } = &outcome {
+            // A turn that ended on its cards completes with the step that
+            // showed them, which is followed by the cards' results.
             let already_logged = {
                 let session = self.session.lock().await;
-                session.latest_message().is_some_and(|last| {
-                    last.role == Role::Assistant && last.content == response.content
-                })
+                session
+                    .message_chain()
+                    .iter()
+                    .rev()
+                    .find(|(_, message)| message.role == Role::Assistant)
+                    .is_some_and(|(_, last)| last.content == response.content)
             };
             if !already_logged {
                 self.append_assistant(response).await;
@@ -1561,8 +1570,10 @@ impl Agent {
         // exits) stays open and this is a no-op — there is nothing to card
         // yet, and the next call to `run_message` will pick it up once it
         // does close.
-        self.close_turn(&outcome).await;
+        // The ending is recorded first: a turn that ended on its cards is
+        // closed by that record (docs/design/87-composed-answers.md §2a).
         self.record_ending(&outcome).await;
+        self.close_turn(&outcome).await;
         if let Some(refresh) = &self.config.history_refresh {
             refresh();
         }
@@ -1836,7 +1847,9 @@ impl Agent {
         let mut compaction_failed = false;
         let mut logged_plan: Option<String> = None;
         let mut turn_tool_base: Option<Vec<vak_llm::ToolDefinition>> = None;
+        let mut answered_by_cards: Option<AssistantMessage> = None;
         'turn: loop {
+            let mut steered = false;
             self.step_span = tracing::info_span!("step", step = turn as u64);
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
@@ -1844,7 +1857,7 @@ impl Agent {
             if !steering.wait_if_paused(&cancel).await {
                 return TurnOutcome::Aborted { partial: None };
             }
-            if turn >= self.config.max_turns {
+            if turn >= self.config.max_turns && answered_by_cards.is_none() {
                 return TurnOutcome::MaxTurnsReached;
             }
             if self
@@ -1870,6 +1883,7 @@ impl Agent {
                     }
                 }
                 for message in steering.drain(DrainMode::OneAtATime) {
+                    steered = true;
                     let (message, steering_meta) = match self.normalize_recorded(message, None) {
                         Ok(normalized) => normalized,
                         Err(error) => {
@@ -1896,723 +1910,746 @@ impl Agent {
                 }
             }
 
-            let _ = events.send(AgentEvent::TurnStart { turn }).await;
+            // A step whose calls were all accepted cards showed the answer:
+            // the turn ends there, through the same checks as a step that
+            // made no call, rather than opening another step after it
+            // (docs/design/87-composed-answers.md §2a). A message the
+            // person sent meanwhile gets a step of its own.
+            let shown = answered_by_cards.take().filter(|_| !steered);
+            let (response, calls, response_entry_id) = if let Some(shown) = shown {
+                (shown, Vec::new(), None)
+            } else {
+                let _ = events.send(AgentEvent::TurnStart { turn }).await;
 
-            // config.model is set by run_turn_inner from effective_model() on
-            // every turn, so it always reflects the current live provider route.
-            let model = self.config.model.clone();
+                // config.model is set by run_turn_inner from effective_model() on
+                // every turn, so it always reflects the current live provider route.
+                let model = self.config.model.clone();
 
-            // Working-set planning (docs/design/68-context-engine.md §4/§7/
-            // §10): built once per TURN, not fresh every step, so a past
-            // turn's fidelity cannot change mid-turn and break the
-            // append-only request contract. `turn_plan`/`turn_tools`
-            // (declared before the loop) hold the frozen baseline; only an
-            // over-length rejection or an incremental compaction below
-            // explicitly replans (updating the baseline for the rest of
-            // the turn too), and only a handoff reset clears it back to
-            // `None`. The lock is taken only for short read/plan/apply
-            // phases and is NEVER held across the summarizer network call
-            // below.
-            let profile = self.effective_capacity_profile();
-            if turn_tool_base.is_none() {
-                turn_tool_base = Some(self.base_tool_definitions());
-            }
-            let mut tool_defs = turn_tool_base.clone().unwrap_or_default();
-            // A withdrawal is an explicit change of the turn's frame: a
-            // tool taken out is no longer offered, whatever was frozen.
-            tool_defs.retain(|definition| !self.is_withdrawn(&definition.name));
-            let promoted = self
-                .config
-                .promoted_tools
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            load_promoted(&mut tool_defs, promoted);
-            let prefix_tokens =
-                profile.estimate_tokens(prefix_chars(&self.config.system_prefix, &tool_defs));
-            let tail_tokens = profile.estimate_tokens(turn_tail.len() as u64);
+                // Working-set planning (docs/design/68-context-engine.md §4/§7/
+                // §10): built once per TURN, not fresh every step, so a past
+                // turn's fidelity cannot change mid-turn and break the
+                // append-only request contract. `turn_plan`/`turn_tools`
+                // (declared before the loop) hold the frozen baseline; only an
+                // over-length rejection or an incremental compaction below
+                // explicitly replans (updating the baseline for the rest of
+                // the turn too), and only a handoff reset clears it back to
+                // `None`. The lock is taken only for short read/plan/apply
+                // phases and is NEVER held across the summarizer network call
+                // below.
+                let profile = self.effective_capacity_profile();
+                if turn_tool_base.is_none() {
+                    turn_tool_base = Some(self.base_tool_definitions());
+                }
+                let mut tool_defs = turn_tool_base.clone().unwrap_or_default();
+                // A withdrawal is an explicit change of the turn's frame: a
+                // tool taken out is no longer offered, whatever was frozen.
+                tool_defs.retain(|definition| !self.is_withdrawn(&definition.name));
+                let promoted = self
+                    .config
+                    .promoted_tools
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                load_promoted(&mut tool_defs, promoted);
+                let prefix_tokens =
+                    profile.estimate_tokens(prefix_chars(&self.config.system_prefix, &tool_defs));
+                let tail_tokens = profile.estimate_tokens(turn_tail.len() as u64);
 
-            let mut plan = match &turn_plan {
-                Some(p) => p.clone(),
-                None => {
+                let mut plan = match &turn_plan {
+                    Some(p) => p.clone(),
+                    None => {
+                        let fresh = self
+                            .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
+                            .await;
+                        turn_plan = Some(fresh.clone());
+                        fresh
+                    }
+                };
+
+                // No usable horizon at all: the prefix, the tail and the open turn
+                // already exceed the prompt ceiling, so the turn itself cannot be
+                // sent. (A zero history budget is not this: the turn still fits and
+                // simply carries no history.) The reset-with-handoff rescue is the
+                // surviving recovery (§4's "the handoff reset stays as the
+                // recovery when a profile has no usable horizon").
+                let (open_turn_tokens, directive_tokens) = {
+                    let session = self.session.lock().await;
+                    let open = session.open_turn_verbatim();
+                    (
+                        profile.estimate_tokens(messages_chars(&open)),
+                        profile.estimate_tokens(messages_chars(&open[..open.len().min(1)])),
+                    )
+                };
+                let needed_tokens = prefix_tokens
+                    .saturating_add(tail_tokens)
+                    .saturating_add(open_turn_tokens);
+                if needed_tokens > profile.prompt_ceiling() {
+                    let est_tokens = needed_tokens;
+                    // When the directive itself fits, the reset only replaces the
+                    // steps that outgrew the horizon and the task stays in view;
+                    // when it does not, the summary (which carries the original
+                    // task) is all that can stand in for it.
+                    let keeps_open_turn = prefix_tokens
+                        .saturating_add(tail_tokens)
+                        .saturating_add(directive_tokens)
+                        <= profile.prompt_ceiling();
+                    if !self.handoff_used && self.config.handoff_reset {
+                        self.handoff_used = true;
+                        if let Ok(handoff) = self
+                            .write_handoff(est_tokens, &prompt_owned, &plan, &cancel, &events)
+                            .await
+                        {
+                            let mut session = self.session.lock().await;
+                            match session.append_handoff_reset(handoff, est_tokens, keeps_open_turn)
+                            {
+                                Ok(_) => {
+                                    let _ = events
+                                        .send(AgentEvent::HandoffReset {
+                                            before_tokens: est_tokens,
+                                        })
+                                        .await;
+                                    drop(session);
+                                    // The reset replaced everything before it:
+                                    // the frozen plan baseline is stale and
+                                    // must be rebuilt against the new chain.
+                                    turn_plan = None;
+                                    continue;
+                                }
+                                Err(e) => {
+                                    return TurnOutcome::Failed {
+                                        error: LlmError::Context(format!(
+                                            "context over budget and handoff write failed: {e}"
+                                        )),
+                                    };
+                                }
+                            }
+                        }
+                    }
+                    return TurnOutcome::Failed {
+                        error: LlmError::Context("context over budget: no usable horizon".into()),
+                    };
+                }
+
+                // The open turn grows with every step while the plan was frozen at
+                // the first one. When history plus the turn as it now stands no
+                // longer fits the ceiling, re-plan with the turn's real size so
+                // history gives way (§10: "the middle changes, and it is a
+                // replan, not a cut"); the request's earlier shape changes once,
+                // exactly as on an over-length rejection.
+                let mut replanned_mid_turn = false;
+                if turn > 0 && plan.spent.saturating_add(needed_tokens) > profile.prompt_ceiling() {
                     let fresh = self
                         .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
                         .await;
-                    turn_plan = Some(fresh.clone());
-                    fresh
+                    if fresh.per_turn != plan.per_turn || fresh.packet_range != plan.packet_range {
+                        plan = fresh;
+                        turn_plan = Some(plan.clone());
+                        replanned_mid_turn = true;
+                    }
                 }
-            };
 
-            // No usable horizon at all: the prefix, the tail and the open turn
-            // already exceed the prompt ceiling, so the turn itself cannot be
-            // sent. (A zero history budget is not this: the turn still fits and
-            // simply carries no history.) The reset-with-handoff rescue is the
-            // surviving recovery (§4's "the handoff reset stays as the
-            // recovery when a profile has no usable horizon").
-            let (open_turn_tokens, directive_tokens) = {
-                let session = self.session.lock().await;
-                let open = session.open_turn_verbatim();
-                (
-                    profile.estimate_tokens(messages_chars(&open)),
-                    profile.estimate_tokens(messages_chars(&open[..open.len().min(1)])),
-                )
-            };
-            let needed_tokens = prefix_tokens
-                .saturating_add(tail_tokens)
-                .saturating_add(open_turn_tokens);
-            if needed_tokens > profile.prompt_ceiling() {
-                let est_tokens = needed_tokens;
-                // When the directive itself fits, the reset only replaces the
-                // steps that outgrew the horizon and the task stays in view;
-                // when it does not, the summary (which carries the original
-                // task) is all that can stand in for it.
-                let keeps_open_turn = prefix_tokens
-                    .saturating_add(tail_tokens)
-                    .saturating_add(directive_tokens)
-                    <= profile.prompt_ceiling();
-                if !self.handoff_used && self.config.handoff_reset {
-                    self.handoff_used = true;
-                    if let Ok(handoff) = self
-                        .write_handoff(est_tokens, &prompt_owned, &plan, &cancel, &events)
-                        .await
-                    {
-                        let mut session = self.session.lock().await;
-                        match session.append_handoff_reset(handoff, est_tokens, keeps_open_turn) {
-                            Ok(_) => {
-                                let _ = events
-                                    .send(AgentEvent::HandoffReset {
-                                        before_tokens: est_tokens,
-                                    })
-                                    .await;
-                                drop(session);
-                                // The reset replaced everything before it:
-                                // the frozen plan baseline is stale and
-                                // must be rebuilt against the new chain.
-                                turn_plan = None;
-                                continue;
+                // Incremental compaction (docs/design/68-context-engine.md §4):
+                // the plan collapsed some turns into a packet that no existing
+                // `Compaction` entry covers yet. Summarize their CARDS (never
+                // raw history) and append one, then re-plan — the packet
+                // disappears from the new plan once it is covered.
+                if let Some((first_turn_id, last_turn_id)) = plan.packet_range.clone()
+                    && !compaction_failed
+                {
+                    let needs_compaction = {
+                        let session = self.session.lock().await;
+                        session.packet_needs_compaction(&first_turn_id, &last_turn_id)
+                    };
+                    'compact: {
+                        if !needs_compaction {
+                            break 'compact;
+                        }
+                        let (transcript, transcript_chars) = {
+                            let session = self.session.lock().await;
+                            session.packet_transcript(&first_turn_id, &last_turn_id)
+                        };
+                        let tokens_before = profile.estimate_tokens(transcript_chars);
+                        let _ = events
+                            .send(AgentEvent::ContextCompacting {
+                                estimated_tokens: tokens_before,
+                            })
+                            .await;
+                        let req = assemble::compaction_request(
+                            &model,
+                            &transcript,
+                            self.config.steps.get(vak_control::Purpose::Compact),
+                        );
+                        let mut ledger = StepLedger::new(
+                            WorkPurpose::Summarize,
+                            self.provider.name(),
+                            &model,
+                            self.config.dispatch_ceiling,
+                        );
+                        let summary_msg = match self
+                            .complete_with_reliability(&req, &cancel, &events, false, &mut ledger)
+                            .await
+                        {
+                            Ok(m) => {
+                                let _ = self
+                                    .session
+                                    .lock()
+                                    .await
+                                    .append_receipt(ledger.take_receipt());
+                                m
+                            }
+                            Err(LlmError::Aborted { .. }) => {
+                                let _ = self
+                                    .session
+                                    .lock()
+                                    .await
+                                    .append_receipt(ledger.take_receipt());
+                                return TurnOutcome::Aborted { partial: None };
                             }
                             Err(e) => {
-                                return TurnOutcome::Failed {
-                                    error: LlmError::Context(format!(
-                                        "context over budget and handoff write failed: {e}"
-                                    )),
-                                };
+                                let _ = self
+                                    .session
+                                    .lock()
+                                    .await
+                                    .append_receipt(ledger.take_receipt());
+                                // The turn does not depend on the summary: without
+                                // it the packeted turns render as cards (no cut).
+                                // Try again on a later turn, not on every step.
+                                compaction_failed = true;
+                                self.record_activity(
+                                    vak_session::ActivityKind::Diagnostic,
+                                    vak_session::ActivityStatus::Failed,
+                                    "compaction-failed".into(),
+                                    Some(e.to_string()),
+                                    Default::default(),
+                                )
+                                .await;
+                                break 'compact;
                             }
-                        }
-                    }
-                }
-                return TurnOutcome::Failed {
-                    error: LlmError::Context("context over budget: no usable horizon".into()),
-                };
-            }
-
-            // The open turn grows with every step while the plan was frozen at
-            // the first one. When history plus the turn as it now stands no
-            // longer fits the ceiling, re-plan with the turn's real size so
-            // history gives way (§10: "the middle changes, and it is a
-            // replan, not a cut"); the request's earlier shape changes once,
-            // exactly as on an over-length rejection.
-            let mut replanned_mid_turn = false;
-            if turn > 0 && plan.spent.saturating_add(needed_tokens) > profile.prompt_ceiling() {
-                let fresh = self
-                    .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
-                    .await;
-                if fresh.per_turn != plan.per_turn || fresh.packet_range != plan.packet_range {
-                    plan = fresh;
-                    turn_plan = Some(plan.clone());
-                    replanned_mid_turn = true;
-                }
-            }
-
-            // Incremental compaction (docs/design/68-context-engine.md §4):
-            // the plan collapsed some turns into a packet that no existing
-            // `Compaction` entry covers yet. Summarize their CARDS (never
-            // raw history) and append one, then re-plan — the packet
-            // disappears from the new plan once it is covered.
-            if let Some((first_turn_id, last_turn_id)) = plan.packet_range.clone()
-                && !compaction_failed
-            {
-                let needs_compaction = {
-                    let session = self.session.lock().await;
-                    session.packet_needs_compaction(&first_turn_id, &last_turn_id)
-                };
-                'compact: {
-                    if !needs_compaction {
-                        break 'compact;
-                    }
-                    let (transcript, transcript_chars) = {
-                        let session = self.session.lock().await;
-                        session.packet_transcript(&first_turn_id, &last_turn_id)
-                    };
-                    let tokens_before = profile.estimate_tokens(transcript_chars);
-                    let _ = events
-                        .send(AgentEvent::ContextCompacting {
-                            estimated_tokens: tokens_before,
-                        })
-                        .await;
-                    let req = assemble::compaction_request(
-                        &model,
-                        &transcript,
-                        self.config.steps.get(vak_control::Purpose::Compact),
-                    );
-                    let mut ledger = StepLedger::new(
-                        WorkPurpose::Summarize,
-                        self.provider.name(),
-                        &model,
-                        self.config.dispatch_ceiling,
-                    );
-                    let summary_msg = match self
-                        .complete_with_reliability(&req, &cancel, &events, false, &mut ledger)
-                        .await
-                    {
-                        Ok(m) => {
-                            let _ = self
-                                .session
-                                .lock()
-                                .await
-                                .append_receipt(ledger.take_receipt());
-                            m
-                        }
-                        Err(LlmError::Aborted { .. }) => {
-                            let _ = self
-                                .session
-                                .lock()
-                                .await
-                                .append_receipt(ledger.take_receipt());
-                            return TurnOutcome::Aborted { partial: None };
-                        }
-                        Err(e) => {
-                            let _ = self
-                                .session
-                                .lock()
-                                .await
-                                .append_receipt(ledger.take_receipt());
-                            // The turn does not depend on the summary: without
-                            // it the packeted turns render as cards (no cut).
-                            // Try again on a later turn, not on every step.
+                        };
+                        let summary = summary_msg.text_content();
+                        if summary.trim().is_empty() {
                             compaction_failed = true;
                             self.record_activity(
                                 vak_session::ActivityKind::Diagnostic,
                                 vak_session::ActivityStatus::Failed,
                                 "compaction-failed".into(),
-                                Some(e.to_string()),
+                                Some("the summariser returned nothing".into()),
                                 Default::default(),
                             )
                             .await;
                             break 'compact;
                         }
-                    };
-                    let summary = summary_msg.text_content();
-                    if summary.trim().is_empty() {
-                        compaction_failed = true;
-                        self.record_activity(
-                            vak_session::ActivityKind::Diagnostic,
-                            vak_session::ActivityStatus::Failed,
-                            "compaction-failed".into(),
-                            Some("the summariser returned nothing".into()),
-                            Default::default(),
-                        )
-                        .await;
-                        break 'compact;
-                    }
-                    {
-                        let mut session = self.session.lock().await;
-                        if let Err(e) = session.append_incremental_compaction(
-                            &first_turn_id,
-                            &last_turn_id,
-                            &model,
-                            summary,
-                            tokens_before,
-                        ) {
-                            compaction_failed = true;
-                            self.record_activity(
-                                vak_session::ActivityKind::Diagnostic,
-                                vak_session::ActivityStatus::Failed,
-                                "compaction-failed".into(),
-                                Some(format!("compaction write failed: {e}")),
-                                Default::default(),
-                            )
-                            .await;
+                        {
+                            let mut session = self.session.lock().await;
+                            if let Err(e) = session.append_incremental_compaction(
+                                &first_turn_id,
+                                &last_turn_id,
+                                &model,
+                                summary,
+                                tokens_before,
+                            ) {
+                                compaction_failed = true;
+                                self.record_activity(
+                                    vak_session::ActivityKind::Diagnostic,
+                                    vak_session::ActivityStatus::Failed,
+                                    "compaction-failed".into(),
+                                    Some(format!("compaction write failed: {e}")),
+                                    Default::default(),
+                                )
+                                .await;
+                            }
                         }
+                        let after_plan = self
+                            .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
+                            .await;
+                        let _ = events
+                            .send(AgentEvent::ContextCompacted {
+                                before_tokens: tokens_before,
+                                after_tokens: after_plan.spent,
+                                summarized_turns: 0,
+                            })
+                            .await;
+                        plan = after_plan;
+                        // Compaction wrote a new ledger entry: the packeted
+                        // range is now covered, so the frozen baseline must
+                        // reflect it for the rest of this turn too.
+                        turn_plan = Some(plan.clone());
                     }
-                    let after_plan = self
-                        .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
-                        .await;
-                    let _ = events
-                        .send(AgentEvent::ContextCompacted {
-                            before_tokens: tokens_before,
-                            after_tokens: after_plan.spent,
-                            summarized_turns: 0,
-                        })
-                        .await;
-                    plan = after_plan;
-                    // Compaction wrote a new ledger entry: the packeted
-                    // range is now covered, so the frozen baseline must
-                    // reflect it for the rest of this turn too.
-                    turn_plan = Some(plan.clone());
                 }
-            }
 
-            // One model step = connect + stream + collect, wrapped with the
-            // full reliability machinery (watchdog, retries+backoff,
-            // circuit breaker, dispatch ceiling). Every dispatch is recorded
-            // into the work receipt, which lands in the ledger on every
-            // exit path. User aborts and partial-output aborts are never
-            // retried; they propagate for caller handling.
-            let mut ledger = StepLedger::new(
-                WorkPurpose::Execute,
-                self.provider.name(),
-                &model,
-                self.config.dispatch_ceiling,
-            );
-            // Recorded on every exit path below, success or failure: the
-            // digest describes what was SENT, not what came back
-            // (docs/design/68-context-engine.md §6/§7).
-            ledger.receipt.prefix_digest =
-                assemble::prefix_digest(&self.config.system_prefix, &tool_defs);
-            // Model-visible selection must be reconstructable (invariant 1):
-            // the plan that shaped this request is recorded when it changes.
-            {
-                let mut session = self.session.lock().await;
-                let data = plan.to_activity_data(session.tail_id().map(String::as_str));
-                let fingerprint = format!("{data:?}");
-                if logged_plan.as_deref() != Some(fingerprint.as_str()) {
-                    logged_plan = Some(fingerprint);
-                    let _ = session.append_activity(vak_session::ActivityRecord {
-                        activity_id: format!("context-plan-{}", uuid::Uuid::now_v7()),
-                        kind: vak_session::ActivityKind::Diagnostic,
-                        status: vak_session::ActivityStatus::Succeeded,
-                        label: vak_session::CONTEXT_PLAN_LABEL.into(),
-                        detail: None,
-                        data,
-                    });
-                }
-            }
-            let must_call = self.must_call.take();
-            let purpose = match must_call {
-                Some(_) => vak_control::Purpose::Answer,
-                None => self.step_purpose().await,
-            };
-            let base_request = {
-                let session = self.session.lock().await;
-                // `messages` is the explicit projection from the plan
-                // (docs/design/68-context-engine.md §4/§10). Omitted history
-                // stays in the ledger and is searched through `recall` only
-                // when the model needs an earlier detail.
-                let (mut messages, directive_at) = session.derive_with_plan_and_directive(&plan);
-                self.note_held(
-                    vak_control::provenance::EARLIER_TURNS,
-                    session.carried_provenance(&plan),
+                // One model step = connect + stream + collect, wrapped with the
+                // full reliability machinery (watchdog, retries+backoff,
+                // circuit breaker, dispatch ceiling). Every dispatch is recorded
+                // into the work receipt, which lands in the ledger on every
+                // exit path. User aborts and partial-output aborts are never
+                // retried; they propagate for caller handling.
+                let mut ledger = StepLedger::new(
+                    WorkPurpose::Execute,
+                    self.provider.name(),
+                    &model,
+                    self.config.dispatch_ceiling,
                 );
-                // The tail is one final text block on the turn's directive
-                // (after any tool_result blocks the directive itself
-                // carries), never a separate consecutive user message and
-                // never re-homed onto a later step's tool result or nudge
+                // Recorded on every exit path below, success or failure: the
+                // digest describes what was SENT, not what came back
                 // (docs/design/68-context-engine.md §6/§7).
-                attach_tail(&mut messages, &turn_tail, directive_at);
-                if replanned_mid_turn {
-                    // The earlier messages changed shape (§7): a thinking block
-                    // produced under the old shape cannot be replayed.
-                    strip_replayed_thinking(&mut messages);
-                }
-                let session_key = session
-                    .header()
-                    .map(|header| header.session_id.clone())
-                    .unwrap_or_default();
-                let cache = (!session_key.is_empty()).then(|| vak_llm::CacheHints {
-                    session_key,
-                    breakpoints: cache_breakpoints(&messages),
-                });
-                ChatRequest {
-                    output_schema: None,
-                    must_call,
-                    model,
-                    system: Some(self.config.system_prefix.clone()),
-                    messages,
-                    tools: tool_defs.clone(),
-                    max_tokens: self.output_budget(),
-                    context_need: None,
-                    cache,
-                    previous_response_id: None,
-                    settings: self.config.steps.get(purpose),
-                }
-            };
-            let mut base_request = base_request;
-            let request_chars = chat_request_chars(&base_request);
-            base_request.max_tokens = reply_room(&profile, request_chars, base_request.max_tokens);
-            base_request.context_need = Some(
-                profile.estimate_tokens(request_chars).saturating_add(
-                    base_request
-                        .max_tokens
-                        .map_or(profile.output_reserve, u64::from),
-                ),
-            );
-            let mut request = base_request.clone();
-            self.record_framing(turn, purpose, &request).await;
-            ledger.receipt.asked = Some(request.settings);
-
-            let mut response = {
-                // Run-level endurance: a sustained fault window (rate-limit
-                // burst, slow/hung upstream, truncating proxy) can outlast
-                // one step's retry budget. The ledger has not been touched,
-                // so re-attempting the whole turn is exact. Aborts, permanent
-                // errors, and ceiling exhaustion still fail/abort immediately.
-                let mut run_attempt: u32 = 0;
-                let mut backoff_ms = self.config.run_retry_base_backoff_ms.max(1);
-                // Over-length replan (docs/design/68-context-engine.md §5):
-                // a provider context-length rejection is a CapacityProfile
-                // contradiction, not a transient fault — retried once, with
-                // the horizon lowered and the request replanned smaller. A
-                // second rejection on the retry is the turn's failure.
-                let mut context_replan_used = false;
-                loop {
-                    match self
-                        .complete_with_reliability(&request, &cancel, &events, true, &mut ledger)
-                        .await
-                    {
-                        Ok(r) => {
-                            // The primary rejected the request and a later leg
-                            // carried it: the next turn must not start from the
-                            // same window.
-                            if ledger.context_rejected_leg == Some(0) {
-                                self.lower_horizon_for_rejection(
-                                    &profile,
-                                    &request,
-                                    "the primary route rejected the request as too long".into(),
-                                )
-                                .await;
-                            }
-                            break r;
-                        }
-                        Err(LlmError::Aborted { partial }) => {
-                            let _ = self
-                                .session
-                                .lock()
-                                .await
-                                .append_receipt(ledger.take_receipt());
-                            let partial = partial.map(|boxed| *boxed);
-                            if let Some(p) = &partial {
-                                let _ = self.append_assistant(p).await;
-                            }
-                            return TurnOutcome::Aborted { partial };
-                        }
-                        Err(e) if ledger.budget.remaining() == 0 => {
-                            let _ = self
-                                .session
-                                .lock()
-                                .await
-                                .append_receipt(ledger.take_receipt());
-                            return TurnOutcome::Failed {
-                                error: LlmError::Network(format!(
-                                    "dispatch ceiling of {} exhausted for this step; last error: {e}",
-                                    self.config.dispatch_ceiling
-                                )),
-                            };
-                        }
-                        // Only the primary's rejection says anything about the
-                        // primary's window; a fallback leg's is that leg's own.
-                        Err(LlmError::Context(reason))
-                            if !context_replan_used && ledger.context_rejected_leg == Some(0) =>
-                        {
-                            context_replan_used = true;
-                            let lowered = self
-                                .lower_horizon_for_rejection(&profile, &request, reason)
-                                .await;
-                            let new_prefix_tokens = lowered.estimate_tokens(prefix_chars(
-                                &self.config.system_prefix,
-                                &tool_defs,
-                            ));
-                            let new_tail_tokens = lowered.estimate_tokens(turn_tail.len() as u64);
-                            plan = self
-                                .build_working_set_plan(
-                                    &lowered,
-                                    new_prefix_tokens,
-                                    new_tail_tokens,
-                                )
-                                .await;
-                            // The lowered plan is the new baseline for the
-                            // rest of this turn, not just this retry.
-                            turn_plan = Some(plan.clone());
-                            request = {
-                                let session = self.session.lock().await;
-                                let (mut messages, directive_at) =
-                                    session.derive_with_plan_and_directive(&plan);
-                                self.note_held(
-                                    vak_control::provenance::EARLIER_TURNS,
-                                    session.carried_provenance(&plan),
-                                );
-                                attach_tail(&mut messages, &turn_tail, directive_at);
-                                // This request just changed shape earlier
-                                // than the open turn's own tail (a smaller
-                                // plan): replaying a thinking block from a
-                                // step already sent under the OLD shape is
-                                // rejected outright by a provider that
-                                // requires nothing earlier to have changed
-                                // since it was produced (docs/design/68
-                                // §7), so it is dropped here instead.
-                                strip_replayed_thinking(&mut messages);
-                                let session_key = session
-                                    .header()
-                                    .map(|header| header.session_id.clone())
-                                    .unwrap_or_default();
-                                let cache =
-                                    (!session_key.is_empty()).then(|| vak_llm::CacheHints {
-                                        session_key,
-                                        breakpoints: cache_breakpoints(&messages),
-                                    });
-                                ChatRequest {
-                                    output_schema: None,
-                                    must_call: None,
-                                    model: self.config.model.clone(),
-                                    system: Some(self.config.system_prefix.clone()),
-                                    messages,
-                                    tools: tool_defs.clone(),
-                                    max_tokens: self.output_budget(),
-                                    context_need: None,
-                                    cache,
-                                    previous_response_id: None,
-                                    settings: vak_control::StepSettings::default(),
-                                }
-                            };
-                            continue;
-                        }
-                        Err(error @ LlmError::ToolCallFormat(_))
-                            if !self.ladder.told(Cause::ToolCallRepair) =>
-                        {
-                            self.ladder.step(Cause::ToolCallRepair, false);
-                            let _ = self
-                                .session
-                                .lock()
-                                .await
-                                .append_receipt(ledger.take_receipt());
-                            if turn + 1 >= self.config.max_turns {
-                                return TurnOutcome::Failed { error };
-                            }
-                            let reason = match &error {
-                                LlmError::ToolCallFormat(reason) => reason.as_str(),
-                                _ => unreachable!("matched ToolCallFormat"),
-                            };
-                            if let Err(write_error) = self
-                                .correct(
-                                    Finding::ToolCallFormat {
-                                        reason: reason.to_string(),
-                                    },
-                                    Rung::Tell,
-                                )
-                                .await
-                            {
-                                return nudge_write_failed(write_error);
-                            }
-                            let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
-                            turn += 1;
-                            // Rebuild the request from the same open turn so
-                            // the system-authored repair record is included.
-                            // Continuing the nested provider-retry loop would
-                            // resend the stale request that caused the error.
-                            continue 'turn;
-                        }
-                        Err(e)
-                            if run_attempt < self.config.run_retry_attempts
-                                && is_transient_step_error(&e) =>
-                        {
-                            run_attempt += 1;
-                            let delay = backoff_ms.min(30_000);
-                            let reason = format!(
-                                "step exhausted ({e}); run-level re-attempt {run_attempt}/{}",
-                                self.config.run_retry_attempts
-                            );
-                            self.record_activity(
-                                vak_session::ActivityKind::Retry,
-                                vak_session::ActivityStatus::Running,
-                                format!("Retry attempt {run_attempt}"),
-                                Some(reason.clone()),
-                                [
-                                    ("attempt".into(), run_attempt.to_string()),
-                                    ("delay_ms".into(), delay.to_string()),
-                                ]
-                                .into(),
-                            )
-                            .await;
-                            let _ = events
-                                .send(AgentEvent::RetryScheduled {
-                                    attempt: run_attempt,
-                                    delay_ms: delay,
-                                    reason,
-                                })
-                                .await;
-                            if tokio::select! {
-                                _ = cancel.cancelled() => false,
-                                _ = tokio::time::sleep(std::time::Duration::from_millis(delay)) => true,
-                            } {
-                                backoff_ms = backoff_ms.saturating_mul(2);
-                                continue;
-                            }
-                            let _ = self
-                                .session
-                                .lock()
-                                .await
-                                .append_receipt(ledger.take_receipt());
-                            return TurnOutcome::Aborted { partial: None };
-                        }
-                        Err(e) => {
-                            let _ = self
-                                .session
-                                .lock()
-                                .await
-                                .append_receipt(ledger.take_receipt());
-                            return TurnOutcome::Failed { error: e };
-                        }
-                    }
-                }
-            };
-
-            // Provider dialect quirks are normalized before the assistant
-            // message reaches the append-only ledger. Execution, replay,
-            // presentation projection, and the next model step must all see
-            // the same canonical call rather than a live-only repaired copy.
-            let mcp_index = self
-                .config
-                .mcp_tool_index
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            normalize_response_tool_uses(
-                &mut response,
-                &self.config.tools,
-                &mcp_index,
-                self.config.time_limits,
-            );
-            // Some small models cannot emit a structured `tool_use` block
-            // and spell one out as text instead: rewrite `response` BEFORE
-            // it reaches the ledger, so what is recorded is already a
-            // valid tool_use/tool_result pair rather than envelope text
-            // (docs/design/68-context-engine.md §5/§7).
-            let calls: Vec<PendingToolCall> = extract_tool_calls(&mut response, &self.config.tools)
-                .into_iter()
-                .collect();
-            let mut calls = calls;
-            {
-                let session = self.session.lock().await;
-                let used = recorded_tool_use_ids(&session);
-                assign_unique_tool_use_ids(&mut response, &mut calls, used);
-            }
-            // A call whose arguments could not be read is written again
-            // under its tool's schema before it is ledgered
-            // (docs/design/89-constrained-tool-arguments.md §4.3).
-            self.regenerate_unreadable(&request, &mut response, &mut calls, &cancel, &events)
-                .await;
-
-            outcome_turns += 1;
-
-            let usage = response.usage.clone();
-            {
-                let mut session = self.session.lock().await;
-                let mut receipt = ledger.take_receipt();
-                if !receipt.prefix_digest.is_empty() {
-                    // A digest that differs from the immediately preceding
-                    // receipt's is a cache-breaking event, surfaced so a
-                    // regression is visible in the ledger rather than only in
-                    // the bill (docs/design/68-context-engine.md §7).
-                    if let Some(previous) = last_prefix_digest(&session)
-                        .filter(|previous| previous != &receipt.prefix_digest)
-                    {
-                        let now = chrono::Utc::now();
-                        let activity = vak_session::ActivityRecord {
-                            activity_id: format!(
-                                "activity-{}",
-                                now.timestamp_nanos_opt()
-                                    .unwrap_or_else(|| now.timestamp_micros() * 1_000)
-                            ),
+                ledger.receipt.prefix_digest =
+                    assemble::prefix_digest(&self.config.system_prefix, &tool_defs);
+                // Model-visible selection must be reconstructable (invariant 1):
+                // the plan that shaped this request is recorded when it changes.
+                {
+                    let mut session = self.session.lock().await;
+                    let data = plan.to_activity_data(session.tail_id().map(String::as_str));
+                    let fingerprint = format!("{data:?}");
+                    if logged_plan.as_deref() != Some(fingerprint.as_str()) {
+                        logged_plan = Some(fingerprint);
+                        let _ = session.append_activity(vak_session::ActivityRecord {
+                            activity_id: format!("context-plan-{}", uuid::Uuid::now_v7()),
                             kind: vak_session::ActivityKind::Diagnostic,
                             status: vak_session::ActivityStatus::Succeeded,
-                            label: "prefix-changed".to_string(),
+                            label: vak_session::CONTEXT_PLAN_LABEL.into(),
                             detail: None,
-                            data: [
-                                ("previous".to_string(), previous),
-                                ("current".to_string(), receipt.prefix_digest.clone()),
-                            ]
-                            .into_iter()
-                            .collect(),
-                        };
-                        let _ = session.append_activity(activity);
-                    }
-                    // Measured once per digest: the provider's reported input
-                    // tokens minus an estimate of the messages alone. A later
-                    // request with the same digest reuses this measurement
-                    // rather than re-deriving it from a cache-served step.
-                    if !prefix_digest_seen(&session, &receipt.prefix_digest) {
-                        let profile = self.effective_capacity_profile();
-                        let messages_tokens =
-                            profile.estimate_tokens(messages_chars(&request.messages));
-                        receipt.prefix_tokens =
-                            Some(usage.prompt_tokens().saturating_sub(messages_tokens));
+                            data,
+                        });
                     }
                 }
-                let _ = session.append_receipt(receipt);
-            };
-            let (settled_provider, settled_model) = (
-                ledger.receipt.provider.clone(),
-                ledger.receipt.model.clone(),
-            );
-            self.record_capacity_usage_feedback(
-                &request,
-                &usage,
-                ledger.last_first_token_ms,
-                &settled_provider,
-                &settled_model,
-            )
-            .await;
-            let response_entry_id = self.append_assistant(&response).await;
-            let _ = events.send(AgentEvent::TurnEnd { usage }).await;
+                let must_call = self.must_call.take();
+                let purpose = match must_call {
+                    Some(_) => vak_control::Purpose::Answer,
+                    None => self.step_purpose().await,
+                };
+                let base_request = {
+                    let session = self.session.lock().await;
+                    // `messages` is the explicit projection from the plan
+                    // (docs/design/68-context-engine.md §4/§10). Omitted history
+                    // stays in the ledger and is searched through `recall` only
+                    // when the model needs an earlier detail.
+                    let (mut messages, directive_at) =
+                        session.derive_with_plan_and_directive(&plan);
+                    self.note_held(
+                        vak_control::provenance::EARLIER_TURNS,
+                        session.carried_provenance(&plan),
+                    );
+                    // The tail is one final text block on the turn's directive
+                    // (after any tool_result blocks the directive itself
+                    // carries), never a separate consecutive user message and
+                    // never re-homed onto a later step's tool result or nudge
+                    // (docs/design/68-context-engine.md §6/§7).
+                    attach_tail(&mut messages, &turn_tail, directive_at);
+                    if replanned_mid_turn {
+                        // The earlier messages changed shape (§7): a thinking block
+                        // produced under the old shape cannot be replayed.
+                        strip_replayed_thinking(&mut messages);
+                    }
+                    let session_key = session
+                        .header()
+                        .map(|header| header.session_id.clone())
+                        .unwrap_or_default();
+                    let cache = (!session_key.is_empty()).then(|| vak_llm::CacheHints {
+                        session_key,
+                        breakpoints: cache_breakpoints(&messages),
+                    });
+                    ChatRequest {
+                        output_schema: None,
+                        must_call,
+                        model,
+                        system: Some(self.config.system_prefix.clone()),
+                        messages,
+                        tools: tool_defs.clone(),
+                        max_tokens: self.output_budget(),
+                        context_need: None,
+                        cache,
+                        previous_response_id: None,
+                        settings: self.config.steps.get(purpose),
+                    }
+                };
+                let mut base_request = base_request;
+                let request_chars = chat_request_chars(&base_request);
+                base_request.max_tokens =
+                    reply_room(&profile, request_chars, base_request.max_tokens);
+                base_request.context_need = Some(
+                    profile.estimate_tokens(request_chars).saturating_add(
+                        base_request
+                            .max_tokens
+                            .map_or(profile.output_reserve, u64::from),
+                    ),
+                );
+                let mut request = base_request.clone();
+                self.record_framing(turn, purpose, &request).await;
+                ledger.receipt.asked = Some(request.settings);
 
-            // Model drift (docs/design/68-context-engine.md §7): the step
-            // served a different directive than the current one. The
-            // steering nudge is appended once and the answer redone; an
-            // answer that drifts again straight after it stands as the
-            // model's own, with a diagnostic, and is never replaced.
-            let drift = self
-                .detect_model_drift(&response, &calls, &prompt_owned)
-                .await;
-            let nudged_before = std::mem::replace(&mut self.drift_nudged, drift.is_some());
-            if let Some(drift_reason) = drift.clone().filter(|_| nudged_before) {
-                self.record_activity(
-                    vak_session::ActivityKind::Diagnostic,
-                    vak_session::ActivityStatus::Failed,
-                    "model-drift".into(),
-                    Some(format!(
-                        "the answer still served another directive after the steering \
-                         nudge and stands as given. {drift_reason}"
-                    )),
-                    std::collections::BTreeMap::new(),
+                let mut response = {
+                    // Run-level endurance: a sustained fault window (rate-limit
+                    // burst, slow/hung upstream, truncating proxy) can outlast
+                    // one step's retry budget. The ledger has not been touched,
+                    // so re-attempting the whole turn is exact. Aborts, permanent
+                    // errors, and ceiling exhaustion still fail/abort immediately.
+                    let mut run_attempt: u32 = 0;
+                    let mut backoff_ms = self.config.run_retry_base_backoff_ms.max(1);
+                    // Over-length replan (docs/design/68-context-engine.md §5):
+                    // a provider context-length rejection is a CapacityProfile
+                    // contradiction, not a transient fault — retried once, with
+                    // the horizon lowered and the request replanned smaller. A
+                    // second rejection on the retry is the turn's failure.
+                    let mut context_replan_used = false;
+                    loop {
+                        match self
+                            .complete_with_reliability(
+                                &request,
+                                &cancel,
+                                &events,
+                                true,
+                                &mut ledger,
+                            )
+                            .await
+                        {
+                            Ok(r) => {
+                                // The primary rejected the request and a later leg
+                                // carried it: the next turn must not start from the
+                                // same window.
+                                if ledger.context_rejected_leg == Some(0) {
+                                    self.lower_horizon_for_rejection(
+                                        &profile,
+                                        &request,
+                                        "the primary route rejected the request as too long".into(),
+                                    )
+                                    .await;
+                                }
+                                break r;
+                            }
+                            Err(LlmError::Aborted { partial }) => {
+                                let _ = self
+                                    .session
+                                    .lock()
+                                    .await
+                                    .append_receipt(ledger.take_receipt());
+                                let partial = partial.map(|boxed| *boxed);
+                                if let Some(p) = &partial {
+                                    let _ = self.append_assistant(p).await;
+                                }
+                                return TurnOutcome::Aborted { partial };
+                            }
+                            Err(e) if ledger.budget.remaining() == 0 => {
+                                let _ = self
+                                    .session
+                                    .lock()
+                                    .await
+                                    .append_receipt(ledger.take_receipt());
+                                return TurnOutcome::Failed {
+                                    error: LlmError::Network(format!(
+                                        "dispatch ceiling of {} exhausted for this step; last error: {e}",
+                                        self.config.dispatch_ceiling
+                                    )),
+                                };
+                            }
+                            // Only the primary's rejection says anything about the
+                            // primary's window; a fallback leg's is that leg's own.
+                            Err(LlmError::Context(reason))
+                                if !context_replan_used
+                                    && ledger.context_rejected_leg == Some(0) =>
+                            {
+                                context_replan_used = true;
+                                let lowered = self
+                                    .lower_horizon_for_rejection(&profile, &request, reason)
+                                    .await;
+                                let new_prefix_tokens = lowered.estimate_tokens(prefix_chars(
+                                    &self.config.system_prefix,
+                                    &tool_defs,
+                                ));
+                                let new_tail_tokens =
+                                    lowered.estimate_tokens(turn_tail.len() as u64);
+                                plan = self
+                                    .build_working_set_plan(
+                                        &lowered,
+                                        new_prefix_tokens,
+                                        new_tail_tokens,
+                                    )
+                                    .await;
+                                // The lowered plan is the new baseline for the
+                                // rest of this turn, not just this retry.
+                                turn_plan = Some(plan.clone());
+                                request = {
+                                    let session = self.session.lock().await;
+                                    let (mut messages, directive_at) =
+                                        session.derive_with_plan_and_directive(&plan);
+                                    self.note_held(
+                                        vak_control::provenance::EARLIER_TURNS,
+                                        session.carried_provenance(&plan),
+                                    );
+                                    attach_tail(&mut messages, &turn_tail, directive_at);
+                                    // This request just changed shape earlier
+                                    // than the open turn's own tail (a smaller
+                                    // plan): replaying a thinking block from a
+                                    // step already sent under the OLD shape is
+                                    // rejected outright by a provider that
+                                    // requires nothing earlier to have changed
+                                    // since it was produced (docs/design/68
+                                    // §7), so it is dropped here instead.
+                                    strip_replayed_thinking(&mut messages);
+                                    let session_key = session
+                                        .header()
+                                        .map(|header| header.session_id.clone())
+                                        .unwrap_or_default();
+                                    let cache =
+                                        (!session_key.is_empty()).then(|| vak_llm::CacheHints {
+                                            session_key,
+                                            breakpoints: cache_breakpoints(&messages),
+                                        });
+                                    ChatRequest {
+                                        output_schema: None,
+                                        must_call: None,
+                                        model: self.config.model.clone(),
+                                        system: Some(self.config.system_prefix.clone()),
+                                        messages,
+                                        tools: tool_defs.clone(),
+                                        max_tokens: self.output_budget(),
+                                        context_need: None,
+                                        cache,
+                                        previous_response_id: None,
+                                        settings: vak_control::StepSettings::default(),
+                                    }
+                                };
+                                continue;
+                            }
+                            Err(error @ LlmError::ToolCallFormat(_))
+                                if !self.ladder.told(Cause::ToolCallRepair) =>
+                            {
+                                self.ladder.step(Cause::ToolCallRepair, false);
+                                let _ = self
+                                    .session
+                                    .lock()
+                                    .await
+                                    .append_receipt(ledger.take_receipt());
+                                if turn + 1 >= self.config.max_turns {
+                                    return TurnOutcome::Failed { error };
+                                }
+                                let reason = match &error {
+                                    LlmError::ToolCallFormat(reason) => reason.as_str(),
+                                    _ => unreachable!("matched ToolCallFormat"),
+                                };
+                                if let Err(write_error) = self
+                                    .correct(
+                                        Finding::ToolCallFormat {
+                                            reason: reason.to_string(),
+                                        },
+                                        Rung::Tell,
+                                    )
+                                    .await
+                                {
+                                    return nudge_write_failed(write_error);
+                                }
+                                let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
+                                turn += 1;
+                                // Rebuild the request from the same open turn so
+                                // the system-authored repair record is included.
+                                // Continuing the nested provider-retry loop would
+                                // resend the stale request that caused the error.
+                                continue 'turn;
+                            }
+                            Err(e)
+                                if run_attempt < self.config.run_retry_attempts
+                                    && is_transient_step_error(&e) =>
+                            {
+                                run_attempt += 1;
+                                let delay = backoff_ms.min(30_000);
+                                let reason = format!(
+                                    "step exhausted ({e}); run-level re-attempt {run_attempt}/{}",
+                                    self.config.run_retry_attempts
+                                );
+                                self.record_activity(
+                                    vak_session::ActivityKind::Retry,
+                                    vak_session::ActivityStatus::Running,
+                                    format!("Retry attempt {run_attempt}"),
+                                    Some(reason.clone()),
+                                    [
+                                        ("attempt".into(), run_attempt.to_string()),
+                                        ("delay_ms".into(), delay.to_string()),
+                                    ]
+                                    .into(),
+                                )
+                                .await;
+                                let _ = events
+                                    .send(AgentEvent::RetryScheduled {
+                                        attempt: run_attempt,
+                                        delay_ms: delay,
+                                        reason,
+                                    })
+                                    .await;
+                                if tokio::select! {
+                                    _ = cancel.cancelled() => false,
+                                    _ = tokio::time::sleep(std::time::Duration::from_millis(delay)) => true,
+                                } {
+                                    backoff_ms = backoff_ms.saturating_mul(2);
+                                    continue;
+                                }
+                                let _ = self
+                                    .session
+                                    .lock()
+                                    .await
+                                    .append_receipt(ledger.take_receipt());
+                                return TurnOutcome::Aborted { partial: None };
+                            }
+                            Err(e) => {
+                                let _ = self
+                                    .session
+                                    .lock()
+                                    .await
+                                    .append_receipt(ledger.take_receipt());
+                                return TurnOutcome::Failed { error: e };
+                            }
+                        }
+                    }
+                };
+
+                // Provider dialect quirks are normalized before the assistant
+                // message reaches the append-only ledger. Execution, replay,
+                // presentation projection, and the next model step must all see
+                // the same canonical call rather than a live-only repaired copy.
+                let mcp_index = self
+                    .config
+                    .mcp_tool_index
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                normalize_response_tool_uses(
+                    &mut response,
+                    &self.config.tools,
+                    &mcp_index,
+                    self.config.time_limits,
+                );
+                // Some small models cannot emit a structured `tool_use` block
+                // and spell one out as text instead: rewrite `response` BEFORE
+                // it reaches the ledger, so what is recorded is already a
+                // valid tool_use/tool_result pair rather than envelope text
+                // (docs/design/68-context-engine.md §5/§7).
+                let calls: Vec<PendingToolCall> =
+                    extract_tool_calls(&mut response, &self.config.tools)
+                        .into_iter()
+                        .collect();
+                let mut calls = calls;
+                {
+                    let session = self.session.lock().await;
+                    let used = recorded_tool_use_ids(&session);
+                    assign_unique_tool_use_ids(&mut response, &mut calls, used);
+                }
+                // A call whose arguments could not be read is written again
+                // under its tool's schema before it is ledgered
+                // (docs/design/89-constrained-tool-arguments.md §4.3).
+                self.regenerate_unreadable(&request, &mut response, &mut calls, &cancel, &events)
+                    .await;
+
+                outcome_turns += 1;
+
+                let usage = response.usage.clone();
+                {
+                    let mut session = self.session.lock().await;
+                    let mut receipt = ledger.take_receipt();
+                    if !receipt.prefix_digest.is_empty() {
+                        // A digest that differs from the immediately preceding
+                        // receipt's is a cache-breaking event, surfaced so a
+                        // regression is visible in the ledger rather than only in
+                        // the bill (docs/design/68-context-engine.md §7).
+                        if let Some(previous) = last_prefix_digest(&session)
+                            .filter(|previous| previous != &receipt.prefix_digest)
+                        {
+                            let now = chrono::Utc::now();
+                            let activity = vak_session::ActivityRecord {
+                                activity_id: format!(
+                                    "activity-{}",
+                                    now.timestamp_nanos_opt()
+                                        .unwrap_or_else(|| now.timestamp_micros() * 1_000)
+                                ),
+                                kind: vak_session::ActivityKind::Diagnostic,
+                                status: vak_session::ActivityStatus::Succeeded,
+                                label: "prefix-changed".to_string(),
+                                detail: None,
+                                data: [
+                                    ("previous".to_string(), previous),
+                                    ("current".to_string(), receipt.prefix_digest.clone()),
+                                ]
+                                .into_iter()
+                                .collect(),
+                            };
+                            let _ = session.append_activity(activity);
+                        }
+                        // Measured once per digest: the provider's reported input
+                        // tokens minus an estimate of the messages alone. A later
+                        // request with the same digest reuses this measurement
+                        // rather than re-deriving it from a cache-served step.
+                        if !prefix_digest_seen(&session, &receipt.prefix_digest) {
+                            let profile = self.effective_capacity_profile();
+                            let messages_tokens =
+                                profile.estimate_tokens(messages_chars(&request.messages));
+                            receipt.prefix_tokens =
+                                Some(usage.prompt_tokens().saturating_sub(messages_tokens));
+                        }
+                    }
+                    let _ = session.append_receipt(receipt);
+                };
+                let (settled_provider, settled_model) = (
+                    ledger.receipt.provider.clone(),
+                    ledger.receipt.model.clone(),
+                );
+                self.record_capacity_usage_feedback(
+                    &request,
+                    &usage,
+                    ledger.last_first_token_ms,
+                    &settled_provider,
+                    &settled_model,
                 )
                 .await;
-            } else if let Some(drift_reason) = drift.filter(|_| !nudged_before) {
-                // A request near the horizon that also drifted is evidence
-                // the horizon itself is optimistic (§1, §6).
-                self.record_capacity_instruction_failure(response.usage.prompt_tokens())
-                    .await;
-                // Never quotes the directive back: an echo after a tool result
-                // reads as the user asking again (docs/design/68 §6).
-                if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(
-                    vak_intent::control::ControlKind::SteeringDrift,
-                    format!(
-                        "[steering-drift]: {drift_reason}. Refocus your next step on the user's latest message."
-                    ),
-                )) {
- return nudge_write_failed(error);
- }
-                if calls.is_empty() {
-                    // A drifted final answer is not accepted as the turn's
-                    // answer: redo it, same as the other repair nudges.
-                    if turn + 1 >= self.config.max_turns {
-                        return TurnOutcome::MaxTurnsReached;
-                    }
-                    let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
-                    turn += 1;
-                    continue;
-                }
-            }
+                let response_entry_id = self.append_assistant(&response).await;
+                let _ = events.send(AgentEvent::TurnEnd { usage }).await;
 
+                // Model drift (docs/design/68-context-engine.md §7): the step
+                // served a different directive than the current one. The
+                // steering nudge is appended once and the answer redone; an
+                // answer that drifts again straight after it stands as the
+                // model's own, with a diagnostic, and is never replaced.
+                let drift = self
+                    .detect_model_drift(&response, &calls, &prompt_owned)
+                    .await;
+                let nudged_before = std::mem::replace(&mut self.drift_nudged, drift.is_some());
+                if let Some(drift_reason) = drift.clone().filter(|_| nudged_before) {
+                    self.record_activity(
+                        vak_session::ActivityKind::Diagnostic,
+                        vak_session::ActivityStatus::Failed,
+                        "model-drift".into(),
+                        Some(format!(
+                            "the answer still served another directive after the steering \
+                             nudge and stands as given. {drift_reason}"
+                        )),
+                        std::collections::BTreeMap::new(),
+                    )
+                    .await;
+                } else if let Some(drift_reason) = drift.filter(|_| !nudged_before) {
+                    // A request near the horizon that also drifted is evidence
+                    // the horizon itself is optimistic (§1, §6).
+                    self.record_capacity_instruction_failure(response.usage.prompt_tokens())
+                        .await;
+                    // Never quotes the directive back: an echo after a tool result
+                    // reads as the user asking again (docs/design/68 §6).
+                    if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(
+                        vak_intent::control::ControlKind::SteeringDrift,
+                        format!(
+                            "[steering-drift]: {drift_reason}. Refocus your next step on the user's latest message."
+                        ),
+                    )) {
+     return nudge_write_failed(error);
+     }
+                    if calls.is_empty() {
+                        // A drifted final answer is not accepted as the turn's
+                        // answer: redo it, same as the other repair nudges.
+                        if turn + 1 >= self.config.max_turns {
+                            return TurnOutcome::MaxTurnsReached;
+                        }
+                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
+                        turn += 1;
+                        continue;
+                    }
+                }
+
+                (response, calls, response_entry_id)
+            };
             if calls.is_empty() {
                 // Empty-step enforcement: the response carried neither text
                 // nor a tool call — a thinking-only completion, which a
@@ -3021,6 +3058,16 @@ impl Agent {
                 .map(|call| (call.name.clone(), call.input.clone()))
                 .collect();
             let (mut results, history_misses) = self.execute_batch(calls, &cancel, &events).await;
+            let shown_only = results.iter().any(|(id, _)| {
+                call_names
+                    .get(id)
+                    .is_some_and(|name| self.tool_presents_cards(name))
+            }) && results.iter().all(|(id, out)| {
+                matches!(out, ToolRunOutput::Ok(_))
+                    && call_names
+                        .get(id)
+                        .is_some_and(|name| self.tool_presents_cards(name) || name == "plan")
+            });
             self.record_worker_work(&task_assignments, &results).await;
             for (id, output) in &results {
                 if let (Some(name), Some(input)) = (call_names.get(id), call_inputs.get(id)) {
@@ -3325,6 +3372,46 @@ impl Agent {
             {
                 return nudge_write_failed(error);
             }
+            // The answer was shown when the step's cards were accepted, its
+            // last card said the answer is done, and the model's plan, if it
+            // made one, has nothing left to deliver
+            // (docs/design/97-cards-end-the-answer.md §4).
+            let last_card_done = call_issue_order
+                .iter()
+                .rev()
+                .find(|id| {
+                    call_names
+                        .get(*id)
+                        .is_some_and(|name| self.tool_presents_cards(name))
+                })
+                .and_then(|id| call_inputs.get(id))
+                .is_some_and(|input| input["then"] == "done");
+            let plan_delivered = || {
+                let plan = self
+                    .declared_plan
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                plan.as_deref().is_none_or(|plan| {
+                    let final_text = response.text_content();
+                    vak_judge::plan::gap(
+                        plan,
+                        &vak_judge::plan::Produced {
+                            cards: &card_answers,
+                            final_text: &final_text,
+                            files_delivered: files_delivered_this_run.len(),
+                            changed: receipts.has_execution_receipt(),
+                            checked: receipts.commands_run > 0 && !verification_stale,
+                            cards_withdrawn: !self.cards_available(),
+                        },
+                    )
+                    .is_empty()
+                })
+            };
+            answered_by_cards = (shown_only
+                && last_card_done
+                && !self.config.reports_to_parent
+                && plan_delivered())
+            .then(|| response.clone());
             turn += 1;
         }
     }

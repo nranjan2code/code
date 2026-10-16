@@ -1,5 +1,10 @@
 ## Unreleased
 
+- An answer shown as cards ends with its cards: every card says whether
+  the answer goes on after it, and when the last card of a step says it is
+  done (and the plan has nothing left), the turn ends there instead of
+  asking for another step, which wrote the cards' content again as text
+  under them or sent them again.
 - A markup preview is given the app's theme as CSS variables (`--vak-bg`,
   `--vak-fg`, `--vak-muted`, `--vak-accent`, `--vak-rule`, `--vak-font`,
   `--vak-font-mono`, `--vak-radius`) and its colour scheme, so generated

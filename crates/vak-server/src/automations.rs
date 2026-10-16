@@ -1373,12 +1373,15 @@ impl RunAnswer {
 
     /// What the run in `log` answered in its last turn.
     fn of_run(run: String, log: &vak_session::SessionLog, summary: &str, failed: bool) -> Self {
+        // The run's own last words, as recorded: the model-facing projection
+        // leaves out text written beside a call once the turn has closed,
+        // and a turn that ended on its cards closes on its last step.
         let narration = log
-            .derive_messages()
+            .message_chain()
             .into_iter()
             .rev()
-            .find(|message| message.role == vak_llm::Role::Assistant)
-            .map(|message| crate::projection::clean_scaffolding(&message.text_content()))
+            .find(|(_, message)| message.role == vak_llm::Role::Assistant)
+            .map(|(_, message)| crate::projection::clean_scaffolding(&message.text_content()))
             .unwrap_or_default();
         let turn = log.current_turn().map(str::to_string);
         let cards: Vec<_> = log

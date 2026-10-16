@@ -472,12 +472,9 @@ async fn a_terminal_card_shows_what_its_command_really_printed() {
         &dir,
         "pc-terminal",
         vec![
+            // Refused cards first: an accepted card is the answer and ends
+            // the turn, so it comes last.
             tool_call_msg("s1", "shell", serde_json::json!({"command": "npm start"})),
-            tool_call_msg(
-                "t1",
-                "emit_terminal_card",
-                serde_json::json!({"command": "npm start", "output": "ready"}),
-            ),
             tool_call_msg(
                 "t2",
                 "emit_terminal_card",
@@ -489,7 +486,11 @@ async fn a_terminal_card_shows_what_its_command_really_printed() {
                 "emit_terminal_card",
                 serde_json::json!({"command": "ls missing"}),
             ),
-            text_msg("The server stopped at its limit."),
+            tool_call_msg(
+                "t1",
+                "emit_terminal_card",
+                serde_json::json!({"command": "npm start", "output": "ready", "then": "done"}),
+            ),
         ],
     )
     .await;
@@ -596,12 +597,21 @@ async fn an_ability_card_shows_every_record_its_call_answered() {
         vec![
             tool_call_msg("u0", "emit_ability_table_card", serde_json::json!({"from": "census", "list": "rows"})),
             tool_call_msg("a1", "census", serde_json::json!({})),
-            tool_call_msg(
-                "u1",
-                "emit_ability_table_card",
-                serde_json::json!({"from": "census", "list": "rows", "rows": [{"city": "Made up", "people": 1}]}),
-            ),
-            tool_call_msg("u2", "emit_ability_table_card", serde_json::json!({"from": "weather", "list": "rows"})),
+            // One step with a refused card beside the accepted one: a step
+            // of accepted cards alone is the answer and ends the turn.
+            {
+                let mut step = tool_call_msg(
+                    "u1",
+                    "emit_ability_table_card",
+                    serde_json::json!({"from": "census", "list": "rows", "rows": [{"city": "Made up", "people": 1}]}),
+                );
+                step.content.push(ContentBlock::ToolUse {
+                    id: "u2".into(),
+                    name: "emit_ability_table_card".into(),
+                    input: serde_json::json!({"from": "weather", "list": "rows"}),
+                });
+                step
+            },
             tool_call_msg("u3", "emit_ability_table_card", serde_json::json!({"from": "census", "list": "towns"})),
             text_msg("Here are the cities."),
         ],

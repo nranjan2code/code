@@ -79,24 +79,29 @@ impl Provider for Carding {
             *step += 1;
             *step
         };
+        // The narration comes with the card that completes the answer: a
+        // card that says `done` ends the turn (docs/design/97).
         let (content, stop) = if step == 1 {
             (
-                ContentBlock::ToolUse {
-                    id: "c1".into(),
-                    name: "emit_callout_card".into(),
-                    input: serde_json::json!({"semantic_type": "callout", "label": "Quote of the day", "text": "Small steps make big change.", "tone": "note"}),
-                },
+                vec![
+                    ContentBlock::text("Here it is."),
+                    ContentBlock::ToolUse {
+                        id: "c1".into(),
+                        name: "emit_callout_card".into(),
+                        input: serde_json::json!({"semantic_type": "callout", "label": "Quote of the day", "text": "Small steps make big change.", "tone": "note", "then": "done"}),
+                    },
+                ],
                 vak_llm::types::StopReason::ToolUse,
             )
         } else {
             (
-                ContentBlock::text("Here it is."),
+                vec![ContentBlock::text("never asked")],
                 vak_llm::types::StopReason::EndTurn,
             )
         };
         let (mut sink, rx) = stream::channel(8);
         let done = AssistantMessage {
-            content: vec![content],
+            content,
             stop_reason: stop,
             usage: Usage::default(),
             model: "card-model".into(),

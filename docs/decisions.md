@@ -9,6 +9,16 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-16
 
+- Cards end the answer by declaration
+  (`docs/design/97-cards-end-the-answer.md`): every card takes a required
+  `then` (`more` or `done`), and a step of accepted cards whose last card
+  said `done` ends the turn when the plan has nothing left. Measured: the
+  open step after a card restated it on the dev route whatever the prompt,
+  result, thinking or sampling; with `then`, one-card answers said `done`
+  and the step after `more` added a card 5 of 5. Native tool search stays
+  unused after a survey of every supported provider: three routes have it
+  and a discovery step hurt the smallest route; deferral remains the "More
+  tools" catalogue, called by name.
 - One history tool and no discovery tool
   (`docs/audits/history-lookup-2026-10-16.md`,
   `docs/design/68-context-engine.md` §5): `recall` searches this

@@ -4649,6 +4649,7 @@ mod tests {
         let mut failures = Vec::new();
         for (tool, semantic_type, args) in cases {
             let mut normalized_args = args.clone();
+            normalized_args["then"] = serde_json::json!("done");
             let emitter = emitters
                 .iter()
                 .find(|emitter| vak_tools::Tool::name(*emitter) == tool)

@@ -394,6 +394,20 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
+0. Answers on screen (2026-10-16). Doc 96 Q1 and Q2 are committed
+   (4d30a2f98, d1066827c). Doc 97 (cards end the answer) is built: every
+   card takes `then: more | done`, a step of accepted cards whose last
+   card said `done` ends the turn, the turn closes on its recorded ending,
+   and readers of a run's last words read recorded messages. Measured on
+   the dev route and compared with the OpenAI route; §7 lists what is open
+   (a connected-accounts rollup for `mail_calendar`, composition skills
+   that only some models fetch, plan as the answer's outline). Next: the
+   Details Activity steps view (the server already reports plan, card and
+   recall calls), then doc 96 Q3, whose two design questions (no rollup
+   over a session ledger; how `choose` becomes a directive) wait on the
+   maintainer. The proposed live-turn design for cards (draw recorded
+   cards while the run goes on, one quiet "Preparing" line, a staggered
+   reveal) also waits on the maintainer.
 1. Doc 93 E6 rest, then E7 to E9 (doc 93 §11), each with the full gate and a
    live turn; tick `docs/plans/open-items.md` and the doc's Status.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are

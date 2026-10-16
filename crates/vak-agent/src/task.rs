@@ -1020,6 +1020,7 @@ impl TaskTool {
         // so the worker starts holding it (docs/design/08-permissions.md
         // "Provenance").
         cfg.inherited_provenance = ctx.provenance;
+        cfg.reports_to_parent = true;
         cfg.model = self.deps.model.clone();
         cfg.tail = self.deps.tail.clone();
         let child_tool_names: std::collections::BTreeSet<_> =

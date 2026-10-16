@@ -79,6 +79,14 @@ A turn's answer is composed by the runtime, not left to emit order:
   narrow one. One type scale, one spacing rhythm, one entrance motion for
   the whole answer, so it reads as one thing rather than a pile of boxes.
 
+### 2a. Cards end the answer (2026-10-16)
+
+Every card says whether the answer goes on after it (`then`: `more` or
+`done`), and a step of accepted cards whose last card said `done` ends the
+turn when the plan, if any, has nothing left; no further step is asked
+for. The design, the measurements on two routes and the provider survey
+are docs/design/97-cards-end-the-answer.md.
+
 ## 3. Blocks
 
 Each block kind is the arguments of the card tool that owns it, called by

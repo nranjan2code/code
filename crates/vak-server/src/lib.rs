@@ -20518,12 +20518,14 @@ fn last_assistant_text(handle: &SessionHandle) -> Option<String> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let log = guard.as_ref()?;
+    // The recorded last words, not the model-facing projection, which
+    // leaves out text written beside a call once the turn has closed.
     let narration = log
-        .derive_messages()
+        .message_chain()
         .into_iter()
         .rev()
-        .find(|m| m.role == vak_llm::Role::Assistant)
-        .map(|m| m.text_content())
+        .find(|(_, m)| m.role == vak_llm::Role::Assistant)
+        .map(|(_, m)| m.text_content())
         .unwrap_or_default();
     // A run whose answer was a card has little or no narration; the cards are
     // still the answer.

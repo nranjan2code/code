@@ -320,14 +320,13 @@ async fn an_unreadable_call_is_regenerated_under_its_schema_and_runs() {
     let log = SessionLog::create(ledger.clone(), header).unwrap();
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let rewritten = json!({"semantic_type": "table", "deliverable": "comparison",
-        "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"]});
+        "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"], "then": "done"});
     let mut agent = Agent::new(
         Arc::new(Scripted {
             capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(VecDeque::from(vec![
                 broken_card("a1"),
                 text(&rewritten.to_string()),
-                text("Obsidian keeps notes local; Notion syncs."),
             ])),
             seen: seen.clone(),
         }),
@@ -356,7 +355,8 @@ async fn an_unreadable_call_is_regenerated_under_its_schema_and_runs() {
     );
     {
         let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 3, "{seen:?}");
+        // The accepted card is the answer: no step is asked after it.
+        assert_eq!(seen.len(), 2, "{seen:?}");
         assert!(seen[1].0.is_empty(), "the rewrite offers no tool: {seen:?}");
         assert_eq!(seen[1].2.as_deref(), Some("emit_table_card"));
     }
@@ -424,7 +424,7 @@ async fn a_call_of_the_wrong_shape_is_regenerated_under_its_schema_at_once() {
     let log = SessionLog::create(ledger.clone(), header).unwrap();
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let rewritten = json!({"semantic_type": "table", "deliverable": "comparison",
-        "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"]});
+        "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"], "then": "done"});
     let mut agent = Agent::new(
         Arc::new(Scripted {
             capacity_key: crate::support::capacity_key(),
@@ -435,7 +435,6 @@ async fn a_call_of_the_wrong_shape_is_regenerated_under_its_schema_at_once() {
                     json!({"semantic_type": "table", "rows": ["A | B"]}),
                 ),
                 text(&rewritten.to_string()),
-                text("Obsidian keeps notes local; Notion syncs."),
             ])),
             seen: seen.clone(),
         }),
@@ -464,7 +463,8 @@ async fn a_call_of_the_wrong_shape_is_regenerated_under_its_schema_at_once() {
     );
     {
         let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 3, "{seen:?}");
+        // The accepted card is the answer: no step is asked after it.
+        assert_eq!(seen.len(), 2, "{seen:?}");
         assert_eq!(seen[1].2.as_deref(), Some("emit_table_card"), "{seen:?}");
     }
     let session = agent.session.lock().await;
@@ -526,7 +526,7 @@ async fn a_blind_call_to_a_deferred_tool_is_regenerated_at_once() {
     let log = SessionLog::create(ledger.clone(), header).unwrap();
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     let rewritten = json!({"semantic_type": "table", "deliverable": "comparison",
-        "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"]});
+        "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"], "then": "done"});
     let mut agent = Agent::new(
         Arc::new(Scripted {
             capacity_key: crate::support::capacity_key(),
@@ -537,7 +537,6 @@ async fn a_blind_call_to_a_deferred_tool_is_regenerated_at_once() {
                     json!({"semantic_type": "table", "rows": ["A | B"]}),
                 ),
                 text(&rewritten.to_string()),
-                text("Obsidian keeps notes local; Notion syncs."),
             ])),
             seen: seen.clone(),
         }),
@@ -572,7 +571,8 @@ async fn a_blind_call_to_a_deferred_tool_is_regenerated_at_once() {
     );
     {
         let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 3, "{seen:?}");
+        // The accepted card is the answer: no step is asked after it.
+        assert_eq!(seen.len(), 2, "{seen:?}");
         assert_eq!(
             seen[1].2.as_deref(),
             Some("emit_table_card"),

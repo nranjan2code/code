@@ -325,21 +325,30 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
                 "steps_block",
                 serde_json::json!({"deliverable": "morning routine", "steps": ["Wake"]}),
             ),
-            call(
-                "a3",
-                "steps_block",
-                serde_json::json!({"deliverable": "Watering", "steps": ["Water Monday"]}),
-            ),
-            call(
-                "a5",
-                "steps_block",
-                serde_json::json!({"deliverable": "morning routine", "steps": ["Wake"]}),
-            ),
-            call(
-                "a4",
-                "steps_block",
-                serde_json::json!({"steps": ["Feed Friday"]}),
-            ),
+            // The planned card, a card naming no planned deliverable and an
+            // unnamed one, in one step: a step of accepted cards alone that
+            // delivers the plan would end the turn.
+            {
+                let mut step = call(
+                    "a3",
+                    "steps_block",
+                    serde_json::json!({"deliverable": "Watering", "steps": ["Water Monday"]}),
+                );
+                for (id, input) in [
+                    (
+                        "a5",
+                        serde_json::json!({"deliverable": "morning routine", "steps": ["Wake"]}),
+                    ),
+                    ("a4", serde_json::json!({"steps": ["Feed Friday"]})),
+                ] {
+                    step.content.push(ContentBlock::ToolUse {
+                        id: id.into(),
+                        name: "steps_block".into(),
+                        input,
+                    });
+                }
+                step
+            },
             text("Water on Monday."),
         ],
     );
@@ -523,5 +532,131 @@ async fn a_kind_sent_to_the_wrong_card_tool_is_told_its_owner() {
     assert!(
         refusal.contains("`steps` is a kind of `steps_block`"),
         "{refusal}"
+    );
+}
+
+/// A step whose calls are all accepted cards showed the answer: the turn
+/// ends there, through the end-of-turn checks, and no further step is asked
+/// for, which is where a restatement of the cards as text came from
+/// (docs/design/87-composed-answers.md §2a).
+#[tokio::test]
+async fn a_step_of_accepted_cards_is_the_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, requests) = agent(
+        &dir,
+        "cards-end-turn",
+        vec![
+            call(
+                "a1",
+                "steps_block",
+                serde_json::json!({"steps": ["Water Monday"], "then": "done"}),
+            ),
+            text("never asked"),
+        ],
+    );
+    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(requests.lock().unwrap().len(), 1, "one step, the cards'");
+    let session = agent.session.lock().await;
+    assert!(
+        !session
+            .derive_messages()
+            .iter()
+            .any(|message| message.text_content().contains("never asked")),
+        "no step after the cards"
+    );
+    let assistants = session
+        .derive_messages()
+        .iter()
+        .filter(|message| message.role == vak_llm::Role::Assistant)
+        .count();
+    assert_eq!(
+        assistants, 1,
+        "the step that showed the cards is logged once"
+    );
+    let index = session.current_turn_index();
+    let turn = index.turns.last().unwrap();
+    assert!(turn.closed, "the recorded ending closes the turn");
+    assert!(turn.card.is_some(), "the closed turn has its card");
+}
+
+/// A plan that still owes a part keeps the turn going after its cards: the
+/// model writes the text deliverable its plan named.
+#[tokio::test]
+async fn a_plan_still_owing_text_gets_its_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, requests) = agent(
+        &dir,
+        "cards-plan-text",
+        vec![
+            call(
+                "p1",
+                "plan",
+                serde_json::json!({"deliverables": [
+                    {"name": "watering", "form": "card"},
+                    {"name": "why", "form": "text"}
+                ]}),
+            ),
+            call(
+                "a1",
+                "steps_block",
+                serde_json::json!({"deliverable": "watering", "steps": ["Water Monday"]}),
+            ),
+            text("Roots dry out by Monday."),
+        ],
+    );
+    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(requests.lock().unwrap().len(), 3);
+    let session = agent.session.lock().await;
+    assert!(
+        session
+            .derive_messages()
+            .iter()
+            .any(|message| message.text_content().contains("Roots dry out")),
+        "the planned text is written"
+    );
+}
+
+/// A card that says the answer goes on keeps the turn going: the next step
+/// shows the rest, and the card that says `done` ends it.
+#[tokio::test]
+async fn a_card_that_says_more_keeps_the_turn_going() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, requests) = agent(
+        &dir,
+        "cards-more-then-done",
+        vec![
+            call(
+                "a1",
+                "steps_block",
+                serde_json::json!({"steps": ["Water Monday"], "then": "more"}),
+            ),
+            call(
+                "a2",
+                "steps_block",
+                serde_json::json!({"steps": ["Feed Friday"], "then": "done"}),
+            ),
+            text("never asked"),
+        ],
+    );
+    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        2,
+        "the card that said done ends it"
     );
 }

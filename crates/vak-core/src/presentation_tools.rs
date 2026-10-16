@@ -1970,26 +1970,36 @@ impl Tool for EmitCardTool {
         }
         properties.insert(
             "label".into(),
-            string(
-                "Optional. A few words of your own naming this part of the answer, shown above it.",
-            ),
+            string("Optional. A few words naming this part, shown above it."),
         );
         properties.insert(
             "deliverable".into(),
-            string("The deliverable from your plan this card delivers, by the name you gave it there. A planned card counts as shown only when a card names it here; leave it out for a card your plan does not list."),
+            string("The plan deliverable this card delivers, by its name; leave it out when your plan does not list it."),
         );
         properties.insert(
             "replaces".into(),
-            string("Optional. To improve a card you already showed in this answer, the presentation id its acknowledgement gave: this card takes its place. Leave it out for a new card."),
+            string(
+                "Optional. The presentation id of a card of this answer that this card replaces.",
+            ),
         );
         properties.insert(
             "beside_previous".into(),
             serde_json::json!({
                 "type": "boolean",
-                "description": "Optional. true to place this card beside the card before it where the screen is wide enough, for two short cards read together; leave it out to give the card the full width."
+                "description": "Optional. true to place it beside the card before it."
             }),
         );
-        serde_json::json!({"type": "object", "properties": properties, "required": own["required"]})
+        properties.insert(
+            "then".into(),
+            serde_json::json!({
+                "type": "string",
+                "enum": ["more", "done"],
+                "description": "more if another card or text follows this card; done if it completes your answer."
+            }),
+        );
+        let mut required = own["required"].as_array().cloned().unwrap_or_default();
+        required.push(Value::from("then"));
+        serde_json::json!({"type": "object", "properties": properties, "required": required})
     }
 
     fn presents_cards(&self) -> bool {
@@ -2095,6 +2105,9 @@ fn validate_call(
     own.remove("deliverable");
     own.remove("replaces");
     own.remove("beside_previous");
+    // `then` says whether the answer goes on after this card; the loop
+    // reads it to end the turn (docs/design/97-cards-end-the-answer.md).
+    own.remove("then");
     let label = own
         .remove("label")
         .and_then(|label| label.as_str().map(str::trim).map(str::to_string))
@@ -2437,6 +2450,7 @@ mod tests {
         for (name, form, mut args) in conformance_cases() {
             let tool = tool(name);
             sent(&tool, &mut args);
+            args["then"] = serde_json::json!("done");
             vak_tools::validate_input(&tool.schema(), &args)
                 .unwrap_or_else(|error| panic!("{form}: {error}"));
             let info = presentation_info(name, &args, &skills)
@@ -2494,6 +2508,7 @@ mod tests {
                     "label".to_string(),
                     "replaces".to_string(),
                     "beside_previous".to_string(),
+                    "then".to_string(),
                 ])
                 .collect();
             let mut calls = vec![json!({}), fixture.clone()];

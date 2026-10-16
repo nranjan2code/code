@@ -1185,7 +1185,12 @@ commit (invariant 30).
   (doc 91); nothing else does. An answer uses as many cards as it has
   parts, laid out by doc 87; the model alone places a card: `replaces`
   (a presentation id of this answer) puts it in that card's place, and
-  `beside_previous` beside the card before it. Nothing decides a card by words or counts:
+  `beside_previous` beside the card before it. Every card says whether
+  the answer goes on after it (`then`: `more` or `done`); a step of
+  accepted cards whose last card said `done` ends the turn when the plan,
+  if any, has nothing left, and no further step is asked for
+  (docs/design/97-cards-end-the-answer.md). Nothing relies on the model
+  choosing to say nothing. Nothing decides a card by words or counts:
   no signals read from text, no title word lists, no row thresholds. The
   contributor guide is `docs/design/67-presentation-renderer-guide.md`. A model shows
   each card by calling the card tool that owns its kind, by its own name

@@ -87,6 +87,11 @@ pub struct Turn {
     /// is not enough once a control nudge or tool result follows it; only
     /// a fresh final answer with nothing after it closes the turn.
     pub closed: bool,
+    /// The runtime recorded that this turn ended answered
+    /// (`Choice::EndTurn` with `End::Answered`): a turn whose answer was
+    /// its cards ends on that record, with no message after its last step
+    /// (docs/design/87-composed-answers.md §2a).
+    pub ended_answered: bool,
     /// `true` when a reset-with-handoff entry (docs/design/42) follows this
     /// turn on the chain and the turn had already finished: the turn is
     /// invisible to the model, so it is
@@ -508,6 +513,7 @@ impl TurnIndex {
                                     card: None,
                                     closing_entry_id: None,
                                     closed: true,
+                                    ended_answered: false,
                                     behind_reset: false,
                                     presentation_records: Vec::new(),
                                     evidence_bodies: HashMap::new(),
@@ -555,6 +561,17 @@ impl TurnIndex {
                                 }
                             }
                         }
+                    }
+                }
+                EntryPayload::Decision(vak_control::Decision {
+                    choice:
+                        vak_control::Choice::EndTurn(vak_control::Ending {
+                            end: vak_control::End::Answered,
+                        }),
+                    ..
+                }) => {
+                    if let Some(turn) = turns.last_mut() {
+                        turn.ended_answered = true;
                     }
                 }
                 EntryPayload::Intent(record) => {
@@ -667,11 +684,12 @@ impl TurnIndex {
         // is not the same thing as an accepted answer).
         if let Some(last) = turns.last_mut() {
             let last_message = last.raw_tail.last().unwrap_or(&last.directive);
-            last.closed = last_message.role == Role::Assistant
-                && !last_message
-                    .content
-                    .iter()
-                    .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
+            last.closed = last.ended_answered
+                || last_message.role == Role::Assistant
+                    && !last_message
+                        .content
+                        .iter()
+                        .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
         }
 
         let by_id: HashMap<String, usize> = turns
