@@ -132,15 +132,6 @@ impl AgentScope {
         self.memory_root().join("user").join("USER.md")
     }
 
-    /// `None` is the Agent-wide (global) entity store.
-    pub fn entities_file(&self, cwd: Option<&Path>) -> PathBuf {
-        let sub = match cwd {
-            Some(dir) => crate::spaces::key(dir),
-            None => "global".to_string(),
-        };
-        self.root.join("entities").join(sub).join("ENTITIES.jsonl")
-    }
-
     pub fn skill_proposals_root(&self) -> PathBuf {
         self.root.join("skill-proposals")
     }
@@ -642,14 +633,6 @@ mod tests {
             home.join("memory").join(&key).join("MEMORY.md")
         );
         assert_eq!(s.user_memory(), home.join("memory/user/USER.md"));
-        assert_eq!(
-            s.entities_file(Some(cwd)),
-            home.join("entities").join(&key).join("ENTITIES.jsonl")
-        );
-        assert_eq!(
-            s.entities_file(None),
-            home.join("entities/global/ENTITIES.jsonl")
-        );
         assert_eq!(
             s.skill_proposals(cwd),
             home.join("skill-proposals").join(&key)

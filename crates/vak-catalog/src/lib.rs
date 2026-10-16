@@ -110,8 +110,8 @@ pub struct Audience {
     /// every Agent.
     pub agents: Option<Vec<String>>,
     /// The conversation audience a result must belong to; `None` is any.
-    /// Something with no audience of its own (an Agent's memory note, its
-    /// entities) belongs to its Agent: it is returned to an audience only
+    /// Something with no audience of its own (an Agent's memory note)
+    /// belongs to its Agent: it is returned to an audience only
     /// when `agents` names that Agent.
     pub audience: Option<String>,
     /// Sessions that must not appear (the trash), as their plain ids.

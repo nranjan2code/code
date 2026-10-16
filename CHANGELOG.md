@@ -1,5 +1,9 @@
 ## Unreleased
 
+- One place for what Vakyartha remembers: the separate "people and
+  things" store is gone, with its tool, the `/entities` routes, `vak
+  entities` and the "People and things" search filter. Notes kept with
+  `remember` are what recall finds.
 - The `data_query` tool is gone: it needed the whole table copied into
   the call. Workbooks are read with `doc_read`, a CSV is profiled by the
   `table-profile` ability, and sums and groupings are worked out with

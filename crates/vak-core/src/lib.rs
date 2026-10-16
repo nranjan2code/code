@@ -21,7 +21,6 @@ pub mod commitments;
 pub mod custom_commands;
 pub mod digest;
 pub mod discovery;
-pub mod entities;
 pub mod erasure;
 pub mod file_mentions;
 pub mod file_state;
@@ -4163,7 +4162,6 @@ impl Core {
             .map(|agent| agent.id.clone())
             .unwrap_or_else(|| "vak".into());
         let session = scope.session_id.clone();
-        let (store, workspace) = (self.scope().into_root(), self.inner.cwd.clone());
         Some(Arc::new(elsewhere::Elsewhere {
             catalog: self.catalog().ok(),
             audience,
@@ -4179,10 +4177,6 @@ impl Core {
                         session: Some(&session),
                     },
                 )
-            })),
-            entity: Some(Arc::new(move |id: &str| {
-                entities::get_entity(&store, Some(&workspace), id)
-                    .and_then(|entity| serde_json::to_value(entity).ok())
             })),
         }))
     }
@@ -4246,10 +4240,6 @@ impl Core {
                 session_id: scope.session_id.clone(),
             }));
             tools.push(Arc::new(learning::ForgetMemoryTool {
-                sessions_home: self.scope().into_root(),
-                cwd: self.inner.cwd.clone(),
-            }));
-            tools.push(Arc::new(entities::EntityRecordTool {
                 sessions_home: self.scope().into_root(),
                 cwd: self.inner.cwd.clone(),
             }));

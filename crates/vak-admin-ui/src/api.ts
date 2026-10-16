@@ -373,7 +373,7 @@ export const api = {
       method: "POST",
     }).then(handleVoid),
 
-  /** Searches every workspace's conversations, memory and entities. */
+  /** Searches every workspace's conversations and memory. */
   search: (
     q: string,
     filters: { kind?: string; limit?: number } = {},

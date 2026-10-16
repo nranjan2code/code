@@ -2859,14 +2859,12 @@ const KIND_FILTERS = [
   { id: "", label: "Everything" },
   { id: "conversation", label: "Conversations" },
   { id: "memory", label: "Memory" },
-  { id: "entity", label: "People and things" },
 ];
 
 const HIT_WORDS: Record<SearchHit["role"], string> = {
   conversation: "Conversation",
   memory: "Memory",
   profile: "About you",
-  entity: "Person or thing",
 };
 
 function SearchView() {
@@ -2904,7 +2902,7 @@ function SearchView() {
   return (
     <div class="view">
       <KnowledgeSubNav active="#/search" />
-      <PageHeader title="Search" description="Look through every conversation, memory note and entity, and jump straight to where something was said." />
+      <PageHeader title="Search" description="Look through every conversation and memory note, and jump straight to where something was said." />
       <div class="search-hero-deck">
         <div class="search-hero">
           <input

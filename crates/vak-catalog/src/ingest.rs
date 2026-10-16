@@ -211,15 +211,13 @@ pub(crate) fn source(
                 frames: versions.max(from.frames),
             }
         }
-        Source::Memory { path, agent } | Source::Entity { path, agent } => {
-            let memory = matches!(source, Source::Memory { .. });
+        Source::Memory { path, agent } => {
             let versions = vak_session::documents::version_count(path) as u64;
             if versions > from.frames {
                 match vak_session::documents::read(path) {
-                    Ok(Some(content)) if memory => memory_document(tx, path, agent, &content)?,
-                    Ok(Some(content)) => entity_document(tx, path, agent, &content)?,
+                    Ok(Some(content)) => memory_document(tx, path, agent, &content)?,
                     // Forgotten: it leaves search.
-                    _ => forget_document(tx, path, memory)?,
+                    _ => forget_document(tx, path)?,
                 }
                 rows += 1;
             }
@@ -841,73 +839,9 @@ fn memory_document(
     set_text(tx, &node, &format!("[{label}] {}", text.trim()))
 }
 
-/// An entity: one Document of JSON with its name, type and summary.
-fn entity_document(
-    tx: &Transaction<'_>,
-    path: &std::path::Path,
-    agent: &str,
-    content: &str,
-) -> rusqlite::Result<()> {
-    let Ok(entity) = serde_json::from_str::<Value>(content) else {
-        return Ok(());
-    };
-    let node = format!("entity:{}", path.display());
-    let field = |name: &str| entity.get(name).and_then(Value::as_str).unwrap_or_default();
-    let attributes = entity
-        .get("attributes")
-        .and_then(Value::as_object)
-        .map(|map| {
-            map.iter()
-                .map(|(key, value)| format!("{key}: {}", value.as_str().unwrap_or_default()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default();
-    // `…/entities/<space or global>/ENTITIES.jsonl/<id>`.
-    let space = path
-        .iter()
-        .rev()
-        .nth(2)
-        .map(|part| part.to_string_lossy().into_owned())
-        .filter(|space| space != "global");
-    upsert(
-        tx,
-        Upsert {
-            id: &node,
-            kind: "entity",
-            space,
-            agent: Some(agent_id(agent)),
-            agent_name: Some(agent.to_string()),
-            title: Some(field("name").to_string()),
-            status: Some(field("entity_type").to_string()),
-            created_at: entity
-                .get("updated_at")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            locator: Some(path.display().to_string()),
-            ..Default::default()
-        },
-    )?;
-    set_text(
-        tx,
-        &node,
-        &format!(
-            "[entity:{}] {} — {} {attributes}",
-            field("entity_type"),
-            field("name"),
-            field("summary")
-        ),
-    )
-}
-
-/// A forgotten memory note or entity leaves search and the catalog.
-fn forget_document(
-    tx: &Transaction<'_>,
-    path: &std::path::Path,
-    memory: bool,
-) -> rusqlite::Result<()> {
-    let kind = if memory { "memory" } else { "entity" };
-    let node = format!("{kind}:{}", path.display());
+/// A forgotten memory note leaves search and the catalog.
+fn forget_document(tx: &Transaction<'_>, path: &std::path::Path) -> rusqlite::Result<()> {
+    let node = format!("memory:{}", path.display());
     tx.execute("DELETE FROM texts WHERE node = ?1", [&node])?;
     tx.execute("DELETE FROM edges WHERE src = ?1 OR dst = ?1", [&node])?;
     tx.execute("DELETE FROM nodes WHERE id = ?1", [&node])?;

@@ -17,7 +17,6 @@ mod data;
 mod digest;
 mod doctor;
 mod effects;
-mod entities_cli;
 mod eval_ledgers;
 mod format;
 mod inbox;
@@ -742,7 +741,6 @@ async fn main() {
             },
         },
         Some(Command::Memory { action }) => memory::run_memory(cwd, action),
-        Some(Command::Entities { action }) => entities_cli::run_entities(cwd, action),
         Some(Command::Agents { action }) => agents_cli::run_agents(cwd, action),
         Some(Command::Export {
             session_id,

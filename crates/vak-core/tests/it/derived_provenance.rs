@@ -3,7 +3,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use vak_core::{entities, learning, memory, reflection};
+use vak_core::{learning, memory, reflection};
 use vak_session::trace::DerivedFrom;
 
 #[test]
@@ -60,17 +60,4 @@ fn derived_writes_record_provenance() {
         })
     );
 
-    let record = entities::EntityRecord {
-        id: "e1".into(),
-        name: "E".into(),
-        entity_type: "system".into(),
-        summary: "s".into(),
-        attributes: Default::default(),
-        relations: vec![],
-        updated_at: chrono::Utc::now(),
-        derived_from: Some(expected.clone()),
-    };
-    entities::upsert_entity(&home, Some(&cwd), record).unwrap();
-    let got = entities::get_entity(&home, Some(&cwd), "e1").unwrap();
-    assert_eq!(got.derived_from, Some(expected));
 }

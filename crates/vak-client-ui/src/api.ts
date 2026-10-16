@@ -525,15 +525,15 @@ export function amendMemory(
 // ---- recall search -----------------------------------------------------------
 
 /** One `/search` hit (plan M6): a conversation's turn or tool call, a
- * memory or profile note, or an entity. */
+ * memory or profile note, an item from a source or a deliverable. */
 export interface SearchHit {
-  /** The conversation's id, or `memory/<id>`, `profile/<id>`, `entity/<id>`;
+  /** The conversation's id, or `memory/<id>` or `profile/<id>`;
    *  empty for an item from a source. */
   session_id: string;
   turn_id: string | null;
   node: string;
   kind: string;
-  role: "conversation" | "memory" | "profile" | "entity" | "item" | "artifact";
+  role: "conversation" | "memory" | "profile" | "item" | "artifact";
   ts: string | null;
   score: number;
   snippet: string;

@@ -108,7 +108,7 @@ inspect or change that agent's effective configuration.
   (`crates/vak-catalog`, docs/design/73 §9), WAL mode, schema-versioned and
   rebuilt from the records alone.
 - Nodes for sessions, turns, tool calls, files a call wrote, runs, effects,
-  triggers, memory notes, entities and commitments; lineage edges from each
+  triggers, memory notes and commitments; lineage edges from each
   up to its run and cause; FTS5 over doc 73's text projections (message
   text and each tool result's digest, never thinking or raw output).
 - Lifecycle: a tailer with one cursor per source catches up at server

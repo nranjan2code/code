@@ -128,7 +128,7 @@ const NOT_REACHED: &[&str] = &[
     "Copies the AI services received when they answered: they are held by those services under their own terms.",
     "Messages and changes already delivered outside Vakyartha: they stay with whoever received them.",
     "Backups made before this erasure: they still hold the encrypted records until they expire.",
-    "Entities and skills an Agent derived from this conversation: they are not examined by this erasure.",
+    "Skills an Agent derived from this conversation: they are not examined by this erasure.",
     "What an Agent wrote in other conversations from what it learned here.",
 ];
 
@@ -215,7 +215,7 @@ pub struct AgentPreview {
     pub digest: String,
     pub held: bool,
     pub conversations: u64,
-    /// Its memory notes, entities and other Documents.
+    /// Its memory notes and other Documents.
     pub documents: u64,
     /// The files that go: an Agent's drafts nobody kept, or every copy
     /// kept for a project.

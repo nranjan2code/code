@@ -215,7 +215,7 @@ Two roots hold an Agent's things, and they are different directories:
 │       └── coworking/                 # grants
 ├── tenants/<tenant>/
 │   ├── store/                         # objects and refs: ledger payloads and
-│   │                                  # Documents (memory, entities, skill
+│   │                                  # Documents (memory, skill
 │   │                                  # proposals, Office rooms, presentations)
 │   ├── spaces.toml                    # space ids and this machine's folder bindings
 │   ├── environments/<run>/            # worktrees, copy environments (M4.8), staging trees

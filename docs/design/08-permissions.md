@@ -136,7 +136,7 @@ read from its reach unless it says otherwise (`provenance_of_reach`):
 Declared beyond their reach: `agent_network` holds both (another Agent
 writes what it read), and `recall` holds what it returned: this
 conversation's own labels, or both once its search reached other
-conversations, notes or followed sources, `entity_record` and `automations` hold
+conversations, notes or followed sources, `automations` holds
 private, and `flow` holds both. A result adds what its own output says
 (`ToolOutput::provenance`): a connected account's result holds both (it is
 the owner's mail and a stranger's words), a `task` worker's result holds what

@@ -1,6 +1,6 @@
 //! What `recall` reaches beyond the conversation it runs in
 //! (docs/design/23-memory.md): other conversations, saved notes, the
-//! person's profile, entities, followed sources and deliverables, in one
+//! person's profile, followed sources and deliverables, in one
 //! ranking over the data catalog (plan M6), filtered to the caller's Agent,
 //! audience and space before ranking (invariant 37). It is no tool of its
 //! own: `recall`'s search returns these hits beside this conversation's
@@ -30,17 +30,10 @@ pub struct Elsewhere {
     /// What the record says about a deliverable a hit names: its workspace
     /// path and state (docs/design/90-file-state.md §3.3), by artifact id.
     pub file: Option<FileLookup>,
-    /// An entity's whole record by its id (type, summary, attributes,
-    /// relations), so a hit on one answers what the snippet cuts: `recall`
-    /// is the one way to read the entity graph.
-    pub entity: Option<EntityLookup>,
 }
 
 /// An artifact id in, its file and state out (`Elsewhere::file`).
 pub type FileLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
-
-/// An entity id in, its record out (`Elsewhere::entity`).
-pub type EntityLookup = Arc<dyn Fn(&str) -> Option<Value> + Send + Sync>;
 
 /// Where a hit is from, and the id `forget_memory` takes for a note.
 fn hit_label(node: &vak_catalog::Node) -> (String, &'static str) {
@@ -56,7 +49,6 @@ fn hit_label(node: &vak_catalog::Node) -> (String, &'static str) {
             (format!("profile/{}", leaf()), "profile")
         }
         "memory" => (format!("memory/{}", leaf()), "saved note"),
-        "entity" => (format!("entity/{}", leaf()), "entity"),
         "item" => (node.id.clone(), "followed source"),
         "artifact" => (node.id.clone(), "deliverable"),
         _ => (
@@ -88,7 +80,7 @@ impl Elsewhere {
             space: self.space.clone(),
             kinds: Some(
                 [
-                    "session", "turn", "call", "memory", "entity", "item", "artifact",
+                    "session", "turn", "call", "memory", "item", "artifact",
                 ]
                 .into_iter()
                 .map(str::to_string)
@@ -121,15 +113,6 @@ impl Elsewhere {
             && let Some(link) = hit.node.locator.as_deref()
         {
             out["link"] = json!(link);
-        }
-        // An entity carries its whole record, relations included.
-        if hit.node.kind == "entity"
-            && let Some(record) = self
-                .entity
-                .as_ref()
-                .and_then(|entity| entity(id.trim_start_matches("entity/")))
-        {
-            out["record"] = record;
         }
         // A deliverable names its file and what the record says of it now,
         // so a later turn can reach it by name.
@@ -166,7 +149,6 @@ mod tests {
             space: Some(vak_session::trace::local::space(cwd).to_string()),
             trash: vak_config::scope::SharedScope::new(home),
             file: None,
-            entity: None,
         }
     }
 
@@ -295,52 +277,5 @@ mod tests {
         let ids: Vec<&str> = hits.iter().filter_map(|hit| hit["id"].as_str()).collect();
         assert!(ids.contains(&"one"), "{hits:?}");
         assert!(!ids.contains(&"two"), "{hits:?}");
-    }
-
-    #[test]
-    fn an_entity_is_found_with_its_whole_record() {
-        vak_config::paths::isolate_home_for_tests();
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        let cwd = dir.path().join("workspace");
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::create_dir_all(&cwd).unwrap();
-        crate::entities::upsert_entity(
-            &home,
-            Some(&cwd),
-            crate::entities::EntityRecord {
-                id: "ent-apollo-11".into(),
-                name: "Project Apollo".into(),
-                entity_type: "mission".into(),
-                summary: "Lunar landing mission targeting Sea of Tranquility".into(),
-                attributes: [("crew".to_string(), "3".to_string())]
-                    .into_iter()
-                    .collect(),
-                relations: vec![crate::entities::EntityRelation {
-                    relation: "launched_by".into(),
-                    target_entity_id: "saturn-v".into(),
-                }],
-                updated_at: chrono::Utc::now(),
-                derived_from: None,
-            },
-        )
-        .unwrap();
-        let mut reach = reach_over(&home, &cwd, None, None);
-        let (store, workspace) = (home.clone(), cwd.clone());
-        reach.entity = Some(Arc::new(move |id: &str| {
-            crate::entities::get_entity(&store, Some(&workspace), id)
-                .and_then(|entity| serde_json::to_value(entity).ok())
-        }));
-        let hits = reach.search("Sea of Tranquility", 5).unwrap();
-        let entity = hits
-            .iter()
-            .find(|hit| hit["from"] == "entity")
-            .expect("entity hit");
-        assert_eq!(entity["record"]["name"], "Project Apollo", "{hits:?}");
-        assert_eq!(
-            entity["record"]["relations"][0]["target_entity_id"],
-            "saturn-v"
-        );
-        assert_eq!(entity["record"]["attributes"]["crew"], "3");
     }
 }

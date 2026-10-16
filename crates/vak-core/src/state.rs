@@ -66,7 +66,7 @@ pub enum Class {
     Record,
     /// Content-addressed, immutable bytes.
     Object,
-    /// Named content edited in place (memory, entities, skills, proposals).
+    /// Named content edited in place (memory, skills, proposals).
     Document,
     /// A pointer with a generation (heads, cursors, leases).
     Ref,

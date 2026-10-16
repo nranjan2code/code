@@ -6,8 +6,12 @@ The memory home passed to `vak-core::memory` is the owning Agent's private
 home (doc 64). Workspace notes live at
 `<agent home>/memory/<space id>/MEMORY.md` (`AgentScope::memory_notes`); profile notes live at
 `<agent home>/memory/user/USER.md`. Session search reads the data catalog
-(`crates/vak-catalog`), which holds conversations, memory notes and
-entities in one ranking. This document
+(`crates/vak-catalog`), which holds conversations and memory notes in one
+ranking. There is one memory writer, `remember` (with `forget_memory`):
+the separate entity store, its `entity_record` tool, `/entities` routes
+and `vak entities` were retired on 2026-10-16, since nothing but an admin
+list read their attributes and relations
+(docs/audits/tool-catalogue-2026-10-16.md, O2). This document
 describes the shipped recall and note store; doc 26 describes learning and
 skill review.
 
@@ -25,7 +29,7 @@ this conversation's turns (Catalog::search_turns)  +  Elsewhere::search:
 Catalog::search(query, audience, scope, limit)
         │  the catalog caught up with every ledger and Document first
         │  FTS5 over message text, tool-result digests, memory notes,
-        │  profile notes, entities and intake items, filtered by Agent,
+        │  profile notes and intake items, filtered by Agent,
         │  audience, space, the trash and intake's holds before ranking
         ▼
 {this_conversation: [{open, record}], elsewhere: [{from, id, date, text, open?}]}
@@ -53,7 +57,7 @@ and Documents remain authoritative.
 flowchart LR
     A[Query] --> B[Catalog caught up with ledgers and Documents]
     B --> C[Filter by Agent, audience, space, trash and holds]
-    C --> D[FTS5 rank over messages, digests, notes, entities, intake]
+    C --> D[FTS5 rank over messages, digests, notes, intake]
     D --> E[Bounded snippets and top hits]
     E --> F[Tool result in session ledger]
 ```

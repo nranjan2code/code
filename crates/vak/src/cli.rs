@@ -250,11 +250,6 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<MemoryAction>,
     },
-    /// Manage the semantic entity knowledge graph: list / search / get / delete
-    Entities {
-        #[command(subcommand)]
-        action: Option<EntitiesAction>,
-    },
     /// Manage persistent agent specialists and domain templates: list / templates / init
     Agents {
         #[command(subcommand)]
@@ -1009,40 +1004,6 @@ pub(crate) enum MemoryAction {
 }
 
 #[derive(Subcommand, Debug)]
-pub(crate) enum EntitiesAction {
-    /// List entities in this workspace (or global)
-    List {
-        /// Read the global entities tier instead of this workspace
-        #[arg(long)]
-        global: bool,
-    },
-    /// Search entities across names, summaries, attributes, and relations
-    Search {
-        query: String,
-        /// Filter by entity category (e.g. 'service', 'database', 'person')
-        #[arg(long)]
-        entity_type: Option<String>,
-        /// Search the global entities tier instead of this workspace
-        #[arg(long)]
-        global: bool,
-    },
-    /// Get details of an entity by id
-    Get {
-        id: String,
-        /// Target the global entities tier instead of this workspace
-        #[arg(long)]
-        global: bool,
-    },
-    /// Delete an entity by id
-    Delete {
-        id: String,
-        /// Target the global entities tier instead of this workspace
-        #[arg(long)]
-        global: bool,
-    },
-}
-
-#[derive(Subcommand, Debug)]
 pub(crate) enum AgentsAction {
     /// List configured agent specialists
     List {
@@ -1545,34 +1506,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_entities_and_export_commands_parse() {
-        assert!(matches!(
-            parse(&["entities"]),
-            Command::Entities { action: None }
-        ));
-
-        match parse(&[
-            "entities",
-            "search",
-            "postgres",
-            "--entity-type",
-            "database",
-        ]) {
-            Command::Entities {
-                action:
-                    Some(EntitiesAction::Search {
-                        query,
-                        entity_type,
-                        global,
-                    }),
-            } => {
-                assert_eq!(query, "postgres");
-                assert_eq!(entity_type.as_deref(), Some("database"));
-                assert!(!global);
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
-
+    fn export_and_agents_commands_parse() {
         match parse(&["export", "sess-1234", "--html"]) {
             Command::Export {
                 session_id,

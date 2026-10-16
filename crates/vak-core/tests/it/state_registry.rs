@@ -98,8 +98,8 @@ async fn agent_home_subpaths_are_declared() {
         agent_home.display()
     );
 
-    // Real per-Agent writes: a session ledger, a memory note, an entity and
-    // an audit entry.
+    // Real per-Agent writes: a session ledger, a memory note and an audit
+    // entry.
     let session = core.start_session().await.expect("session");
     let session_id = session.header().expect("header").session_id.clone();
     vak_core::memory::append_note(
@@ -111,21 +111,6 @@ async fn agent_home_subpaths_are_declared() {
         "the registry declares this",
     )
     .expect("memory note");
-    vak_core::entities::upsert_entity(
-        &agent_home,
-        Some(workspace.path()),
-        vak_core::entities::EntityRecord {
-            id: "registry-probe".into(),
-            name: "Registry probe".into(),
-            entity_type: "thing".into(),
-            summary: "written by the registry test".into(),
-            attributes: Default::default(),
-            relations: Vec::new(),
-            updated_at: chrono::Utc::now(),
-            derived_from: None,
-        },
-    )
-    .expect("entity");
     vak_core::security_events::record(
         &vak_config::scope::AgentScope::new(&agent_home),
         vak_core::security_events::EventKind::ConfigChange,

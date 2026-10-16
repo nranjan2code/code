@@ -184,7 +184,7 @@ erased`.
   sharing it stops the clock. The Library lists such drafts under "Older
   drafts" after 14 days; that is a view, not a state (`82-library.md` §3).
 
-### 2.8 Documents (memory, entities, skills, prompt layers, presentation packs)
+### 2.8 Documents (memory, skills, prompt layers, presentation packs)
 
 `active → amended (new version) → forgotten (tombstone)`.
 
@@ -302,7 +302,7 @@ RetentionLabel {
 | checkpoints (sealed session) | — | 30 d |
 | environments | — | 7 d after settle |
 | draft versions (not accepted, starred or shared) | — | 60 d, then the trash |
-| Document history (memory, entities) | — | 90 d |
+| Document history (memory) | — | 90 d |
 | inbox entries | — | 90 d |
 | pending/denied allowlist entries | — | 90 d |
 | cost / routing / activity segments | 90 d | 400 d |
@@ -389,7 +389,7 @@ Two rules make that true:
   payload, commitment statement, turn-card text) is field-encrypted under
   the conversation key. Non-content fields (ids, timestamps, states) stay
   readable for audit and scheduling. (Plan §M7a "M7a design", 2026-10-08: such content is stored as a tenant object granted to the conversation's scope instead, and the row keeps a reference.)
-- **Derived writes record `derived_from`.** Memory notes, entities, skill
+- **Derived writes record `derived_from`.** Memory notes, skill
   proposals, FTS rows and embeddings name their source conversation and turn
   (plan M1).
 

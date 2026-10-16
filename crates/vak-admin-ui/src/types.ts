@@ -112,14 +112,14 @@ export interface TranscriptEntry {
 }
 
 /** One `/search` hit (plan M6): a conversation's turn or tool call, a
- * memory or profile note, or an entity, with the catalog node behind it. */
+ * memory or profile note, with the catalog node behind it. */
 export interface SearchHit {
-  /** The conversation's id, or `memory/<id>`, `profile/<id>`, `entity/<id>`. */
+  /** The conversation's id, or `memory/<id>` or `profile/<id>`. */
   session_id: string;
   turn_id: string | null;
   node: string;
   kind: string;
-  role: "conversation" | "memory" | "profile" | "entity";
+  role: "conversation" | "memory" | "profile";
   ts: string | null;
   score: number;
   snippet: string;

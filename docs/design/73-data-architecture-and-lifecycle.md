@@ -396,7 +396,7 @@ locations*, not of file names.
 |---|---|---|---|---|---|---|
 | **Record** | session ledgers, runs, effects, commitments, promotions, audit, cost, deliveries | source of truth | append-only, segmented | conversation content: crypto-shred per conversation, or per contributor within it (§7.3); non-content shared ledgers: expire by sealed segment | always | sealed segments |
 | **Object** | file contents, attachments, drafts, checkpoint contents, evidence bodies, stdout/stderr, exports | content-addressed (keyed id) | immutable | GC when no key grant or ref remains | always | by id, deduped |
-| **Document** | memory notes, entities, skills, skill proposals, prompt layers, presentation packs, Office rooms | named; a person or the runtime edits it | every save is an immutable version; "current" is a ref | forget = tombstone; history by retention; erased with its `derived_from` source | always | versions as objects |
+| **Document** | memory notes, skills, skill proposals, prompt layers, presentation packs, Office rooms | named; a person or the runtime edits it | every save is an immutable version; "current" is a ref | forget = tombstone; history by retention; erased with its `derived_from` source | always | versions as objects |
 | **Ref** | artifact current version, session head, trigger claims, cursors, leases, bindings | pointer with a generation and a writer epoch | CAS-updated; a stale epoch is refused | with its owner | always | CAS sync |
 | **Desired** | config layers, Agents, triggers, endpoints, bots, allowlist, prompt layers, connections and their grants, sources, the owner record (`auth/`) | operator intent | versioned like a Document: each save a version, current a ref; additive schema | explicit | always | sync (no secrets) |
 | **Secret** | provider keys, bot tokens, connection credentials | credential store | operator only | explicit | opt-in | never plaintext; references only |
@@ -413,7 +413,7 @@ Five rules follow:
   commitment statement) is encrypted under its conversation's key. Ids,
   timestamps and states stay readable for audit and scheduling. This is
   what lets an erasure reach every copy (review R2).
-- **Derived writes record `derived_from`.** Memory, entities, skill
+- **Derived writes record `derived_from`.** Memory, skill
   proposals, catalog text rows and embeddings name their source
   conversation and turn. Provider-derived records and all descendants also
   retain the connected-account source id and lineage edge; the account id is

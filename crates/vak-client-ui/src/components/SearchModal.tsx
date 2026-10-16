@@ -11,7 +11,6 @@ const HIT_WORDS: Record<SearchHit["role"], string> = {
   conversation: "Conversation",
   memory: "Memory",
   profile: "About you",
-  entity: "Person or thing",
   item: "From your sources",
   artifact: "Made for you",
 };

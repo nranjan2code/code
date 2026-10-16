@@ -305,7 +305,7 @@ is in `docs/plans/open-items.md`. No later step starts unasked.
 - Key anything about a workspace by its space id (`vak_config::spaces`),
   never by its path. Only `spaces::bind` writes the registry: a writer of
   space-keyed state binds its folder first (`SessionPath::new_session_file`
-  and the memory, entity and proposal writers do), a reader never binds, and
+  and the memory and proposal writers do), a reader never binds, and
   a ledger or Document under an `unbound-` key is refused
   (`spaces::require_bound`). An Agent workspace is its space's; a run
   environment is `env-<run>`, never a space.

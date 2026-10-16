@@ -1467,14 +1467,6 @@ fn router_with_state(state: AppState) -> Router {
             "/memory/{note_id}",
             axum::routing::patch(amend_memory_note).delete(forget_memory_note),
         )
-        .route(
-            "/entities",
-            get(list_entities_route).post(upsert_entity_route),
-        )
-        .route(
-            "/entities/{id}",
-            get(get_entity_route).delete(delete_entity_route),
-        )
         .route("/agents/{agent}/pause", post(pause_agent))
         .route("/agents/{agent}/resume", post(resume_agent))
         .route("/agents/{agent}/revoke", post(revoke_agent))
@@ -2601,167 +2593,6 @@ async fn list_memory(
     Json(serde_json::json!({ "notes": blocks })).into_response()
 }
 
-#[derive(serde::Deserialize)]
-struct ListEntitiesQuery {
-    #[serde(default)]
-    q: Option<String>,
-    #[serde(default)]
-    scope: Option<String>,
-}
-
-async fn list_entities_route(
-    State(state): State<AppState>,
-    axum::extract::Query(query): axum::extract::Query<ListEntitiesQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let home = state.core.scope().into_root();
-    let is_global = query.scope.as_deref() == Some("global");
-    let cwd_buf = state.core.cwd();
-    let cwd = if is_global {
-        None
-    } else {
-        Some(cwd_buf.as_path())
-    };
-    let entities = if let Some(ref q) = query.q {
-        vak_core::entities::search_entities(&home, cwd, q)
-    } else {
-        vak_core::entities::list_entities(&home, cwd)
-    };
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "entities": entities })),
-    )
-        .into_response()
-}
-
-async fn get_entity_route(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    axum::extract::Query(query): axum::extract::Query<ListEntitiesQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let home = state.core.scope().into_root();
-    let is_global = query.scope.as_deref() == Some("global");
-    let cwd_buf = state.core.cwd();
-    let cwd = if is_global {
-        None
-    } else {
-        Some(cwd_buf.as_path())
-    };
-    if let Some(entity) = vak_core::entities::get_entity(&home, cwd, &id) {
-        (
-            StatusCode::OK,
-            Json(serde_json::to_value(&entity).unwrap_or_default()),
-        )
-            .into_response()
-    } else {
-        (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "entity not found" })),
-        )
-            .into_response()
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct UpsertEntityBody {
-    #[serde(default)]
-    id: Option<String>,
-    name: String,
-    entity_type: String,
-    #[serde(default)]
-    summary: String,
-    #[serde(default)]
-    attributes: std::collections::BTreeMap<String, String>,
-    #[serde(default)]
-    relations: Vec<vak_core::entities::EntityRelation>,
-    #[serde(default)]
-    scope: Option<String>,
-}
-
-async fn upsert_entity_route(
-    State(state): State<AppState>,
-    Json(body): Json<UpsertEntityBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let home = state.core.scope().into_root();
-    let is_global = body.scope.as_deref() == Some("global");
-    let cwd_buf = state.core.cwd();
-    let cwd = if is_global {
-        None
-    } else {
-        Some(cwd_buf.as_path())
-    };
-    let id = body.id.unwrap_or_else(|| {
-        let slug = body
-            .name
-            .to_ascii_lowercase()
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { '-' })
-            .collect::<String>()
-            .trim_matches('-')
-            .to_string();
-        if slug.is_empty() {
-            uuid::Uuid::now_v7().to_string()
-        } else {
-            slug
-        }
-    });
-
-    let record = vak_core::entities::EntityRecord {
-        id,
-        name: body.name,
-        entity_type: body.entity_type,
-        summary: body.summary,
-        attributes: body.attributes,
-        relations: body.relations,
-        updated_at: chrono::Utc::now(),
-        derived_from: None,
-    };
-
-    match vak_core::entities::upsert_entity(&home, cwd, record) {
-        Ok(saved) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(&saved).unwrap_or_default()),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-async fn delete_entity_route(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    axum::extract::Query(query): axum::extract::Query<ListEntitiesQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let home = state.core.scope().into_root();
-    let is_global = query.scope.as_deref() == Some("global");
-    let cwd_buf = state.core.cwd();
-    let cwd = if is_global {
-        None
-    } else {
-        Some(cwd_buf.as_path())
-    };
-    match vak_core::entities::delete_entity(&home, cwd, &id) {
-        Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "deleted": true }))).into_response(),
-        Ok(false) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "deleted": false, "error": "entity not found" })),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
 /// Resolve a note id to the markdown store it lives in. The workspace tier/// is per-cwd; the profile tier is global (`<home>/memory/user/USER.md`).
 #[derive(serde::Deserialize)]
 struct AppendMemoryBody {
@@ -3203,8 +3034,8 @@ struct SearchQuery {
     /// sessions home (docs/design/29-personal-os.md P1), not just this cwd.
     #[serde(default)]
     all: bool,
-    /// What to look through: `conversation`, `memory` or `entity`; all
-    /// three when absent.
+    /// What to look through: `conversation`, `memory`, `item` or
+    /// `artifact`; all of them when absent.
     #[serde(default)]
     kind: Option<String>,
     /// The Agent whose ledgers and memory are searched (default `vak`).
@@ -3232,11 +3063,10 @@ async fn search_sessions(
             match q.kind.as_deref() {
                 Some("conversation") => vec!["session", "turn", "call"],
                 Some("memory") => vec!["memory"],
-                Some("entity") => vec!["entity"],
                 Some("item") => vec!["item"],
                 Some("artifact") => vec!["artifact"],
                 _ => vec![
-                    "session", "turn", "call", "memory", "entity", "item", "artifact",
+                    "session", "turn", "call", "memory", "item", "artifact",
                 ],
             }
             .into_iter()
@@ -3269,8 +3099,8 @@ async fn search_sessions(
     }
 }
 
-/// One search hit as clients read it: the conversation (or memory note,
-/// profile note or entity) it names, its date, kind and snippet, and the
+/// One search hit as clients read it: the conversation (or memory note or
+/// profile note) it names, its date, kind and snippet, and the
 /// catalog node behind it for lineage.
 fn search_hit(hit: vak_catalog::Hit) -> serde_json::Value {
     let node = hit.node;
@@ -3285,7 +3115,6 @@ fn search_hit(hit: vak_catalog::Hit) -> serde_json::Value {
             (format!("profile/{leaf}"), "profile")
         }
         "memory" => (format!("memory/{leaf}"), "memory"),
-        "entity" => (format!("entity/{leaf}"), "entity"),
         "item" => (String::new(), "item"),
         "artifact" => (String::new(), "artifact"),
         _ => (
