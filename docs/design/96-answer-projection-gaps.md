@@ -139,8 +139,14 @@ Measured live on 2026-10-16 (dev server, a planned three- and four-card
 turn with commands between cards): each card appeared when recorded,
 seconds before the turn settled; the wheel went 0, 1, 2 of 3 done as they
 landed; a second turn on the same page drew none of the first turn's cards.
-Open: a page reloaded mid-turn shows the turn's earlier cards only when it
-settles, because live cards travel only on the event stream.
+A page reloaded mid-turn draws the cards already recorded: while a run
+holds the ledger, `/presentation` serves the handle's live timeline, which
+`project_frame` builds from every event, `CardRecorded` included. Checked
+live on 2026-10-17 (a steps card drawn 432 ms after a reload while the
+turn ran) and pinned by
+`a_running_turns_timeline_carries_its_recorded_cards`. The open line this
+replaces was written from a reading of the event path and did not
+reproduce.
 
 ### Q3 Card actions as records
 

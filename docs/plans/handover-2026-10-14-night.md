@@ -390,7 +390,8 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
    turn: recorded cards drawn as they land (`CardRecorded`, `LiveAnswer`)
    and the plan's progress on the presence wheel, an arc below the chip
    from 3 to 9 o'clock with the caption beneath (doc 96 Q2 "Superseded").
-   Open: a page reloaded mid-turn shows earlier cards only at settle.
+   A page reloaded mid-turn draws earlier cards (checked 2026-10-17;
+   the old open line did not reproduce).
    Follow-ups the maintainer asked for, each its own session: (a) check
    the media card really shows its image or video in the app and fix
    what does not; (b) a map card (doc 96 P5) designed to be intuitive:

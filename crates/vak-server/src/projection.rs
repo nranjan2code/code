@@ -2836,6 +2836,62 @@ mod tests {
         assert!(frame.snapshot.is_none());
     }
 
+    /// The handle's live timeline is what `/presentation` serves while a run
+    /// holds the ledger, so a page reloaded mid-turn draws the cards already
+    /// recorded (docs/design/96, live turn).
+    #[test]
+    fn a_running_turns_timeline_carries_its_recorded_cards() {
+        let mut timeline = OutputTimeline::empty("session-1");
+        super::project_frame(
+            &mut timeline,
+            crate::events::SeqEvent {
+                seq: 3,
+                event: vak_agent::AgentEvent::TurnStart { turn: 0 },
+            },
+        );
+        let payload = serde_json::json!({
+            "title": "Boil an egg",
+            "steps": [{"label": "Boil", "text": "Boil water"}],
+        });
+        let record = vak_session::types::PresentationRecord {
+            turn_id: "directive-1".into(),
+            source: vak_session::types::PresentationSource::ToolCall {
+                tool_use_id: "call-1".into(),
+            },
+            semantic_type: "steps".into(),
+            skill_id: "steps".into(),
+            skill_version: "1".into(),
+            schema_version: 2,
+            payload_digest: vak_session::types::payload_digest(&payload),
+            payload,
+            derived_from: Vec::new(),
+            title: "Boil an egg".into(),
+            identity_digest: String::new(),
+            block: Some("steps".into()),
+        };
+        super::project_frame(
+            &mut timeline,
+            crate::events::SeqEvent {
+                seq: 4,
+                event: vak_agent::AgentEvent::CardRecorded {
+                    tool_use_id: "call-1".into(),
+                    presentation_id: "pres-1".into(),
+                    record: Box::new(record),
+                },
+            },
+        );
+        let card = timeline
+            .items
+            .iter()
+            .find(|item| item.id == "live-card-pres-1")
+            .expect("the recorded card is in the live timeline");
+        assert_eq!(card.kind, OutputKind::Card);
+        assert_eq!(card.turn_id, "live-turn-3");
+        let provenance = card.provenance.as_ref().expect("provenance");
+        assert_eq!(provenance.source.as_deref(), Some("live_event"));
+        assert_eq!(provenance.presentation_id.as_deref(), Some("pres-1"));
+    }
+
     /// Writes the `Presentation` entry a real turn would have written at
     /// card validation (docs/design/68-context-engine.md §10), so these
     /// fixture ledgers exercise the same projection path production does:

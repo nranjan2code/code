@@ -287,9 +287,10 @@ Carried over from 7.2.0:
   - [x] The shell is superseded: recorded cards are drawn live in the
     running turn (`CardRecorded`, `LiveAnswer`) and the plan's progress is
     the presence wheel (2026-10-16).
-  - [ ] A page reloaded mid-turn shows that turn's earlier cards only when
-    it settles: live cards travel only on the event stream, and the
-    running turn's snapshot does not carry them.
+  - [x] A page reloaded mid-turn shows that turn's earlier cards: did not
+    reproduce (2026-10-17). The running snapshot is the handle's live
+    timeline and carries every recorded card; a reload drew them at once.
+    Pinned by `a_running_turns_timeline_carries_its_recorded_cards`.
   - [x] Markup previews get none of the theme's tokens (Q1).
   - [ ] Serve pinned vendored libraries from the preview origin, keeping
     `connect-src` closed (P3).
