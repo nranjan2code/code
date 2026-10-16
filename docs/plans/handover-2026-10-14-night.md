@@ -45,26 +45,27 @@ progress lines."
 
 ## Where things stand
 
-**Next (2026-10-16): a careful audit of every tool, then consolidation.**
-The maintainer asked for a slow read of each built-in tool (where it comes
-from, what it is for, who needs it) and of everything runs can add (skill
-programs, MCP, hooks, plugins, card packs), to catalogue them, remove
-duplicates and keep the list from growing with overlaps, without
-restricting a commercial product. Read each tool's code and design doc
-before proposing: names mislead (`doc_read` is the anchored, labelled read
-`office_apply` edits against, not a second `read`). Candidates seen but not
-yet audited: `webfetch`/`browse`, `remember`/`entity_record`,
-`data_query`. Write the audit as docs/audits/tool-catalogue-<date>.md,
-decide with the maintainer, then build with one measurement per change.
-Method and scripts: docs/audits/history-lookup-2026-10-16.md, /tmp/vak-live
-(scenarios.sh, nturn.sh, outcomes.py, compare.py, ablate_report.py).
+**Next (2026-10-16): the maintainer picks which tool changes to build.**
+The tool audit is written and committed: docs/audits/tool-catalogue-
+2026-10-16.md (every built-in tool with its declarations and surface,
+every mechanism runs can add, overlaps O1 to O10, a ranked proposal of ten
+changes with blast radius and what must not break). Nothing is built yet;
+build only what the maintainer approves, one measurement per change
+(method and scripts: docs/audits/history-lookup-2026-10-16.md,
+/tmp/vak-live; dev server `vak-inv-live` on 8915 behind `ollama-capture`).
+Strongest findings: consolidation promotes notes by a word list and copies
+them (O1); `entity_record` declares no reach and asks where `remember`
+does not (O2); `data_query` parses in the Core process with inline data
+(O3); an ability is listed as both a skill and a tool under "a skill name
+is never a tool name" (O4, from code, not yet measured); `mail_calendar`
+is 18 % of every request's tool bytes with no account (O5).
 
 **Done 2026-10-16 (pushed):** `session_search` and `entity_query` folded
 into `recall`; `find_tools` removed (tools called by name); Anthropic
-deferral dropped; grounded cards; `open` beside `query` answers both. A
-live check of the last fix (three five-turn runs, `/tmp/vak-live/measure/
-both*`) was still running at commit; read its outcomes.json before trusting
-the turn-1 recall number (replays: 13 of 16).
+deferral dropped; grounded cards; `open` beside `query` answers both. The
+live check of the last fix, run again on 2026-10-16 (the first left no
+outcomes): turn 5 answered "Miso" in 2 of 3 five-turn runs, both through
+`recall`; the third answered without looking (audit §4).
 
 
 **8.3.0 released and installed on this Mac** (2026-10-15, `e9bcf11fc`,
