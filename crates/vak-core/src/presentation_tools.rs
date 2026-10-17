@@ -83,6 +83,21 @@ fn list_of(description: &str, properties: Value, required: &[&str]) -> Value {
     })
 }
 
+fn close_records(schema: &mut Value) {
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
+        for property in properties.values_mut() {
+            close_records(property);
+        }
+        object.insert("additionalProperties".into(), Value::Bool(false));
+    }
+    if let Some(items) = object.get_mut("items") {
+        close_records(items);
+    }
+}
+
 fn fields(properties: Value, required: &[&str]) -> Value {
     serde_json::json!({"properties": properties, "required": required})
 }
@@ -1618,7 +1633,7 @@ const SHAPES: &[CardShape] = &[
     shape(
         "steps",
         "emit_steps_card",
-        "Things done in order: a how-to, a routine, an itinerary, an agenda or any plan in time. Each step has a short label, and a detail, time or duration when they help.",
+        "Things done in order: a how-to, a routine, an itinerary, an agenda or any plan in time. Each step has a short label, and a detail, time or duration when they help. A step can offer alternatives the person picks one of (`choices`), and their pick comes back to you.",
         steps_fields,
         build_steps,
         fill_steps,
@@ -2099,6 +2114,16 @@ impl Tool for EmitCardTool {
         serde_json::json!({"type": "object", "properties": properties, "required": required})
     }
 
+    /// The schema closed at every record, so a field it does not name is
+    /// refused and the call written again, never dropped by the builder
+    /// while the model is told the card was shown. The advertised schema
+    /// stays open: not every provider carries `additionalProperties`.
+    fn call_schema(&self, _args: &Value) -> Value {
+        let mut schema = self.schema();
+        close_records(&mut schema);
+        schema
+    }
+
     fn presents_cards(&self) -> bool {
         true
     }
@@ -2556,6 +2581,17 @@ mod tests {
             args["then"] = serde_json::json!("done");
             vak_tools::validate_input(&tool.schema(), &args)
                 .unwrap_or_else(|error| panic!("{form}: {error}"));
+            // What the model sends, before the runtime fills in what the
+            // command printed and how it ended, is closed too.
+            let mut written = args.clone();
+            if let (Some(spec), Some(fields)) = (tool.output_of_command(), written.as_object_mut())
+            {
+                for filled in [Some(spec.exit_code), Some(spec.duration_ms), spec.output] {
+                    filled.map(|key| fields.remove(key));
+                }
+            }
+            vak_tools::validate_input(&tool.call_schema(&written), &written)
+                .unwrap_or_else(|error| panic!("{form} as written: {error}"));
             let info = presentation_info(name, &args, &skills)
                 .unwrap_or_else(|| panic!("{form}: refused a schema-valid call"));
             assert_eq!(
@@ -2563,6 +2599,33 @@ mod tests {
                 (form, Some(form))
             );
         }
+    }
+
+    /// Choices written inside a step were dropped by the builder while the
+    /// model was told the card was shown (live, 2026-10-17); the call's
+    /// schema refuses them, so the call is written again.
+    #[test]
+    fn a_field_the_card_does_not_name_is_refused_not_dropped() {
+        let steps = tool("emit_steps_card");
+        let mut args = json!({
+            "then": "done",
+            "steps": [
+                {"label": "Boil water"},
+                {"label": "Brew", "choices": [{"step": "Brew", "fact": "4 min"}]}
+            ]
+        });
+        steps.fill_defaults(&mut args);
+        vak_tools::validate_input(&steps.schema(), &args)
+            .expect("the advertised schema stays open for every provider");
+        let refused = vak_tools::validate_input(&steps.call_schema(&args), &args).unwrap_err();
+        assert!(refused.contains("`choices`"), "{refused}");
+        assert!(
+            steps
+                .schema()
+                .to_string()
+                .find("additionalProperties")
+                .is_none()
+        );
     }
 
     #[tokio::test]

@@ -1,5 +1,10 @@
 ## Unreleased
 
+- A card no longer drops part of what was written for it without a word:
+  a field the card does not have (choices written inside a step, say) is
+  sent back to be written again under the card's own shape, where before
+  the card was shown without it.
+
 - Reloading the page while a turn waits for your approval, or for your
   answer to a worker's question, shows that card again at once. Before,
   it came back only after about ten seconds, and until then nothing on

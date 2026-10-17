@@ -276,9 +276,23 @@ Carried over from 7.2.0:
     were lost on reload (Q3: `CardAction` entries; a choice starts a turn,
     ticks reach the next turn's tail).
   - [ ] A choice ("Use this") is verified through the HTTP test only: no
-    live turn on the dev route drew a steps card with choices.
-  - [ ] A card action while a turn runs is refused (the ledger is the
-    agent's then); the client puts a tick back without saying why.
+    live turn on the dev route drew a steps card with choices. Found
+    2026-10-17: the one call that wrote choices put them inside a step
+    (`steps[n].choices`, with `fact` and no `label`); the builder dropped
+    them and the model was told the card was shown. Fixed: a card tool's
+    `call_schema` is closed at every record, so such a field is refused and
+    the call written again; the advertised schema stays open
+    (`a_field_the_card_does_not_name_is_refused_not_dropped`). The steps
+    card's description did not say a step can offer choices; it does now,
+    and three fresh runs of "let me choose between French press, pour-over
+    and moka pot" each drew a steps card (two before drew details cards),
+    but none wrote `choices`: each put the alternatives in a step's text.
+    Open for the maintainer: choices nested in their step is the shape
+    the model reached for, and the flat-schema rule (no list of records
+    inside a list of records, doc 30 §30.1) forbids it.
+  - [x] A tick while a turn runs says why (checked 2026-10-17): the tick
+    goes back and the notice reads "Agent is working; try again after this
+    turn settles". The open line was stale.
   - [x] A card shows nothing until its call is complete and valid (Q2:
     `CardDrafting` and the empty card shell). On the dev route a tool call
     arrives whole, so the shell stands only while the call is checked.
