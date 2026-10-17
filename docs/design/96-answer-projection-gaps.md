@@ -2,7 +2,8 @@
 
 Status: in progress (2026-10-16): Q1, Q2 and Q3 are built, Q2's card
 shell superseded by live cards and the plan wheel; P5 (the map form) is
-built and seen in a live turn (2026-10-17); P1 to P4 and P6 are open. Written from a review of what an answer can do on screen.
+built and seen in a live turn (2026-10-17); P1 (the controls form) is
+built and drew in live turns (2026-10-17); P1 to P4 and P6 are open. Written from a review of what an answer can do on screen.
 
 ## 1. What is wrong
 
@@ -226,6 +227,40 @@ Done when: a bill split, a loan payment and a unit conversion asked on the
 dev route draw as working controls (checked in the browser at both sizes
 and themes); a wrong example is refused and repaired by the loop; a
 channel receives the example table; the evaluator equality test passes.
+
+Built 2026-10-17, with two changes from the design above:
+
+- **The model writes no results.** `equals` was asked of the model and
+  measured live: the first bill split wrote `"yes"`, then the expression
+  again, then a valid number with a member access (`tip_pct.value`) in
+  the formula. The expression already says what an output is; asking for
+  its value is asking for one fact twice (doc 30 §30.1 rule 9), and the
+  model asserting a number is what invariant 33 gives the runtime. The
+  tool takes an optional `decimals`; `build` computes each output from the
+  inputs' values with the host's evaluator and stores it as `equals`, the
+  card's worked example and its text form (a two-column table).
+- **"Ask about this" is a values action.** `CardActionValues::Values`
+  carries what the person set, by input name; the server checks each value
+  against its input (kind, range, a choice's options) and computes the
+  outputs itself (`card_actions::controls_directive`), so the turn starts
+  with "I set Bill to 3000 on “Bill Splitter”, which gives Each pays
+  1100", numbers the client never supplied.
+
+The expression language is `vak_delivery::expression` and
+`vak-client-ui/src/controlsExpression.ts`, held equal by
+`vak-delivery/tests/expression_cases.json` (read by both test suites). A
+refusal says how the language writes what was tried (`if(…)` for `?:`, an
+option's number for text).
+
+Measured live on the dev route, one turn at a time: a bill split drew as
+working controls on the first call, and "Ask about this" started a turn
+with the host's figures; a loan payment drew after one refusal (an input
+the formula read was missing); a kilometres-to-miles converter was
+refused twice (text compared to a choice, then `?:`) and answered with a
+details card, and on a second try with an HTML page instead. The card
+computes the formula the model wrote: the loan card's formula was wrong
+(a payment of 43 on five lakh), which no check of the card can see.
+Checked in the browser at 1440 × 900 and 390 × 844, light and dark.
 
 ### P2 Pages that stay current
 

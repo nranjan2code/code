@@ -12,7 +12,9 @@ use std::collections::BTreeMap;
 
 pub mod adaptive;
 pub mod client;
+pub mod controls;
 pub mod discord;
+pub mod expression;
 pub mod presentation;
 pub mod skills;
 pub mod slack;

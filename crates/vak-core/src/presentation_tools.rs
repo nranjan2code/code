@@ -1191,6 +1191,149 @@ fn fill_map(fields: &mut Map<String, Value>) {
     }
 }
 
+// ---- controls ----------------------------------------------------------------
+
+fn number(description: &str) -> Value {
+    serde_json::json!({"type": "number", "description": description})
+}
+
+const EXPRESSION: &str = "How it is computed from the inputs and earlier outputs, by their names: numbers, + - * / % ^, parentheses, comparisons (< <= > >= == != give 1 or 0), and if(condition, then, else), min, max, round(x, places), floor, ceil, abs, sqrt, log, exp, sum, avg. A toggle reads 1 when on, a date as a count of days. Example: bill * (1 + tip / 100) / people.";
+
+fn controls_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "title": string(TITLE),
+            "inputs": list_of(
+                "What the person sets, with the values the card starts from.",
+                serde_json::json!({
+                    "name": string("The name expressions use for it: letters, digits and _, starting with a letter (bill, tip_percent)."),
+                    "kind": one_of(CONTROL_KINDS, "number for any number, range for a number on a slider between min and max, choice for one of the options, toggle for on or off, date for a day."),
+                    "value": string("Its value in the example, as text: a number for number, range and choice (a choice's value is one of its options' values), true or false for a toggle, YYYY-MM-DD for a date."),
+                    "min": number("Optional for number, needed for range. The smallest value."),
+                    "max": number("Optional for number, needed for range. The largest value."),
+                    "step": number("Optional. How much the value moves at a time."),
+                    "options": string("Optional, needed for choice. The options separated by semicolons, each a number or a name with its number: Low=10; Usual=15; Generous=20."),
+                    "unit": string("Optional. The unit shown beside it (₹, km, %)."),
+                    "label": string("What it is called on the card.")
+                }),
+                &["name", "kind", "value", "label"],
+            ),
+            "outputs": list_of(
+                "The results, computed in this order, each shown as the person changes the inputs.",
+                serde_json::json!({
+                    "name": string("The name later outputs use for it."),
+                    "expression": string(EXPRESSION),
+                    "decimals": integer("Optional. How many decimal places it is shown with; whole numbers when left out."),
+                    "unit": string("Optional. The unit shown beside it."),
+                    "label": string("What it is called on the card.")
+                }),
+                &["name", "expression", "label"],
+            )
+        }),
+        &["inputs", "outputs"],
+    )
+}
+
+/// The kinds of input, as the card tool offers them.
+pub const CONTROL_KINDS: &[&str] = vak_delivery::controls::INPUT_KINDS;
+
+/// A choice's options, written `Low=10; Usual=15` or `10; 15`.
+fn control_options(text: &str) -> Result<Vec<Value>, String> {
+    text.split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let (label, number) = part.rsplit_once('=').unwrap_or((part, part));
+            let value: f64 = number
+                .trim()
+                .parse()
+                .map_err(|_| format!("option `{part}` needs a number: `Name=10` or `10`"))?;
+            Ok(serde_json::json!({"label": label.trim(), "value": value}))
+        })
+        .collect()
+}
+
+fn build_controls(args: &Map<String, Value>) -> Result<Value, String> {
+    let mut inputs = Vec::new();
+    for (at, input) in records(args, "inputs").iter().enumerate() {
+        let mut built = copy(
+            input.as_object().unwrap_or(&Map::new()),
+            &["name", "label", "kind", "unit", "min", "max", "step"],
+        );
+        let kind = text(input, "kind");
+        let written = text(input, "value");
+        let value = match kind {
+            "toggle" => match written {
+                "true" => Value::Bool(true),
+                "false" => Value::Bool(false),
+                _ => {
+                    return Err(format!(
+                        "inputs[{at}].value must be true or false for a toggle"
+                    ));
+                }
+            },
+            "date" => Value::String(written.to_string()),
+            _ => {
+                let options = match kind {
+                    "choice" => control_options(text(input, "options"))
+                        .map_err(|error| format!("inputs[{at}].options: {error}"))?,
+                    _ => Vec::new(),
+                };
+                // A choice's value may name its option.
+                let named = options
+                    .iter()
+                    .find(|option| option["label"].as_str() == Some(written))
+                    .and_then(|option| option["value"].as_f64());
+                let number = match named {
+                    Some(number) => number,
+                    None => written.parse::<f64>().map_err(|_| {
+                        format!("inputs[{at}].value must be a number for a {kind}, not `{written}`")
+                    })?,
+                };
+                if kind == "choice" {
+                    built.insert("options".into(), Value::Array(options));
+                }
+                Value::from(number)
+            }
+        };
+        built.insert("value".into(), value);
+        inputs.push(Value::Object(built));
+    }
+    let mut outputs = Vec::new();
+    for (at, output) in records(args, "outputs").iter().enumerate() {
+        let mut built = copy(
+            output.as_object().unwrap_or(&Map::new()),
+            &["name", "label", "expression", "unit"],
+        );
+        let decimals = match output.get("decimals") {
+            None => 0,
+            Some(value) => value
+                .as_u64()
+                .filter(|places| *places <= 12)
+                .ok_or_else(|| {
+                    format!("outputs[{at}].decimals must be a whole number from 0 to 12")
+                })?,
+        };
+        built.insert("decimals".into(), Value::from(decimals));
+        outputs.push(Value::Object(built));
+    }
+    let mut payload = copy(args, &["title"]);
+    payload.insert("inputs".into(), Value::Array(inputs));
+    payload.insert("outputs".into(), Value::Array(outputs));
+    let mut payload = Value::Object(payload);
+    // What each output comes to with the values the card starts from, as
+    // the runtime computes it: the card's worked example, and its text form.
+    let computed = vak_delivery::controls::compute(&payload, &std::collections::BTreeMap::new())?;
+    if let Some(outputs) = payload["outputs"].as_array_mut() {
+        for (output, (_, value)) in outputs.iter_mut().zip(computed) {
+            let decimals = output["decimals"].as_u64().unwrap_or(0);
+            let scale = 10_f64.powi(decimals as i32);
+            output["equals"] = Value::from((value * scale).round() / scale);
+        }
+    }
+    Ok(payload)
+}
+
 // ---- link and media ----------------------------------------------------------
 
 fn link_fields() -> Value {
@@ -1722,6 +1865,14 @@ const SHAPES: &[CardShape] = &[
         fill_map,
     ),
     shape(
+        "controls",
+        "emit_controls_card",
+        "Inputs a person changes and results that update as they do: a bill split, a loan payment, a unit conversion, a what-if. Each result is an expression over the inputs; Vakyartha computes it.",
+        controls_fields,
+        build_controls,
+        fill_nothing,
+    ),
+    shape(
         "link",
         "emit_link_card",
         "A preview of one web page: its URL and title.",
@@ -1901,6 +2052,13 @@ fn fixture_for(form: &str) -> Value {
         "map" => serde_json::json!({"connect": "route", "places": [
             {"label": "Pune Station", "position": "18.5286, 73.8746"},
             {"label": "Shaniwar Wada", "position": "18.5195, 73.8553", "detail": "The old palace, open from eight in the morning"}]}),
+        "controls" => {
+            serde_json::json!({"title": "Split the restaurant bill between friends, with a tip", "inputs": [
+            {"name": "bill", "kind": "number", "value": "1200", "min": 0, "unit": "₹", "label": "Bill"},
+            {"name": "tip", "kind": "choice", "value": "Usual", "options": "None=0; Usual=15; Generous=20", "unit": "%", "label": "Tip"},
+            {"name": "people", "kind": "range", "value": "3", "min": 1, "max": 12, "step": 1, "label": "People"}],
+            "outputs": [{"name": "each", "expression": "bill * (1 + tip / 100) / people", "unit": "₹", "label": "Each pays"}]})
+        }
         "link" => serde_json::json!({"url": "https://example.com/page", "title": "Page"}),
         "media" => {
             serde_json::json!({"format": "image", "url": "https://example.com/a.png", "alt": "A chart"})
@@ -2599,6 +2757,36 @@ mod tests {
                 (form, Some(form))
             );
         }
+    }
+
+    /// A controls card's results are the runtime's: computed from the
+    /// values it starts from, never a number the model wrote
+    /// (docs/design/96, P1).
+    #[test]
+    fn a_controls_card_computes_its_own_results() {
+        let card = built("emit_controls_card", fixture_for("controls")).unwrap();
+        assert_eq!(card["inputs"][1]["value"], 15.0);
+        assert_eq!(card["inputs"][1]["options"][2]["label"], "Generous");
+        assert_eq!(card["outputs"][0]["equals"], 460.0);
+        assert_eq!(card["outputs"][0]["decimals"], 0);
+        let mut unknown = fixture_for("controls");
+        unknown["outputs"][0]["expression"] = json!("bill / guests");
+        let refused = built("emit_controls_card", unknown).unwrap_err();
+        assert!(refused.contains("`guests`"), "{refused}");
+        let mut member = fixture_for("controls");
+        member["outputs"][0]["expression"] = json!("bill * tip.value");
+        let refused = built("emit_controls_card", member).unwrap_err();
+        assert!(refused.contains("write `tip`"), "{refused}");
+        let loan = json!({"inputs": [
+            {"name": "p", "kind": "number", "value": "100000", "label": "Loan"},
+            {"name": "r", "kind": "range", "value": "12", "min": 1, "max": 30, "label": "Rate"},
+            {"name": "n", "kind": "number", "value": "12", "label": "Months"}],
+            "outputs": [{"name": "emi", "expression": "p * r / 1200 / (1 - (1 + r / 1200) ^ (-n))",
+            "decimals": 2, "label": "Monthly payment"}]});
+        assert_eq!(
+            built("emit_controls_card", loan).unwrap()["outputs"][0]["equals"],
+            8884.88
+        );
     }
 
     /// Choices written inside a step were dropped by the builder while the

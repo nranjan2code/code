@@ -11,6 +11,8 @@ export const PresentationInteractionContext = createContext<{
   onOptionSelect(label: string): void;
   marked: number[];
   onMark(index: number, label: string, checked: boolean): Promise<boolean>;
+  /** What the person set on a controls card's inputs, by name; a turn follows. */
+  onValues?(values: Record<string, string>): void;
 }>();
 /** The conversation a card belongs to: a preview reads its files from that
  *  conversation's folder, which is its Agent's own. */

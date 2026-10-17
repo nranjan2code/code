@@ -1200,11 +1200,12 @@ export type InterventionReceipt = {
   reason?: string;
 };
 
-/** What a person did on a card (docs/design/96, Q3): a choice starts a turn
- *  and returns its directive; a tick returns the card's state. */
+/** What a person did on a card (docs/design/96, Q3, P1): a choice, or values
+ *  set on a controls card, starts a turn and returns its directive; a tick
+ *  returns the card's state. */
 export function postCardAction(
   id: string,
-  body: { presentation_id: string; action: "choose" | "mark"; values: { kind: "option"; label: string } | { kind: "item"; index: number; label: string; checked: boolean } },
+  body: { presentation_id: string; action: "choose" | "mark"; values: { kind: "option"; label: string } | { kind: "item"; index: number; label: string; checked: boolean } | { kind: "values"; values: Record<string, string> } },
 ): Promise<{ directive?: string; state?: import("./types").CardState }> {
   return req(`/sessions/${id}/card-actions`, { method: "POST", body: JSON.stringify(body) });
 }

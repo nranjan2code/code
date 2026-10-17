@@ -21,7 +21,7 @@ pub(crate) struct CardActionBody {
 }
 
 /// Why an action does not fit the card it names.
-fn refusal(message: &str) -> Response {
+fn refusal(message: String) -> Response {
     (
         StatusCode::UNPROCESSABLE_ENTITY,
         Json(serde_json::json!({ "error": message })),
@@ -29,12 +29,109 @@ fn refusal(message: &str) -> Response {
         .into_response()
 }
 
+/// What a controls card's values come to: each setting as the card shows it
+/// and each output the host computes from them (docs/design/96, P1).
+fn controls_directive(
+    payload: &Value,
+    title: &str,
+    values: &std::collections::BTreeMap<String, String>,
+) -> Result<String, String> {
+    let inputs = payload["inputs"].as_array().cloned().unwrap_or_default();
+    let with_unit = |shown: String, item: &Value| match item["unit"].as_str() {
+        Some(unit) if !unit.trim().is_empty() => format!("{shown} {}", unit.trim()),
+        _ => shown,
+    };
+    let mut set = std::collections::BTreeMap::new();
+    let mut said = Vec::new();
+    if let Some(unknown) = values.keys().find(|name| {
+        !inputs
+            .iter()
+            .any(|input| input["name"].as_str() == Some(name.as_str()))
+    }) {
+        return Err(format!("this card has no input named `{unknown}`"));
+    }
+    // In the card's own order.
+    for input in &inputs {
+        let name = input["name"].as_str().unwrap_or_default();
+        let Some(written) = values.get(name) else {
+            continue;
+        };
+        let label = input["label"].as_str().unwrap_or(name);
+        let written = written.trim();
+        let (value, shown) = match input["kind"].as_str().unwrap_or_default() {
+            "toggle" => match written {
+                "true" => (1.0, "on".to_string()),
+                "false" => (0.0, "off".to_string()),
+                _ => return Err(format!("`{label}` is on or off")),
+            },
+            "date" => (
+                vak_delivery::controls::days(written)
+                    .ok_or_else(|| format!("`{label}` is a date, YYYY-MM-DD"))?,
+                written.to_string(),
+            ),
+            kind => {
+                let number: f64 = written
+                    .parse()
+                    .ok()
+                    .filter(|number: &f64| number.is_finite())
+                    .ok_or_else(|| format!("`{label}` is a number"))?;
+                let below = input["min"].as_f64().is_some_and(|min| number < min);
+                let above = input["max"].as_f64().is_some_and(|max| number > max);
+                if below || above {
+                    return Err(format!("`{label}` is outside the card's range"));
+                }
+                let shown = if kind == "choice" {
+                    input["options"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|option| option["value"].as_f64() == Some(number))
+                        .and_then(|option| option["label"].as_str())
+                        .map(str::to_string)
+                        .ok_or_else(|| format!("`{label}` has no option with that value"))?
+                } else {
+                    written.to_string()
+                };
+                (number, shown)
+            }
+        };
+        set.insert(name.to_string(), value);
+        said.push(format!("{label} to {}", with_unit(shown, input)));
+    }
+    let computed = vak_delivery::controls::compute(payload, &set)?;
+    let outputs = payload["outputs"].as_array().cloned().unwrap_or_default();
+    let results = outputs
+        .iter()
+        .zip(computed)
+        .map(|(output, (name, value))| {
+            let decimals = output["decimals"].as_u64().unwrap_or(0);
+            let label = output["label"].as_str().unwrap_or(&name).to_string();
+            format!(
+                "{label} {}",
+                with_unit(vak_delivery::controls::shown(value, decimals), output)
+            )
+        })
+        .collect::<Vec<_>>();
+    Ok(vak_session::card_actions::values_text(
+        title, &said, &results,
+    ))
+}
+
 /// The card's title, when the action fits the card: a choice names one of a
 /// comparison's options, a tick one item of a checkable list by its place
 /// and label.
-fn check(payload: &Value, block: &str, body: &CardActionBody) -> Result<String, &'static str> {
+/// For values set on a controls card, the directive their turn starts with.
+fn check(
+    payload: &Value,
+    block: &str,
+    body: &CardActionBody,
+) -> Result<(String, Option<String>), String> {
     let title = payload["title"].as_str().unwrap_or_default().to_string();
     match (&body.action, &body.values) {
+        (CardActionKind::Choose, CardActionValues::Values { values }) if block == "controls" => {
+            let directive = controls_directive(payload, &title, values)?;
+            Ok((title, Some(directive)))
+        }
         (CardActionKind::Choose, CardActionValues::Option { label }) => {
             let named = |list: &Value, key: &str| {
                 list.as_array().is_some_and(|options| {
@@ -53,9 +150,9 @@ fn check(payload: &Value, block: &str, body: &CardActionBody) -> Result<String, 
                 _ => false,
             };
             if offered {
-                Ok(title)
+                Ok((title, None))
             } else {
-                Err("this card offers no option by that name")
+                Err("this card offers no option by that name".into())
             }
         }
         (CardActionKind::Mark, CardActionValues::Item { index, label, .. }) => {
@@ -63,12 +160,14 @@ fn check(payload: &Value, block: &str, body: &CardActionBody) -> Result<String, 
                 .then(|| payload["items"].get(*index))
                 .flatten();
             if item.is_some_and(|item| item["label"].as_str() == Some(label.as_str())) {
-                Ok(title)
+                Ok((title, None))
             } else {
-                Err("this card has no item to tick at that place")
+                Err("this card has no item to tick at that place".into())
             }
         }
-        _ => Err("a choice names an option; a tick names an item"),
+        _ => Err(
+            "a choice names an option, a tick an item, and values a controls card's inputs".into(),
+        ),
     }
 }
 
@@ -98,53 +197,54 @@ pub(crate) async fn post(
         };
         record(session, &body)
     };
-    let (entry_id, title, state_now) = match recorded {
+    let recorded = match recorded {
         Ok(recorded) => recorded,
         Err(Refused::NoCard) => return StatusCode::NOT_FOUND.into_response(),
         Err(Refused::Mismatch(message)) => return refusal(message),
         Err(Refused::Write) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    match (&body.action, &body.values) {
-        (CardActionKind::Choose, CardActionValues::Option { label }) => {
-            let directive = vak_session::card_actions::choice_text(&title, label);
-            let Ok(mut run) = serde_json::from_value::<RunBody>(serde_json::json!({
-                "prompt": directive,
-            })) else {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            };
-            run.card_action = Some(entry_id);
-            let started = crate::run_prompt(State(state), Path(id), Json(run)).await;
-            if !started.status().is_success() {
-                return started;
-            }
-            // The directive the turn started with, so a client shows the
-            // person's choice as their message.
-            (
-                started.status(),
-                Json(serde_json::json!({ "directive": directive })),
-            )
-                .into_response()
-        }
-        _ => (
+    let Some(directive) = recorded.directive else {
+        return (
             StatusCode::OK,
-            Json(serde_json::json!({ "state": state_now })),
+            Json(serde_json::json!({ "state": recorded.state_now })),
         )
-            .into_response(),
+            .into_response();
+    };
+    let Ok(mut run) = serde_json::from_value::<RunBody>(serde_json::json!({
+        "prompt": directive,
+    })) else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    run.card_action = Some(recorded.entry_id);
+    let started = crate::run_prompt(State(state), Path(id), Json(run)).await;
+    if !started.status().is_success() {
+        return started;
     }
+    // The directive the turn started with, so a client shows the person's
+    // choice as their message.
+    (
+        started.status(),
+        Json(serde_json::json!({ "directive": directive })),
+    )
+        .into_response()
+}
+
+struct Recorded {
+    entry_id: String,
+    /// The directive of the turn the action starts, when it starts one.
+    directive: Option<String>,
+    state_now: vak_session::card_actions::CardState,
 }
 
 enum Refused {
     NoCard,
-    Mismatch(&'static str),
+    Mismatch(String),
     Write,
 }
 
 /// Records the action on the card it names, returning the entry, the card's
 /// title and the card's state after it.
-fn record(
-    session: &mut SessionLog,
-    body: &CardActionBody,
-) -> Result<(String, String, vak_session::card_actions::CardState), Refused> {
+fn record(session: &mut SessionLog, body: &CardActionBody) -> Result<Recorded, Refused> {
     let (payload, block) = session
         .chain_to_root()
         .into_iter()
@@ -159,7 +259,7 @@ fn record(
             _ => None,
         })
         .ok_or(Refused::NoCard)?;
-    let title = check(&payload, &block, body).map_err(Refused::Mismatch)?;
+    let (title, directive) = check(&payload, &block, body).map_err(Refused::Mismatch)?;
     let entry = session
         .append_card_action(CardActionRecord {
             presentation_id: body.presentation_id.clone(),
@@ -172,5 +272,50 @@ fn record(
     let state_now = vak_session::card_actions::card_states(session.chain_to_root())
         .remove(&body.presentation_id)
         .unwrap_or_default();
-    Ok((entry.id, title, state_now))
+    let directive = match &body.values {
+        CardActionValues::Option { label } => {
+            Some(vak_session::card_actions::choice_text(&title, label))
+        }
+        _ => directive,
+    };
+    Ok(Recorded {
+        entry_id: entry.id,
+        directive,
+        state_now,
+    })
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::controls_directive;
+    use std::collections::BTreeMap;
+
+    /// What a person set is checked against the card, and the outputs are
+    /// the host's own computation, never the client's.
+    #[test]
+    fn values_set_on_a_controls_card_start_a_turn_the_host_computes() {
+        let card = serde_json::json!({"title": "Split the bill", "inputs": [
+            {"name": "bill", "label": "Bill", "kind": "number", "value": 1200, "min": 0, "unit": "₹"},
+            {"name": "tip", "label": "Tip", "kind": "choice", "value": 15,
+             "options": [{"label": "None", "value": 0}, {"label": "Usual", "value": 15}]},
+            {"name": "people", "label": "People", "kind": "range", "value": 3, "min": 1, "max": 12}],
+            "outputs": [{"name": "each", "label": "Each pays", "expression": "bill * (1 + tip / 100) / people",
+             "equals": 460, "decimals": 0, "unit": "₹"}]});
+        let set = BTreeMap::from([
+            ("bill".to_string(), "1500".to_string()),
+            ("tip".to_string(), "0".to_string()),
+            ("people".to_string(), "4".to_string()),
+        ]);
+        assert_eq!(
+            controls_directive(&card, "Split the bill", &set).expect("fits"),
+            "I set Bill to 1500 ₹, Tip to None, People to 4 on “Split the bill”, which gives Each pays 375 ₹."
+        );
+        let outside = BTreeMap::from([("people".to_string(), "40".to_string())]);
+        assert!(controls_directive(&card, "", &outside).is_err());
+        let unknown = BTreeMap::from([("guests".to_string(), "2".to_string())]);
+        assert!(controls_directive(&card, "", &unknown).is_err());
+        let off_menu = BTreeMap::from([("tip".to_string(), "12".to_string())]);
+        assert!(controls_directive(&card, "", &off_menu).is_err());
+    }
 }

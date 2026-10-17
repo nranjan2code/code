@@ -9,32 +9,43 @@ history keeps them); every note of theirs that is still true is under
 "Continue in /Users/nisheethranjan/Projects/Vak/code on main. Read
 AGENTS.md first (especially 'The data rules', 'No word lists, no tuned
 limits', 'Investigating a failure' and 'Verification before every
-commit'), then this handover's 'Next' item 0 and
-docs/design/96-answer-projection-gaps.md and
-docs/design/97-cards-end-the-answer.md.
+commit'), then this handover's 'Now' and 'Next', then
+docs/design/96-answer-projection-gaps.md.
 
-Run `git status` and `git log --oneline -8`. The newest commit should be
-'Doc 96 Q3: card actions as records'. The working tree holds the
-UNCOMMITTED live-turn work (Next item 0): verify it live, run the full
-gate, record it, commit, push. Then propose the two follow-ups as their
-own sessions (Next item 0). Stage only your own paths; keep only `main`.
-We are on a Claude Code Pro plan: read with grep and line ranges, batch
-commands, run the full gate in the background once per finished step,
-and rewrite this prompt and 'Next' before the session's limit. The
-maintainer is the only user: rewrite a wrong design rather than patch
+Run `git status` and `git log --oneline -8`; the newest commit should be
+'Doc 96 P1: the controls form'. Stage only your own paths; keep only
+`main`. We are on a Claude Code Pro plan: be lean (grep and line ranges,
+batched commands), check usage with get_usage, run the full gate in the
+background once per finished step, commit each verified step, and rewrite
+'Now' and 'Next' here after every step so a cut-off session loses nothing.
+The maintainer is the only user: rewrite a wrong design rather than patch
 it, never blame the model, and ask on open design choices.
 
 Live runs: launch entry `vak-e1-live` (port 8905, VAK_HOME
 /tmp/vak-live/e1-home, Ollama qwen3.5:4b-mlx; sign-in link
 http://127.0.0.1:8905/app?token=<contents of /tmp/vak-live/test-gateway-token>).
-For a second route use `vak exec --provider openai-responses --model
-gpt-6-luna` in a /tmp workspace (per-run override; the installed route
-stays the local model; sparingly). After a client change: `npm run
-build` in crates/vak-client-ui, then `cargo build -p vak -p vak-server
---bins` (BOTH binaries; the dev server runs `vak`), then restart the
-server. Short progress lines."
+ONE TURN AT A TIME on the local model: never start a request while one
+runs (two overlapping turns stall Ollama; the watchdog then waits 600 s).
+Drive turns with the scratchpad pattern: POST /sessions (fresh session),
+POST /sessions/{id}/run {prompt}, poll GET /sessions until that session is
+not running, read /sessions/{id}/transcript. After a client change: `npm
+run build` in crates/vak-client-ui, then `cargo build -p vak -p vak-server
+--bins`, restart the server, and RELOAD the browser tab (a hash change
+does not reload the bundle). Short progress lines."
 
 ## Where things stand
+
+**Now (2026-10-17).** Pushed today: mid-turn reload draws recorded cards
+(pinned by a test) and restores a waiting approval or question at once
+(`keepLiveGates`, restores start from an empty list); doc 96 P5 map drew
+live; card tools refuse a field they do not name (closed `call_schema`)
+instead of dropping it; steps description says a step can offer choices.
+Doc 96 P1, the `controls` form, is built and verified live (bill split,
+loan; "Ask about this" starts a turn with host-computed values); the
+model writes no results, the builder computes them
+(`vak_delivery::expression`, `::controls`, client
+`controlsExpression.ts`, shared `tests/expression_cases.json`).
+
 
 **Next (2026-10-16): the tool audit is built; doc 95 waits for the
 maintainer.** docs/audits/tool-catalogue-2026-10-16.md §6 says what was
@@ -385,24 +396,41 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-0. Answers on screen (2026-10-16). Done and committed: doc 96 Q1, Q2,
-   Q3, doc 97 cards end the answer, Details Activity steps, and the live
-   turn: recorded cards drawn as they land (`CardRecorded`, `LiveAnswer`)
-   and the plan's progress on the presence wheel, an arc below the chip
-   from 3 to 9 o'clock with the caption beneath (doc 96 Q2 "Superseded").
-   A page reloaded mid-turn draws earlier cards (checked 2026-10-17;
-   the old open line did not reproduce).
-   Follow-ups the maintainer asked for, each its own session: (a) check
-   the media card really shows its image or video in the app and fix
-   what does not; (b) a map card (doc 96 P5) designed to be intuitive:
-   places drawn without network tiles by default, tiles only behind an
-   owner-granted allowance. Open from doc 97 §7: a connected-accounts
-   rollup for `mail_calendar`, composition skills only some models fetch,
-   the plan as the answer's outline.
-1. Doc 93 E6 rest, then E7 to E9 (doc 93 §11), each with the full gate and a
-   live turn; tick `docs/plans/open-items.md` and the doc's Status.
-2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are
-   the maintainer's; ask before cutting.
+0. If 'Doc 96 P1: the controls form' is not the newest commit, the gate
+   or commit did not finish: run the full gate and commit the P1 paths
+   (controls.rs, expression.rs, expression_cases.json, Controls.tsx,
+   controlsExpression.ts, controls-expression.mjs, card_actions on both
+   sides, presentation_tools, skills, docs 92/96, open-items, CHANGELOG,
+   dist-web).
+1. Answers beyond single cards, asked for by the maintainer 2026-10-17
+   ("we cannot build a card for every scenario"; "make this the best out
+   there"). Write docs/design/98 as a proposal FIRST and show it before
+   building:
+   - Shared values within an answer: a controls card publishes its inputs
+     and outputs by name; any card's field may be an expression over them
+     in the same closed language; the client recomputes live, the host
+     checks every expression and computes the starting values. Linked,
+     concurrent cards with no new card type.
+   - Bigger results open in the Canvas (doc 66) to view and work with.
+   - Free-form HTML (markup and file previews, dashboards) must follow the
+     product's styling, theme and tokens: Q1 already injects `--vak-*`
+     tokens into previews; extend to a token stylesheet and the type scale
+     every generated page gets, and describe it in the preview card tools.
+   - Living dashboards: doc 96 P2 (a Library page versioned by an
+     automation), composed of cards.
+2. Open questions for the maintainer (ask together):
+   - P3 as designed does not fit: preview origins are per preview on fresh
+     ports, so an opaque markup frame has no stable origin for vendored
+     libraries. Alternative: the client inlines a pinned library into the
+     srcdoc (script-src already allows inline). Bundle size is the cost.
+   - Steps choices: the model nests them inside the step; the flat-schema
+     rule (doc 30 §30.1 rule 4) forbids that. Keep flat, or allow?
+   - P4 (MCP UI resources): text only, or Vakyartha's own renderer.
+   - Doc 97 §7: `mail_calendar` needs a connected-accounts rollup to load
+     only when an account is connected.
+3. P6 (live eval of format choice), the converter that has not drawn as
+   controls yet (open-items), the OpenAI route with `then`.
+4. Release questions (data baseline, purge) are the maintainer's.
 
 ## Working notes
 

@@ -32,6 +32,7 @@ pub const FORMS: &[&str] = &[
     "sources",
     "calendar",
     "map",
+    "controls",
     "link",
     "media",
     "file_preview",
@@ -731,6 +732,7 @@ pub fn validate_form(form: &str, payload: &Value) -> Check {
                 _ => Ok(()),
             }
         }
+        "controls" => validate_controls(&card, payload),
         "link" => {
             card.only(&["url", "title", "description", "site_name", "image_url"])?;
             card.text("url")?;
@@ -843,6 +845,150 @@ fn validate_against_schema(payload: &Value, schema: &Value) -> Check {
         {
             return Err(SkillError::InvalidPayload(format!(
                 "missing required field: {key}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A controls card's input or output name: an identifier the expressions
+/// can read, used once.
+fn control_name(record: &Record<'_>, names: &mut Vec<String>) -> Check {
+    let name = record.text("name")?;
+    let readable = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !readable || crate::expression::function_names().contains(&name) {
+        return Err(record.err(format!(
+            "`name` `{name}` must be letters, digits and _, start with a letter, and not be a function's name"
+        )));
+    }
+    if names.iter().any(|known| known == name) {
+        return Err(record.err(format!("`name` `{name}` is used twice")));
+    }
+    names.push(name.to_string());
+    Ok(())
+}
+
+/// A controls card (docs/design/96, P1): typed inputs, outputs computed
+/// from them in the closed expression language, and the card's own values
+/// as a worked example every output must agree with.
+fn validate_controls(card: &Record<'_>, payload: &Value) -> Check {
+    card.only(&["title", "inputs", "outputs"])?;
+    card.optional_text("title")?;
+    let mut names: Vec<String> = Vec::new();
+    for input in card.records("inputs", false)? {
+        input.only(&[
+            "name", "label", "kind", "value", "unit", "min", "max", "step", "options",
+        ])?;
+        control_name(&input, &mut names)?;
+        input.text("label")?;
+        input.optional_text("unit")?;
+        input.one_of("kind", crate::controls::INPUT_KINDS)?;
+        let bound = |key: &str| -> Result<Option<f64>, SkillError> {
+            match input.fields.get(key) {
+                None => Ok(None),
+                Some(value) => value
+                    .as_f64()
+                    .filter(|number| number.is_finite())
+                    .map(Some)
+                    .ok_or_else(|| input.err(format!("`{key}` must be a number"))),
+            }
+        };
+        let (min, max, step) = (bound("min")?, bound("max")?, bound("step")?);
+        if step.is_some_and(|step| step <= 0.0) {
+            return Err(input.err("`step` must be greater than zero"));
+        }
+        let kind = text_of(&Value::Object(input.fields.clone()), "kind").to_string();
+        match kind.as_str() {
+            "toggle" if !input.fields.get("value").is_some_and(Value::is_boolean) => {
+                return Err(input.err("a toggle's `value` must be true or false"));
+            }
+            "date"
+                if !input
+                    .fields
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .is_some_and(date) =>
+            {
+                return Err(input.err("a date's `value` must be YYYY-MM-DD"));
+            }
+            "number" | "range" | "choice" => {
+                let Some(value) = input.fields.get("value").and_then(Value::as_f64) else {
+                    return Err(input.err(format!("a {kind}'s `value` must be a number")));
+                };
+                if kind == "range" && (min.is_none() || max.is_none()) {
+                    return Err(input.err("a range needs `min` and `max`"));
+                }
+                if min.is_some_and(|min| value < min) || max.is_some_and(|max| value > max) {
+                    return Err(input.err("`value` must lie between `min` and `max`"));
+                }
+                if kind == "choice" {
+                    let options = input.records("options", false)?;
+                    for option in &options {
+                        option.only(&["label", "value"])?;
+                        option.text("label")?;
+                        if !option
+                            .fields
+                            .get("value")
+                            .and_then(Value::as_f64)
+                            .is_some_and(f64::is_finite)
+                        {
+                            return Err(option.err("`value` must be a number"));
+                        }
+                    }
+                    if !options.iter().any(|option| {
+                        option.fields.get("value").and_then(Value::as_f64) == Some(value)
+                    }) {
+                        return Err(
+                            input.err("a choice's `value` must be one of its options' values")
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for output in card.records("outputs", false)? {
+        output.only(&["name", "label", "expression", "unit", "equals", "decimals"])?;
+        control_name(&output, &mut names)?;
+        output.text("label")?;
+        output.optional_text("unit")?;
+        output.whole("decimals")?;
+        let source = output.text("expression")?;
+        let expr = crate::expression::parse(source)
+            .map_err(|error| output.err(format!("`expression`: {error}")))?;
+        let known = &names[..names.len() - 1];
+        if let Some(unknown) = crate::expression::names(&expr)
+            .into_iter()
+            .find(|read| !known.contains(read))
+        {
+            return Err(output.err(format!(
+                "`expression` reads `{unknown}`, which is not an input or an earlier output (those are {})",
+                known.join(", ")
+            )));
+        }
+        if !output
+            .fields
+            .get("equals")
+            .and_then(Value::as_f64)
+            .is_some_and(f64::is_finite)
+        {
+            return Err(output.err("`equals` must be a number"));
+        }
+    }
+    let computed = crate::controls::compute(payload, &std::collections::BTreeMap::new())
+        .map_err(|error| card.err(error))?;
+    for (output, (name, value)) in items(payload, "outputs").iter().zip(computed) {
+        let stated = output["equals"].as_f64().unwrap_or_default();
+        let decimals = output["decimals"].as_u64().unwrap_or(0);
+        if !crate::controls::agrees(value, stated, decimals) {
+            return Err(card.err(format!(
+                "output `{name}` computes {} from the inputs' values, not the {} given as `equals`",
+                crate::controls::shown(value, decimals),
+                crate::controls::shown(stated, decimals)
             )));
         }
     }
@@ -1106,6 +1252,35 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
                 ));
             }
         }
+        "controls" => {
+            let with_unit = |value: String, item: &Value| match text_of(item, "unit") {
+                "" => value,
+                unit => format!("{value} {unit}"),
+            };
+            lines.push("| | |".into());
+            lines.push("| --- | --- |".into());
+            for input in items(p, "inputs") {
+                let value = match &input["value"] {
+                    Value::Bool(on) => if *on { "on" } else { "off" }.to_string(),
+                    other => shown(other),
+                };
+                lines.push(format!(
+                    "| {} | {} |",
+                    text_of(input, "label"),
+                    with_unit(value, input)
+                ));
+            }
+            for output in items(p, "outputs") {
+                let decimals = output["decimals"].as_u64().unwrap_or(0);
+                let value =
+                    crate::controls::shown(output["equals"].as_f64().unwrap_or_default(), decimals);
+                lines.push(format!(
+                    "| **{}** | **{}** |",
+                    text_of(output, "label"),
+                    with_unit(value, output)
+                ));
+            }
+        }
         "link" => {
             lines.push(format!("[{}]({})", text_of(p, "title"), text_of(p, "url")));
             if !text_of(p, "description").is_empty() {
@@ -1234,6 +1409,11 @@ mod tests {
             "map" => json!({"connect": "route", "places": [
                 {"label": "Station", "latitude": 18.5286, "longitude": 73.8746},
                 {"label": "Fort", "latitude": 18.5195, "longitude": 73.8553, "detail": "Gates at 9"}]}),
+            "controls" => json!({"inputs": [
+                {"name": "bill", "label": "Bill", "kind": "number", "value": 1200, "unit": "₹"},
+                {"name": "people", "label": "People", "kind": "range", "value": 4, "min": 1, "max": 12, "step": 1}],
+                "outputs": [{"name": "each", "label": "Each pays", "expression": "bill / people",
+                "equals": 300, "decimals": 0, "unit": "₹"}]}),
             "link" => json!({"url": "https://a.example", "title": "A"}),
             "media" => json!({"format": "image", "url": "https://a.example/a.png", "alt": "A"}),
             "file_preview" => json!({"artifact_path": "index.html"}),

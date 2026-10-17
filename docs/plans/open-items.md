@@ -260,9 +260,13 @@ Carried over from 7.2.0:
 - Answer projection review (2026-10-16), staged in
   docs/design/96-answer-projection-gaps.md (Q1 to Q3, P1 to P6), each a
   Q1 to Q3 built 2026-10-16:
-  - [ ] No live controls: a `controls` form of typed inputs with outputs
-    written in a closed set of pure expressions evaluated in the client,
-    and a worked example the builder checks. No code runs.
+  - [x] Live controls (P1, 2026-10-17): the `controls` form, its closed
+    expression language on both sides, results the runtime computes, and
+    "Ask about this" as a values action. Bill split and loan drew live.
+  - [ ] A kilometres-to-miles converter has not drawn as controls on the
+    dev route: two tries, one refused twice (text compared to a choice,
+    then `?:`; both refusals now say how the language writes it) and one
+    answered with an HTML page. Try again after the refusal wording.
   - [x] A map form (P5) drew in a real turn (2026-10-17): one
     `emit_map_card` call with the model's own coordinates, at 1440×900
     and 390×844, light and dark, tiles off and on; the tile route refuses

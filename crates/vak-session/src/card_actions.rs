@@ -32,6 +32,9 @@ pub enum CardActionValues {
         label: String,
         checked: bool,
     },
+    /// What the person set on a controls card's inputs, by input name, as
+    /// they wrote it (docs/design/96, P1); the host computes the outputs.
+    Values { values: BTreeMap<String, String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -76,6 +79,7 @@ pub fn card_states<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> HashMap<
             CardActionValues::Option { label } => {
                 chosen.insert(record.presentation_id.clone(), label.clone());
             }
+            CardActionValues::Values { .. } => {}
         }
     }
     let mut states: HashMap<String, CardState> = HashMap::new();
@@ -99,6 +103,21 @@ pub fn choice_text(card_title: &str, label: &str) -> String {
     } else {
         format!("I choose “{label}” from “{}”.", card_title.trim())
     }
+}
+
+/// The directive values set on a controls card start their turn with: what
+/// the person set and what the card computes from it, naming the card.
+pub fn values_text(card_title: &str, set: &[String], results: &[String]) -> String {
+    let card = match card_title.trim() {
+        "" => String::new(),
+        title => format!(" on “{title}”"),
+    };
+    let gives = if results.is_empty() {
+        String::new()
+    } else {
+        format!(", which gives {}", results.join(", "))
+    };
+    format!("I set {}{card}{gives}.", set.join(", "))
 }
 
 /// One card's items as last marked: label and whether ticked, by place.

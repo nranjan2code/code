@@ -60,6 +60,7 @@ its name:
 | `sources` | findings tied to the sources they came from | research, news, evidence |
 | `calendar` | events placed on dates and times | calendar, availability |
 | `map` | places on the earth: apart, a route in order, or an area (doc 96 P5) | places that were a list with links |
+| `controls` | inputs a person changes and results the runtime computes from them (doc 96 P1) | calculators that were prose or a static table |
 | `link` | a link with its title | link preview |
 | `media` | an image, video or audio | media.* |
 | `file_preview` | a workspace HTML/UI file | ui.preview |
@@ -90,7 +91,8 @@ Rules:
   conversation's reading size; prose is held to ~70ch.
 
 Not built: a board, a graph and a form to fill in. Places go in a `map`
-(added 2026-10-16, docs/design/96-answer-projection-gaps.md P5); a decision the person makes goes through
+(added 2026-10-16, docs/design/96-answer-projection-gaps.md P5), and a
+calculation a person adjusts in `controls` (added 2026-10-17, P1); a decision the person makes goes through
 the existing approval and option flows. Each is added only when real
 turns show a shape the forms above cannot carry (`docs/plans/open-items.md`).
 

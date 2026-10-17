@@ -1,5 +1,12 @@
 ## Unreleased
 
+- An answer can be a working calculator: a card of inputs you change (a
+  number, a slider, a choice, an on-off switch or a date) and results
+  that update as you do, such as a bill split or a loan payment.
+  Vakyartha computes the results itself, from a small fixed set of
+  arithmetic, and "Ask about this" sends what you set, with the results
+  worked out again, as your next message.
+
 - A card no longer drops part of what was written for it without a word:
   a field the card does not have (choices written inside a step, say) is
   sent back to be written again under the card's own shape, where before

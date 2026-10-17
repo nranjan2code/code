@@ -1158,6 +1158,11 @@ function cardInteractionFor(sessionId?: string, presentationId?: string, state?:
         .then((result) => { if (result.directive) appendUser(sessionId, result.directive); })
         .catch((error) => setNotice({ kind: "error", text: error instanceof Error ? error.message : String(error) }));
     },
+    onValues: (values: Record<string, string>) => {
+      void api.postCardAction(sessionId, { presentation_id: presentationId, action: "choose", values: { kind: "values", values } })
+        .then((result) => { if (result.directive) appendUser(sessionId, result.directive); })
+        .catch((error) => setNotice({ kind: "error", text: error instanceof Error ? error.message : String(error) }));
+    },
     marked: state?.marked ?? [],
     onMark: (index: number, label: string, checked: boolean) =>
       api.postCardAction(sessionId, { presentation_id: presentationId, action: "mark", values: { kind: "item", index, label, checked } })

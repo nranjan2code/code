@@ -1173,8 +1173,8 @@ commit (invariant 30).
   **A card is a form** (docs/design/92-card-forms.md): a shape of
   information, never a topic. The forms are `vak_delivery::FORMS` (summary,
   steps, list, details, table, comparison, stats, chart, callout, sources,
-  calendar, link, media, file preview, markup preview, diff, test report,
-  terminal), and the same list is the card tools, the delivery validators
+  calendar, map, controls, link, media, file preview, markup preview, diff,
+  test report, terminal), and the same list is the card tools, the delivery validators
   (`validate_form`, one text form each in `structured_markdown`), the host's
   form primitives (`vak_presentation::PRIMITIVES`, plus layout) and the
   client's `FORMS` table (`vak-client-ui/src/components/cards/index.tsx`),
