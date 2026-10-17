@@ -76,6 +76,7 @@ impl Core {
             created_by: None,
             home: None,
             made_by: Some(triggers::MadeBy::Owner),
+            page: None,
         };
         trigger.in_zone(&self.owner_timezone());
         triggers::create(&self.shared_scope(), &trigger).map_err(|error| error.to_string())?;

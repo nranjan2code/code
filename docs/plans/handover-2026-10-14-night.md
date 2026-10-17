@@ -56,7 +56,12 @@ the series cap as `[control.limits] series_points` (Settings → Limits),
 card tools declaring followable fields (`Tool::followable_fields`), S3
 the whole answer in the Canvas (multi-column, scrolling, live), S4
 generated pages in the product's look (one client stylesheet, preview
-slot, live theme switch). All card wording is domain-neutral.
+slot, live theme switch), S5 living pages (doc 98 §12: a saved answer is
+a page of its own items; `Trigger::page` keeps one current, set by Keep
+current or the automation tool's `as_page`/`page`; checked live on the dev
+route: a routine run added version 2, the page opened in the Canvas, and a
+guest with a viewer share saw only the page). All card wording is
+domain-neutral.
 
 
 **Next (2026-10-16): the tool audit is built; doc 95 waits for the
@@ -408,11 +413,9 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Doc 98 S5, living pages (doc 96 P2): a Library page whose content is
-   an answer's composed cards and whose versions come from an automation
-   (`Trigger`) whose run ends by recording a new version; its controls
-   and shared values work as in an answer. Write its design into doc 98
-   §6/S5 first if it needs choices, and ask on them.
+1. Doc 98 is built (S1 to S5). What S5 left is in open-items "Card
+   forms": Keep current's form and the Agent's `as_page` not yet run
+   live, file cards inside a page, Download of a page.
 2. Open from today (docs/plans/open-items.md):
    - Rename `vak_control::TimeLimits` (it now holds `series_points`) to
      what `[control.limits]` is; `Limits` is taken by the intent kernel.

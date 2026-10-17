@@ -2334,6 +2334,8 @@ export interface TriggerDraft {
   scope?: import("./types").RoutineScope | null;
   /** The conversation its results go to (a session id). */
   home?: string | null;
+  /** The Library page each run's answer becomes the next version of. */
+  page?: string;
 }
 
 export function createTrigger(draft: TriggerDraft): Promise<import("./types").Trigger> {
@@ -2608,7 +2610,7 @@ export interface ArtifactSummary {
   id: string;
   name: string;
   path: string;
-  kind: "file" | "document" | "changeset" | "card" | "skill";
+  kind: "file" | "document" | "changeset" | "page" | "skill";
   agent: string;
   space: string;
   summary?: string | null;

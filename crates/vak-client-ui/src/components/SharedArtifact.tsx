@@ -1,4 +1,5 @@
-import { createSignal, For, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
+import PageView, { readPage } from "./PageView";
 import { relAgo } from "../time";
 
 interface SharedVersion {
@@ -69,6 +70,17 @@ export default function SharedArtifact() {
     }
   };
 
+  // A page is drawn, its newest shown version, rather than only offered as
+  // a file (docs/design/98 §12).
+  const [page] = createResource(
+    () => {
+      const shared = view();
+      const newest = shared?.versions[shared.versions.length - 1];
+      return shared?.kind === "page" && newest ? newest.id : null;
+    },
+    async (version) => readPage(new Uint8Array(await (await call(`/shared/artifact/versions/${encodeURIComponent(version)}`)).arrayBuffer())),
+  );
+
   const comment = async (version: string) => {
     const text = note().trim();
     if (!text) return;
@@ -108,6 +120,7 @@ export default function SharedArtifact() {
               <div class="library-head"><h2>{shared().name}</h2></div>
               <p class="library-meta">Shared with {shared().you}</p>
               <Show when={error()}><div class="worker-error" role="alert">{error()}</div></Show>
+              <Show when={page()}>{(shown) => <div class="library-preview library-page-view"><PageView page={shown()} /></div>}</Show>
               <h3>Versions</h3>
               <ol class="library-versions">
                 <For each={[...shared().versions].reverse()}>

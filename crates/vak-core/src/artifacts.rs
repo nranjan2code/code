@@ -37,8 +37,10 @@ pub enum ArtifactKind {
     Document,
     /// Code changes that promote into git as a commit.
     Changeset,
-    /// A card a person saved out of a conversation.
-    Card,
+    /// An answer kept as a page (`vak_delivery::page`): its own items,
+    /// drawn as the conversation drew them; a living page gains a version
+    /// from each run of the automation that names it.
+    Page,
     /// A skill folder, as one bundle (`vak_tools::capability::bundle`):
     /// what an Agent proposed or learned (docs/design/93 §6).
     Skill,

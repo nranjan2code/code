@@ -323,6 +323,7 @@ async fn create_source(State(state): State<AppState>, Json(draft): Json<SourceDr
         created_by: Some(actor),
         home: None,
         made_by: None,
+        page: None,
     };
     let source = Source {
         id,

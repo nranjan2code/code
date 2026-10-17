@@ -105,7 +105,7 @@ Artifact "Sales dashboard"                     (art_ id at M8; derived key befor
 ```
 
 - **Kinds**: document, spreadsheet, slides, page, dashboard, image, data,
-  diagram, saved card. The kind comes from the declaration that made the
+  diagram, answer page. The kind comes from the declaration that made the
   entry (§3) when it names one, else from the bytes: the main part's content
   type for Open XML (invariant 39), the PDF header, and magic-byte sniffing
   for images and archives. That detection runs in the worker (invariant 14)
@@ -279,9 +279,11 @@ Volume control is the design. The rules:
    · sent in chat") when Vak makes a version of it.
 5. **Versions, not copies.** A revision is a version of the same artifact
    (§2.1). An identical body (the same digest) is one version.
-6. **Cards stay in chat** unless saved ("save this recipe"); a saved card is
-   a `saved card` artifact holding the card's payload. Saving is a write, so
-   saved cards arrive with M8; no save action exists today.
+6. **Cards stay in chat** unless saved ("save this recipe"). A card is never
+   saved alone: Save to Library keeps the whole answer as a `page` artifact
+   holding the answer's own items, drawn as the conversation drew them, and
+   an automation can keep a page current, one version per run
+   (docs/design/98-answers-beyond-one-card.md §12).
 7. **Drafts fade (M7a/M8).** Fading is the lifecycle reconciler applying the
    default retention label (doc 74 §2.7 and §3.1), not a Library rule. A
    draft version not accepted, starred or shared is listed under "Older

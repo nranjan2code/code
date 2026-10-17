@@ -43,6 +43,7 @@ fn trigger(cwd: &Path, anchor: DateTime<Utc>, on_crash: OnCrash) -> Trigger {
         created_by: None,
         home: None,
         made_by: None,
+        page: None,
     };
     triggers::create(&shared(), &trigger).unwrap();
     trigger

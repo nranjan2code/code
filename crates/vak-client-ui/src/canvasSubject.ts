@@ -10,7 +10,7 @@
 
 import { isOfficePath } from "./officeFiles.ts";
 
-export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office" | "automation" | "daily_mail_calendar" | "answer";
+export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office" | "automation" | "daily_mail_calendar" | "answer" | "page";
 
 interface SubjectBase {
   title: string;
@@ -36,6 +36,7 @@ export type CanvasSubject =
   | (SubjectBase & { kind: "daily_mail_calendar"; agentId: string })
   /** Every card of one answer, by its conversation and turn (docs/design/98 §3). */
   | (SubjectBase & { kind: "answer"; sessionId: string; turnId: string })
+  | (SubjectBase & { kind: "page"; artifactId: string })
   /** A dev server the session's launch configuration names. */
   | (SubjectBase & { kind: "live_server"; serverName: string; sessionId: string; candidateId?: string; path?: string });
 
@@ -82,6 +83,7 @@ export function previewSource(subject: CanvasSubject): PreviewSource | null {
     case "automation":
     case "daily_mail_calendar":
     case "answer":
+    case "page":
     case "live_server": return null;
   }
 }
@@ -108,12 +110,13 @@ export function subjectPath(subject: CanvasSubject): string {
     case "automation": return "";
     case "daily_mail_calendar": return "";
     case "answer": return "";
+    case "page": return "";
     default: return subject.path;
   }
 }
 
 export function subjectSessionId(subject: CanvasSubject): string | undefined {
-  return subject.kind === "automation" || subject.kind === "daily_mail_calendar" ? undefined : subject.sessionId;
+  return subject.kind === "automation" || subject.kind === "daily_mail_calendar" || subject.kind === "page" ? undefined : subject.sessionId;
 }
 
 export function subjectCandidateId(subject: CanvasSubject): string | undefined {
@@ -137,6 +140,7 @@ export function subjectKey(subject: CanvasSubject): string {
     case "automation": return `task:${subject.taskId}`;
     case "daily_mail_calendar": return `daily_mail_calendar:${subject.agentId}`;
     case "answer": return `answer:${subject.sessionId}:${subject.turnId}`;
+    case "page": return `page:${subject.artifactId}`;
     case "inline": return `inline:${subject.basePath ?? ""}:${subject.title}:${digest(subject.html)}`;
   }
 }
@@ -202,6 +206,7 @@ export function displayType(subject: CanvasSubject): ArtifactDisplayType {
   if (subject.kind === "automation") return "automation";
   if (subject.kind === "daily_mail_calendar") return "daily_mail_calendar";
   if (subject.kind === "answer") return "answer";
+  if (subject.kind === "page") return "page";
   const path = subject.path.toLowerCase();
   if (path.endsWith(".pdf")) return "pdf";
   if (path.endsWith(".csv") || path.endsWith(".tsv")) return "table";

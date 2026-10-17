@@ -147,10 +147,15 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
     }
 }
 
-/// One turn's answer as a document a person can keep: its request as the
-/// title, its cards' text in the order shown, then the reply (beside cards,
-/// only what the reply adds to them). `None` when the turn has no answer.
-pub(crate) fn answer_document(timeline: &OutputTimeline, turn: &str) -> Option<(String, String)> {
+/// One turn's answer as a page a person can keep (docs/design/98 §12): the
+/// turn's items as the conversation drew them, its request as the title, and
+/// as its text form its cards' text in the order shown, then the reply
+/// (beside cards, only what the reply adds to them). `None` when the turn
+/// has no answer.
+pub(crate) fn answer_page(
+    timeline: &OutputTimeline,
+    turn: &str,
+) -> Option<vak_delivery::page::Page> {
     let of_turn = || timeline.items.iter().filter(|item| item.turn_id == turn);
     let cards: Vec<&str> = of_turn()
         .filter(|item| {
@@ -201,7 +206,16 @@ pub(crate) fn answer_document(timeline: &OutputTimeline, turn: &str) -> Option<(
         })
         .map(|line| line.trim().to_string())
         .unwrap_or_default();
-    Some((title, body.join("\n\n")))
+    Some(vak_delivery::page::Page::new(
+        title,
+        of_turn().cloned().collect(),
+        timeline
+            .answers
+            .iter()
+            .find(|outline| outline.turn_id == turn)
+            .cloned(),
+        body.join("\n\n"),
+    ))
 }
 
 /// Keep the model's short narration separate from the structured cards.

@@ -15,6 +15,7 @@ pub mod client;
 pub mod controls;
 pub mod discord;
 pub mod expression;
+pub mod page;
 pub mod presentation;
 pub mod skills;
 pub mod slack;

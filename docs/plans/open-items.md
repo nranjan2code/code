@@ -245,6 +245,17 @@ Carried over from 7.2.0:
 
 ## Card forms (docs/design/92)
 
+- [ ] Living pages (docs/design/98 §12), left from S5 (2026-10-17): Keep
+  current's schedule form in the Library was not clicked through live (the
+  same automation was made through `/triggers` with `page`, and its run
+  added version 2); the Agent's `as_page` was tested only in a unit test,
+  not in a live turn; a page made from an answer that delivered a file
+  draws that file's card, whose Review needs the conversation it came
+  from; Download on a page gives its JSON.
+- [ ] A guest's shared view asks for `/app/fonts/InterVariable.woff2` and
+  is refused (401), so it falls back to the system font; seen 2026-10-17,
+  older than S5.
+
 - [ ] `vak_control::TimeLimits` now holds a non-time limit
   (`series_points`); rename it to what `[control.limits]` is (the
   operator's limits) across Rust, the client and the admin console, which

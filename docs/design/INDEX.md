@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 3 proposal, 20 in progress, 56 implemented, 3 reference, 8 superseded, 4 historical.
+Counts: 3 proposal, 19 in progress, 57 implemented, 3 reference, 8 superseded, 4 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -102,4 +102,4 @@ Counts: 3 proposal, 20 in progress, 56 implemented, 3 reference, 8 superseded, 4
 | [95-one-capability-index.md](95-one-capability-index.md) | 95-one-capability-index.md | proposal | (2026-10-16): written from the tool catalogue audit (docs/audits/tool-catalogue-2026-10-16.md, O8) |
 | [96-answer-projection-gaps.md](96-answer-projection-gaps.md) | 96 — Answer projection gaps | in progress | (2026-10-16): Q1, Q2 and Q3 are built, Q2's card shell superseded by live cards and the plan wheel |
 | [97-cards-end-the-answer.md](97-cards-end-the-answer.md) | 97 — Cards end the answer, on every provider | in progress | (2026-10-16): stages A to C built and verified live on the dev route |
-| [98-answers-beyond-one-card.md](98-answers-beyond-one-card.md) | 98 — Answers beyond one card | in progress | (2026-10-17): accepted by the maintainer |
+| [98-answers-beyond-one-card.md](98-answers-beyond-one-card.md) | 98 — Answers beyond one card | implemented | (2026-10-17): accepted by the maintainer |

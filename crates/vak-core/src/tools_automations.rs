@@ -32,6 +32,8 @@ pub struct AutomationsTool {
     pub owner_zone: String,
     /// Starts a run now where a scheduler runs (`Core::set_trigger_runner`).
     pub runner: Option<std::sync::Arc<dyn triggers::Runner>>,
+    /// The Library, where a page an automation keeps current lives.
+    pub artifacts: crate::artifacts::Artifacts,
 }
 
 fn render(trigger: &Trigger, runs: &vak_session::runs::Runs, zone: &str) -> Value {
@@ -44,6 +46,7 @@ fn render(trigger: &Trigger, runs: &vak_session::runs::Runs, zone: &str) -> Valu
         "when": trigger.when_words(zone),
         "does": trigger.action,
         "deliver_to": trigger.deliver_to,
+        "page": trigger.page,
         "next_run": trigger
             .next_slot_after(chrono::Utc::now())
             .filter(|_| trigger.enabled)
@@ -264,12 +267,50 @@ impl AutomationsTool {
                     session,
                 }),
             made_by: triggers::MadeBy::of_call(ctx.trace.as_ref()),
+            page: None,
         };
         trigger.in_zone(&self.owner_zone);
+        let new_page = args.get("as_page").and_then(Value::as_bool) == Some(true);
+        match str_arg(args, "page") {
+            Some(_) if new_page => {
+                return refuse(Fault::Shape, "give 'page' or 'as_page', not both");
+            }
+            Some(page) => match vak_session::ids::ArtifactId::parse(&page) {
+                Ok(page) => trigger.page = Some(page),
+                Err(_) => {
+                    return refuse(
+                        Fault::Shape,
+                        format!("'{page}' is not a Library item's id; 'recall' finds one"),
+                    );
+                }
+            },
+            None => {}
+        }
+        if let Some(refusal) = trigger.page_refusal(&self.artifacts) {
+            return refuse(Fault::Target, refusal);
+        }
+        if new_page {
+            if !matches!(trigger.action, TriggerAction::Prompt { .. }) {
+                return refuse(
+                    Fault::Shape,
+                    "a page is kept current by an automation that runs a prompt",
+                );
+            }
+            match trigger.declare_page(&self.artifacts, None) {
+                Ok(page) => trigger.page = Some(page),
+                Err(e) => return refuse(Fault::Tool, e.to_string()),
+            }
+        }
         if let Err(e) = triggers::create(&self.shared, &trigger) {
             return refuse(Fault::Tool, e.to_string());
         }
-        vak_tools::ToolOutput::ok(format!("created {}", summary(&trigger, &self.owner_zone)))
+        let page = trigger.page.map_or_else(String::new, |page| {
+            format!("; each run's answer becomes the next version of Library page {page}")
+        });
+        vak_tools::ToolOutput::ok(format!(
+            "created {}{page}",
+            summary(&trigger, &self.owner_zone)
+        ))
     }
 
     fn change(
@@ -384,7 +425,8 @@ impl vak_tools::Tool for AutomationsTool {
          run now or remove one ('remind me on Friday at 9', 'every weekday \
          at 8 send me the headlines', 'move my morning line to 9', 'pause \
          it', 'run it now'). `add` creates one; its result comes back in \
-         this conversation. For a single moment give `at`, the person's \
+         this conversation, or, with `as_page`, becomes the next version of \
+         a Library page that stays current. For a single moment give `at`, the person's \
          local date and time ('2026-10-17 09:00'); for a repeating schedule \
          give `cron` (5 fields: min hour dom mon dow, e.g. '0 9 * * 1-5' for \
          weekdays at 9am) or `every_secs`; times are the owner's time zone \
@@ -450,6 +492,14 @@ impl vak_tools::Tool for AutomationsTool {
                 "agent": {
                     "type": "string",
                     "description": "For add: a saved Agent name or id to run it as; defaults to you"
+                },
+                "as_page": {
+                    "type": "boolean",
+                    "description": "For add with a prompt: make a Library page named like the automation; each run's answer, its cards included, becomes the page's next version instead of coming back in a conversation"
+                },
+                "page": {
+                    "type": "string",
+                    "description": "For add with a prompt: the id of a Library page to keep current the same way (not with 'as_page')"
                 }
             },
             "required": ["action"]
@@ -542,11 +592,72 @@ mod tests {
             default_deliver_to: Some("telegram:42".into()),
             owner_zone: "Asia/Kolkata".into(),
             runner: None,
+            artifacts: crate::artifacts::Artifacts::at(
+                &vak_config::scope::SharedScope::new(home),
+                vak_config::paths::local_tenant_home(),
+            ),
         }
     }
 
     fn ctx() -> vak_tools::ToolContext {
         vak_tools::ToolContext::new(std::path::PathBuf::from("/"))
+    }
+
+    /// `as_page` makes a page the automation keeps current (docs/design/98
+    /// §12); `page` names only a page, and only a prompt keeps one.
+    #[tokio::test]
+    async fn an_automation_keeps_a_page_current() {
+        vak_config::paths::isolate_home_for_tests();
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        vak_config::spaces::bind(cwd.path()).unwrap();
+        let tool = tool(home.path(), cwd.path());
+        let add = |extra: Value| {
+            let mut args = serde_json::json!({
+                "action": "add", "name": "board", "prompt": "the numbers", "cron": "0 9 * * 1",
+            });
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+        let made = tool
+            .execute(&add(serde_json::json!({"as_page": true})), &ctx())
+            .await;
+        assert!(!made.is_error(), "{}", made.content);
+        let stored = triggers::list(&tool.shared).unwrap();
+        let page = stored[0].page.expect("the automation names its page");
+        let artifact = tool.artifacts.get(&page.to_string()).unwrap();
+        assert_eq!(artifact.kind, crate::artifacts::ArtifactKind::Page);
+        assert_eq!(artifact.name(), "board");
+        assert!(made.content.contains(&page.to_string()), "{}", made.content);
+
+        let again = tool
+            .execute(&add(serde_json::json!({"page": page.to_string()})), &ctx())
+            .await;
+        assert!(!again.is_error(), "an existing page: {}", again.content);
+        let file = tool
+            .artifacts
+            .declare(
+                &stored[0].space,
+                "vak",
+                "notes.md",
+                crate::artifacts::ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        for refused in [
+            add(serde_json::json!({"page": file.to_string()})),
+            add(serde_json::json!({"page": page.to_string(), "as_page": true})),
+            serde_json::json!({"action": "add", "name": "x", "script": "true", "cron": "0 9 * * 1", "as_page": true}),
+        ] {
+            let out = tool.execute(&refused, &ctx()).await;
+            assert!(out.is_error(), "refused: {refused}");
+        }
+        assert_eq!(triggers::list(&tool.shared).unwrap().len(), 2);
     }
 
     #[tokio::test]

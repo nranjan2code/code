@@ -9,6 +9,7 @@ import SourceViewer from "./SourceViewer";
 import AutomationViewer from "./AutomationViewer";
 import DailyMailCalendarViewer from "./DailyMailCalendarViewer";
 import AnswerViewer from "./AnswerViewer";
+import PageViewer from "./PageViewer";
 import TableViewer from "./TableViewer";
 import type { ViewerProps } from "./types";
 
@@ -24,4 +25,5 @@ export const VIEWERS: Record<ArtifactDisplayType, Component<ViewerProps>> = {
   automation: AutomationViewer,
   daily_mail_calendar: DailyMailCalendarViewer,
   answer: AnswerViewer,
+  page: PageViewer,
 };

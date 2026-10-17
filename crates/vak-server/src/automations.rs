@@ -233,6 +233,10 @@ pub(crate) struct TriggerDraft {
     /// The conversation its results are delivered into (docs/design/94 §3).
     #[serde(default)]
     home: Option<String>,
+    /// The Library page each run's answer becomes the next version of
+    /// (docs/design/98 §12); only a new automation takes one.
+    #[serde(default)]
+    page: Option<vak_session::ids::ArtifactId>,
 }
 
 /// The schedule a draft names: `repeat` as a person picked it, else its
@@ -344,12 +348,16 @@ pub(crate) async fn create_trigger(
         created_by: Some(crate::request_actor(&state)),
         home: None,
         made_by: Some(triggers::MadeBy::Owner),
+        page: draft.page,
     };
     trigger.home = draft.home.map(|session| triggers::Home {
         agent: trigger.agent.clone(),
         session,
     });
     trigger.in_zone(&state.core.owner_timezone());
+    if let Some(refusal) = trigger.page_refusal(&state.core.artifacts()) {
+        return error_response(StatusCode::UNPROCESSABLE_ENTITY, refusal);
+    }
     if let Err(response) = check_routine(&state, &trigger).await {
         return *response;
     }
@@ -610,6 +618,47 @@ fn note_refusal(state: &AppState, trigger: &Trigger, run: &str, reason: &str) {
         Some(&format!("routine-failed|{}|{run}", trigger.id)),
         None,
     );
+}
+
+/// A living page's run (docs/design/98 §12): its answer becomes the page's
+/// next version. A run that failed or answered nothing leaves the page as it
+/// was, and the inbox says why.
+fn keep_page(
+    state: &AppState,
+    trigger: &Trigger,
+    page: vak_session::ids::ArtifactId,
+    timeline: &vak_delivery::presentation::OutputTimeline,
+    session: &str,
+    answer: &RunAnswer,
+) {
+    let refused = |reason: &str| note_refusal(state, trigger, &answer.run, reason);
+    if answer.failed {
+        return refused(&format!(
+            "The page was left as it was: {}",
+            answer.text.lines().next().unwrap_or("the run failed")
+        ));
+    }
+    let Some(artifact) = state.core.artifacts().get(&page.to_string()) else {
+        return refused("The page it keeps current is no longer in the Library.");
+    };
+    let made = timeline
+        .items
+        .iter()
+        .rev()
+        .find(|item| item.role == vak_delivery::presentation::OutputRole::User)
+        .and_then(|item| {
+            crate::projection::answer_page(timeline, &item.turn_id)
+                .map(|page| (item.turn_id.clone(), page))
+        });
+    let Some((turn, made)) = made else {
+        return refused("The run gave no answer, so the page was left as it was.");
+    };
+    if let Err(error) =
+        crate::library::record_page(state, Some(&artifact), &made, session, &turn, None)
+    {
+        tracing::warn!(trigger = %trigger.id, error_kind = %vak_telemetry::error_kind(&*error), "a page's version was not recorded");
+        refused("The page's new version could not be recorded.");
+    }
 }
 
 /// Tells the person why a run could not do its work: it settles failed,
@@ -1007,7 +1056,24 @@ async fn fire(
                             .unwrap_or_else(|| {
                                 RunAnswer::words(run.id().to_string(), text.clone(), is_error)
                             });
-                        deliver_home(&st, &home_trigger, answer).await;
+                        let timeline = child_handle
+                            .presentation
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .clone();
+                        match home_trigger.page {
+                            Some(page) => keep_page(
+                                &st,
+                                &home_trigger,
+                                page,
+                                &timeline,
+                                &child_session,
+                                &answer,
+                            ),
+                            None => {
+                                deliver_home(&st, &home_trigger, answer).await;
+                            }
+                        }
                         let body = format!("automation '{name}' finished:\n{text}");
                         let title = format!("automation '{name}' finished");
                         if let Some(target) = &deliver_to {
@@ -1023,7 +1089,7 @@ async fn fire(
                                 result_id.as_deref(),
                             )
                             .await;
-                        } else {
+                        } else if home_trigger.page.is_none() {
                             let dedupe_key = format!("inbox|{child_session}");
                             let _ = vak_core::inbox::record_with_result_and_key(
                                 &st.core.shared_scope().as_agent(),

@@ -49,6 +49,7 @@ fn intake_item_has_trace_and_provenance() {
         created_by: None,
         home: None,
         made_by: None,
+        page: None,
     };
     triggers::create(&shared, &trigger).unwrap();
     let source = Source {

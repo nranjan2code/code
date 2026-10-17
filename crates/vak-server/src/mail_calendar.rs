@@ -3842,6 +3842,7 @@ mod tests {
                 created_by: None,
                 home: None,
                 made_by: None,
+                page: None,
             };
             vak_core::triggers::create(&shared, &trigger).unwrap();
             id.to_string()
@@ -4091,6 +4092,7 @@ mod tests {
             created_by: None,
             home: None,
             made_by: None,
+            page: None,
         };
         vak_core::triggers::create(&state.core.shared_scope(), &routine).unwrap();
 

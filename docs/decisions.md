@@ -7,6 +7,15 @@ maintainer decides something a later session might otherwise ask again or
 undo, in the same commit that records it. Do not ask again about anything
 listed here unless the maintainer reopens it.
 
+## 2026-10-17
+
+- Living pages (`docs/design/98-answers-beyond-one-card.md` §6 S5, §12):
+  a saved answer is a page of its own items, never Markdown; an automation
+  keeps a page current through one field, `Trigger::page`, set by the
+  owner's Keep current or the Agent's automation tool; a page's runs go to
+  the page alone, not a conversation; a viewer's control values are their
+  own and never saved.
+
 ## 2026-10-16
 
 - The map form (`docs/design/96-answer-projection-gaps.md` P5): places

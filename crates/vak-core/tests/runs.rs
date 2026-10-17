@@ -374,6 +374,7 @@ fn last_run_is_a_query() {
         created_by: None,
         home: None,
         made_by: None,
+        page: None,
     };
     vak_core::triggers::create(&shared, &trigger).unwrap();
     assert!(

@@ -3,7 +3,8 @@
 Status: in progress (2026-10-16): Q1, Q2 and Q3 are built, Q2's card
 shell superseded by live cards and the plan wheel; P5 (the map form) is
 built and seen in a live turn (2026-10-17); P1 (the controls form) is
-built and drew in live turns (2026-10-17); P1 to P4 and P6 are open. Written from a review of what an answer can do on screen.
+built and drew in live turns (2026-10-17); P2 (living pages) is built
+(docs/design/98-answers-beyond-one-card.md §12, 2026-10-17); P3, P4 and P6 are open. Written from a review of what an answer can do on screen.
 
 ## 1. What is wrong
 

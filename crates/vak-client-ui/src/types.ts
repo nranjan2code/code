@@ -628,6 +628,8 @@ export interface Trigger {
   home?: { agent: string; session: string } | null;
   /** What last made or changed it. */
   made_by?: { kind: "turn"; session: string; turn: string } | { kind: "owner" } | null;
+  /** The Library page each run's answer becomes the next version of. */
+  page?: string | null;
   /** The last run's message a person may send again, when there is one. */
   delivery_effect?: string | null;
   running?: boolean;

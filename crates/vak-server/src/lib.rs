@@ -27355,6 +27355,7 @@ mod scheduler_state_tests {
             created_by: None,
             home: None,
             made_by: None,
+            page: None,
         }
     }
 
@@ -27542,6 +27543,7 @@ mod scheduler_state_tests {
             created_by: None,
             home: None,
             made_by: None,
+            page: None,
         };
         task.validate().unwrap();
 

@@ -1008,7 +1008,8 @@ function ResultEvidence(props: { item: OutputItem }) {
 }
 
 /** Ask for changes on a result that is not a single file; a single file's
- * card carries it (`ResultCard`). */
+ * card carries it (`ResultCard`). A page has no conversation to ask in, so
+ * it has none (docs/design/98 §12). */
 function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string; turnId: string; resultId?: string }) {
   const files = () => props.material.filter((item) => item.content.type === "artifact").length;
   const isPlan = createMemo(() => [props.answer, ...props.material].some((item) => {
@@ -1022,7 +1023,7 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
     setReplyTarget({ sessionId: props.sessionId, resultId, label: "this result" });
     window.dispatchEvent(new CustomEvent("vak:focus-composer"));
   };
-  return <Show when={files() !== 1 && props.resultId}>
+  return <Show when={files() !== 1 && props.resultId && props.sessionId}>
     <nav class="primary-result-actions" aria-label="Result actions">
       <button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for changes"}</button>
       <Show when={files() === 0}>
@@ -1625,15 +1626,17 @@ export const InCanvasContext = createContext(false);
 export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean }) {
   // The automations a turn made or changed (docs/design/94 §5), read again
   // whenever the conversation grows, so a card follows its record.
+  // A page has no conversation, so no automations of its own and nothing
+  // to ask the owner's server for (docs/design/98 §12).
   const [fetchedAutomations, { refetch: refetchAutomations }] = createResource(
-    () => `${props.sessionId}:${props.timeline.items.length}`,
+    () => (props.sessionId ? `${props.sessionId}:${props.timeline.items.length}` : null),
     () => api.listTriggers().then((list) => list.triggers.filter((trigger) => trigger.made_by?.kind === "turn" && trigger.made_by.session === props.sessionId)).catch(() => []),
   );
   // Kept by id, so a refresh updates a card in place.
   const [automationList, setAutomationList] = createStore<import("../types").Trigger[]>([]);
   createEffect(() => { const next = fetchedAutomations(); if (next) setAutomationList(reconcile(next, { key: "id" })); });
   const automations = () => automationList;
-  const [ownerZone] = createResource(() => api.getConfig().then((config) => config.owner?.timezone).catch(() => undefined));
+  const [ownerZone] = createResource(() => props.sessionId || null, () => api.getConfig().then((config) => config.owner?.timezone).catch(() => undefined));
   const automationsOf = (turn: string) => {
     const directive = props.timeline.items.find((item) => item.turn_id === turn && item.role === "user")?.provenance?.entry_id;
     return directive ? (automations() ?? []).filter((trigger) => trigger.made_by?.kind === "turn" && trigger.made_by.turn === directive) : [];

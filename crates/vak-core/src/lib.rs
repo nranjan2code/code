@@ -4203,6 +4203,7 @@ impl Core {
             default_deliver_to: self.default_deliver_to.clone(),
             owner_zone: self.owner_timezone(),
             runner: self.trigger_runner(),
+            artifacts: self.artifacts(),
         }));
         if self.effective_commitment() {
             tools.push(Arc::new(tools_commitments::CommitmentsTool {

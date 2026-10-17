@@ -4012,6 +4012,7 @@ body.is-resizing .split-divider {
 .inbox-page,
 .library-page {
   flex: 1;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -4078,6 +4079,8 @@ body.is-resizing .split-divider {
 .library-rename input { flex: 1; min-width: 0; }
 .library-preview { margin: 0 0 16px; max-height: 420px; overflow: auto; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-control); }
 .library-document { max-height: 640px; padding: 0; white-space: normal; overflow-wrap: normal; }
+.library-page-view { max-height: none; white-space: normal; overflow-wrap: normal; font-size: inherit; }
+.library-keeper { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; flex-basis: 100%; }
 .library-note { font-size: var(--fs-control); color: var(--text-soft); }
 .library-edit { margin: 0 0 16px; }
 .library-edit textarea { width: 100%; min-height: 240px; box-sizing: border-box; padding: var(--space-3); border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-family: var(--mono); font-size: var(--fs-control); }
@@ -4116,7 +4119,7 @@ body.is-resizing .split-divider {
 .library-artifact { display: flex; flex-direction: column; }
 .library-artifact > .library-history, .library-artifact > .library-note { order: 1; }
 .library-artifact > .library-preview, .library-artifact > .library-edit, .library-artifact > .library-comments-block { order: 2; }
-@media (min-width: 1100px) {
+@container (min-width: 1000px) {
   .library-artifact { display: grid; grid-template-columns: minmax(0, 1fr) 340px; column-gap: 28px; align-items: start; }
   .library-artifact > * { grid-column: 1; }
   .library-artifact > .library-history { grid-column: 2; grid-row: 1 / span 40; position: sticky; top: 0; }

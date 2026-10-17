@@ -2,7 +2,7 @@ import { createEffect, createMemo, createResource, createSignal, For, on, Show }
 import * as api from "../api";
 import type { ArtifactDetail, ArtifactShare, ArtifactSummary, ArtifactVersion, FileNeeds, ReadInput, ShareRole, VersionCompare } from "../api";
 import { host } from "../host";
-import { abilitySheetOpen, libraryAbilities, libraryFocus, openAbilitySheet, setLibraryAbilities, setLibraryFocus, setLibraryOpen, technicalDetails } from "../store";
+import { abilitySheetOpen, openArtifactCanvas, libraryAbilities, libraryFocus, openAbilitySheet, setLibraryAbilities, setLibraryFocus, setLibraryOpen, technicalDetails } from "../store";
 import { relAgo } from "../time";
 import { activate, openAgentChat } from "../App";
 import { attachArtifact } from "../attachFiles";
@@ -10,6 +10,8 @@ import { compareTexts, type Run } from "../wordDiff";
 import Icon, { type IconName } from "./Icon";
 import OfficeView from "./OfficeView";
 import OfficeChangeList from "./OfficeChangeList";
+import PageView, { readPage } from "./PageView";
+import PageKeeper from "./PageKeeper";
 import { Pill, stateOf } from "./fileState";
 import { ABILITY_STATE } from "./AbilitySheet";
 
@@ -18,7 +20,7 @@ const KIND: Record<ArtifactSummary["kind"], string> = {
   file: "File",
   document: "Document",
   changeset: "Code changes",
-  card: "Saved card",
+  page: "Page",
   skill: "Ability",
 };
 
@@ -401,6 +403,14 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
     },
     async ([id, at]) => new TextDecoder().decode(await api.libraryVersionBytes(id, at)),
   );
+  const [page] = createResource(
+    () => {
+      const found = detail();
+      const at = version();
+      return found && at && found.kind === "page" ? [found.id, at] as const : null;
+    },
+    async ([id, at]) => readPage(await api.libraryVersionBytes(id, at)),
+  );
   const siblings = createMemo(() => {
     // A version in the trash or deleted is not one of the current ones.
     const history = (detail()?.history ?? []).filter((v) => !v.trashed_at && !v.erased);
@@ -493,6 +503,14 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
               <button class="btn primary" onClick={() => void workOn(found(), "continue")}>Continue working</button>
               <Show when={version()}>{(at) => <button class="btn" onClick={() => void download(found(), at())}><Icon name="download" size={14} />Download</button>}</Show>
               <button class="btn" onClick={() => setSharing(true)}><Icon name="link" size={14} />Share</button>
+              <Show when={found().kind === "page"}>
+                <button class="btn" onClick={() => openArtifactCanvas({ kind: "page", title: found().name, artifactId: found().id })}>Open in Canvas</button>
+                <PageKeeper
+                  artifactId={found().id}
+                  title={found().name}
+                  request={page()?.items.find((item) => item.role === "user")?.fallback_text.trim() || null}
+                />
+              </Show>
               <details class="workspace-more" data-menu>
                 <summary class="btn" aria-label="More actions"><Icon name="more" size={14} />More</summary>
                 <div class="workspace-more-menu" role="menu">
@@ -578,21 +596,32 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
           </Show>
           <Show when={editing() === null}>
           <Show
-            when={isText(found())}
+            when={found().kind === "page"}
             fallback={
               <Show
-                when={isDocument(found()) && version()}
-                fallback={<div class="library-preview dock-empty">Download to open this {KIND[found().kind].toLowerCase()}.</div>}
+                when={isText(found())}
+                fallback={
+                  <Show
+                    when={isDocument(found()) && version()}
+                    fallback={<div class="library-preview dock-empty">Download to open this {KIND[found().kind].toLowerCase()}.</div>}
+                  >
+                    {(at) => (
+                      <div class="library-preview library-document">
+                        <OfficeView source={{ path: found().path, version: { artifact: found().id, version: at() } }} fileName={found().path.split("/").pop() ?? found().path} />
+                      </div>
+                    )}
+                  </Show>
+                }
               >
-                {(at) => (
-                  <div class="library-preview library-document">
-                    <OfficeView source={{ path: found().path, version: { artifact: found().id, version: at() } }} fileName={found().path.split("/").pop() ?? found().path} />
-                  </div>
-                )}
+                <pre class="library-preview">{text() ?? "Loading…"}</pre>
               </Show>
             }
           >
-            <pre class="library-preview">{text() ?? "Loading…"}</pre>
+            <div class="library-preview library-page-view">
+              <Show when={page()} fallback={<p class="library-note">{version() ? "Loading…" : "No version yet: the first comes from its automation's first run."}</p>}>
+                {(shown) => <PageView page={shown()} />}
+              </Show>
+            </div>
           </Show>
           </Show>
 

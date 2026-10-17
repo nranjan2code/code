@@ -127,7 +127,7 @@ async fn edits_become_the_file_and_late_put_backs_become_siblings() {
 }
 
 #[tokio::test]
-async fn a_saved_answer_is_kept_in_the_library_whole() {
+async fn a_saved_answer_is_kept_in_the_library_as_a_page() {
     vak_config::paths::isolate_home_for_tests();
     let data = vak_config::paths::data_home();
     let cwd = tempfile::tempdir().unwrap();
@@ -173,12 +173,20 @@ async fn a_saved_answer_is_kept_in_the_library_whole() {
     assert_eq!(res.status(), 201);
     let saved: Value = res.json().await.unwrap();
     let artifact = core.artifacts().get(saved["id"].as_str().unwrap()).unwrap();
-    assert_eq!(artifact.kind, ArtifactKind::File);
+    assert_eq!(artifact.kind, ArtifactKind::Page);
     assert_eq!(artifact.name(), "Which harbours are famous?");
     let head = artifact.head().unwrap();
     assert!(head.saved, "a saved answer's version is kept");
-    let bytes = core.artifacts().bytes(&artifact, &head.id).unwrap();
-    assert!(String::from_utf8(bytes).unwrap().contains("Sydney"));
+    let page =
+        vak_delivery::page::Page::read(&core.artifacts().bytes(&artifact, &head.id).unwrap())
+            .expect("a saved answer is a page");
+    assert!(page.text.contains("Sydney"), "its text form: {}", page.text);
+    assert!(
+        page.items
+            .iter()
+            .any(|item| item.fallback_text.contains("Sydney")),
+        "its items, as the conversation drew them"
+    );
 }
 
 /// A draft goes to the trash and comes back through the real router (plan

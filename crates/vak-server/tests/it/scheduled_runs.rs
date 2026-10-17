@@ -305,6 +305,7 @@ fn prompt_trigger(name: &str, ws: &Path, agent: &str) -> vak_core::triggers::Tri
         created_by: None,
         home: None,
         made_by: None,
+        page: None,
     }
 }
 
@@ -1080,5 +1081,107 @@ async fn a_run_that_answered_with_a_card_delivers_the_card_as_a_card() {
             .iter()
             .any(|entry| entry["scheduled"]["name"] == "quote"),
         "the chat learns which message an automation delivered: {transcript}"
+    );
+}
+
+/// A living page (docs/design/98 §12): an automation that names a Library
+/// page makes each run's answer the page's next version, parented on the one
+/// before, and delivers nothing elsewhere. Only a page can be named.
+#[tokio::test]
+async fn a_page_automation_makes_each_run_a_version_of_its_page() {
+    let (_dir, ws, home, _) = space(true, |_| Vec::new());
+    vak_config::paths::isolate_home_for_tests();
+    let core = Core::new_with_trust(ws.clone(), true).unwrap();
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    core.set_provider_instance(Arc::new(Carding(
+        crate::support::CapacityKey::default(),
+        std::sync::Mutex::new(0),
+    )));
+    let space = vak_session::trace::local::space(&ws).to_string();
+    let declare = |path: &str, kind| {
+        core.artifacts()
+            .declare(
+                &space,
+                "vak",
+                path,
+                kind,
+                Some("Quotes".into()),
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+    };
+    let page = declare("pages/quotes.json", vak_core::artifacts::ArtifactKind::Page);
+    let file = declare("notes.md", vak_core::artifacts::ArtifactKind::File);
+    let artifacts = core.artifacts();
+    let server = serve_core(core, Arc::new(AtomicUsize::new(0))).await;
+    let draft = |page: &vak_session::ids::ArtifactId| {
+        serde_json::json!({
+            "name": "quote", "enabled": false,
+            "repeat": {"kind": "daily", "time": "09:00"},
+            "action": {"kind": "prompt", "text": "a quote"},
+            "page": page,
+        })
+    };
+    let post = |body: serde_json::Value| {
+        let request = server
+            .client()
+            .post(format!("{}/triggers", server.base))
+            .json(&body);
+        async move { request.send().await.unwrap() }
+    };
+    assert_eq!(
+        post(draft(&file)).await.status(),
+        422,
+        "only a page is kept current"
+    );
+    let created = post(draft(&page)).await;
+    assert_eq!(created.status(), 201);
+    let id = created.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let versions = || {
+        artifacts
+            .get(&page.to_string())
+            .map_or(0, |artifact| artifact.versions.len())
+    };
+    for run in 1..=2 {
+        server.run_now(&id).await;
+        assert!(
+            eventually(30, || async { versions() == run }).await,
+            "run {run} made version {run}"
+        );
+    }
+    let artifact = artifacts.get(&page.to_string()).unwrap();
+    let [first, second] = artifact.versions.as_slice() else {
+        panic!("two versions");
+    };
+    assert_eq!(
+        second.parent,
+        Some(first.id),
+        "each version names the one before"
+    );
+    let kept = vak_delivery::page::Page::read(&artifacts.bytes(&artifact, &first.id).unwrap())
+        .expect("a version is a page");
+    assert!(
+        kept.items.iter().any(|item| {
+            item.kind == vak_delivery::presentation::OutputKind::Card
+                && item.fallback_text.contains("Small steps make big change.")
+        }),
+        "the run's card is kept as a card: {kept:?}"
+    );
+    assert!(kept.text.contains("Small steps make big change."));
+    assert!(
+        server
+            .inbox()
+            .await
+            .iter()
+            .all(|note| note["kind"] != "task_summary"),
+        "a page's run goes to the page alone"
     );
 }

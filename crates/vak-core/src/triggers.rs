@@ -368,6 +368,50 @@ pub struct Trigger {
     /// so a card does not leave the turn it is under.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<MadeBy>,
+    /// The page each run's answer becomes the next version of: a living
+    /// page (docs/design/98 §12). Such a run's answer goes to the page
+    /// alone, never into a conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<vak_session::ids::ArtifactId>,
+}
+
+impl Trigger {
+    /// Why this automation cannot keep its `page` current, when it cannot
+    /// (docs/design/98 §12): only a prompt automation keeps one, and only a
+    /// Library page outside the trash is one.
+    pub fn page_refusal(&self, artifacts: &crate::artifacts::Artifacts) -> Option<&'static str> {
+        let page = self.page?;
+        if !matches!(self.action, TriggerAction::Prompt { .. }) || self.scope.is_some() {
+            return Some("a page is kept current by an automation that runs a prompt");
+        }
+        match artifacts.get(&page.to_string()) {
+            None => Some("there is no such page in the Library"),
+            Some(artifact) if artifact.kind != crate::artifacts::ArtifactKind::Page => {
+                Some("only a page can be kept current, and this Library item is not one")
+            }
+            Some(artifact) if artifact.in_trash() => Some("that page is in the trash"),
+            Some(_) => None,
+        }
+    }
+
+    /// Declares a new page for this automation to keep current, named as it
+    /// is; its first version is its first run's answer.
+    pub fn declare_page(
+        &self,
+        artifacts: &crate::artifacts::Artifacts,
+        actor: Option<vak_session::ids::PrincipalId>,
+    ) -> Result<vak_session::ids::ArtifactId, crate::artifacts::ArtifactError> {
+        artifacts.declare(
+            &vak_session::trace::local::space_of(&self.space).to_string(),
+            &self.agent,
+            &format!("pages/{}.json", self.id),
+            crate::artifacts::ArtifactKind::Page,
+            Some(self.name.clone()),
+            None,
+            None,
+            actor,
+        )
+    }
 }
 
 impl MadeBy {
@@ -1446,6 +1490,7 @@ mod tests {
             created_by: None,
             home: None,
             made_by: None,
+            page: None,
         };
         assert!(trigger.validate().is_err(), "a cron names its zone");
         trigger.in_zone("Asia/Kolkata");
@@ -1737,6 +1782,7 @@ mod tests {
             created_by: None,
             home: None,
             made_by: None,
+            page: None,
         }
     }
 

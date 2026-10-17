@@ -266,6 +266,7 @@ fn stale_script(
         created_by: None,
         home: None,
         made_by: None,
+        page: None,
     }
 }
 

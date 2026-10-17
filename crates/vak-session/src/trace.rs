@@ -217,8 +217,12 @@ pub mod local {
     /// registry (`vak_config::spaces`); a folder never opened as a workspace
     /// has a Space derived from its `unbound-` key.
     pub fn space(cwd: &Path) -> SpaceId {
-        let key = vak_config::spaces::key(cwd);
-        SpaceId::parse(&key).unwrap_or_else(|_| SpaceId::derived(&key))
+        space_of(&vak_config::spaces::key(cwd))
+    }
+
+    /// The space a registry key (`vak_config::spaces::key`) names.
+    pub fn space_of(key: &str) -> SpaceId {
+        SpaceId::parse(key).unwrap_or_else(|_| SpaceId::derived(key))
     }
 
     pub fn agent(agent_id: &str) -> AgentId {

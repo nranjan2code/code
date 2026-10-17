@@ -1,7 +1,8 @@
 # 98 — Answers beyond one card
 
-Status: in progress (2026-10-17): accepted by the maintainer; S1 to S4
-built and checked live (2026-10-17). Written at
+Status: implemented (2026-10-17): accepted by the maintainer; S1 to S5
+built and checked live (2026-10-17); what S5 left is in
+docs/plans/open-items.md. Written at
 the maintainer's direction ("we cannot build a card for every scenario";
 "make this the best out there"). Builds on docs/design/92-card-forms.md
 (forms), docs/design/87-composed-answers.md (composition),
@@ -103,7 +104,14 @@ Q1). To make every page look like the product:
   following the answer's sliders.
 - **S4 Product look for HTML.** §5. Done when a generated dashboard page
   matches the app in both themes with no colour of its own.
-- **S5 Living pages.** Doc 96 P2.
+- **S5 Living pages.** Doc 96 P2. Choices the maintainer made
+  (2026-10-17): a Library page stores the answer as its own items, not
+  Markdown; an automation names a page in one field (`Trigger::page`),
+  made by the owner's Keep current or by the Agent's automation tool; a
+  page's runs go to the page alone; a viewer's control values are their
+  own and never saved. Done when a page made by a routine on the dev
+  route gains a version per run, keeps the old ones, opens in the Canvas,
+  and a guest with a grant reads it and nothing else.
 
 Each stage is its own commit with the full gate and a live turn.
 
@@ -239,3 +247,35 @@ Each stage is its own commit with the full gate and a live turn.
   variables 30 times and had no colour of its own (all 34 hex values are
   fallbacks). In the Canvas it showed in the product's dark theme, and
   switching the app to light re-themed the open page at once.
+
+## 12. S5 as built (2026-10-17)
+
+- A page is `vak_delivery::page::Page`: the answer's turn as the
+  conversation drew it (its items, its outline when its model planned)
+  plus a text form (the cards' text, then the reply) for search, export
+  and anything that draws no cards. Save to Library keeps every answer as
+  a page (`projection::answer_page`, `library::record_page`); the
+  Markdown save it replaces is gone, and the never-written
+  `ArtifactKind::Card` became `ArtifactKind::Page`.
+- An automation keeps a page current through one field,
+  `Trigger::page`. The owner sets it with Keep current on a page in the
+  Library (a schedule; the prompt is the page's request), which posts
+  `/triggers` with `page`; the Agent sets it with the automation tool's
+  `as_page` (a new page named like the automation, declared at once, its
+  first version the first run) or `page` (an existing page's id).
+  `Trigger::page_refusal` is the one check: only a prompt automation, and
+  only a Library page outside the trash.
+- A page automation's run ends in `automations::keep_page`: its answer
+  becomes the page's next version, parented on the newest, saved so no
+  retention rule removes it. Nothing goes to a conversation or the inbox's
+  summaries; a `deliver_to` the automation names is still sent. A run that
+  failed or answered nothing leaves the page as it was and the inbox says
+  why (`RoutineFailed`).
+- One view draws a page wherever it is shown (`PageView`): the
+  conversation's own timeline view over the page's items, in the Canvas's
+  columns, so cards, controls and shared values work as in the answer and a
+  viewer's changes stay theirs. It is used by the Library's preview, by
+  the Canvas subject `page` (`PageViewer`, always the newest version, so a
+  reload shows the latest run) and by a guest's shared view, which draws
+  the newest version it was shown beside the version list.
+

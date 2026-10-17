@@ -776,7 +776,7 @@ pub(crate) fn attach(
     let kind = match artifact.kind {
         vak_core::artifacts::ArtifactKind::Document => "a document",
         vak_core::artifacts::ArtifactKind::Changeset => "code changes",
-        vak_core::artifacts::ArtifactKind::Card => "a saved card",
+        vak_core::artifacts::ArtifactKind::Page => "a page",
         vak_core::artifacts::ArtifactKind::Skill => "a skill",
         vak_core::artifacts::ArtifactKind::File => "a file",
     };
@@ -1534,58 +1534,76 @@ struct AnswerSave {
 
 /// `POST /library/answers`: an answer a person keeps out of its
 /// conversation (doc 82 §3: what a chat shows stays in the chat unless
-/// saved). The whole answer is one artifact, its cards and its reply
-/// together as a Markdown document; a single card is never saved alone. An
-/// answer that delivered a file has that file in the Library already.
+/// saved). The whole answer is one page, its text, cards and files as the
+/// conversation drew them (docs/design/98 §12); a single card is never saved
+/// alone. An answer that delivered a file has that file in the Library
+/// already.
 async fn save_answer(State(state): State<AppState>, Json(body): Json<AnswerSave>) -> Response {
     let Some(log) = crate::open_historical_session(&state, &body.session) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let timeline = crate::projection::snapshot(&body.session, &log);
-    let Some((title, document)) = crate::projection::answer_document(&timeline, &body.turn) else {
+    let Some(page) = crate::projection::answer_page(&timeline, &body.turn) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let space = vak_session::trace::local::space(state.core.cwd()).to_string();
-    let agent = state
-        .core
-        .agent_identity()
-        .map(|agent| agent.id.clone())
-        .unwrap_or_else(|| "vak".into());
-    let artifacts = state.core.artifacts();
     let actor = Some(crate::request_actor(&state));
-    let saved = artifacts
-        .declare(
-            &space,
-            &agent,
-            &format!("answers/{}-{}.md", body.session, body.turn),
-            vak_core::artifacts::ArtifactKind::File,
-            (!title.is_empty()).then_some(title),
-            None,
-            None,
-            actor,
-        )
-        .and_then(|id| {
-            let version = artifacts.version(
-                id,
-                NewVersion {
-                    parent: None,
-                    bytes: document.as_bytes(),
-                    source: VersionSource::Call {
-                        session: body.session.clone(),
-                        call: body.turn.clone(),
-                        in_workspace: false,
-                    },
-                },
-                None,
-                actor,
-            )?;
-            artifacts.record(id, ArtifactStep::Saved { version }, None, actor)?;
-            Ok(id)
-        });
-    match saved {
+    match record_page(&state, None, &page, &body.session, &body.turn, actor) {
         Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response(),
         Err(error) => share_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
     }
+}
+
+/// Keeps `page`, the answer of `turn` in `session`: as the next version of
+/// the page `onto` (a living page's run, parented on its newest version), or
+/// as a new page. The version is saved, so no retention rule removes it.
+pub(crate) fn record_page(
+    state: &AppState,
+    onto: Option<&vak_core::artifacts::Artifact>,
+    page: &vak_delivery::page::Page,
+    session: &str,
+    turn: &str,
+    actor: Option<vak_session::ids::PrincipalId>,
+) -> Result<vak_session::ids::ArtifactId, Box<dyn std::error::Error + Send + Sync>> {
+    let bytes = page.to_bytes()?;
+    let artifacts = state.core.artifacts();
+    let (id, parent) = match onto {
+        Some(artifact) => (artifact.id, artifact.head().map(|head| head.id)),
+        None => {
+            let space = vak_session::trace::local::space(state.core.cwd()).to_string();
+            let agent = state
+                .core
+                .agent_identity()
+                .map(|agent| agent.id.clone())
+                .unwrap_or_else(|| "vak".into());
+            let id = artifacts.declare(
+                &space,
+                &agent,
+                &format!("pages/{session}-{turn}.json"),
+                vak_core::artifacts::ArtifactKind::Page,
+                (!page.title.is_empty()).then(|| page.title.clone()),
+                None,
+                None,
+                actor,
+            )?;
+            (id, None)
+        }
+    };
+    let version = artifacts.version(
+        id,
+        NewVersion {
+            parent,
+            bytes: &bytes,
+            source: VersionSource::Call {
+                session: session.to_string(),
+                call: turn.to_string(),
+                in_workspace: false,
+            },
+        },
+        None,
+        actor,
+    )?;
+    artifacts.record(id, ArtifactStep::Saved { version }, None, actor)?;
+    Ok(id)
 }
 
 // ---- Sharing (plan M8.4a, docs/design/82-library.md §8) --------------------
