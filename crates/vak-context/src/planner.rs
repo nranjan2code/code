@@ -7,7 +7,7 @@
 //! that `SessionLog::derive_with_plan` turns into messages.
 
 pub use vak_session::{Fidelity, WorkingSetPlan};
-use vak_session::{LinkKind, ReadingKey, SessionLog, TurnIndex};
+use vak_session::{LinkKind, ReadingKey, SessionLog, TurnCard, TurnIndex};
 
 use crate::assemble::messages_chars;
 use crate::capacity::CapacityProfile;
@@ -235,15 +235,21 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
                 .collect()
         })
         .unwrap_or_default();
+    // A turn stopped before it did anything is not the exchange a request
+    // follows; the turn before it is.
     let preceding = closed
         .iter()
         .rev()
+        .filter(|turn| !turn.card.as_ref().is_some_and(TurnCard::stopped_empty))
         .find(|turn| {
             turn.links
                 .iter()
                 .any(|link| continued.contains(&link.node.as_str()))
         })
-        .or(closed.last())
+        .or(closed
+            .iter()
+            .rev()
+            .find(|turn| !turn.card.as_ref().is_some_and(TurnCard::stopped_empty)))
         .map(|turn| turn.id.clone());
     // `ContextProfile::Minimal` suppresses link expansion. The preceding
     // turn's compact card is carried at any context level.
@@ -1180,6 +1186,41 @@ mod tests {
             carries_only_the_preceding_card(&index, &result),
             "a recall reading adds no history by itself"
         );
+    }
+
+    #[test]
+    fn a_turn_stopped_before_it_did_anything_is_not_the_one_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut log, ids) = fixture(dir.path(), &[("use a map card for routes", 160, 10, &[])]);
+        let stopped = log
+            .append_message(MessageRecord {
+                message: M::user_text("a route to the temple"),
+                meta: None,
+            })
+            .unwrap()
+            .id;
+        let mut empty = card(&stopped, "a route to the temple", 20, 5, &[]);
+        empty.outcome = "cancelled".into();
+        empty.did.clear();
+        empty.answered.presentations.clear();
+        empty.answered.narration.clear();
+        log.append_turn_card(TurnCardRecord {
+            turn_id: stopped.clone(),
+            card: empty,
+        })
+        .unwrap();
+        let index = TurnIndex::from_log(&log);
+        let profile = profile(200);
+        let result = plan(PlanInput {
+            profile: &profile,
+            index: &index,
+            directive: "a route to the temple",
+            reading: None,
+            prefix_tokens: 0,
+            tail_tokens: 0,
+            current_turn_tokens: 0,
+        });
+        assert_eq!(result.per_turn, vec![(ids[0].clone(), Fidelity::Card)]);
     }
 
     #[test]

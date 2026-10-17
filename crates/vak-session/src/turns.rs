@@ -1512,6 +1512,16 @@ fn evidence_refs(ids: &[&str]) -> String {
 }
 
 impl TurnCard {
+    /// Whether the turn was stopped before it did or said anything: it
+    /// holds only the person's words, so the conversation's last exchange
+    /// is still the turn before it.
+    pub fn stopped_empty(&self) -> bool {
+        self.outcome == "cancelled"
+            && self.did.is_empty()
+            && self.answered.presentations.is_empty()
+            && self.answered.narration.trim().is_empty()
+    }
+
     /// The text BM25 indexes this card by: `asked` + every presentation's
     /// title/digest + narration + trace tool names and args (docs/design/68
     /// §10).

@@ -254,8 +254,10 @@ budget        = ceiling − prefix_tokens − tail_tokens − current_turn_reser
                 # reserve is model-specific and learned from observed turns
 # never split a turn
 carried     = the compact card of the turn the request follows (the last
-              turn of the thread it continues, else the last turn), within
-              the budget; nothing older, whatever the request's words
+              turn of the thread it continues, else the last turn; a turn
+              stopped before it did or said anything is walked past, since
+              it holds only the person's words), within the budget; nothing
+              older, whatever the request's words
 older turns = reached through recall by the model, never preloaded;
               unused budget stays unused
 ```

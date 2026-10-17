@@ -3746,7 +3746,9 @@ impl Agent {
                 // A turn that ended without a final answer (cancelled, failed,
                 // out of turns) still gets its card, so its outcome is on the
                 // record and it plans like any other turn once a later
-                // directive follows it.
+                // directive follows it, except one stopped before it did
+                // anything (`TurnCard::stopped_empty`), which the planner
+                // walks past.
                 let ended = turn.closed || !matches!(outcome, TurnOutcome::Completed { .. });
                 (ended && turn.card.is_none()).then(|| {
                     let narration = turn
