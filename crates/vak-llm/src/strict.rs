@@ -43,6 +43,25 @@ const UNENFORCED: [&str; 8] = [
     "maxItems",
 ];
 
+/// Annotations a strict schema does not take; they constrain nothing.
+const ANNOTATIONS: [&str; 3] = ["examples", "default", "title"];
+
+/// Keywords no strict grammar renders: a schema that uses one has no strict
+/// form, rather than one that silently means something else.
+const UNRENDERED: [&str; 11] = [
+    "not",
+    "patternProperties",
+    "propertyNames",
+    "if",
+    "then",
+    "else",
+    "dependentRequired",
+    "dependentSchemas",
+    "prefixItems",
+    "contains",
+    "uniqueItems",
+];
+
 /// The strict form of `schema`, or `None` when it has none.
 pub fn strict_schema(schema: &Value, dialect: Dialect) -> Option<Value> {
     let mut schema = schema.clone();
@@ -53,8 +72,29 @@ fn strict(schema: &mut Value, dialect: Dialect) -> bool {
     let Some(object) = schema.as_object_mut() else {
         return true;
     };
-    for keyword in UNENFORCED {
-        object.remove(keyword);
+    for keyword in UNENFORCED.iter().chain(&ANNOTATIONS) {
+        object.remove(*keyword);
+    }
+    if UNRENDERED
+        .iter()
+        .any(|keyword| object.contains_key(*keyword))
+    {
+        return false;
+    }
+    // Exactly one branch is not a grammar either dialect takes; any branch
+    // is wider, and the tool's own validation still holds it to one.
+    if let Some(branches) = object.remove("oneOf") {
+        if object.contains_key("anyOf") {
+            return false;
+        }
+        object.insert("anyOf".into(), branches);
+    }
+    if object
+        .get("additionalProperties")
+        .is_some_and(|extra| extra != &Value::Bool(false))
+    {
+        // A map of named entries: closing it would refuse every entry.
+        return false;
     }
     if object
         .get("minItems")
@@ -259,6 +299,32 @@ mod tests {
         assert_eq!(strict["additionalProperties"], false);
         assert_eq!(strict["required"], json!(["steps"]));
         assert_eq!(strict["properties"]["title"]["type"], "string");
+    }
+
+    #[test]
+    fn one_of_is_rendered_as_any_of_and_each_branch_goes_strict() {
+        let schema = json!({"type": "object", "properties": {
+            "ops": {"type": "array", "items": {"oneOf": [
+                {"type": "object", "properties": {"op": {"type": "string", "enum": ["a"]}}, "required": ["op"]},
+                {"type": "object", "properties": {"op": {"type": "string", "enum": ["b"]}, "n": {"type": "integer"}}, "required": ["op"]}
+            ]}}
+        }, "required": ["ops"], "examples": [{"ops": []}]});
+        let strict = strict_schema(&schema, Dialect::OpenAi).unwrap();
+        assert!(strict.get("examples").is_none());
+        let items = &strict["properties"]["ops"]["items"];
+        assert!(items.get("oneOf").is_none());
+        assert_eq!(items["anyOf"][1]["additionalProperties"], false);
+        assert_eq!(items["anyOf"][1]["required"], json!(["n", "op"]));
+    }
+
+    #[test]
+    fn a_map_or_an_unrendered_keyword_has_no_strict_form() {
+        let map = json!({"type": "object", "properties": {"cells": {
+            "type": "object", "properties": {}, "additionalProperties": {"type": "string"}
+        }}});
+        assert!(strict_schema(&map, Dialect::OpenAi).is_none());
+        let not = json!({"type": "object", "properties": {"x": {"not": {"type": "null"}}}});
+        assert!(strict_schema(&not, Dialect::Anthropic).is_none());
     }
 
     #[test]

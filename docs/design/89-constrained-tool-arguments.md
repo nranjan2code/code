@@ -118,6 +118,20 @@ strict tools and 24 optional parameters, the rest sent as they are). The
 receipt records which tools went strict (`Applied`), so a turn can be
 explained. A call on these wires cannot arrive as broken JSON.
 
+The strict form is rendered only where it means what the canonical schema
+means, or something wider: `oneOf` is sent as `anyOf`, and annotations
+(`examples`, `default`, `title`) are dropped, since the tool's own
+validation still holds the call to the canonical schema. A schema that uses
+a keyword no strict grammar renders (`not`, `patternProperties`, `if`, …)
+or a map of named entries (`additionalProperties` given a schema) has no
+strict form and is sent as it is. A refused strict tool fails the whole
+request, and the resend without strict tools turns them off for every tool
+on that model (`DispatchSettings::accepted`), so one bad strict form costs
+every tool its enforcement: on 2026-10-17 `office_apply`'s `oneOf` and
+`examples`, sent once it was no longer deferred, did that to gpt-6-luna.
+`every_tools_strict_form_uses_only_what_a_strict_grammar_takes`
+(vak-tools) checks every built-in tool's strict form.
+
 ### 4.3 Regenerating arguments that cannot be read
 
 Where the wire constrains output but not tool arguments, and as the general
