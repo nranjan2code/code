@@ -216,10 +216,21 @@ async fn push_pull_roundtrip_identical_derive_messages() {
     assert_eq!(registry().matches("[spaces.").count(), projects);
 
     // A damaged remote is refused whole: nothing on the puller changes.
-    let victim = in_remote
+    // The damaged blob is one the puller must read: a pull skips a file it
+    // already holds as the index names it, so a blob for a file every
+    // fresh home makes the same would never be read (it failed at random
+    // when the walk found one of those first).
+    let index: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(remote.join("index.json")).unwrap()).unwrap();
+    let digest = index["files"]
+        .as_object()
+        .unwrap()
         .iter()
-        .find(|file| file.to_string_lossy().contains("/blobs/"))
-        .unwrap();
+        .find(|(path, _)| path.starts_with("agents/"))
+        .and_then(|(_, entry)| entry["sha256"].as_str())
+        .unwrap()
+        .to_string();
+    let victim = &remote.join("blobs").join(&digest[..2]).join(&digest);
     let mut bytes = std::fs::read(victim).unwrap();
     let last = bytes.len() - 1;
     bytes[last] ^= 0xff;
