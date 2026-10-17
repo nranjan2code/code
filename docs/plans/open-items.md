@@ -40,11 +40,16 @@ failed, the same request that had been answered well failed three times.
 - [ ] F: set a turn aside (and undo) from the conversation, skipped by the
   planner, recall, evidence and memory; retry from a turn. Designed in
   doc 99 §4 F; needs the server route and the client surface.
-- [ ] Poison replay (doc 99 §5) as a repeatable check. Live on luna
-  2026-10-17 the carried labels reached the model ("the calls failed"),
-  but the run that tested imitation was confounded: the poisoned turn's
-  request itself named the approach. Still open whether labels alone stop
-  a model copying a failed turn's approach.
+- [x] Poison replay (doc 99 §5) as a repeatable check:
+  `scripts/poison_replay.sh` (`vak eval --poison-replay`). The poisoned
+  turn is scripted under the same request words, so the confound of the
+  2026-10-17 luna run (its request named the approach) cannot recur.
+- [ ] First replay, ollama qwen3.5:4b-mlx, 2026-10-17, one run: the
+  answer after the poisoned turn did not call anything only the poisoned
+  turn called, but made one call of `emit_code_card` (no such card tool),
+  refused, where neither clean answer had a refusal. One run of a live
+  model: repeat it, and read that call and what Vak answered in the
+  ledger, before naming a cause. Not yet run on the installed route.
 
 ## Installed route failures (qwen3.5:0.8b-mlx, 2026-10-15)
 
