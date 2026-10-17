@@ -34,6 +34,7 @@ import {
   setCoworkingPresence,
   setUsageFor,
   hydrateFromTranscript,
+  hydrateSetAside,
   hydrateFromPresentation,
   itemsOf,
   presentationOf,
@@ -317,6 +318,7 @@ async function hydrate(id: string, background = false) {
     // keep the stream's current turn intact while refreshing sidecar state.
     if (t && (!isRunning(id) || holdsOnlyLiveGates(itemsOf(id)))) {
       hydrateFromTranscript(id, t.messages, t.entries, isRunning(id));
+      hydrateSetAside(id, t.set_aside);
       if (presentation) hydrateFromPresentation(id, presentation);
       setUsageFor(id, t.usage);
     }

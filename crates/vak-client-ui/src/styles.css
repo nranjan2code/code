@@ -854,6 +854,12 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
   border-color: var(--border-strong);
 }
 .msg-action-btn span { font-size: var(--fs-caption); }
+.turn-aside { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-3); padding: var(--space-3) var(--space-4); border: 1px dashed var(--border-soft); border-radius: var(--radius); background: var(--surface); color: var(--muted); }
+.turn-aside-copy { display: flex; flex: 1 1 220px; flex-direction: column; gap: 2px; min-width: 0; }
+.turn-aside-title { color: var(--text-soft); font-size: var(--fs-control); font-weight: 600; }
+.turn-aside-note { font-size: var(--fs-caption); }
+.turn-aside-actions { display: flex; gap: var(--space-2); }
+.chat-turn-aside .chat-turn-body { opacity: 0.6; }
 .semantic-stream-text { white-space: pre-wrap; }
 
 .md { overflow-wrap: anywhere; }

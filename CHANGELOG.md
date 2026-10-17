@@ -1,5 +1,9 @@
 ## Unreleased
 
+- A turn can be set aside from the conversation: later replies no longer
+  see it, find it or cite it, and Undo brings it back. Nothing is deleted;
+  the turn stays in the conversation, folded.
+
 - A file or a saved note the Agent made in an earlier turn is read back
   with how that turn went: which of its steps failed, what it planned and
   did not deliver, and how it ended. Nothing is hidden; it is labelled.

@@ -126,6 +126,24 @@ pub(crate) fn index_entry(
             jump.as_ref().map(|(_, depth)| *depth as i64)
         ],
     )?;
+    if let EntryPayload::TurnSetAside(record) | EntryPayload::TurnRestored(record) = &entry.payload
+    {
+        let aside = matches!(entry.payload, EntryPayload::TurnSetAside(_));
+        tx.execute(
+            "INSERT OR IGNORE INTO turn_marks (session, entry_id, turn_id, aside)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![session, entry.id, record.turn, aside],
+        )?;
+        let turn = crate::ingest::turn_node(&record.turn);
+        if aside {
+            tx.execute(
+                "INSERT OR IGNORE INTO turns_aside (turn) VALUES (?1)",
+                [turn],
+            )?;
+        } else {
+            tx.execute("DELETE FROM turns_aside WHERE turn = ?1", [turn])?;
+        }
+    }
     if let EntryPayload::TurnCard(record) = &entry.payload {
         tx.execute(
             "INSERT OR IGNORE INTO turn_records (session, entry_id, turn_id, record, recorded_at)
@@ -213,6 +231,32 @@ fn is_ancestor(
     Ok(found.as_deref() == Some(ancestor))
 }
 
+/// Whether a person set turn `turn` aside on the branch ending at `leaf`:
+/// the deepest of its marks on that branch decides.
+fn aside_on_branch(
+    conn: &rusqlite::Connection,
+    session: &str,
+    turn: &str,
+    leaf: &str,
+) -> rusqlite::Result<bool> {
+    let mut statement = conn.prepare(
+        "SELECT m.entry_id, m.aside FROM turn_marks m
+         JOIN entries e ON e.session = m.session AND e.entry_id = m.entry_id
+         WHERE m.session = ?1 AND m.turn_id = ?2 ORDER BY e.depth DESC",
+    )?;
+    let marks = statement
+        .query_map(params![session, turn], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (mark, aside) in marks {
+        if is_ancestor(conn, session, &mark, leaf)? {
+            return Ok(aside);
+        }
+    }
+    Ok(false)
+}
+
 impl Catalog {
     /// Takes what the session ledger at `dir` appended: the hint after a
     /// turn.
@@ -296,6 +340,9 @@ impl Catalog {
             .collect::<Result<Vec<_>, _>>()?;
         for id in ids {
             if is_ancestor(&conn, &session, &id, leaf)? {
+                if aside_on_branch(&conn, &session, turn, leaf)? {
+                    return Ok(None);
+                }
                 return Ok(Some(id));
             }
         }
@@ -351,7 +398,9 @@ impl Catalog {
             if over() {
                 return Err(CatalogError::Interrupted);
             }
-            if is_ancestor(&conn, &session, &hit.record_id, leaf)? {
+            if is_ancestor(&conn, &session, &hit.record_id, leaf)?
+                && !aside_on_branch(&conn, &session, &hit.turn_id, leaf)?
+            {
                 selected.push(hit);
                 if selected.len() >= limit.clamp(1, 20) {
                     break;
@@ -526,5 +575,76 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rows, 2049);
+    }
+
+    /// A turn a person set aside is found by no search on the branch that
+    /// set it aside, and is again once restored (docs/design/99 §4 F).
+    #[test]
+    fn a_turn_set_aside_is_not_found_until_restored() {
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = Catalog::open(&dir.path().join("catalog.db"), dir.path()).unwrap();
+        let mut leaves = Vec::new();
+        catalog
+            .seed(|tx| {
+                let directive = Entry::new(
+                    None,
+                    EntryPayload::Message(vak_session::MessageRecord {
+                        message: vak_llm::Message::user_text("turn"),
+                        meta: None,
+                    }),
+                );
+                let mark = |parent: &str, aside: bool| {
+                    let record = vak_session::turn_marks::TurnMarkRecord {
+                        turn: "route".into(),
+                        trace: None,
+                        actor: None,
+                    };
+                    Entry::new(
+                        Some(parent.to_string()),
+                        if aside {
+                            EntryPayload::TurnSetAside(record)
+                        } else {
+                            EntryPayload::TurnRestored(record)
+                        },
+                    )
+                };
+                let aside = mark(&directive.id, true);
+                let restored = mark(&aside.id, false);
+                for (frame, entry) in [&directive, &aside, &restored].into_iter().enumerate() {
+                    index_entry(
+                        tx,
+                        "ses_aside",
+                        Position {
+                            segment: 1,
+                            frames: frame as u64,
+                        },
+                        entry,
+                    )?;
+                }
+                tx.execute(
+                    "INSERT INTO turn_records (session, entry_id, turn_id, record, recorded_at)
+                     VALUES ('ses_aside', ?1, 'route', 'Asked: bike route map', '2026-10-17T00:00:00Z')",
+                    [&directive.id],
+                )?;
+                leaves = vec![directive.id, aside.id, restored.id];
+                Ok(())
+            })
+            .unwrap();
+        let found = |leaf: &str| {
+            catalog
+                .search_turns("aside", leaf, "bike route", 8, &|| false)
+                .unwrap()
+                .matches
+                .len()
+        };
+        assert_eq!(found(&leaves[0]), 1);
+        assert_eq!(found(&leaves[1]), 0);
+        assert_eq!(
+            catalog
+                .locate_turn_record("aside", "route", &leaves[1])
+                .unwrap(),
+            None
+        );
+        assert_eq!(found(&leaves[2]), 1);
     }
 }

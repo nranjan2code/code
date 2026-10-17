@@ -5180,7 +5180,7 @@ impl Agent {
         // Facts only: the answer is a past turn's answer word for word, and
         // the person did not ask that same thing again.
         let repeated_answer = turns.iter().any(|past| {
-            if past.behind_reset {
+            if past.out_of_view() {
                 return false;
             }
             let Some(card) = past.card.as_ref() else {
@@ -5992,8 +5992,37 @@ impl Agent {
             TurnIndex::from_log(session)
                 .turns
                 .iter()
+                .filter(|turn| !turn.set_aside)
                 .fold(Provenance::NONE, |held, turn| held.join(turn.provenance))
         };
+        // A turn the person set aside is not reopened, nor anything it
+        // showed or received (docs/design/99-turns-that-do-not-poison.md
+        // §4 F).
+        let set_aside = || {
+            RecallFailure::NotFound(
+                serde_json::json!({"type": "set_aside",
+                    "message": "the person set that turn aside; it is not part of this conversation now"})
+                .to_string(),
+            )
+        };
+        {
+            let index = TurnIndex::from_log(&*self.session.lock().await);
+            let aside = |turn: &vak_session::Turn| match &request {
+                RecallRequest::TurnId(id) => turn.id == *id,
+                RecallRequest::Presentation(id) => turn.presentations.contains(id),
+                RecallRequest::Evidence { id, .. } => turn.evidence.contains(id),
+                _ => false,
+            };
+            let numbered = match &request {
+                RecallRequest::Turn(n) => index.turn_by_number(*n as usize),
+                _ => None,
+            };
+            if numbered.is_some_and(|turn| turn.set_aside)
+                || index.turns.iter().any(|turn| turn.set_aside && aside(turn))
+            {
+                return Err(set_aside());
+            }
+        }
         if matches!(
             &request,
             RecallRequest::Search { .. }
@@ -6054,7 +6083,7 @@ impl Agent {
                             .iter()
                             .enumerate()
                             .find(|(_, turn)| turn.id == id)?;
-                        if !turn.closed || turn.behind_reset {
+                        if !turn.closed || turn.out_of_view() {
                             return None;
                         }
                         let card = turn.card.as_ref()?;

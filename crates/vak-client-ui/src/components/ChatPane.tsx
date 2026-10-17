@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item, openInLibrary } from "../store";
+import { activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, turnsSetAside, turnSettled, setTurnAside, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item, openInLibrary } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
@@ -634,7 +634,13 @@ function itemBody(item: Item, sessionId?: string | null): JSX.Element {
           </Show>
           <Show when={text}>
             <div class="msg-user-content"><Markdown text={text} /></div>
-            <MessageActions text={text} role="user" />
+            <MessageActions
+              text={text}
+              role="user"
+              onSetAside={sessionId && item.entryId && turnSettled(sessionId, item.entryId) && !turnsSetAside(sessionId).includes(item.entryId)
+                ? () => { void setTurnAside(sessionId, item.entryId!, true).catch(() => undefined); }
+                : undefined}
+            />
           </Show>
         </div>
       </div>
@@ -1129,7 +1135,22 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
             <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={itemsOf(sid()).some((item) => item.kind === "user")} />}>
-                <Index each={displayedTurns()}>{(entry) => { const arrived = untrack(() => settledSid() === sid()); return <div class={arrived ? "chat-turn arrived" : "chat-turn"} data-turn-index={entry().index}>
+                <Index each={displayedTurns()}>{(entry) => { const arrived = untrack(() => settledSid() === sid()); const directive = () => { const user = entry().turn.find((item) => item.kind === "user"); return user?.kind === "user" ? user.entryId : undefined; }; const aside = () => { const id = directive(); return !!id && turnsSetAside(sid()).includes(id); }; const [shown, setShown] = createSignal(false); return <div class={arrived ? "chat-turn arrived" : "chat-turn"} classList={{ "chat-turn-aside": aside() }} data-turn-index={entry().index}>
+                <Show when={aside()}>
+                  <div class="turn-aside" role="group" aria-label="Turn set aside">
+                    <Icon name="archive" size={14} />
+                    <div class="turn-aside-copy">
+                      <span class="turn-aside-title">Set aside</span>
+                      <span class="turn-aside-note">Later replies don’t see this turn. Nothing was deleted.</span>
+                    </div>
+                    <div class="turn-aside-actions">
+                      <button type="button" class="btn sm" aria-expanded={shown()} onClick={() => setShown(!shown())}>{shown() ? "Hide" : "Show"}</button>
+                      <button type="button" class="btn sm" onClick={() => { const id = directive(); if (id) void setTurnAside(sid()!, id, false).then(() => setShown(false)).catch(() => undefined); }}>Undo</button>
+                    </div>
+                  </div>
+                </Show>
+                <Show when={!aside() || shown()}>
+                <div class="chat-turn-body">
                 <Index each={visibleItems(entry().turn).filter((item) => item.kind === "user")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
                 <Show when={entry().index === turns().length - 1 && working()}>
                   <div class="assistant-working-state" role="status" aria-live="polite">
@@ -1142,6 +1163,8 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 <Show when={projectedTurn(entry().index)} fallback={<><Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<ItemView item={it()} sessionId={sid()} />}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>
                   <Show when={entry().index === turns().length - 1}><LiveAnswer sessionId={sid()!} /></Show></>}>
                   {(timeline) => <div class="turn-result"><PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} hideUser /></div>}
+                </Show>
+                </div>
                 </Show>
               </div>; }}</Index>
             </Show>

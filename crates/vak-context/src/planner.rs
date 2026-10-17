@@ -217,7 +217,7 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
         .index
         .turns
         .iter()
-        .filter(|turn| turn.closed && turn.card.is_some() && !turn.behind_reset)
+        .filter(|turn| turn.closed && turn.card.is_some() && !turn.out_of_view())
         .collect();
 
     let mut spent: u64 = 0;
@@ -318,7 +318,7 @@ pub fn plan_selected(input: PlanInput) -> WorkingSetPlan {
         ..Default::default()
     };
     for turn in &input.index.turns {
-        if !turn.closed || turn.behind_reset {
+        if !turn.closed || turn.out_of_view() {
             continue;
         }
         let (Some(card), Some(closing)) = (&turn.card, &turn.closing_entry_id) else {
@@ -490,7 +490,7 @@ mod tests {
             .turns
             .iter()
             .rev()
-            .find(|turn| turn.closed && turn.card.is_some() && !turn.behind_reset)
+            .find(|turn| turn.closed && turn.card.is_some() && !turn.out_of_view())
             .map(|turn| turn.id.as_str());
         plan.per_turn.len() <= 1
             && plan
@@ -1279,6 +1279,51 @@ mod tests {
             "{:?}",
             result.packet_range
         );
+    }
+
+    /// A turn a person set aside is not the turn a request follows: the
+    /// request follows the turn before it, and follows it again once the
+    /// turn is restored (docs/design/99-turns-that-do-not-poison.md §4 F).
+    #[test]
+    fn a_turn_set_aside_is_never_planned_until_restored() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut log, ids) = fixture(
+            dir.path(),
+            &[("turn one", 400, 40, &[]), ("turn two", 400, 40, &[])],
+        );
+        log.append_message(MessageRecord {
+            message: M::user_text("turn three"),
+            meta: None,
+        })
+        .unwrap();
+        let carried = |log: &SessionLog| {
+            let index = TurnIndex::from_log(log);
+            let profile = profile(100_000);
+            plan(PlanInput {
+                profile: &profile,
+                index: &index,
+                directive: "turn three",
+                reading: None,
+                prefix_tokens: 100,
+                tail_tokens: 0,
+                current_turn_tokens: 0,
+            })
+            .per_turn
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(carried(&log), vec![ids[1].clone()]);
+        let mark = || vak_session::turn_marks::TurnMarkRecord {
+            turn: ids[1].clone(),
+            trace: None,
+            actor: None,
+        };
+        log.append_turn_mark(true, mark()).unwrap();
+        assert!(TurnIndex::from_log(&log).turns[1].set_aside);
+        assert_eq!(carried(&log), vec![ids[0].clone()]);
+        log.append_turn_mark(false, mark()).unwrap();
+        assert_eq!(carried(&log), vec![ids[1].clone()]);
     }
 
     #[test]

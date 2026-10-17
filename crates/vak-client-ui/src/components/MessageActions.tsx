@@ -1,7 +1,9 @@
 import { createSignal, Show } from "solid-js";
 import Icon from "./Icon";
 
-export default function MessageActions(props: { text: string; role: "user" | "assistant" }) {
+/** `onSetAside`, on a person's message whose turn has ended, sets that turn
+ *  aside so later replies no longer see it (docs/design/99 §4 F). */
+export default function MessageActions(props: { text: string; role: "user" | "assistant"; onSetAside?: () => void }) {
   const [copied, setCopied] = createSignal(false);
   const [copyFailed, setCopyFailed] = createSignal(false);
   const copy = async () => {
@@ -42,6 +44,18 @@ export default function MessageActions(props: { text: string; role: "user" | "as
         >
           <Icon name="code" size={11} />
           <span>Edit</span>
+        </button>
+      </Show>
+      <Show when={props.onSetAside}>
+        <button
+          type="button"
+          class="msg-action-btn"
+          title="Set this turn aside: later replies will not see it. Nothing is deleted."
+          aria-label="Set this turn aside"
+          onClick={() => props.onSetAside?.()}
+        >
+          <Icon name="archive" size={11} />
+          <span>Set aside</span>
         </button>
       </Show>
     </div>

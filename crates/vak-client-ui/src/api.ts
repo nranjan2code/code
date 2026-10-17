@@ -970,8 +970,19 @@ export function transcript(id: string): Promise<{
   usage: Record<string, number>;
   messages: Message[];
   entries?: TranscriptEntryMeta[];
+  /** Directive entry ids of the turns the person set aside (doc 99 §4 F). */
+  set_aside?: string[];
 }> {
   return req(`/sessions/${id}/transcript`);
+}
+
+/** Sets a turn aside so later turns no longer see it, or restores it
+ *  (docs/design/99-turns-that-do-not-poison.md §4 F). Nothing is deleted. */
+export function setTurnAside(id: string, turn: string, aside: boolean): Promise<{ set_aside: string[] }> {
+  return req(`/sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(turn)}/aside`, {
+    method: "PUT",
+    body: JSON.stringify({ aside }),
+  });
 }
 
 export function sandboxExecutions(id: string): Promise<{ session_id: string; events: Array<Record<string, unknown>> }> {

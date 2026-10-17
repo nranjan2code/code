@@ -91,6 +91,7 @@ pub mod surfaces;
 mod telemetry;
 #[cfg(test)]
 mod traced_rows_tests;
+mod turn_marks;
 mod voice;
 mod web;
 
@@ -1236,6 +1237,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/run", post(run_prompt))
         .route("/sessions/{id}/steering", post(send_steering))
         .route("/sessions/{id}/card-actions", post(card_actions::post))
+        .route("/sessions/{id}/turns/{turn}/aside", put(turn_marks::put))
         .route("/sessions/{id}/compact", post(compact_session))
         .route("/sessions/{id}/cancel", post(cancel_run))
         .route("/sessions/{id}/pause", post(pause_run))
@@ -4790,7 +4792,9 @@ fn summarize_jsonl(
                 vak_session::EntryPayload::EvidenceBody(_)
                 | vak_session::EntryPayload::CallEffect(_)
                 | vak_session::EntryPayload::Decision(_)
-                | vak_session::EntryPayload::CardAction(_) => {}
+                | vak_session::EntryPayload::CardAction(_)
+                | vak_session::EntryPayload::TurnSetAside(_)
+                | vak_session::EntryPayload::TurnRestored(_) => {}
                 vak_session::EntryPayload::ContextSelection(_) => {}
             }
         }
@@ -8554,6 +8558,7 @@ pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
         "usage": s.total_usage(),
         "messages": messages,
         "entries": entries,
+        "set_aside": turn_marks::set_aside_list(s),
     })
 }
 
@@ -23265,6 +23270,157 @@ mod sandbox_promotion_tests {
             assert!(log.chain_to_root().iter().any(|entry| entry.id == action_id
                 && matches!(entry.payload, vak_session::EntryPayload::CardAction(_))));
         }
+    }
+
+    /// A turn is set aside and restored by the owner, through the real
+    /// layers; a guest is refused, a turn still going is refused, and the
+    /// transcript names the turns set aside (docs/design/99 §4 F).
+    #[tokio::test]
+    async fn turns_are_set_aside_and_restored_by_the_owner_only() {
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            dir.path().to_path_buf(),
+        ));
+        let mut log = seed_session_at(&core, "session-aside", core.cwd());
+        let mut turn = |asked: &str, answered: Option<&str>| {
+            let directive = log
+                .append_message(vak_session::types::MessageRecord {
+                    message: vak_llm::Message::user_text(asked),
+                    meta: None,
+                })
+                .unwrap();
+            if let Some(answer) = answered {
+                log.append_message(vak_session::types::MessageRecord {
+                    message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(answer)]),
+                    meta: None,
+                })
+                .unwrap();
+            }
+            directive.id
+        };
+        let first = turn("Plan a ride", Some("Here is a route."));
+        let open = turn("Again please", None);
+        drop(log);
+        let state = AppState::new(core);
+        let guest = "aside-guest-secret";
+        coworking::invite(
+            &coworking::grants(&state),
+            coworking::AudienceGrant {
+                grant_id: coworking::test_grant_id("grant-aside"),
+                principal_id: "person-aside".into(),
+                display_name: "Asha".into(),
+                conversation_id: "session-aside".into(),
+                audience_id: "local".into(),
+                capabilities: vec!["read".into(), "message".into()],
+                token_hash: coworking::token_hash(guest),
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                trace: None,
+                actor: None,
+            },
+        )
+        .unwrap();
+        let app = Router::new()
+            .route("/sessions/{id}/turns/{turn}/aside", put(turn_marks::put))
+            .route("/sessions/{id}/transcript", get(transcript))
+            .with_state(state.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                enforce_participant_audience,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                AuthPolicy {
+                    token: "operator-secret".into(),
+                    home: dir.path().into(),
+                    shared: dir.path().into(),
+                    trusted_hosts: Vec::new(),
+                    public_url: None,
+                    browser_sessions: web::BrowserSessions::default(),
+                },
+                require_bearer,
+            ));
+        let request =
+            |bearer: &str, method: axum::http::Method, uri: String, body: Option<bool>| {
+                let builder = axum::http::Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        format!("Bearer {bearer}"),
+                    )
+                    .header(axum::http::header::CONTENT_TYPE, "application/json");
+                let body = body.map_or_else(String::new, |aside| {
+                    serde_json::json!({ "aside": aside }).to_string()
+                });
+                builder.body(axum::body::Body::from(body)).unwrap()
+            };
+        let aside = |bearer: &str, turn: &str, aside: bool| {
+            request(
+                bearer,
+                axum::http::Method::PUT,
+                format!("/sessions/session-aside/turns/{turn}/aside"),
+                Some(aside),
+            )
+        };
+        let read = |response: axum::response::Response| async move {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default()
+        };
+
+        let refused = app
+            .clone()
+            .oneshot(aside(guest, &first, true))
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        let still_going = app
+            .clone()
+            .oneshot(aside("operator-secret", &open, true))
+            .await
+            .unwrap();
+        assert_eq!(still_going.status(), StatusCode::CONFLICT);
+        let unknown = app
+            .clone()
+            .oneshot(aside("operator-secret", "no-such-turn", true))
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+
+        let set = app
+            .clone()
+            .oneshot(aside("operator-secret", &first, true))
+            .await
+            .unwrap();
+        assert_eq!(set.status(), StatusCode::OK);
+        assert_eq!(read(set).await["set_aside"], serde_json::json!([first]));
+        let transcript = app
+            .clone()
+            .oneshot(request(
+                "operator-secret",
+                axum::http::Method::GET,
+                "/sessions/session-aside/transcript".into(),
+                None,
+            ))
+            .await
+            .unwrap();
+        let transcript = read(transcript).await;
+        assert_eq!(transcript["set_aside"], serde_json::json!([first]));
+        // Nothing is removed: the turn's messages are still there.
+        assert_eq!(transcript["messages"].as_array().map(Vec::len), Some(3));
+
+        let restored = app
+            .clone()
+            .oneshot(aside("operator-secret", &first, false))
+            .await
+            .unwrap();
+        assert_eq!(restored.status(), StatusCode::OK);
+        assert_eq!(read(restored).await["set_aside"], serde_json::json!([]));
     }
 
     fn seed_session_at(

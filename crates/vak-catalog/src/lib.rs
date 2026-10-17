@@ -714,6 +714,11 @@ fn connect(path: &Path) -> Result<Connection, CatalogError> {
              record TEXT NOT NULL, recorded_at TEXT NOT NULL,
              PRIMARY KEY (session, entry_id));
          CREATE INDEX IF NOT EXISTS turn_records_turn ON turn_records (session, turn_id);
+         CREATE TABLE IF NOT EXISTS turn_marks (
+             session TEXT NOT NULL, entry_id TEXT NOT NULL, turn_id TEXT NOT NULL,
+             aside INTEGER NOT NULL, PRIMARY KEY (session, entry_id));
+         CREATE INDEX IF NOT EXISTS turn_marks_turn ON turn_marks (session, turn_id);
+         CREATE TABLE IF NOT EXISTS turns_aside (turn TEXT PRIMARY KEY);
          CREATE VIRTUAL TABLE IF NOT EXISTS turn_records_fts USING fts5(
              record, content='turn_records', content_rowid='rowid', tokenize='unicode61');
          CREATE TRIGGER IF NOT EXISTS turn_records_ai AFTER INSERT ON turn_records BEGIN
@@ -813,6 +818,9 @@ fn audience_filter(audience: &Audience, first: usize) -> (String, Vec<rusqlite::
     if !audience.held {
         clauses.push("(n.kind != 'item' OR n.status = 'accepted')".to_string());
     }
+    // A turn a person set aside, and every call in it, is found by no one
+    // (docs/design/99-turns-that-do-not-poison.md §4 F).
+    clauses.push("IFNULL(n.turn, '') NOT IN (SELECT turn FROM turns_aside)".to_string());
     // An Agent reads an artifact through its Space only while the artifact
     // inherits; once a share breaks inheritance, a grant must name it.
     if audience.agents.is_some() {

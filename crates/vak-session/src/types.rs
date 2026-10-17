@@ -1101,6 +1101,11 @@ pub enum EntryPayload {
     /// itself: a choice reaches the model as the directive that names it,
     /// a tick in the next turn's `<card_marks>` tail block.
     CardAction(crate::card_actions::CardActionRecord),
+    /// A person set a turn aside (docs/design/99-turns-that-do-not-poison.md
+    /// §4 F): no later turn sees it. Never model-visible; nothing is removed.
+    TurnSetAside(crate::turn_marks::TurnMarkRecord),
+    /// A person undid setting a turn aside: later turns see it again.
+    TurnRestored(crate::turn_marks::TurnMarkRecord),
 }
 
 /// One effect of one tool call, named by the call's id.

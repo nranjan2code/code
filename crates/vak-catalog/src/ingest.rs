@@ -18,7 +18,7 @@ pub(crate) fn session_node(id: &str) -> String {
     }
 }
 
-fn turn_node(id: &str) -> String {
+pub(crate) fn turn_node(id: &str) -> String {
     if id.starts_with("trn_") {
         id.to_string()
     } else {

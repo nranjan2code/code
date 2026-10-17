@@ -318,3 +318,13 @@ Type `SecurityEvent` in `crates/vak-core/src/security_events.rs`. Class: ledger.
 | `ip` | `Option<String>` | no | Source IP when available. |
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
+
+## turn_mark
+
+Type `TurnMarkRecord` in `crates/vak-session/src/turn_marks.rs`. Class: ledger. Stored in: `sessions`. Version: 1.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `turn` | `String` | yes | The turn, by its directive's entry id. |
+| `trace` | `Option<TraceKey>` | no |  |
+| `actor` | `Option<PrincipalId>` | no |  |

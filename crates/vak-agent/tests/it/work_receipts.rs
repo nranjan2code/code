@@ -329,6 +329,8 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::CallEffect(_) => "call-effect",
             EntryPayload::Decision(_) => "decision",
             EntryPayload::CardAction(_) => "card-action",
+            EntryPayload::TurnSetAside(_) => "turn-set-aside",
+            EntryPayload::TurnRestored(_) => "turn-restored",
             EntryPayload::ContextSelection(_) => "context-selection",
         })
         .filter(|kind| *kind != "decision")

@@ -81,11 +81,18 @@ pub fn turn_facts(log: &SessionLog) -> Vec<TurnFacts> {
         })
         .collect();
 
+    // A turn a person set aside teaches nothing
+    // (docs/design/99-turns-that-do-not-poison.md §4 F).
+    let aside = vak_session::turn_marks::set_aside_turns(entries.iter().copied());
     let mut order: Vec<String> = Vec::new();
     let mut turns: HashMap<String, (TurnFacts, Option<chrono::DateTime<chrono::Utc>>)> =
         HashMap::new();
     for entry in &entries {
-        let Some(turn) = entry.at_turn.as_deref() else {
+        let Some(turn) = entry
+            .at_turn
+            .as_deref()
+            .filter(|turn| !aside.contains(*turn))
+        else {
             continue;
         };
         let (facts, admitted) = turns.entry(turn.to_string()).or_insert_with(|| {

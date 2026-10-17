@@ -98,6 +98,11 @@ pub struct Turn {
     /// never planned, never packeted and never listed as covered — though
     /// it stays in the index for `recall({ turn })` and turn numbering.
     pub behind_reset: bool,
+    /// `true` when a person set this turn aside and has not restored it
+    /// (`EntryPayload::TurnSetAside`, docs/design/99-turns-that-do-not-poison.md
+    /// §4 F): like a turn behind a reset, never planned and never recalled,
+    /// though it stays in the index for turn numbering and the transcript.
+    pub set_aside: bool,
     /// Full presentation records parallel to `presentations`, kept alongside
     /// the id list so `full_record`/`build_card` never re-walk the ledger.
     presentation_records: Vec<PresentationRecord>,
@@ -515,6 +520,7 @@ impl TurnIndex {
                                     closed: true,
                                     ended_answered: false,
                                     behind_reset: false,
+                                    set_aside: false,
                                     presentation_records: Vec::new(),
                                     evidence_bodies: HashMap::new(),
                                     reading: pending_readings.remove(&entry.id),
@@ -630,6 +636,12 @@ impl TurnIndex {
                     {
                         turn.evidence_bodies
                             .insert(body.tool_use_id.clone(), content);
+                    }
+                }
+                EntryPayload::TurnSetAside(record) | EntryPayload::TurnRestored(record) => {
+                    let aside = matches!(entry.payload, EntryPayload::TurnSetAside(_));
+                    if let Some(turn) = turns.iter_mut().rev().find(|turn| turn.id == record.turn) {
+                        turn.set_aside = aside;
                     }
                 }
                 EntryPayload::Compaction(c) if c.reset_all => {
@@ -800,6 +812,12 @@ impl TurnIndex {
 }
 
 impl Turn {
+    /// Whether later turns see this turn: not behind a reset, and not set
+    /// aside by a person (docs/design/99-turns-that-do-not-poison.md §4 F).
+    pub fn out_of_view(&self) -> bool {
+        self.behind_reset || self.set_aside
+    }
+
     /// What call `tool_use_id` of this turn held, when it was recorded.
     pub fn call_provenance(&self, tool_use_id: &str) -> Option<vak_control::Provenance> {
         self.call_provenance.get(tool_use_id).copied()

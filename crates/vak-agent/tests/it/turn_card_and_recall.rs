@@ -685,3 +685,114 @@ async fn open_and_query_together_are_both_answered() {
         "{result}"
     );
 }
+
+/// A turn a person set aside is not reopened or found by `recall`, nor is
+/// what it received; once restored it is again
+/// (docs/design/99-turns-that-do-not-poison.md §4 F).
+#[tokio::test]
+async fn recall_skips_a_turn_set_aside_until_it_is_restored() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "recall-aside",
+        vec![
+            tool_call_msg(
+                "t1",
+                "bash",
+                serde_json::json!({"command": "printf 'HELLO WORLD'"}),
+            ),
+            text_msg("Printed HELLO WORLD."),
+            tool_call_msg(
+                "r1",
+                "recall",
+                serde_json::json!({"open": "ev:t1", "query": "", "lines": {"start": 0, "end": 0}}),
+            ),
+            tool_call_msg(
+                "r2",
+                "recall",
+                serde_json::json!({"open": "#1", "query": ""}),
+            ),
+            tool_call_msg(
+                "r3",
+                "recall",
+                serde_json::json!({"query": "HELLO WORLD", "limit": 5}),
+            ),
+            text_msg("Nothing earlier."),
+            tool_call_msg(
+                "r4",
+                "recall",
+                serde_json::json!({"open": "ev:t1", "query": "", "lines": {"start": 0, "end": 0}}),
+            ),
+            tool_call_msg(
+                "r5",
+                "recall",
+                serde_json::json!({"query": "HELLO WORLD", "limit": 5}),
+            ),
+            text_msg("Found it."),
+        ],
+        vec![Arc::new(BashTool)],
+        false,
+    );
+    let mark = |agent: &Agent, aside: bool| {
+        let session = agent.session.clone();
+        async move {
+            let mut session = session.lock().await;
+            let turn = vak_session::TurnIndex::from_log(&session).turns[0]
+                .id
+                .clone();
+            session
+                .append_turn_mark(
+                    aside,
+                    vak_session::turn_marks::TurnMarkRecord {
+                        turn,
+                        trace: None,
+                        actor: None,
+                    },
+                )
+                .unwrap();
+        }
+    };
+    for (prompt, aside) in [
+        ("print hello", Some(true)),
+        ("what did we print before?", Some(false)),
+        ("and now?", None),
+    ] {
+        let outcome = agent
+            .run(
+                prompt,
+                &Default::default(),
+                CancellationToken::new(),
+                mpsc::channel(64).0,
+            )
+            .await;
+        assert!(
+            matches!(outcome, TurnOutcome::Completed { .. }),
+            "{outcome:?}"
+        );
+        if let Some(aside) = aside {
+            mark(&agent, aside).await;
+        }
+    }
+
+    let session = agent.session.lock().await;
+    let result = |id: &str| -> String {
+        session
+            .message_chain()
+            .iter()
+            .flat_map(|(_, m)| m.content.clone())
+            .find_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } if tool_use_id == id => Some(content),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no tool result for {id}"))
+    };
+    assert!(result("r1").contains("set_aside"), "{}", result("r1"));
+    assert!(result("r2").contains("set_aside"), "{}", result("r2"));
+    assert!(!result("r3").contains("HELLO"), "{}", result("r3"));
+    assert!(result("r4").contains("HELLO WORLD"), "{}", result("r4"));
+    assert!(result("r5").contains("HELLO"), "{}", result("r5"));
+}

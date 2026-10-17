@@ -37,9 +37,17 @@ failed, the same request that had been answered well failed three times.
   path that is not yet an artifact, or a file a command made, is not
   recorded (doc 82 §3), so a later read of it carries no record. Whether
   every file a turn writes should be versioned is a Library decision.
-- [ ] F: set a turn aside (and undo) from the conversation, skipped by the
-  planner, recall, evidence and memory; retry from a turn. Designed in
-  doc 99 §4 F; needs the server route and the client surface.
+- [x] F: a person sets a turn aside (and undoes it) from the conversation;
+  the planner, recall, citation evidence and measurement skip it. Checked
+  live 2026-10-17: after setting aside the turn that named a codename,
+  the next turn's plan carried nothing and its recall search found
+  nothing; after Undo the same question was answered from it.
+- [ ] Retry from a turn (doc 99 §4 F): a new directive whose parent is the
+  turn before, so a branch replaces a turn instead of setting it aside.
+  Needs `run_prompt` to start a turn from a chosen parent entry.
+- [ ] A memory note made in a set-aside turn is hidden from catalog search
+  by its turn (`turns_aside`), but no test covers a note yet, and a note
+  that names no turn is not hidden.
 - [x] Poison replay (doc 99 §5) as a repeatable check:
   `scripts/poison_replay.sh` (`vak eval --poison-replay`). The poisoned
   turn is scripted under the same request words, so the confound of the

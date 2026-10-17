@@ -827,6 +827,21 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::CardAction(record)))
     }
 
+    /// Appends a person setting a turn aside, or restoring it (doc 99 §4 F).
+    pub fn append_turn_mark(
+        &mut self,
+        aside: bool,
+        record: crate::turn_marks::TurnMarkRecord,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        let payload = if aside {
+            EntryPayload::TurnSetAside(record)
+        } else {
+            EntryPayload::TurnRestored(record)
+        };
+        self.append(Entry::new(parent, payload))
+    }
+
     /// Appends one control-plane decision (audit; never model-visible).
     pub fn append_decision(
         &mut self,
@@ -1565,8 +1580,18 @@ impl SessionLog {
                 _ => None,
             })
             .collect();
+        // A turn a person set aside retrieved nothing a later card may cite
+        // (docs/design/99-turns-that-do-not-poison.md §4 F).
+        let aside = crate::turn_marks::set_aside_turns(chain.iter().copied());
         let mut out = String::new();
         for entry in &chain {
+            if entry
+                .at_turn
+                .as_ref()
+                .is_some_and(|turn| aside.contains(turn))
+            {
+                continue;
+            }
             match &entry.payload {
                 EntryPayload::Message(record) => {
                     let from_person = record.message.role == vak_llm::Role::User
@@ -2685,8 +2710,9 @@ impl SessionLog {
         for (turn_number, turn) in index.turns.iter().enumerate() {
             let turn_pos = position.get(turn.id.as_str()).copied().unwrap_or(0);
             // A turn still open across a reset keeps its directive and its
-            // steps after the reset (`behind_reset` is false for it).
-            if turn.behind_reset {
+            // steps after the reset (`behind_reset` is false for it). A turn
+            // a person set aside is never sent either.
+            if turn.out_of_view() {
                 continue;
             }
             if !turn.closed {

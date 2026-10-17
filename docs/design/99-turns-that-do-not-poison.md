@@ -1,9 +1,9 @@
 # 99 — Turns that do not poison later turns
 
-Status: in progress (2026-10-17): stages A to E built, A to D checked live
-on the installed route (B and C seen in the model's own reading); the
-poison replay (§5) is a repeatable check; F designed, open in
-docs/plans/open-items.md. Builds on docs/design/68-context-engine.md (the planner and
+Status: in progress (2026-10-17): stages A to F built, A to D and F
+checked live on the installed route (B and C seen in the model's own
+reading); the poison replay (§5) is a repeatable check; retry from a turn
+and the rest are open in docs/plans/open-items.md. Builds on docs/design/68-context-engine.md (the planner and
 recall), docs/design/85-turn-graph.md (turn ids), docs/design/86-model-plans-runtime-checks.md
 (the plan check) and docs/design/30-render-architecture.md §30.1
 (citations).
@@ -101,17 +101,36 @@ turn still open has no card and adds nothing; a file no version holds (a
 `write` with no title to a path that is not yet an artifact, a file a
 command made) has no turn to name: open in docs/plans/open-items.md.
 
-### F. Setting a turn aside (designed)
+### F. Setting a turn aside
 
 A person can remove a turn from what later turns see without deleting
 anything: invariants 2 and 42 keep the ledger append-only. Setting a turn
-aside appends a `TurnSetAside { turn }` entry (undo appends
-`TurnRestored`). A set-aside turn is skipped by the planner, by recall,
-by citation evidence and by memory writes derived from it, exactly as
-`behind_reset` turns are; the transcript shows it folded, with Undo.
-"Retry from here" is a branch (a new directive whose parent is the turn
-before), already the ledger's shape. Erasing bytes stays
-`Core::erase_conversation`.
+aside appends a `TurnSetAside` entry naming the turn's directive; Undo
+appends `TurnRestored` (`vak_session::turn_marks::TurnMarkRecord`, with
+the owner as actor). The last mark of a turn on the chain decides
+(`set_aside_turns`); `TurnIndex` marks it `set_aside`, and
+`Turn::out_of_view` (behind a reset, or set aside) is what every reader
+of history skips:
+
+- the planner never carries it, so a request follows the turn before it,
+  and `derive_with_plan` never sends it even when a plan names it;
+- `recall` neither finds nor reopens it: `turn:`, `#n`, `pres:` and `ev:`
+  of a set-aside turn answer `set_aside`, the in-memory search skips it,
+  and the catalog keeps the marks (`turn_marks`, branch-aware, for the
+  turn search; `turns_aside` for every other search, so its calls, and
+  a memory note naming it, are found by no one);
+- citation evidence (`SessionLog::evidence_text`) counts nothing it
+  received;
+- what is measured and offered for promotion from turns
+  (`vak_core::measure::turn_facts`) leaves it out.
+
+A turn still going cannot be set aside. `PUT /sessions/{id}/turns/{turn}/aside`
+(`{"aside": true|false}`, owner only) records the mark and answers the
+turns set aside now; `/transcript` names them in `set_aside`. The client
+offers Set aside on a person's message once its turn has ended and draws
+a set-aside turn folded, with Show and Undo. "Retry from here" (a new
+directive whose parent is the turn before) is not built: it is open in
+docs/plans/open-items.md. Erasing bytes stays `Core::erase_conversation`.
 
 ## 5. How to find more of these
 

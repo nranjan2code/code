@@ -922,6 +922,38 @@ export function isRunning(id: string | null, bucket: Bucket = "main"): boolean {
   return !!(id && runningMap[K(bucket, id)]);
 }
 
+// Turns the person set aside, by directive entry id, as the server last said
+// (docs/design/99-turns-that-do-not-poison.md §4 F).
+const [asideBySession, setAsideBySession] = createStore<Record<string, string[]>>({});
+
+export function turnsSetAside(id: string | null): string[] {
+  return id ? asideBySession[id] ?? [] : [];
+}
+
+export function hydrateSetAside(id: string, turns: string[] | undefined) {
+  setAsideBySession(id, reconcile(turns ?? []));
+}
+
+/** Whether a turn has ended, so it can be set aside: every turn but the one
+ *  still running. */
+export function turnSettled(id: string | null, entryId: string | undefined): boolean {
+  if (!id || !entryId) return false;
+  if (!isRunning(id)) return true;
+  const users = itemsOf(id).filter((item) => item.kind === "user");
+  const last = users[users.length - 1];
+  return !(last?.kind === "user" && last.entryId === entryId);
+}
+
+export async function setTurnAside(id: string, turn: string, aside: boolean) {
+  try {
+    const answer = await api.setTurnAside(id, turn, aside);
+    setAsideBySession(id, reconcile(answer.set_aside));
+  } catch (error) {
+    setNotice({ kind: "error", text: aside ? "This turn could not be set aside. Try again in a moment." : "This turn could not be brought back. Try again in a moment." });
+    throw error;
+  }
+}
+
 export function isStopping(id: string | null, bucket: Bucket = "main"): boolean {
   return !!(id && stoppingMap[K(bucket, id)]);
 }
