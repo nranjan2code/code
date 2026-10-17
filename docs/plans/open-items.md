@@ -249,20 +249,27 @@ Carried over from 7.2.0:
   delivered a file draws that file's card, whose Review needs the
   conversation it came from. Keep current names its automation after the
   page, which is the whole request when the page was saved from a chat.
-- [ ] The Agent's `as_page` never reached in a live turn (dev route,
-  2026-10-17, two turns asking for "a Library page that stays current
-  every Monday at 9"): the first wrote an HTML file into `Library/`; after
-  `automations`' first sentence (the line "More tools" shows) named pages,
-  the second planned three text deliverables, showed cards, then wrote a
-  Markdown file. `automations` is deferred (`serves: orchestration`) and
-  was never called. Open: what in the deferred index or the plan leads
-  away from it; capture the turn's first request to see what it carried.
-- [ ] A card call's `deliverable` was the field's own description, copied
-  verbatim ("plan deliverable this card delivers, by its name; leave it
-  out when your plan does not list it"), twice in one turn, and the card
-  was shown; a stats card naming "Weekly Stats Card", which the plan did
-  not have, was shown too. AGENTS.md says a card naming a deliverable the
-  plan lacks is refused with the plan's names. Same turn as above.
+- [ ] The Agent's `as_page` (dev route, 2026-10-17, "a Library page that
+  stays current every Monday at 9"). Deferred, `automations` was never
+  called: two live turns wrote a file, and a replay of the captured first
+  request reached it in 0 of 16 trials (`commitments`, whose description
+  says "work that outlives a single conversation", came first in 13);
+  loaded, in 11 of 16. `automations` is now always loaded. The live turn
+  after that called `add` but left `as_page` out, putting "remain visible
+  on the user's Library page" in its prompt, and wrote cron `0 9 * * *`
+  (every day) for Mondays although the result said "Every day at 9:00 AM".
+  Open: how the call says where its result goes so a page is not an
+  optional flag a model leaves out.
+- [x] A card call's `deliverable` was the field's own description, copied
+  verbatim, and the card was shown; a card naming a deliverable the plan
+  did not have was shown too (2026-10-17). Cause: the check ran only when
+  the plan had a card deliverable, and that plan had only text. Now any
+  declared plan checks the name ("Your plan lists no card"), and the
+  field's description reads as an instruction, not a value
+  (`a_plan_with_no_card_refuses_a_named_deliverable`). Not yet seen in a
+  live turn.
+- [ ] With no plan at all, a card's `deliverable` is not checked and is
+  recorded as written. Decide: refuse it, or record none.
 - [ ] A guest's shared view asks for `/app/fonts/InterVariable.woff2` and
   is refused (401), so it falls back to the system font; seen 2026-10-17,
   older than S5.
@@ -313,9 +320,9 @@ Carried over from 7.2.0:
     and three fresh runs of "let me choose between French press, pour-over
     and moka pot" each drew a steps card (two before drew details cards),
     but none wrote `choices`: each put the alternatives in a step's text.
-    Decided 2026-10-17: keep flat (docs/decisions.md). Open: the steps
-    tool's description and refusal should say a step's alternatives go in
-    a card of their own after the steps, not in a step.
+    Decided 2026-10-17: keep flat (docs/decisions.md). The `steps`
+    argument now says a step's alternatives go in `choices`, each naming
+    its step; not yet seen in a live turn.
   - [x] A tick while a turn runs says why (checked 2026-10-17): the tick
     goes back and the notice reads "Agent is working; try again after this
     turn settles". The open line was stale.

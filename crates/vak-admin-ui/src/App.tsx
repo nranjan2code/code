@@ -48,9 +48,9 @@ import type {
   ActiveWorker, SkillItem, SkillProposal, TranscriptEntry, VoiceConfig, WorkReceipt,
 } from "./types";
 
-// The client's four theme choices; a stored retired id resolves to system.
-type ThemeChoice = "system" | "light" | "dark" | "contrast";
-const THEME_CHOICES: readonly ThemeChoice[] = ["system", "light", "dark", "contrast"];
+// The client's six theme choices; a stored retired id resolves to system.
+type ThemeChoice = "system" | "light" | "dark" | "contrast" | "frosted-light" | "frosted-dark";
+const THEME_CHOICES: readonly ThemeChoice[] = ["system", "light", "dark", "contrast", "frosted-light", "frosted-dark"];
 const storedTheme = localStorage.getItem("vak_admin_theme") as ThemeChoice | null;
 const [theme, setTheme] = createSignal<ThemeChoice>(
   storedTheme && THEME_CHOICES.includes(storedTheme) ? storedTheme : "system",
@@ -5483,7 +5483,7 @@ function ChannelTopologyMatrix(props: { ctx: GatewayCtx }) {
           <div class="topology-tier-body">
             <Show
               when={bots().length > 0}
-              fallback={<p class="dim" style={{ "font-size": "11.5px" }}>No bots configured yet. Add a bot in the Bots tab.</p>}
+              fallback={<p class="dim" style={{ "font-size": "12px" }}>No bots configured yet. Add a bot in the Bots tab.</p>}
             >
               <div class="topology-entity-list">
                 <For each={bots()}>
@@ -5491,7 +5491,7 @@ function ChannelTopologyMatrix(props: { ctx: GatewayCtx }) {
                     <div class="topology-entity-item">
                       <div>
                         <strong>{b.label}</strong>
-                        <span class="dim mono" style={{ "font-size": "10.5px", "margin-left": "4px" }}>({b.surface})</span>
+                        <span class="dim mono" style={{ "font-size": "12px", "margin-left": "4px" }}>({b.surface})</span>
                       </div>
                       <span class={`chip chip-tone-${b.token_configured ? "success" : "warning"}`} style={{ "font-size": "12px" }}>
                         {b.token_configured ? "token set" : "no token"}
@@ -5535,7 +5535,7 @@ function ChannelTopologyMatrix(props: { ctx: GatewayCtx }) {
         <span class="eyebrow" style={{ "margin": "0" }}>Discovered Chat Transports:</span>
         <Show
           when={surfaces().length > 0}
-          fallback={<span class="dim" style={{ "font-size": "11.5px" }}>No channel transports discovered.</span>}
+          fallback={<span class="dim" style={{ "font-size": "12px" }}>No channel transports discovered.</span>}
         >
           <For each={surfaces()}>
             {(s) => (
@@ -7020,6 +7020,8 @@ export function Settings() {
                     { id: "light", label: "Light", class: "" },
                     { id: "dark", label: "Dark", class: "dark" },
                     { id: "contrast", label: "High contrast", class: "contrast" },
+                    { id: "frosted-light", label: "Frosted light", class: "frosted-light" },
+                    { id: "frosted-dark", label: "Frosted dark", class: "frosted-dark" },
                   ] as const}
                 >
                   {(t) => (

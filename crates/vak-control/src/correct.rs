@@ -282,7 +282,9 @@ pub fn card_unplanned(answers: &str, open: &[String], shown: &[String]) -> Strin
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let open = if open.is_empty() {
+    let open = if open.is_empty() && shown.is_empty() {
+        "Your plan lists no card.".to_string()
+    } else if open.is_empty() {
         "Every card in your plan is shown already.".to_string()
     } else {
         format!(

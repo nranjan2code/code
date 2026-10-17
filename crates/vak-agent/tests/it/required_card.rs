@@ -408,6 +408,55 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
     );
 }
 
+/// A plan with no card still checks a card's `deliverable`: a name it does
+/// not list is refused with "your plan lists no card", and the card sent
+/// again without one is shown (found live 2026-10-17: a model filled the
+/// field with its description and the card was shown).
+#[tokio::test]
+async fn a_plan_with_no_card_refuses_a_named_deliverable() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, _) = agent(
+        &dir,
+        "no-card-plan",
+        vec![
+            plan("text"),
+            call(
+                "a1",
+                "steps_block",
+                serde_json::json!({"deliverable": "a name the plan never gave", "steps": ["Wake"]}),
+            ),
+            call("a2", "steps_block", serde_json::json!({"steps": ["Wake"]})),
+            text("Water on Monday."),
+        ],
+    );
+    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let results: Vec<(bool, String)> = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } if tool_use_id.starts_with('a') => Some((is_error, content)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 2, "{results:?}");
+    assert!(
+        results[0].0 && results[0].1.contains("Your plan lists no card"),
+        "{results:?}"
+    );
+    assert!(!results[1].0, "{results:?}");
+}
+
 /// A card sent in the same step as the plan is checked against that plan,
 /// and the plan's result asks for the cards together in one step.
 #[tokio::test]

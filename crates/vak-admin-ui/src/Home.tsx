@@ -505,7 +505,7 @@ function RightNow(props: { ops: OperationsSnapshot | null; error: boolean }) {
                     <span class={`run-pip run-pip-${run().state === "running" ? "live" : "held"}`} />
                     <span class="mono">{shortId(run().session_id)}</span>
                     <Show when={run().agent_name || run().agent_id}>
-                      <span class="chip chip-tone-info" style={{ "font-size": "10.5px", padding: "1px 6px" }}>
+                      <span class="chip chip-tone-info" style={{ "font-size": "12px", padding: "1px 6px" }}>
                         ✦ {run().agent_name || run().agent_id}
                       </span>
                     </Show>

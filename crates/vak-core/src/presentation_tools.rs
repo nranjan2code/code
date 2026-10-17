@@ -198,7 +198,7 @@ fn steps_fields() -> Value {
         serde_json::json!({
             "title": string(TITLE),
             "steps": list_of(
-                "The steps in the order they are done.",
+                "The steps in the order they are done. Alternatives for a step go in `choices`, each naming its step, never inside the step.",
                 serde_json::json!({
                     "label": string("What to do, in a few words."),
                     "detail": string("Optional. What helps someone do it."),
@@ -2284,7 +2284,7 @@ impl Tool for EmitCardTool {
         );
         properties.insert(
             "deliverable".into(),
-            string("The plan deliverable this card delivers, by its name; leave it out when your plan does not list it."),
+            string("The name of the card in your plan that this card delivers, written as the plan wrote it. Leave it out when your plan lists no card for it."),
         );
         properties.insert(
             "replaces".into(),

@@ -647,9 +647,9 @@ function IntentSimulator() {
         {/* Custom Input & Surface Bar */}
         <div class="intent-input-section" style={{ "margin-top": "16px" }}>
           <div class="intent-input-header">
-            <label class="font-semibold" style={{ "font-size": "12.5px" }}>Test Work Instruction Prompt</label>
+            <label class="font-semibold" style={{ "font-size": "13px" }}>Test Work Instruction Prompt</label>
             <div class="intent-surface-picker">
-              <span class="dim" style={{ "font-size": "11.5px" }}>Delivery Surface:</span>
+              <span class="dim" style={{ "font-size": "12px" }}>Delivery Surface:</span>
               <select
                 value={surface()}
                 onChange={(e) => setSurface(e.currentTarget.value)}
@@ -1134,7 +1134,7 @@ function KernelPolicyView() {
 
         <div style={{ "margin-top": "16px", "padding-top": "12px", "border-top": "1px solid var(--border-soft)" }}>
           <span class="eyebrow">Satisfaction Lattice Standards</span>
-          <div style={{ "display": "flex", "flex-direction": "column", "gap": "6px", "margin-top": "6px", "font-size": "11.5px" }}>
+          <div style={{ "display": "flex", "flex-direction": "column", "gap": "6px", "margin-top": "6px", "font-size": "12px" }}>
             <div><strong style={{ "color": "var(--text)" }}>1. Asserted:</strong> The model said so on its own say-so.</div>
             <div><strong style={{ "color": "var(--text)" }}>2. Cited:</strong> The model said so, accompanied by verified citations.</div>
             <div><strong style={{ "color": "var(--text)" }}>3. Observed:</strong> The runtime checked the fact against host reality.</div>

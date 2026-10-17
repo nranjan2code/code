@@ -595,7 +595,7 @@ export function Inbox() {
                               <button
                                 type="button"
                                 class="button small ghost"
-                                style="color: var(--bad); border-color: rgba(239, 68, 68, 0.4);"
+                                style="color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent);"
                                 onClick={() =>
                                   void handleResolveApproval(
                                     approval().session_id,

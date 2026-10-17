@@ -626,7 +626,7 @@ export function GateSimulator(props: {
             >
               <span class="sim-tool">{action.tool}</span>
               <span class="sim-arg">{action.arg}</span>
-              <span class="dim" style={{ "font-size": "10.5px" }}>{action.desc}</span>
+              <span class="dim" style={{ "font-size": "12px" }}>{action.desc}</span>
             </button>
           )}
         </For>
@@ -669,7 +669,7 @@ export function GateSimulator(props: {
             {simulation().verdict === "allow" ? "ALLOW (Pre-approved / Within Bounds)" : simulation().verdict === "ask" ? "ASK (Human Approval Required)" : "DENY (Blocked by Security Policy)"}
           </span>
         </div>
-        <p style={{ "margin": "0", "font-size": "12.5px" }}>{simulation().reason}</p>
+        <p style={{ "margin": "0", "font-size": "13px" }}>{simulation().reason}</p>
 
         <div class="sim-trace">
           <div class="eyebrow" style={{ "margin-top": "8px" }}>Evaluation Trace:</div>
@@ -842,60 +842,60 @@ function PrecedenceFlowchartCard() {
         <div class="precedence-step">
           <div class="precedence-step-head">
             <span class="precedence-step-num">STAGE 1</span>
-            <span class="chip chip-tone-danger" style={{ "font-size": "9.5px" }}>Deny</span>
+            <span class="chip chip-tone-danger" style={{ "font-size": "12px" }}>Deny</span>
           </div>
           <strong class="precedence-step-title">Explicit Deny</strong>
           <p class="precedence-step-desc">Checked first. If tool matches any <code>deny</code> pattern, refused immediately.</p>
           <div class="precedence-step-outcome">
-            <span class="dim" style={{ "font-size": "10.5px" }}>⇒ Fails closed</span>
+            <span class="dim" style={{ "font-size": "12px" }}>⇒ Fails closed</span>
           </div>
         </div>
 
         <div class="precedence-step">
           <div class="precedence-step-head">
             <span class="precedence-step-num">STAGE 2</span>
-            <span class="chip chip-tone-warning" style={{ "font-size": "9.5px" }}>Ask</span>
+            <span class="chip chip-tone-warning" style={{ "font-size": "12px" }}>Ask</span>
           </div>
           <strong class="precedence-step-title">Explicit Ask</strong>
           <p class="precedence-step-desc">If tool matches any <code>ask</code> pattern, forces approval gate escalation.</p>
           <div class="precedence-step-outcome">
-            <span class="dim" style={{ "font-size": "10.5px" }}>⇒ Raises Ask</span>
+            <span class="dim" style={{ "font-size": "12px" }}>⇒ Raises Ask</span>
           </div>
         </div>
 
         <div class="precedence-step">
           <div class="precedence-step-head">
             <span class="precedence-step-num">STAGE 3</span>
-            <span class="chip chip-tone-success" style={{ "font-size": "9.5px" }}>Allow</span>
+            <span class="chip chip-tone-success" style={{ "font-size": "12px" }}>Allow</span>
           </div>
           <strong class="precedence-step-title">Explicit Allow</strong>
           <p class="precedence-step-desc">If tool matches any <code>allow</code> pattern, executes without prompting.</p>
           <div class="precedence-step-outcome">
-            <span class="dim" style={{ "font-size": "10.5px" }}>⇒ Dispatches</span>
+            <span class="dim" style={{ "font-size": "12px" }}>⇒ Dispatches</span>
           </div>
         </div>
 
         <div class="precedence-step">
           <div class="precedence-step-head">
             <span class="precedence-step-num">STAGE 4</span>
-            <span class="chip chip-phrase" style={{ "font-size": "9.5px" }}>Mode</span>
+            <span class="chip chip-phrase" style={{ "font-size": "12px" }}>Mode</span>
           </div>
           <strong class="precedence-step-title">Authority Mode</strong>
           <p class="precedence-step-desc">No rule match. Mode decides: ReadOnly refuses writes; WorkspaceWrite permits workspace writes.</p>
           <div class="precedence-step-outcome">
-            <span class="dim" style={{ "font-size": "10.5px" }}>⇒ Baseline rule</span>
+            <span class="dim" style={{ "font-size": "12px" }}>⇒ Baseline rule</span>
           </div>
         </div>
 
         <div class="precedence-step">
           <div class="precedence-step-head">
             <span class="precedence-step-num">STAGE 5</span>
-            <span class="chip chip-phrase" style={{ "font-size": "9.5px" }}>Gate</span>
+            <span class="chip chip-phrase" style={{ "font-size": "12px" }}>Gate</span>
           </div>
           <strong class="precedence-step-title">Approval Strategy</strong>
           <p class="precedence-step-desc">Resolves raised Ask: auto-approve, approve-safe, or forwards to human chat approver.</p>
           <div class="precedence-step-outcome">
-            <span class="dim" style={{ "font-size": "10.5px" }}>⇒ Final verdict</span>
+            <span class="dim" style={{ "font-size": "12px" }}>⇒ Final verdict</span>
           </div>
         </div>
       </div>
@@ -1049,7 +1049,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
               {selectedPermissionMode()}
             </span>
             <Show when={inheritedPermissionMode()}>
-              <span class="dim" style={{ "font-size": "10.5px" }}>inherited</span>
+              <span class="dim" style={{ "font-size": "12px" }}>inherited</span>
             </Show>
           </div>
           <span class="stat-card-hint">
@@ -1244,7 +1244,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
               </div>
               <Show
                 when={rulesFor("deny").length > 0}
-                fallback={<p class="dim" style={{ "font-size": "11.5px" }}>Nothing blocked outright beyond mode defaults.</p>}
+                fallback={<p class="dim" style={{ "font-size": "12px" }}>Nothing blocked outright beyond mode defaults.</p>}
               >
                 <div class="chip-stack">
                   <For each={rulesFor("deny")}>{(r) => <RuleChip rule={r} />}</For>
@@ -1259,7 +1259,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
               </div>
               <Show
                 when={rulesFor("ask").length > 0}
-                fallback={<p class="dim" style={{ "font-size": "11.5px" }}>Nothing forced to ask beyond mode defaults.</p>}
+                fallback={<p class="dim" style={{ "font-size": "12px" }}>Nothing forced to ask beyond mode defaults.</p>}
               >
                 <div class="chip-stack">
                   <For each={rulesFor("ask")}>{(r) => <RuleChip rule={r} />}</For>
@@ -1274,7 +1274,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
               </div>
               <Show
                 when={rulesFor("allow").length > 0}
-                fallback={<p class="dim" style={{ "font-size": "11.5px" }}>Nothing pre-approved beyond mode defaults.</p>}
+                fallback={<p class="dim" style={{ "font-size": "12px" }}>Nothing pre-approved beyond mode defaults.</p>}
               >
                 <div class="chip-stack">
                   <For each={rulesFor("allow")}>{(r) => <RuleChip rule={r} />}</For>
@@ -1301,7 +1301,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
                 <p class="dim">AGENTS.md Invariant 15 enforcement.</p>
               </div>
             </div>
-            <div style={{ "display": "flex", "flex-direction": "column", "gap": "8px", "font-size": "12.5px", "color": "var(--text-soft)" }}>
+            <div style={{ "display": "flex", "flex-direction": "column", "gap": "8px", "font-size": "13px", "color": "var(--text-soft)" }}>
               <p>
                 Under Invariant 15, unattended surfaces always fail closed. Chat-driven turns auto-deny escalations unless an explicitly configured approver chat answers within the timeout window. Silence, network timeout, or missing delivery credentials resolve to a strict denial.
               </p>

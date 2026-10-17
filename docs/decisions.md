@@ -9,9 +9,16 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-17
 
-- Steps cards stay flat: a step's alternatives are not records nested in
-  the step; choices go in a card of their own after the steps (doc 30
-  §30.1, `docs/plans/open-items.md` "Card forms").
+- Where an automation's result goes is one argument of the automation
+  tool, `result_to`: the conversation (default), a new page, or a page's
+  id; it replaces `as_page` and `page`
+  (`docs/design/98-answers-beyond-one-card.md` §12).
+- A card naming a `deliverable` with no plan declared is refused, as a
+  name the plan lacks is (`docs/design/87-composed-answers.md`).
+
+- Steps cards stay flat: a step's alternatives are the card's own
+  top-level `choices`, each naming its step, never records nested in a
+  step (doc 30 §30.1, `docs/plans/open-items.md` "Card forms").
 - Markup previews get libraries by the client inlining a pinned library
   into the opaque frame's srcdoc, not from a preview origin
   (`docs/design/96-answer-projection-gaps.md` P3).

@@ -415,17 +415,17 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Doc 98 is built (S1 to S5). Open in open-items "Card forms": the
-   Agent's `as_page` not reached in two live turns, and a card's
-   `deliverable` copied from its description and not refused (both need
-   investigating); file cards inside a page. Keep current's form was
-   clicked through live (2026-10-17).
+1. Doc 98 is built (S1 to S5). Fixed 2026-10-17: a card's `deliverable`
+   is checked against any declared plan; `automations` is always loaded
+   (replay 0/16 deferred, 11/16 loaded). Open (open-items "Card forms"):
+   the Agent leaves `as_page` out when it makes the automation; file
+   cards inside a page; `deliverable` with no plan at all.
 2. Open from today (docs/plans/open-items.md):
    - A kilometres-to-miles converter has not drawn as controls live.
    - In the chat an answer is one reading column unless the model sets
      `beside_previous`; the Canvas is where it takes the width.
 3. Decided by the maintainer 2026-10-17 (docs/decisions.md), to build:
-   steps stay flat (say so in the steps tool); P3 the client inlines a
+   steps stay flat (the `steps` argument now points to `choices`); P3 the client inlines a
    pinned library into the srcdoc; P4 MCP UI is text only (nothing to
    build); `mail_calendar` loads only with a connected-accounts rollup.
 4. P6 (live eval of format choice); the OpenAI route with `then`.

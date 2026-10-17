@@ -99,12 +99,12 @@ async fn a_tool_a_turn_called_is_loaded_after_a_restart() {
             reply(
                 ContentBlock::ToolUse {
                     id: "a1".into(),
-                    name: "automations".into(),
-                    input: serde_json::json!({"action": "list"}),
+                    name: "forget_memory".into(),
+                    input: serde_json::json!({"note_id": "memory/none"}),
                 },
                 StopReason::ToolUse,
             ),
-            reply(ContentBlock::text("none yet"), StopReason::EndTurn),
+            reply(ContentBlock::text("nothing to forget"), StopReason::EndTurn),
         ]),
     );
     let session = first.start_session().await.unwrap();
@@ -113,7 +113,7 @@ async fn a_tool_a_turn_called_is_loaded_after_a_restart() {
     first
         .run_turn_with(
             session,
-            "what runs on its own?",
+            "forget that note",
             CancellationToken::new(),
             None,
             None,
@@ -124,7 +124,7 @@ async fn a_tool_a_turn_called_is_loaded_after_a_restart() {
         .unwrap();
     let offered_first = requests.lock().unwrap()[0].clone();
     assert!(
-        !loaded(&offered_first, "automations"),
+        !loaded(&offered_first, "forget_memory"),
         "deferred until a turn reaches for it"
     );
     drop(first);
@@ -140,7 +140,7 @@ async fn a_tool_a_turn_called_is_loaded_after_a_restart() {
     second
         .run_turn_with(
             session,
-            "pause it",
+            "and the other one",
             CancellationToken::new(),
             None,
             None,
@@ -151,7 +151,7 @@ async fn a_tool_a_turn_called_is_loaded_after_a_restart() {
         .unwrap();
     let request = requests.lock().unwrap()[before].clone();
     assert!(
-        loaded(&request, "automations"),
+        loaded(&request, "forget_memory"),
         "a tool an earlier turn called is loaded after a restart: {:?}",
         request
             .tools

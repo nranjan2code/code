@@ -414,6 +414,14 @@ impl vak_tools::Tool for AutomationsTool {
         vec!["orchestration"]
     }
 
+    /// Loaded on every turn: a schedule is asked for in plain conversation
+    /// ("remind me", "every Monday", "keep this current"). Deferred, a
+    /// replay of a captured request asking for a page kept current reached
+    /// it in 0 of 16 trials; loaded, in 11 of 16 (2026-10-17).
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn permission(&self) -> vak_permission::Declared {
         vak_permission::Declared::reach(vak_permission::Reach::Schedule)
     }

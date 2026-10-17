@@ -6486,13 +6486,17 @@ impl Agent {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(str::to_string);
-        // A card names only a deliverable the plan has; one that names none
-        // is shown after the plan's sections, and covers no planned card in
-        // the plan check (docs/audits/cards-in-answers-2026-10-11.md, F4).
-        let planned: Vec<String> = self
+        // A card names only a card deliverable the plan has; one that names
+        // none is shown after the plan's sections, and covers no planned card
+        // in the plan check (docs/audits/cards-in-answers-2026-10-11.md, F4).
+        // A plan with no card still checks the name: a model that filled the
+        // field with its own description was shown (found live 2026-10-17).
+        let plan = self
             .declared_plan
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let planned: Vec<String> = plan
             .as_deref()
             .unwrap_or_default()
             .iter()
@@ -6509,7 +6513,7 @@ impl Agent {
             .cloned()
             .partition(|planned| named.iter().any(|name| name.eq_ignore_ascii_case(planned)));
         if let Some(name) = answers.as_deref()
-            && !planned.is_empty()
+            && plan.is_some()
             && !planned
                 .iter()
                 .any(|planned| planned.eq_ignore_ascii_case(name))

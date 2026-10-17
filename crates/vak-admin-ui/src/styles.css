@@ -12,6 +12,7 @@
  * crates/vak-config/tests/design_tokens.rs keeps the shared tokens equal. */
 :root {
   color-scheme: light;
+  --surface-alpha: 100%; --surface-blur: 0px; --surface-filter: none; --backdrop: var(--bg);
   --bg: #f7f7f8;
   --surface: #ffffff;
   --surface-raised: #ffffff;
@@ -49,6 +50,7 @@
 /* Indigo night, as in the client. */
 html[data-theme="dark"] {
   color-scheme: dark;
+  --surface-alpha: 100%; --surface-blur: 0px; --surface-filter: none; --backdrop: var(--bg);
   --bg: #18191b; --surface: #202124; --surface-raised: #26272b; --surface-hover: #303137; --surface-active: #383a43;
   --sidebar: #1d1e21; --border: #383a42; --border-soft: #303238; --border-strong: #51545e;
   --text: #f0f0f2; --text-soft: #d0d1d7; --muted: #b5b7c0; --faint: #a7a9b3;
@@ -59,12 +61,49 @@ html[data-theme="dark"] {
 
 html[data-theme="contrast"] {
   color-scheme: dark;
+  --surface-alpha: 100%; --surface-blur: 0px; --surface-filter: none; --backdrop: var(--bg);
   --bg: #07080f; --surface: #0e1020; --surface-raised: #161a2e; --surface-hover: #22273f; --surface-active: #2b3150;
   --sidebar: #0e1020; --border: #6b7194; --border-soft: #3b4160; --border-strong: #9aa0c0;
   --text: #ffffff; --text-soft: #eceef8; --muted: #c6c9dc; --faint: #b8bbd0;
   --accent: #c3caff; --accent-bright: #dde1ff; --accent-wash: rgba(195, 202, 255, 0.18); --on-accent: #07080f;
   --green: #8fe0ad; --yellow: #ffc24d; --red: #ff9a9a; --blue: #a8c8f0;
   --shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* Frosted themes use the shared client's calibrated veil and tinted backdrop. */
+html[data-theme="frosted-light"] {
+  color-scheme: light;
+  --surface-alpha: 78%; --surface-blur: 24px; --surface-filter: blur(var(--surface-blur)) saturate(170%);
+  --backdrop: radial-gradient(58% 52% at 8% 4%, #d3d9fb 0%, transparent 72%), radial-gradient(46% 44% at 94% 10%, #d2e5f6 0%, transparent 70%), radial-gradient(52% 50% at 78% 96%, #ddd5f8 0%, transparent 72%), radial-gradient(44% 42% at 14% 92%, #d6e2f8 0%, transparent 70%), #eceef7;
+  --bg: color-mix(in srgb, #f7f8fd var(--surface-alpha), transparent);
+  --surface: color-mix(in srgb, #ffffff var(--surface-alpha), transparent);
+  --surface-raised: color-mix(in srgb, #ffffff var(--surface-alpha), transparent);
+  --surface-hover: color-mix(in srgb, #15161c 7%, transparent); --surface-active: color-mix(in srgb, #15161c 10%, transparent);
+  --sidebar: color-mix(in srgb, #f3f4fc var(--surface-alpha), transparent);
+  --border: color-mix(in srgb, #27337f 17%, transparent); --border-soft: color-mix(in srgb, #ffffff 72%, transparent); --border-strong: color-mix(in srgb, #27337f 32%, transparent);
+  --text: #15161c; --text-soft: #2c2e38; --muted: #393b46; --faint: #3f414d;
+  --accent: #27337f; --accent-bright: #1f2a6b; --accent-wash: rgba(39, 51, 127, 0.1); --on-accent: #ffffff;
+  --green: #1c4a32; --yellow: #5c3800; --red: #7d2323; --blue: #1f4166;
+}
+html[data-theme="frosted-dark"] {
+  color-scheme: dark;
+  --surface-alpha: 84%; --surface-blur: 28px; --surface-filter: blur(var(--surface-blur)) saturate(170%);
+  --backdrop: radial-gradient(58% 52% at 8% 4%, #1d2352 0%, transparent 72%), radial-gradient(46% 44% at 94% 10%, #152c48 0%, transparent 70%), radial-gradient(52% 50% at 78% 96%, #291f55 0%, transparent 72%), radial-gradient(44% 42% at 14% 92%, #17274c 0%, transparent 70%), #0d0f1c;
+  --bg: color-mix(in srgb, #0b0c12 var(--surface-alpha), transparent);
+  --surface: color-mix(in srgb, #0f1018 var(--surface-alpha), transparent);
+  --surface-raised: color-mix(in srgb, #12131c var(--surface-alpha), transparent);
+  --surface-hover: color-mix(in srgb, #f4f4f7 10%, transparent); --surface-active: color-mix(in srgb, #f4f4f7 14%, transparent);
+  --sidebar: color-mix(in srgb, #0d0e15 var(--surface-alpha), transparent);
+  --border: color-mix(in srgb, #ffffff 16%, transparent); --border-soft: color-mix(in srgb, #ffffff 10%, transparent); --border-strong: color-mix(in srgb, #ffffff 28%, transparent);
+  --text: #f4f4f7; --text-soft: #dfe0e7; --muted: #d3d5de; --faint: #c5c7d1;
+  --accent: #cdd3ff; --accent-bright: #dde1ff; --accent-wash: rgba(205, 211, 255, 0.14); --on-accent: #0b0c12;
+  --green: #9be0b8; --yellow: #ffc56b; --red: #ffb0b0; --blue: #b5d2f5;
+}
+@media (prefers-reduced-transparency: reduce) {
+  html[data-theme^="frosted-"] { --surface-alpha: 100%; --surface-blur: 0px; --surface-filter: none; }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html[data-theme^="frosted-"] { --surface-alpha: 100%; --surface-blur: 0px; --surface-filter: none; }
 }
 
 * { box-sizing: border-box; }
@@ -74,7 +113,7 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: var(--bg);
+  background: var(--backdrop, var(--bg)) fixed;
   color: var(--text);
   font-family: var(--sans);
   font-size: 14px;
@@ -183,6 +222,8 @@ html, body {
   overflow-x: hidden;
   overflow-y: auto;
   background: var(--sidebar);
+  backdrop-filter: var(--surface-filter, none);
+  -webkit-backdrop-filter: var(--surface-filter, none);
   border-right: 1px solid var(--border-soft);
   padding: 14px 10px;
   user-select: none;
@@ -278,6 +319,8 @@ html[data-visual-pack="dimensional"] .login-logo img { content: url("/app/assets
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--surface-raised) 88%, var(--accent-wash));
+  backdrop-filter: var(--surface-filter, none);
+  -webkit-backdrop-filter: var(--surface-filter, none);
   color: var(--text-soft);
   font-size: 12px;
 }
@@ -330,6 +373,8 @@ html[data-visual-pack="dimensional"] .login-logo img { content: url("/app/assets
   padding: 18px 20px;
   transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  backdrop-filter: var(--surface-filter, none);
+  -webkit-backdrop-filter: var(--surface-filter, none);
 }
 .panel:focus-within { border-color: var(--border-strong); }
 .panel h2 {
@@ -927,7 +972,7 @@ button.approve:hover:not(:disabled) { background: color-mix(in srgb, var(--green
 .mode-desc { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 
 /* Theme selector grid matching desktop */
-.theme-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.theme-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 @media (max-width: 800px) { .theme-grid { grid-template-columns: 1fr; } }
 .theme-choice {
   position: relative;
@@ -953,6 +998,8 @@ button.approve:hover:not(:disabled) { background: color-mix(in srgb, var(--green
 .theme-preview.system { background: linear-gradient(135deg, #f7f7f8 0 50%, #18191b 50% 100%); }.theme-preview.system i:first-child { background: color-mix(in srgb, #f2f2f4 55%, #1d1e21); }.theme-preview.system i:nth-child(2) { background: color-mix(in srgb, #ffffff 55%, #202124); }
 .theme-preview.dark { background: #18191b; border-color: #383a42; }.theme-preview.dark i:first-child { background: #1d1e21; }.theme-preview.dark i:nth-child(2) { background: #202124; }.theme-preview.dark i:last-child { background: #a3adf7; }
 .theme-preview.contrast { background: #07080f; border-color: #9aa0c0; }.theme-preview.contrast i:first-child { background: #0e1020; }.theme-preview.contrast i:nth-child(2) { background: #22273f; }.theme-preview.contrast i:last-child { background: #c3caff; }
+.theme-preview.frosted-light { background: radial-gradient(circle at 20% 20%, #d3d9fb, #eceef7 70%); }.theme-preview.frosted-light i:first-child { background: color-mix(in srgb, #f3f4fc 78%, transparent); }.theme-preview.frosted-light i:nth-child(2) { background: color-mix(in srgb, #fff 78%, transparent); }.theme-preview.frosted-light i:last-child { background: #27337f; }
+.theme-preview.frosted-dark { background: radial-gradient(circle at 20% 20%, #1d2352, #0d0f1c 70%); }.theme-preview.frosted-dark i:first-child { background: color-mix(in srgb, #0d0e15 84%, transparent); }.theme-preview.frosted-dark i:nth-child(2) { background: color-mix(in srgb, #0f1018 84%, transparent); }.theme-preview.frosted-dark i:last-child { background: #cdd3ff; }
 
 /* ---- composer ---- */
 
@@ -2326,9 +2373,9 @@ a.tab-btn {
   border-radius: 4px;
   text-transform: none;
 }
-.home-status-tag.ok { background: rgba(52, 211, 153, 0.14); color: var(--green); }
-.home-status-tag.warn { background: rgba(251, 191, 36, 0.14); color: var(--yellow); }
-.home-status-tag.bad { background: rgba(248, 113, 113, 0.14); color: var(--red); }
+.home-status-tag.ok { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }
+.home-status-tag.warn { background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--yellow); }
+.home-status-tag.bad { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
 
 .home-deck-title {
   margin: 2px 0 0;
@@ -2459,10 +2506,10 @@ a.tab-btn {
   text-transform: none;
   letter-spacing: 0.05em;
 }
-.kpi-tag.ok { background: rgba(52, 211, 153, 0.12); color: var(--green); }
-.kpi-tag.warn { background: rgba(251, 191, 36, 0.12); color: var(--yellow); }
-.kpi-tag.bad { background: rgba(248, 113, 113, 0.12); color: var(--red); }
-.kpi-tag.info { background: rgba(96, 165, 250, 0.12); color: var(--blue); }
+.kpi-tag.ok { background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--green); }
+.kpi-tag.warn { background: color-mix(in srgb, var(--yellow) 12%, transparent); color: var(--yellow); }
+.kpi-tag.bad { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
+.kpi-tag.info { background: color-mix(in srgb, var(--blue) 12%, transparent); color: var(--blue); }
 
 /* ---- home-top grid ---- */
 .home-top {
@@ -2615,15 +2662,15 @@ a.tab-btn {
   transform: translateY(-1px);
 }
 .home-attention-row.sev-critical {
-  border-color: rgba(248, 113, 113, 0.3);
-  background: linear-gradient(90deg, rgba(248, 113, 113, 0.08), transparent 60%);
+  border-color: color-mix(in srgb, var(--red) 30%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--red) 8%, transparent), transparent 60%);
 }
 .home-attention-row.sev-warning {
-  border-color: rgba(251, 191, 36, 0.3);
-  background: linear-gradient(90deg, rgba(251, 191, 36, 0.06), transparent 60%);
+  border-color: color-mix(in srgb, var(--yellow) 30%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--yellow) 6%, transparent), transparent 60%);
 }
 .home-attention-row.sev-info {
-  border-color: rgba(96, 165, 250, 0.25);
+  border-color: color-mix(in srgb, var(--blue) 25%, transparent);
 }
 
 .home-cat-tag {
@@ -2635,9 +2682,9 @@ a.tab-btn {
   border-radius: 4px;
   flex-shrink: 0;
 }
-.home-cat-tag.sev-critical { background: rgba(248, 113, 113, 0.15); color: var(--red); }
-.home-cat-tag.sev-warning { background: rgba(251, 191, 36, 0.15); color: var(--yellow); }
-.home-cat-tag.sev-info { background: rgba(96, 165, 250, 0.15); color: var(--blue); }
+.home-cat-tag.sev-critical { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
+.home-cat-tag.sev-warning { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); }
+.home-cat-tag.sev-info { background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); }
 
 .home-attention-copy {
   flex: 1;
@@ -2683,7 +2730,7 @@ a.tab-btn {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: rgba(52, 211, 153, 0.15);
+  background: color-mix(in srgb, var(--green) 15%, transparent);
   color: var(--green);
   display: grid;
   place-items: center;
@@ -3118,7 +3165,7 @@ a.tab-btn {
   height: 7px;
   border-radius: 50%;
   background: var(--green);
-  box-shadow: 0 0 6px rgba(52, 211, 153, 0.7);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--green) 70%, transparent);
   animation: finops-pulse 2s infinite ease-in-out;
 }
 
@@ -3136,9 +3183,9 @@ a.tab-btn {
   padding: 2px 7px;
   border-radius: 4px;
 }
-.finops-stat-badge.good { background: rgba(52, 211, 153, 0.12); color: var(--green); border: 1px solid rgba(52, 211, 153, 0.25); }
-.finops-stat-badge.warn { background: rgba(251, 191, 36, 0.12); color: var(--yellow); border: 1px solid rgba(251, 191, 36, 0.25); }
-.finops-stat-badge.alert { background: rgba(248, 113, 113, 0.12); color: var(--red); border: 1px solid rgba(248, 113, 113, 0.25); }
+.finops-stat-badge.good { background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 25%, transparent); }
+.finops-stat-badge.warn { background: color-mix(in srgb, var(--yellow) 12%, transparent); color: var(--yellow); border: 1px solid color-mix(in srgb, var(--yellow) 25%, transparent); }
+.finops-stat-badge.alert { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 25%, transparent); }
 
 .chart-meta-row {
   display: flex;
@@ -3365,8 +3412,8 @@ a.tab-btn {
   gap: 6px;
   margin-top: 6px;
   padding: 4px 10px;
-  background: rgba(96, 165, 250, 0.08);
-  border: 1px solid rgba(96, 165, 250, 0.3);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--blue) 30%, transparent);
   border-radius: var(--radius-sm);
   color: var(--blue);
   font-size: 12px;
@@ -3375,7 +3422,7 @@ a.tab-btn {
   transition: all 0.15s ease;
 }
 .custom-model-chip:hover {
-  background: rgba(96, 165, 250, 0.22);
+  background: color-mix(in srgb, var(--blue) 22%, transparent);
   border-color: var(--blue);
 }
 
@@ -3462,8 +3509,8 @@ a.tab-btn {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
 }
 .prompt-kpi-card.warn {
-  border-color: rgba(220, 130, 40, 0.3);
-  background: linear-gradient(180deg, rgba(220, 130, 40, 0.06) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--yellow) 30%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--yellow) 6%, transparent) 0%, var(--surface) 100%);
 }
 .prompt-kpi-head {
   display: flex;
@@ -3754,8 +3801,8 @@ a.tab-btn {
   margin-top: 12px;
   padding: 12px 14px;
   border-radius: var(--radius);
-  background: rgba(220, 130, 40, 0.06);
-  border: 1px solid rgba(220, 130, 40, 0.25);
+  background: color-mix(in srgb, var(--yellow) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--yellow) 25%, transparent);
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-soft);
@@ -3768,24 +3815,24 @@ a.tab-btn {
 
 /* Color Coding per Section — subtle tinted borders & ambient gradient instead of harsh 3px left strips */
 .prompt-block-card.block-identity {
-  border-color: rgba(139, 92, 246, 0.22);
-  background: linear-gradient(180deg, rgba(139, 92, 246, 0.035) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 4%, transparent) 0%, var(--surface) 100%);
 }
 .prompt-block-card.block-operating-rules {
-  border-color: rgba(6, 182, 212, 0.22);
-  background: linear-gradient(180deg, rgba(6, 182, 212, 0.035) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--blue) 22%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 4%, transparent) 0%, var(--surface) 100%);
 }
 .prompt-block-card.block-guardrails {
-  border-color: rgba(245, 158, 11, 0.22);
-  background: linear-gradient(180deg, rgba(245, 158, 11, 0.035) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--yellow) 22%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--yellow) 4%, transparent) 0%, var(--surface) 100%);
 }
 .prompt-block-card.block-surface-note {
-  border-color: rgba(16, 185, 129, 0.22);
-  background: linear-gradient(180deg, rgba(16, 185, 129, 0.035) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--green) 22%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--green) 4%, transparent) 0%, var(--surface) 100%);
 }
 .prompt-block-card.block-code-owned {
-  border-color: rgba(100, 116, 139, 0.22);
-  background: linear-gradient(180deg, rgba(100, 116, 139, 0.035) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--muted) 22%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--muted) 4%, transparent) 0%, var(--surface) 100%);
 }
 
 .prompt-filter-btn.block-identity.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
@@ -3912,8 +3959,8 @@ a.tab-btn {
 /* Live Target Injection Callout */
 .preview-target-diff {
   margin-top: 12px;
-  background: linear-gradient(180deg, rgba(14, 165, 233, 0.04) 0%, var(--surface) 100%);
-  border: 1px solid rgba(14, 165, 233, 0.2);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 4%, transparent) 0%, var(--surface) 100%);
+  border: 1px solid color-mix(in srgb, var(--blue) 20%, transparent);
   border-radius: var(--radius-lg);
   padding: 14px 16px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -4013,7 +4060,7 @@ a.tab-btn {
 }
 
 .table tbody tr.active-row {
-  background: rgba(14, 165, 233, 0.08);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
 }
 
 /* ==========================================================================
@@ -4111,12 +4158,12 @@ a.tab-btn {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
 }
 .note-card.note-profile {
-  border-color: rgba(139, 92, 246, 0.25);
-  background: linear-gradient(180deg, rgba(139, 92, 246, 0.035) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 4%, transparent) 0%, var(--surface) 100%);
 }
 .note-card.note-workspace {
-  border-color: rgba(6, 182, 212, 0.25);
-  background: linear-gradient(180deg, rgba(6, 182, 212, 0.035) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--blue) 25%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 4%, transparent) 0%, var(--surface) 100%);
 }
 
 /* Search Hero and Filter Chips */
@@ -4271,16 +4318,16 @@ a.tab-btn {
   gap: 8px;
 }
 .sim-verdict-box.allow {
-  border-color: rgba(16, 185, 129, 0.4);
-  background: linear-gradient(180deg, rgba(16, 185, 129, 0.08) 0%, var(--surface-raised) 100%);
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--green) 8%, transparent) 0%, var(--surface-raised) 100%);
 }
 .sim-verdict-box.ask {
-  border-color: rgba(245, 158, 11, 0.4);
-  background: linear-gradient(180deg, rgba(245, 158, 11, 0.08) 0%, var(--surface-raised) 100%);
+  border-color: color-mix(in srgb, var(--yellow) 40%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--yellow) 8%, transparent) 0%, var(--surface-raised) 100%);
 }
 .sim-verdict-box.deny {
-  border-color: rgba(239, 68, 68, 0.4);
-  background: linear-gradient(180deg, rgba(239, 68, 68, 0.08) 0%, var(--surface-raised) 100%);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--red) 8%, transparent) 0%, var(--surface-raised) 100%);
 }
 
 .sim-verdict-title {
@@ -4755,12 +4802,12 @@ a.tab-btn {
   background: var(--surface-raised);
 }
 .commitment-promotion-banner.banner-promoted {
-  border-color: rgba(16, 185, 129, 0.4);
-  background: rgba(16, 185, 129, 0.05);
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+  background: color-mix(in srgb, var(--green) 5%, transparent);
 }
 .commitment-promotion-banner.banner-ephemeral {
-  border-color: rgba(56, 189, 248, 0.4);
-  background: rgba(56, 189, 248, 0.04);
+  border-color: color-mix(in srgb, var(--blue) 40%, transparent);
+  background: color-mix(in srgb, var(--blue) 4%, transparent);
 }
 .banner-icon-wrap {
   width: 32px;
@@ -4772,11 +4819,11 @@ a.tab-btn {
   flex-shrink: 0;
 }
 .banner-promoted .banner-icon-wrap {
-  background: rgba(16, 185, 129, 0.15);
+  background: color-mix(in srgb, var(--green) 15%, transparent);
   color: var(--green);
 }
 .banner-ephemeral .banner-icon-wrap {
-  background: rgba(56, 189, 248, 0.15);
+  background: color-mix(in srgb, var(--blue) 15%, transparent);
   color: var(--blue);
 }
 .banner-icon {
@@ -4953,23 +5000,23 @@ a.tab-btn {
   color: var(--text-soft);
 }
 .step-badge.step-active {
-  background: rgba(16, 185, 129, 0.15);
-  border-color: rgba(16, 185, 129, 0.4);
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
   color: var(--green);
 }
 .step-badge.step-waiting {
-  background: rgba(245, 158, 11, 0.15);
-  border-color: rgba(245, 158, 11, 0.4);
+  background: color-mix(in srgb, var(--yellow) 15%, transparent);
+  border-color: color-mix(in srgb, var(--yellow) 40%, transparent);
   color: var(--yellow);
 }
 .step-badge.step-satisfying {
-  background: rgba(6, 182, 212, 0.15);
-  border-color: rgba(6, 182, 212, 0.4);
+  background: color-mix(in srgb, var(--blue) 15%, transparent);
+  border-color: color-mix(in srgb, var(--blue) 40%, transparent);
   color: var(--blue);
 }
 .step-badge.step-closed {
-  background: rgba(139, 92, 246, 0.15);
-  border-color: rgba(139, 92, 246, 0.4);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   color: var(--accent);
 }
 .step-arrow {
@@ -5045,10 +5092,10 @@ a.tab-btn {
   font-weight: 600;
   text-transform: lowercase;
 }
-.advancement-badge.advanced { background: rgba(16, 185, 129, 0.15); color: var(--green); }
-.advancement-badge.learned { background: rgba(6, 182, 212, 0.15); color: var(--blue); }
-.advancement-badge.blocked { background: rgba(239, 68, 68, 0.15); color: var(--red); }
-.advancement-badge.stalled { background: rgba(245, 158, 11, 0.15); color: var(--yellow); }
+.advancement-badge.advanced { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
+.advancement-badge.learned { background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); }
+.advancement-badge.blocked { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
+.advancement-badge.stalled { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); }
 
 /* Policy Grid */
 .policy-grid {
@@ -5107,24 +5154,24 @@ a.tab-btn {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
 }
 .inbox-stat-card[data-tone="ok"] {
-  background: linear-gradient(180deg, rgba(16, 185, 129, 0.035) 0%, var(--surface) 100%);
-  border-color: rgba(16, 185, 129, 0.22);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--green) 4%, transparent) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--green) 22%, transparent);
 }
 .inbox-stat-card[data-tone="warn"] {
-  background: linear-gradient(180deg, rgba(245, 158, 11, 0.035) 0%, var(--surface) 100%);
-  border-color: rgba(245, 158, 11, 0.24);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--yellow) 4%, transparent) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--yellow) 24%, transparent);
 }
 .inbox-stat-card[data-tone="bad"] {
-  background: linear-gradient(180deg, rgba(239, 68, 68, 0.035) 0%, var(--surface) 100%);
-  border-color: rgba(239, 68, 68, 0.24);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--red) 4%, transparent) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--red) 24%, transparent);
 }
 .inbox-stat-card[data-tone="info"] {
-  background: linear-gradient(180deg, rgba(6, 182, 212, 0.035) 0%, var(--surface) 100%);
-  border-color: rgba(6, 182, 212, 0.22);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 4%, transparent) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--blue) 22%, transparent);
 }
 .inbox-stat-card[data-tone="neutral"] {
-  background: linear-gradient(180deg, rgba(100, 116, 139, 0.035) 0%, var(--surface) 100%);
-  border-color: rgba(100, 116, 139, 0.22);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--muted) 4%, transparent) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--muted) 22%, transparent);
 }
 
 .inbox-stat-head {
@@ -5149,23 +5196,23 @@ a.tab-btn {
   text-transform: none;
 }
 .inbox-stat-pill.pill-ok {
-  background: rgba(16, 185, 129, 0.15);
+  background: color-mix(in srgb, var(--green) 15%, transparent);
   color: var(--green);
 }
 .inbox-stat-pill.pill-warn {
-  background: rgba(245, 158, 11, 0.15);
+  background: color-mix(in srgb, var(--yellow) 15%, transparent);
   color: var(--yellow);
 }
 .inbox-stat-pill.pill-bad {
-  background: rgba(239, 68, 68, 0.15);
+  background: color-mix(in srgb, var(--red) 15%, transparent);
   color: var(--red);
 }
 .inbox-stat-pill.pill-cyan {
-  background: rgba(6, 182, 212, 0.15);
+  background: color-mix(in srgb, var(--blue) 15%, transparent);
   color: var(--blue);
 }
 .inbox-stat-pill.pill-slate {
-  background: rgba(100, 116, 139, 0.15);
+  background: color-mix(in srgb, var(--muted) 15%, transparent);
   color: var(--muted);
 }
 
@@ -5291,13 +5338,13 @@ a.tab-btn {
   color: var(--text);
 }
 .inbox-cat-chip.active {
-  background: var(--accent-wash, rgba(99, 102, 241, 0.15));
+  background: var(--accent-wash, color-mix(in srgb, var(--accent) 15%, transparent));
   border-color: var(--accent);
   color: var(--accent-bright, var(--accent));
   font-weight: 600;
 }
 .inbox-cat-chip.inbox-cat-action.active {
-  background: rgba(245, 158, 11, 0.15);
+  background: color-mix(in srgb, var(--yellow) 15%, transparent);
   border-color: var(--yellow);
   color: var(--yellow);
 }
@@ -5351,8 +5398,8 @@ a.tab-btn {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
 }
 .inbox-card.inbox-card-urgent {
-  background: linear-gradient(90deg, rgba(245, 158, 11, 0.04) 0%, var(--surface) 25%);
-  border-color: rgba(245, 158, 11, 0.25);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--yellow) 4%, transparent) 0%, var(--surface) 25%);
+  border-color: color-mix(in srgb, var(--yellow) 25%, transparent);
 }
 
 .inbox-card-header {
@@ -5433,7 +5480,7 @@ button.inbox-meta-tag:hover {
 /* Interactive Gate Box */
 .inbox-gate-box {
   background: var(--surface-raised);
-  border: 1px solid rgba(245, 158, 11, 0.35);
+  border: 1px solid color-mix(in srgb, var(--yellow) 35%, transparent);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   display: flex;
@@ -5457,7 +5504,7 @@ button.inbox-meta-tag:hover {
   font-size: 12px;
   font-family: var(--font-mono, monospace);
   color: var(--text);
-  background: rgba(245, 158, 11, 0.1);
+  background: color-mix(in srgb, var(--yellow) 10%, transparent);
   padding: 1px 6px;
   border-radius: 3px;
 }
@@ -5490,7 +5537,7 @@ button.inbox-meta-tag:hover {
 /* Interactive Skill Box */
 .inbox-skill-box {
   background: var(--surface-raised);
-  border: 1px solid rgba(139, 92, 246, 0.35);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: var(--radius-sm);
   padding: 8px 12px;
   display: flex;
@@ -5542,13 +5589,13 @@ button.inbox-meta-tag:hover {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--green) 25%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
   margin-bottom: 6px;
-  box-shadow: 0 0 24px rgba(16, 185, 129, 0.15);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--green) 15%, transparent);
 }
 .inbox-zero-title {
   font-size: 14px;
@@ -5587,7 +5634,7 @@ button.inbox-meta-tag:hover {
   letter-spacing: 0.05em;
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--accent-wash, rgba(99, 102, 241, 0.15));
+  background: var(--accent-wash, color-mix(in srgb, var(--accent) 15%, transparent));
   color: var(--accent-bright, var(--accent));
 }
 .inbox-arch-title {
@@ -5676,16 +5723,16 @@ button.inbox-meta-tag:hover {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
 }
 .session-kpi-card[data-tone="ok"] {
-  background: linear-gradient(180deg, rgba(16, 185, 129, 0.035) 0%, var(--surface) 100%);
-  border-color: rgba(16, 185, 129, 0.22);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--green) 4%, transparent) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--green) 22%, transparent);
 }
 .session-kpi-card[data-tone="info"] {
-  background: linear-gradient(180deg, rgba(6, 182, 212, 0.035) 0%, var(--surface) 100%);
-  border-color: rgba(6, 182, 212, 0.22);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 4%, transparent) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--blue) 22%, transparent);
 }
 .session-kpi-card[data-tone="neutral"] {
-  background: linear-gradient(180deg, rgba(100, 116, 139, 0.035) 0%, var(--surface) 100%);
-  border-color: rgba(100, 116, 139, 0.22);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--muted) 4%, transparent) 0%, var(--surface) 100%);
+  border-color: color-mix(in srgb, var(--muted) 22%, transparent);
 }
 
 .session-kpi-head {
@@ -5857,9 +5904,9 @@ button.inbox-meta-tag:hover {
   letter-spacing: 0.04em;
 }
 .session-status-badge.running {
-  background: rgba(16, 185, 129, 0.15);
+  background: color-mix(in srgb, var(--green) 15%, transparent);
   color: var(--green);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);
 }
 
 .session-masthead-actions {
@@ -6488,7 +6535,7 @@ button.inbox-meta-tag:hover {
 .inspector-badge {
   font-size: 12px;
   font-weight: 600;
-  background: var(--accent-wash, rgba(99, 102, 241, 0.15));
+  background: var(--accent-wash, color-mix(in srgb, var(--accent) 15%, transparent));
   color: var(--accent-bright, var(--accent));
   padding: 2px 6px;
   border-radius: 4px;
@@ -6645,12 +6692,12 @@ button.inbox-meta-tag:hover {
   transition: all 0.15s ease;
 }
 .entry-card[data-role="user"] {
-  border-color: rgba(6, 182, 212, 0.22);
-  background: linear-gradient(90deg, rgba(6, 182, 212, 0.04) 0%, var(--surface) 35%);
+  border-color: color-mix(in srgb, var(--blue) 22%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--blue) 4%, transparent) 0%, var(--surface) 35%);
 }
 .entry-card[data-role="assistant"] {
-  border-color: rgba(139, 92, 246, 0.22);
-  background: linear-gradient(90deg, rgba(139, 92, 246, 0.04) 0%, var(--surface) 35%);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 4%, transparent) 0%, var(--surface) 35%);
 }
 .entry-header {
   display: flex;
@@ -6961,7 +7008,7 @@ button.inbox-meta-tag:hover {
 
 .precedence-step.step-hit {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent-subtle, rgba(59, 130, 246, 0.2));
+  box-shadow: 0 0 0 1px var(--accent-subtle, color-mix(in srgb, var(--blue) 20%, transparent));
 }
 
 .precedence-step-head {
