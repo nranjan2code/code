@@ -144,6 +144,27 @@ pub(crate) fn index_entry(
             tx.execute("DELETE FROM turns_aside WHERE turn = ?1", [turn])?;
         }
     }
+    if let EntryPayload::TurnRetried(record) = &entry.payload {
+        // The turn retried and every turn after it on its branch left the
+        // chain: like a turn set aside, no search finds their calls or the
+        // notes naming them (docs/design/99-turns-that-do-not-poison.md §4 F).
+        let turns = tx
+            .prepare("SELECT DISTINCT turn_id FROM turn_records WHERE session = ?1")?
+            .query_map([session], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut left = vec![record.turn.clone()];
+        for turn in turns {
+            if turn != record.turn && is_ancestor(tx, session, &record.turn, &turn)? {
+                left.push(turn);
+            }
+        }
+        for turn in left {
+            tx.execute(
+                "INSERT OR IGNORE INTO turns_aside (turn) VALUES (?1)",
+                [crate::ingest::turn_node(&turn)],
+            )?;
+        }
+    }
     if let EntryPayload::TurnCard(record) = &entry.payload {
         tx.execute(
             "INSERT OR IGNORE INTO turn_records (session, entry_id, turn_id, record, recorded_at)
@@ -646,5 +667,78 @@ mod tests {
             None
         );
         assert_eq!(found(&leaves[2]), 1);
+    }
+
+    /// Retrying a turn takes it, and every turn after it on its branch, out
+    /// of every search; the turns before it stay (docs/design/99 §4 F).
+    #[test]
+    fn a_retried_turn_and_the_turns_after_it_leave_every_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = Catalog::open(&dir.path().join("catalog.db"), dir.path()).unwrap();
+        let mut turns = Vec::new();
+        catalog
+            .seed(|tx| {
+                let message = |parent: Option<&str>, text: &str| {
+                    Entry::new(
+                        parent.map(str::to_string),
+                        EntryPayload::Message(vak_session::MessageRecord {
+                            message: vak_llm::Message::user_text(text),
+                            meta: None,
+                        }),
+                    )
+                };
+                let first = message(None, "one");
+                let second = message(Some(&first.id), "two");
+                let third = message(Some(&second.id), "three");
+                let retried = Entry::new(
+                    Some(first.id.clone()),
+                    EntryPayload::TurnRetried(vak_session::turn_marks::TurnMarkRecord {
+                        turn: second.id.clone(),
+                        trace: None,
+                        actor: None,
+                    }),
+                );
+                for (frame, entry) in [&first, &second, &third].into_iter().enumerate() {
+                    index_entry(
+                        tx,
+                        "ses_retry",
+                        Position {
+                            segment: 1,
+                            frames: frame as u64,
+                        },
+                        entry,
+                    )?;
+                    tx.execute(
+                        "INSERT INTO turn_records (session, entry_id, turn_id, record, recorded_at)
+                         VALUES ('ses_retry', ?1, ?1, 'Asked: turn', '2026-10-17T00:00:00Z')",
+                        [&entry.id],
+                    )?;
+                }
+                index_entry(
+                    tx,
+                    "ses_retry",
+                    Position {
+                        segment: 1,
+                        frames: 3,
+                    },
+                    &retried,
+                )?;
+                turns = vec![first.id, second.id, third.id];
+                Ok(())
+            })
+            .unwrap();
+        let conn = catalog.conn.lock().unwrap();
+        let out = |turn: &str| -> bool {
+            conn.query_row(
+                "SELECT COUNT(*) FROM turns_aside WHERE turn = ?1",
+                [crate::ingest::turn_node(turn)],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+                == 1
+        };
+        assert!(!out(&turns[0]));
+        assert!(out(&turns[1]));
+        assert!(out(&turns[2]));
     }
 }

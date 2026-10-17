@@ -98,7 +98,7 @@ fn commits(entry: &Entry) -> bool {
             record.effect,
             crate::types::CallEffect::Failed { .. } | crate::types::CallEffect::Provenance(_)
         ),
-        EntryPayload::Header(_) | EntryPayload::TurnCard(_) => true,
+        EntryPayload::Header(_) | EntryPayload::TurnCard(_) | EntryPayload::TurnRetried(_) => true,
         EntryPayload::Message(record) => {
             record.message.role == vak_llm::Role::User && record.control_kind().is_none()
         }
@@ -840,6 +840,54 @@ impl SessionLog {
             EntryPayload::TurnRestored(record)
         };
         self.append(Entry::new(parent, payload))
+    }
+
+    /// Starts the branch that asks for `turn_id` again (doc 99 §4 F): a
+    /// `TurnRetried` entry whose parent is the last entry on the chain
+    /// before the turn began (its first entry naming it, or its directive),
+    /// so the next directive follows it and the turn, with everything after
+    /// it, leaves the chain. Nothing is removed. Returns the turn's
+    /// directive as recorded, to be sent again.
+    pub fn retry_turn(
+        &mut self,
+        turn_id: &str,
+        actor: Option<crate::ids::PrincipalId>,
+    ) -> Result<crate::types::MessageRecord, SessionError> {
+        let (parent, directive) = {
+            let chain = self.chain_to_root();
+            let start = chain
+                .iter()
+                .position(|e| e.id == turn_id || e.at_turn.as_deref() == Some(turn_id))
+                .ok_or(SessionError::InvalidSelection)?;
+            let directive = chain[start..]
+                .iter()
+                .find(|e| e.id == turn_id && e.is_directive())
+                .and_then(|e| match &e.payload {
+                    EntryPayload::Message(record) => Some(record.clone()),
+                    _ => None,
+                })
+                .ok_or(SessionError::InvalidSelection)?;
+            let parent = start.checked_sub(1).map(|i| chain[i].id.clone());
+            (parent, directive)
+        };
+        crate::fence::check()?;
+        let before = (self.tail_id.clone(), self.current_turn.clone());
+        self.tail_id = parent.clone();
+        self.current_turn = self.latest_directive_entry_id();
+        let appended = self.append(Entry::new(
+            parent,
+            EntryPayload::TurnRetried(crate::turn_marks::TurnMarkRecord {
+                turn: turn_id.to_string(),
+                trace: None,
+                actor,
+            }),
+        ));
+        if let Err(error) = appended {
+            (self.tail_id, self.current_turn) = before;
+            return Err(error);
+        }
+        self.reserved_turn = None;
+        Ok(directive)
     }
 
     /// Appends one control-plane decision (audit; never model-visible).

@@ -1552,6 +1552,19 @@ export function appendUser(id: string, text: string, files?: api.InboxFile[], bu
   if (bucket === "main") setLastSubmittedPrompt({ sessionId: id, sequence: ++submittedPromptSequence });
 }
 
+/** Drops the turn whose directive is `entryId`, and everything after it,
+ *  and shows its words again as the turn being answered: what a retry does
+ *  to the conversation (docs/design/99 §4 F). */
+export function branchBeforeTurn(id: string, entryId: string) {
+  const list = itemsOf(id);
+  const at = list.findIndex((item) => item.kind === "user" && item.entryId === entryId);
+  const directive = list[at];
+  if (directive?.kind !== "user") return;
+  updateList("main", id, (items) => items.slice(0, at));
+  pushItem("main", id, { kind: "user", text: directive.text, files: directive.files, artifacts: directive.artifacts });
+  setLastSubmittedPrompt({ sessionId: id, sequence: ++submittedPromptSequence });
+}
+
 export function appendSystem(id: string, text: string, bucket: Bucket = "main") {
   note(bucket, id, text);
 }

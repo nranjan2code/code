@@ -35,6 +35,7 @@ import {
   setUsageFor,
   hydrateFromTranscript,
   hydrateSetAside,
+  branchBeforeTurn,
   hydrateFromPresentation,
   itemsOf,
   presentationOf,
@@ -829,6 +830,23 @@ export async function sendPrompt(
     if (e instanceof api.ApiError && e.kind === "no_ai_service") appendNeedsAiService(id);
     else appendSystem(id, `error: ${e instanceof Error ? e.message : String(e)}`);
     if (propagateError) throw e;
+  }
+}
+
+/// Asks for a settled turn again (docs/design/99 §4 F): the turn and every
+/// turn after it leave the conversation, and its words are answered again on
+/// a new branch from the turn before it. A refusal puts the view back.
+export async function retryTurn(id: string, turn: string) {
+  if (isRunning(id)) return;
+  branchBeforeTurn(id, turn);
+  markRunning(id, true);
+  try {
+    await api.retryTurn(id, turn);
+  } catch (e) {
+    markRunning(id, false);
+    void hydrate(id, true);
+    if (e instanceof api.ApiError && e.kind === "no_ai_service") appendNeedsAiService(id);
+    else setNotice({ kind: "error", text: "This turn could not be tried again. Try again in a moment." });
   }
 }
 

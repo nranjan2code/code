@@ -42,9 +42,14 @@ failed, the same request that had been answered well failed three times.
   live 2026-10-17: after setting aside the turn that named a codename,
   the next turn's plan carried nothing and its recall search found
   nothing; after Undo the same question was answered from it.
-- [ ] Retry from a turn (doc 99 §4 F): a new directive whose parent is the
-  turn before, so a branch replaces a turn instead of setting it aside.
-  Needs `run_prompt` to start a turn from a chosen parent entry.
+- [x] Retry from a turn (doc 99 §4 F): `TurnRetried` starts a branch before
+  the turn and its directive is sent again; `POST
+  /sessions/{id}/turns/{turn}/retry`, Retry in the client. Checked live
+  2026-10-17 on the installed route: retrying turn 2 answered it as a new
+  turn on a new branch, and turn 3's plan carried the retried turn's card,
+  not the original's.
+- [ ] A retried goal, managed or automatic turn is sent again as the plain
+  message it began with; its goal or mode is not carried over.
 - [ ] A memory note made in a set-aside turn is hidden from catalog search
   by its turn (`turns_aside`), but no test covers a note yet, and a note
   that names no turn is not hidden.

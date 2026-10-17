@@ -48,8 +48,8 @@ Short progress lines."
 ## Where things stand
 
 **Now (2026-10-17, late).** 8.7.0 is released (`2e94d5962`, tag
-`v8.7.0`; its `dist/8.7.0` artifacts were removed with the scratch
-worktree they were built in, so there is no local feed for 8.7.0) and installed on this Mac (additive,
+`v8.7.0`, artifacts in `/tmp/vak-rel-870/dist/8.7.0`, rebuilt at the tag,
+`vak` byte-identical to the installed one) and installed on this Mac (additive,
 no purge): doc 99 E (a file or note is read with the record of the turn
 that made it), F (set a turn aside, Undo) and the poison replay
 (`scripts/poison_replay.sh`). Uncommitted in the checkout: the retry-from-
