@@ -394,14 +394,13 @@ impl<'a> Record<'a> {
     }
 
     /// Only these keys (and `label`, the eyebrow every card may carry at
-    /// its top) appear.
+    /// its top, and `bound`, its fields computed from values another card
+    /// of the answer publishes, docs/design/98) appear.
     fn only(&self, keys: &[&str]) -> Check {
         let top = self.at.is_empty();
-        match self
-            .fields
-            .keys()
-            .find(|key| !keys.contains(&key.as_str()) && !(top && key.as_str() == "label"))
-        {
+        match self.fields.keys().find(|key| {
+            !keys.contains(&key.as_str()) && !(top && matches!(key.as_str(), "label" | "bound"))
+        }) {
             Some(key) => Err(self.err(format!("unexpected field `{key}`"))),
             None => Ok(()),
         }

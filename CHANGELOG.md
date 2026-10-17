@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Cards in one answer can move together: a figure or a table cell can
+  follow the values of a calculator card above it, and changes as you
+  change the calculator.
+
 - An answer can be a working calculator: a card of inputs you change (a
   number, a slider, a choice, an on-off switch or a date) and results
   that update as you do, such as a bill split or a loan payment.

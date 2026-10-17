@@ -1,6 +1,7 @@
-import { For, Show, createMemo, createSignal, useContext } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, useContext } from "solid-js";
+import { publish } from "../../answerValues";
 import { daysOf, evaluateExpression, parseExpression } from "../../controlsExpression";
-import { Card, PresentationInteractionContext, num, records, text, type Payload } from "./shared";
+import { Card, CardIdContext, PresentationInteractionContext, num, records, text, type Payload } from "./shared";
 
 let nextControl = 0;
 
@@ -59,7 +60,12 @@ export default function ControlsCard(props: { payload: Payload }) {
         return { error: `${text(output.label) ?? ""}: ${error instanceof Error ? error.message : String(error)}` };
       }
     }
-    return { shown };
+    return { shown, values };
+  });
+  const cardId = useContext(CardIdContext);
+  createEffect(() => {
+    const now = results();
+    if (cardId && now.values) publish(cardId, now.values);
   });
   const changed = () => inputs().some((input) => (setting()[text(input.name) ?? ""] ?? "") !== initial(input));
   const ask = () => {

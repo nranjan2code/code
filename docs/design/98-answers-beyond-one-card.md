@@ -1,8 +1,9 @@
 # 98 — Answers beyond one card
 
-Status: proposal (2026-10-17): written at the maintainer's direction
-("we cannot build a card for every scenario"; "make this the best out
-there"); nothing here is built. Builds on docs/design/92-card-forms.md
+Status: in progress (2026-10-17): accepted by the maintainer; S1 built
+(host and client, tested), not yet drawn linked in a live turn. Written at
+the maintainer's direction ("we cannot build a card for every scenario";
+"make this the best out there"). Builds on docs/design/92-card-forms.md
 (forms), docs/design/87-composed-answers.md (composition),
 docs/design/91-presentation-capabilities.md (packs),
 docs/design/66-immersive-artifact-canvas.md (the Canvas) and
@@ -105,3 +106,26 @@ Q1). To make every page look like the product:
 - **S5 Living pages.** Doc 96 P2.
 
 Each stage is its own commit with the full gate and a live turn.
+
+## 7. S1 as built (2026-10-17)
+
+- Marker: `= expression` in a stat's `value` or a table cell, both text
+  fields, so no schema changed; the controls, stats and table tool
+  descriptions say so.
+- Host: `show_card` (vak-agent) collects what this turn's controls cards
+  publish (`vak_delivery::controls::published`: inputs and computed
+  outputs, by name, with the publishing presentation id), refuses a
+  controls card that publishes a name already taken, and binds the new
+  card (`controls::bind`): each `=` field is parsed, checked against the
+  names, computed and stored as a number, and recorded in the card's
+  `bound` list (`path`, `expression`, `from`). Every form may carry
+  `bound`.
+- Client: a controls card publishes its live values under its
+  presentation id (`answerValues.ts`); `FormView` recomputes every bound
+  field from them (`withBoundValues`), so any form follows, one path.
+- Live on the dev route (qwen3.5:4b-mlx), two turns: the model answered
+  with one controls card holding every result, and, asked for a separate
+  table, wrote textbook names (`P`, `r`, `n`) and an assignment; both
+  refusals now list the names to use and say an expression has no
+  assignment. No turn has yet drawn two linked cards.
+

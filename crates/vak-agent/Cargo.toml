@@ -26,6 +26,7 @@ vak-judge = { workspace = true }
 vak-llm = { workspace = true }
 vak-permission = { workspace = true }
 vak-session = { workspace = true }
+vak-delivery = { workspace = true }
 vak-context = { workspace = true }
 vak-tools = { workspace = true }
 

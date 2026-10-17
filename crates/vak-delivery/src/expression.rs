@@ -152,7 +152,9 @@ fn tokens(source: &str) -> Result<Vec<(usize, Token)>, ParseError> {
                 let instead = match c {
                     '?' | ':' => ": choose with if(condition, then, else)",
                     '\'' | '"' => ": there is no text; compare a choice by its option's number",
-                    '=' => ": compare with ==",
+                    '=' => {
+                        ": an expression has no assignment, so write only what follows `=`; compare with =="
+                    }
                     _ => "",
                 };
                 return Err(ParseError {

@@ -6621,7 +6621,7 @@ impl Agent {
         // The tool accepted the call, so a card that cannot be rebuilt from
         // it is Vak's fault, and the person sees nothing: never say it was
         // shown.
-        let Some(info) = rebuild(call.name.as_str(), input) else {
+        let Some(mut info) = rebuild(call.name.as_str(), input) else {
             return (
                 ToolRunOutput::Err(
                     Fault::Tool,
@@ -6655,6 +6655,42 @@ impl Agent {
                     CallVerdict::Refused(Refusal::Tool),
                 );
             }
+        }
+        // Values the answer's controls cards published before this card
+        // (docs/design/98 §2): its `= expression` fields are computed from
+        // them, and a controls card publishes no name already taken.
+        let mut scope = std::collections::BTreeMap::new();
+        for (entry_id, record) in session.presentations() {
+            if record.turn_id != turn_id || record.block.as_deref() != Some("controls") {
+                continue;
+            }
+            for (name, value) in
+                vak_delivery::controls::published(&record.payload).unwrap_or_default()
+            {
+                scope.insert(name, (value, entry_id.clone()));
+            }
+        }
+        let form = info
+            .block
+            .clone()
+            .unwrap_or_else(|| info.semantic_type.clone());
+        let bound = if form == "controls" {
+            vak_delivery::controls::published(&info.payload).and_then(|names| {
+                match names.iter().find(|(name, _)| scope.contains_key(name)) {
+                    Some((name, _)) => Err(format!(
+                        "`{name}` is already published by a controls card of this answer; give it another name"
+                    )),
+                    None => Ok(()),
+                }
+            })
+        } else {
+            vak_delivery::controls::bind(&form, &mut info.payload, &scope)
+        };
+        if let Err(message) = bound {
+            return (
+                ToolRunOutput::Err(Fault::Shape, message),
+                CallVerdict::Refused(Refusal::Tool),
+            );
         }
         let digest = vak_session::types::payload_digest(&info.payload);
         if session.has_presentation(&turn_id, &digest) {

@@ -14,6 +14,9 @@ export const PresentationInteractionContext = createContext<{
   /** What the person set on a controls card's inputs, by name; a turn follows. */
   onValues?(values: Record<string, string>): void;
 }>();
+/** The presentation a card was recorded as: what a controls card publishes
+ *  its values under (docs/design/98 §2). */
+export const CardIdContext = createContext<string | undefined>();
 /** The conversation a card belongs to: a preview reads its files from that
  *  conversation's folder, which is its Agent's own. */
 export const PresentationSessionContext = createContext<string | undefined>();

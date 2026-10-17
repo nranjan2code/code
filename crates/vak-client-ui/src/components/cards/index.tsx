@@ -1,4 +1,5 @@
-import { For, Show, type JSX } from "solid-js";
+import { For, Show, createMemo, type JSX } from "solid-js";
+import { withBoundValues } from "../../answerValues";
 import type { AdaptiveRenderNode } from "../../types";
 import ChartCard from "./Chart";
 import ControlsCard from "./Controls";
@@ -10,7 +11,7 @@ import {
 } from "./forms";
 import { record, text, type Payload } from "./shared";
 
-export { PresentationInteractionContext, PresentationSessionContext, downloadCsv } from "./shared";
+export { CardIdContext, PresentationInteractionContext, PresentationSessionContext, downloadCsv } from "./shared";
 
 /** One renderer per form (docs/design/92-card-forms.md), keyed by the card's
  *  block. A kind is never read here: what draws a card is its form. */
@@ -44,9 +45,11 @@ export const formNames = Object.freeze(Object.keys(FORMS));
  *  skill's kind, or a card recorded before its form existed). */
 export function FormView(props: { block: string; payload: Payload; fallback: string }) {
   const form = () => FORMS[props.block];
+  // Fields bound to another card's values follow them (docs/design/98 §2).
+  const payload = createMemo(() => withBoundValues(props.payload));
   return (
     <Show when={form()} fallback={<pre class="card-text">{props.fallback}</pre>}>
-      {(draw) => draw()({ payload: props.payload })}
+      {(draw) => draw()({ payload: payload() })}
     </Show>
   );
 }

@@ -59,7 +59,7 @@ import MermaidViewer from "./presentation/MermaidViewer";
 // Technical details are a disclosure preference only; they never change the
 // result, route, authority, or which safety states remain visible.
 const showOperatorChrome = () => technicalDetails();
-import { FormView, PackTree, PresentationInteractionContext, PresentationSessionContext, downloadCsv, formNames } from "./cards";
+import { CardIdContext, FormView, PackTree, PresentationInteractionContext, PresentationSessionContext, downloadCsv, formNames } from "./cards";
 import AgentMark from "./AgentMark";
 import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 import type { AssistantPart } from "../structured";
@@ -1182,7 +1182,9 @@ export function StructuredView(props: { output: import("../types").StructuredOut
         <>
           <PresentationSessionContext.Provider value={props.sessionId}>
             <PresentationInteractionContext.Provider value={cardInteractionFor(props.sessionId, props.presentationId, props.cardState)}>
-              <div class="presentation-content"><StructuredRenderer output={props.output} /></div>
+              <CardIdContext.Provider value={props.presentationId}>
+                <div class="presentation-content"><StructuredRenderer output={props.output} /></div>
+              </CardIdContext.Provider>
             </PresentationInteractionContext.Provider>
           </PresentationSessionContext.Provider>
           <Show when={showOperatorChrome() && props.sessionId}>

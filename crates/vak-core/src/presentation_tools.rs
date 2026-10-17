@@ -439,7 +439,7 @@ fn table_fields() -> Value {
                 "type": "array",
                 "items": {
                     "type": "string",
-                    "description": "One line of the table with its cells separated by |: the first line names every column, each later line gives one row's cells in the same order."
+                    "description": "One line of the table with its cells separated by |: the first line names every column, each later line gives one row's cells in the same order. A cell may be `= expression` over what a controls card earlier in this answer publishes (= emi * 12)."
                 },
                 "description": "The table, one string per line: first the column names in one string, then one string for each row. Example: [\"Item | Amount\", \"Rice | 2 kg\", \"Oil | 1 l\"]."
             }
@@ -827,7 +827,7 @@ fn stats_fields() -> Value {
                 "Each figure, in the order to show them.",
                 serde_json::json!({
                     "label": string("What the figure is."),
-                    "value": string("The figure, or a word for a descriptive reading such as light rain."),
+                    "value": string("The figure, or a word for a descriptive reading such as light rain, or `= expression` over the inputs and outputs a controls card earlier in this answer publishes (= emi * months), which then follows them as the person changes them."),
                     "unit": string("Optional. Its unit, for a number (°C, km/h, %, $)."),
                     "change": string("Optional. How it moved, as given (+3% since last week).")
                 }),
@@ -1867,7 +1867,7 @@ const SHAPES: &[CardShape] = &[
     shape(
         "controls",
         "emit_controls_card",
-        "Inputs a person changes and results that update as they do: a bill split, a loan payment, a unit conversion, a what-if. Each result is an expression over the inputs; Vakyartha computes it.",
+        "Inputs a person changes and results that update as they do: a bill split, a loan payment, a unit conversion, a what-if. Each result is an expression over the inputs; Vakyartha computes it. Later cards of the answer can follow its values: a stat's value or a table cell written `= name`.",
         controls_fields,
         build_controls,
         fill_nothing,

@@ -6619,6 +6619,7 @@ dependencies = [
  "vak-config",
  "vak-context",
  "vak-control",
+ "vak-delivery",
  "vak-hooks",
  "vak-intent",
  "vak-judge",
