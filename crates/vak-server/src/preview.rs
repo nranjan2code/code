@@ -281,6 +281,33 @@ base-uri 'self'; \
 form-action 'self'; \
 frame-ancestors http://127.0.0.1:* http://localhost:* tauri: http://tauri.localhost https://tauri.localhost";
 
+/// What a page served here gets first: an empty slot for the product's
+/// stylesheet and a listener that fills it with what the embedding app sends
+/// (`{type: "vak-theme", css}`, docs/design/98 §5). It carries no theme
+/// value of its own and accepts only its parent's messages; plain elements
+/// and the `vak-` classes then take the product's look, and a page's own
+/// rules still win.
+const THEME_SLOT: &str = "<style data-vak-theme></style><script data-vak-theme>addEventListener(\"message\",function(e){if(e.source!==parent||!e.data||e.data.type!==\"vak-theme\")return;var s=document.querySelector(\"style[data-vak-theme]\");if(s)s.textContent=String(e.data.css)});</script>";
+
+/// A document with the theme slot placed before its first markup (after a
+/// leading doctype), so the parser moves it into the head ahead of the
+/// page's own styles.
+fn with_theme_slot(document: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(document);
+    let trimmed = text.trim_start();
+    let lead = text.len() - trimmed.len();
+    let doctype = trimmed
+        .get(..9)
+        .filter(|start| start.eq_ignore_ascii_case("<!doctype"))
+        .and_then(|_| trimmed.find('>'))
+        .map_or(0, |end| lead + end + 1);
+    let mut out = Vec::with_capacity(document.len() + THEME_SLOT.len());
+    out.extend_from_slice(&text.as_bytes()[..doctype]);
+    out.extend_from_slice(THEME_SLOT.as_bytes());
+    out.extend_from_slice(&text.as_bytes()[doctype..]);
+    out
+}
+
 async fn serve(
     State(served): State<Served>,
     method: Method,
@@ -312,6 +339,11 @@ async fn serve(
         Err(status) => return status.into_response(),
     };
     let mime = crate::raw_mime_for(std::path::Path::new(&relative));
+    let bytes = if mime.starts_with("text/html") {
+        with_theme_slot(&bytes)
+    } else {
+        bytes
+    };
     let mut response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime)
@@ -338,6 +370,20 @@ async fn serve(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_page_gets_the_theme_slot_before_its_own_markup() {
+        let page = with_theme_slot(b"<!doctype html><html><head><style>p{}</style>");
+        let text = String::from_utf8(page).unwrap();
+        assert!(
+            text.starts_with(
+                "<!doctype html><style data-vak-theme></style><script data-vak-theme>"
+            )
+        );
+        assert!(text.ends_with("<html><head><style>p{}</style>"));
+        let bare = String::from_utf8(with_theme_slot(b"<p>hi</p>")).unwrap();
+        assert!(bare.starts_with("<style data-vak-theme>") && bare.ends_with("<p>hi</p>"));
+    }
 
     #[test]
     fn a_request_path_names_a_file_inside_the_tree_or_nothing() {

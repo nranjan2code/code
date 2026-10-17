@@ -8,7 +8,7 @@ import DeviceViewport from "./DeviceViewport";
 import LoadState from "./LoadState";
 import SourcePane from "./SourcePane";
 import type { ViewerProps } from "./types";
-import { themedPreview } from "../../previewTheme";
+import { sendPreviewTheme, themedPreview } from "../../previewTheme";
 
 type Shown =
   /** Served from an origin of its own, with the files it loads. */
@@ -91,7 +91,12 @@ export default function HtmlViewer(props: ViewerProps) {
             <Show when={loaded.shown.mode === "document" ? loaded.shown.warning : loaded.warning}>{(warning) => <div class="artifact-canvas-preview-warning" role="status">{warning()}</div>}</Show>
             <DeviceViewport>
               {loaded.shown.mode === "origin"
-                ? <iframe class="artifact-canvas-frame" classList={{ drawing: !drawn() }} onLoad={() => setDrawn(true)} src={loaded.shown.url} title={props.subject.title} sandbox={previewSandbox("origin")} />
+                ? (() => {
+                    let frame: HTMLIFrameElement | undefined;
+                    const url = loaded.shown.url;
+                    createEffect(() => { if (drawn()) sendPreviewTheme(frame, url); });
+                    return <iframe ref={frame} class="artifact-canvas-frame" classList={{ drawing: !drawn() }} onLoad={() => { setDrawn(true); sendPreviewTheme(frame, url); }} src={url} title={props.subject.title} sandbox={previewSandbox("origin")} />;
+                  })()
                 : <iframe class="artifact-canvas-frame" classList={{ drawing: !drawn() }} onLoad={() => setDrawn(true)} srcdoc={themedPreview(loaded.shown.page)} title={props.subject.title} sandbox={previewSandbox("static")} />}
             </DeviceViewport>
           </div>

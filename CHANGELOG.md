@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Pages Vakyartha writes and previews look like the app: its colours,
+  fonts and type in light and dark, following a theme switch while open.
+
 - A whole answer opens in the Canvas: its text and every card, laid out
   in as many columns as fit, scrolling, and still working there; change
   an input and the linked figures, charts and tables follow.

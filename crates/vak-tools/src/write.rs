@@ -60,7 +60,7 @@ impl Tool for WriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write a text file the user requested in the workspace, creating parent directories as needed. Do not create a file just to duplicate an answer already delivered in cards or prose. Overwrites the file if it exists. Not for Word, Excel, PowerPoint or PDF files: those are made with office_apply."
+        "Write a text file the user requested in the workspace, creating parent directories as needed. Do not create a file just to duplicate an answer already delivered in cards or prose. Overwrites the file if it exists. Not for Word, Excel, PowerPoint or PDF files: those are made with office_apply. An HTML page is shown in Vakyartha's look: take colours, fonts and radius from its CSS variables with a fallback for outside it (var(--vak-bg, white), var(--vak-fg, black), var(--vak-surface, white), var(--vak-accent, blue), var(--vak-rule, silver), var(--vak-muted, gray), var(--vak-series-1, blue) to --vak-series-4, var(--vak-font, sans-serif)); plain elements and the classes vak-card, vak-grid, vak-muted and vak-primary are styled already."
     }
 
     /// A path sent as `file_path` or `file` is the path.

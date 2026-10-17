@@ -122,26 +122,62 @@ export function sandboxedSrcdoc(html: string): string {
 }
 
 /** The app's tokens a preview is given, by the name the page uses
- *  (docs/design/96-answer-projection-gaps.md, Q1). */
+ *  (docs/design/96-answer-projection-gaps.md Q1, docs/design/98 §5). */
 const PREVIEW_TOKENS: ReadonlyArray<readonly [string, string]> = [
   ["--vak-bg", "--bg"],
+  ["--vak-surface", "--surface"],
   ["--vak-fg", "--text"],
+  ["--vak-soft", "--text-soft"],
   ["--vak-muted", "--muted"],
   ["--vak-accent", "--accent"],
+  ["--vak-on-accent", "--on-accent"],
   ["--vak-rule", "--border"],
+  ["--vak-good", "--green"],
+  ["--vak-warn", "--yellow"],
+  ["--vak-bad", "--red"],
+  ["--vak-series-1", "--chart-1"],
+  ["--vak-series-2", "--chart-2"],
+  ["--vak-series-3", "--chart-3"],
+  ["--vak-series-4", "--chart-4"],
   ["--vak-font", "--sans"],
   ["--vak-font-mono", "--mono"],
   ["--vak-radius", "--radius"],
 ];
 
+/** How plain elements and the `vak-` classes look in a preview: the
+ *  product's type scale and surfaces, at zero specificity (`:where`), so a
+ *  page's own rules always win. */
+const PREVIEW_BASE = [
+  ":where(html){background:var(--vak-bg);color:var(--vak-fg);font-family:var(--vak-font);font-size:16px;line-height:1.55}",
+  ":where(body){margin:0;padding:24px}",
+  ":where(h1){font-size:1.75rem;line-height:1.2;margin:0 0 .5em}",
+  ":where(h2){font-size:1.375rem;line-height:1.25;margin:1.2em 0 .5em}",
+  ":where(h3){font-size:1.125rem;line-height:1.3;margin:1em 0 .4em}",
+  ":where(a){color:var(--vak-accent)}",
+  ":where(small,.vak-muted){color:var(--vak-muted);font-size:.875rem}",
+  ":where(code,pre,kbd){font-family:var(--vak-font-mono);font-size:.875rem}",
+  ":where(table){border-collapse:collapse;width:100%}",
+  ":where(th,td){padding:8px 12px;border-bottom:1px solid var(--vak-rule);text-align:left}",
+  ":where(th){color:var(--vak-muted);font-weight:600;font-size:.875rem}",
+  ":where(button,input,select,textarea){font:inherit;font-size:.875rem;color:var(--vak-fg)}",
+  ":where(button){min-height:32px;padding:0 12px;border:1px solid var(--vak-rule);border-radius:var(--vak-radius);background:var(--vak-surface);cursor:pointer}",
+  ":where(button.vak-primary){background:var(--vak-accent);border-color:transparent;color:var(--vak-on-accent)}",
+  ":where(input,select,textarea){min-height:32px;padding:0 8px;border:1px solid var(--vak-rule);border-radius:var(--vak-radius);background:var(--vak-surface)}",
+  ":where(input[type=range],input[type=checkbox],input[type=radio],progress){accent-color:var(--vak-accent)}",
+  ":where(:focus-visible){outline:2px solid var(--vak-accent);outline-offset:2px}",
+  ":where(.vak-card){background:var(--vak-surface);border:1px solid var(--vak-rule);border-radius:var(--vak-radius);padding:16px}",
+  ":where(.vak-grid){display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr))}",
+].join("");
+
 const THEME_STYLE = /<style data-vak-theme>[^<]*<\/style>/;
 
 /**
- * The active theme as CSS variables, read from the app's root style when the
- * document is built. It is written after the policy and before the markup, so
- * it is always the first style block, and it holds no script and no address.
+ * The product's look as a stylesheet, read from the app's root style now:
+ * its tokens as `--vak-*` variables and the base above. It holds no script
+ * and no address. Markup previews carry it first; a page on a preview origin
+ * is sent it (`postMessage`, `{type: "vak-theme", css}`).
  */
-function previewThemeStyle(): string {
+export function previewThemeCss(): string {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return "";
   const root = getComputedStyle(document.documentElement);
   const tokens = PREVIEW_TOKENS
@@ -150,7 +186,12 @@ function previewThemeStyle(): string {
     .map(([name, value]) => `${name}:${value}`)
     .join(";");
   const scheme = root.colorScheme === "dark" ? "dark" : "light";
-  return `<style data-vak-theme>:root{${tokens};color-scheme:${scheme}}body{font-family:var(--vak-font)}</style>`;
+  return `:root{${tokens};color-scheme:${scheme}}${PREVIEW_BASE}`;
+}
+
+function previewThemeStyle(): string {
+  const css = previewThemeCss();
+  return css ? `<style data-vak-theme>${css}</style>` : "";
 }
 
 /**

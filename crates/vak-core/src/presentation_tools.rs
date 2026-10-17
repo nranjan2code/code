@@ -1933,7 +1933,7 @@ const SHAPES: &[CardShape] = &[
         ..shape(
             "file_preview",
             "emit_file_preview_card",
-            "A live preview of an HTML or UI file in the workspace, by its path. For markup with no file, use emit_markup_preview_card.",
+            "A live preview of an HTML or UI file in the workspace, by its path. For markup with no file, use emit_markup_preview_card. The page is shown in Vakyartha's look in every theme: plain elements (headings, tables, buttons, inputs, links) are styled already, the classes vak-card, vak-grid, vak-muted and vak-primary (a button) are there to use, and the colours are CSS variables: --vak-bg, --vak-surface, --vak-fg, --vak-soft, --vak-muted, --vak-accent, --vak-on-accent, --vak-rule, --vak-good, --vak-warn, --vak-bad, --vak-series-1 to --vak-series-4, --vak-font, --vak-font-mono, --vak-radius. Use them and set no colours or fonts of your own, so the page matches the app.",
             file_preview_fields,
             build_file_preview,
             fill_nothing,
@@ -1942,7 +1942,7 @@ const SHAPES: &[CardShape] = &[
     shape(
         "markup_preview",
         "emit_markup_preview_card",
-        "A live preview of HTML markup written in the call itself, with no file. For a file in the workspace, use emit_file_preview_card. The page is given the app's theme as CSS variables, so markup that uses them matches every theme: --vak-bg, --vak-fg, --vak-muted, --vak-accent, --vak-rule, --vak-font, --vak-font-mono, --vak-radius.",
+        "A live preview of HTML markup written in the call itself, with no file. For a file in the workspace, use emit_file_preview_card. The page is shown in Vakyartha's look in every theme: plain elements (headings, tables, buttons, inputs, links) are styled already, the classes vak-card, vak-grid, vak-muted and vak-primary (a button) are there to use, and the colours are CSS variables: --vak-bg, --vak-surface, --vak-fg, --vak-soft, --vak-muted, --vak-accent, --vak-on-accent, --vak-rule, --vak-good, --vak-warn, --vak-bad, --vak-series-1 to --vak-series-4, --vak-font, --vak-font-mono, --vak-radius. Use them and set no colours or fonts of your own, so the page matches the app.",
         markup_preview_fields,
         build_markup_preview,
         fill_nothing,

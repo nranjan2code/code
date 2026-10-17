@@ -1,7 +1,7 @@
 # 98 — Answers beyond one card
 
-Status: in progress (2026-10-17): accepted by the maintainer; S1, S2 and
-S3 built and checked live (2026-10-17). Written at
+Status: in progress (2026-10-17): accepted by the maintainer; S1 to S4
+built and checked live (2026-10-17). Written at
 the maintainer's direction ("we cannot build a card for every scenario";
 "make this the best out there"). Builds on docs/design/92-card-forms.md
 (forms), docs/design/87-composed-answers.md (composition),
@@ -216,3 +216,26 @@ Each stage is its own commit with the full gate and a live turn.
 - The same request, asked for "a dashboard" without saying cards, was
   answered with an HTML page (the free-form path, §5), which drew in the
   Canvas in its own colours: S4's work.
+
+## 11. S4 as built (2026-10-17)
+
+- One stylesheet, built by the client from the app's tokens
+  (`safeUrl.ts` `previewThemeCss`): eighteen `--vak-*` variables (surfaces,
+  text, accent, rule, good/warn/bad, four series colours, fonts, radius)
+  and a base for plain elements and the classes `vak-card`, `vak-grid`,
+  `vak-muted` and `vak-primary`, all at zero specificity (`:where`), so a
+  page's own rules still win. Markup previews carry it first, as before.
+- A page on a preview origin is cross-origin, so the preview server puts
+  a fixed slot in every HTML page it serves (`preview.rs` `THEME_SLOT`: an
+  empty style and a listener that accepts only its parent's message) and
+  the Canvas posts the stylesheet into it on load and on every theme
+  change (`sendPreviewTheme`). The theme has one source, the client.
+- Where the model meets it: the `write` tool and both preview card tools
+  say a page is shown in Vakyartha's look and name the variables, each
+  written with a fallback so the file still works outside Vakyartha. The
+  first live page ignored the preview card's note, because the model wrote
+  the file with `write` before any card; the note now sits in `write`.
+- Live, installed route, a fresh folder: the dashboard page used the
+  variables 30 times and had no colour of its own (all 34 hex values are
+  fallbacks). In the Canvas it showed in the product's dark theme, and
+  switching the app to light re-themed the open page at once.
