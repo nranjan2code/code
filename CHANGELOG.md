@@ -1,4 +1,4 @@
-## Unreleased
+## 8.5.0 — 2026-10-17
 
 - The Agent is offered mail and calendar reading only while an account
   is connected, so a turn without one sends a smaller request.
