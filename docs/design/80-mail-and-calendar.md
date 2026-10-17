@@ -248,7 +248,10 @@ available in the Agent vault; a connection ledger row alone is not presented
 as proof that saved sign-in material can be loaded. Owner-only bounded
 previews for Gmail and Microsoft are implemented. The Agent read tool uses
 the connected account's declared capability and the owning Agent's local
-surface grant. Calendar and availability previews accept an owner-selected
+surface grant, and a turn is offered it only while a connected account
+serves that Agent and conversation (a routine's own account, for a
+routine), read from the connection ledger's rollup
+(`MailCalendarTool::has_account`). Calendar and availability previews accept an owner-selected
 local date range of up to 30 days and show when the result was refreshed;
 times are rendered in the device's time zone. Inbox navigation remains a
 bounded recent-message view and owner-submitted phrase search within the selected

@@ -151,6 +151,10 @@ every card.
   ledger at turn start would replay a chain on the turn path, which the
   data rules forbid. Decided 2026-10-17 (docs/decisions.md): build that
   rollup, and load `mail_calendar` only when it names a connected account.
+  Built 2026-10-17: the connection ledger is a record chain read through a
+  rollup, and `scoped_tools` adds the tool only when
+  `MailCalendarTool::has_account` finds an account serving the turn's
+  Agent and conversation.
 
 - Composition guidance (the `answer-layouts` skills) reaches only a model
   that calls the skill loader; luna does, the small route does not.

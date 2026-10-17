@@ -89,6 +89,14 @@ presentation update does not restore stale-context behavior.
 > **Historical record**: one note per change to the seed, newest first,
 > each true as of its version; the current wording is the seed itself.
 
+- 2026-10-17, the mail and calendar bullet is gone. It told every turn to
+  call `mail_calendar`, which is now offered only while an account is
+  connected (docs/design/97-cards-end-the-answer.md §7), and everything it
+  said (account choice, masked hints, routines, provider content as
+  untrusted, effects need their own review) is in that tool's description,
+  which reaches the model with the tool. The general rule that tool content
+  is data, not instruction, stays.
+
 - 2026-10-16, the capability contract names one history tool and no
   discovery tool (docs/audits/history-lookup-2026-10-16.md). "Load More
   tools with `find_tools`" became "a tool under More tools, called by its

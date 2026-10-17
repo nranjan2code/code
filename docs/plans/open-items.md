@@ -245,7 +245,7 @@ Carried over from 7.2.0:
 
 ## Card forms (docs/design/92)
 
-- [ ] `mail_calendar` loads only when an account is connected (decided
+- [x] `mail_calendar` loads only when an account is connected (decided
   2026-10-17, docs/decisions.md). Found first: the connection ledger
   (`vak_mail_calendar::connection_ledger`, `agents/<id>/mail-calendar/
   connections.jsonl`) is a raw JSONL file under its own flock, which the
@@ -258,7 +258,9 @@ Carried over from 7.2.0:
   ledger is a `RecordChain` at `agents/<id>/mail-calendar/connections`
   read through a rollup, and a decision that must not race another writer
   (a fence check before a vault write) runs under the chain's writer lock
-  (`RecordChain::append_decided`). Step 2 is open.
+  (`RecordChain::append_decided`). Step 2 done 2026-10-17: `scoped_tools`
+  adds the tool only when `MailCalendarTool::has_account` (read from the
+  rollup) finds an account serving the turn's Agent and conversation.
 
 - [x] P3 (docs/design/96, 2026-10-17): `emit_markup_preview_card`
   requires a typed `libraries` list (`vak_delivery::skills::MARKUP_LIBRARIES`,

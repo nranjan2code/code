@@ -4213,9 +4213,8 @@ impl Core {
         }
         // Provider reads stay broker-owned: the model receives only a narrow
         // typed read tool, never vault handles, credentials, or worker access.
-        // The tool is present in the declaration view too, where its missing
-        // Agent/audience scope makes execution fail closed.
-        tools.push(Arc::new(mail_calendar::MailCalendarTool {
+        // It is offered only while a connected account serves the turn.
+        let mail_calendar = mail_calendar::MailCalendarTool {
             agent_id: scope.agent_id.clone(),
             audience_id: scope.audience_id.clone(),
             routine_scope: self
@@ -4226,7 +4225,10 @@ impl Core {
                 .and_then(|scope| scope.clone()),
             worker_exe: self.tool_worker_exe(),
             routine_items_used: self.inner.mail_calendar_routine_items_used.clone(),
-        }));
+        };
+        if mail_calendar.has_account() {
+            tools.push(Arc::new(mail_calendar));
+        }
         if self.effective_memory_write_enabled() {
             tools.push(Arc::new(learning::RememberTool {
                 sessions_home: self.scope().into_root(),

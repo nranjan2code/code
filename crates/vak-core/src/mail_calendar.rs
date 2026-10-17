@@ -627,7 +627,41 @@ impl MailCalendarTool {
     /// is built.
     pub const PERMISSION: vak_permission::Declared =
         vak_permission::Declared::reach(vak_permission::Reach::ReadStore);
+
+    /// Whether a connected account serves this turn's Agent and
+    /// conversation (a routine's own account, for a routine): the tool is
+    /// offered only then (docs/design/97-cards-end-the-answer.md §7). Read
+    /// from the connection ledger's rollup, never by replaying its chain.
+    /// A ledger that cannot be read still offers the tool, whose call then
+    /// says so.
+    pub fn has_account(&self) -> bool {
+        let (Some(agent_id), Some(OWNER_AUDIENCE)) =
+            (self.agent_id.as_deref(), self.audience_id.as_deref())
+        else {
+            return false;
+        };
+        let Ok(ledger) = ConnectionLedger::for_agent(agent_id) else {
+            return false;
+        };
+        let audience = format!("agent:{agent_id}");
+        ledger.read_all().map_or(true, |accounts| {
+            accounts.iter().any(|account| {
+                account.status == AccountStatus::Connected
+                    && account.revoked_at.is_none()
+                    && account.owner_agent_id == agent_id
+                    && account.allowed_audiences.contains(&audience)
+                    && self
+                        .routine_scope
+                        .as_ref()
+                        .is_none_or(|scope| account.id == scope.account_id)
+            })
+        })
+    }
 }
+
+/// The one conversation audience the Agent's own account grant reaches:
+/// the local owner surface.
+const OWNER_AUDIENCE: &str = "local";
 
 #[async_trait::async_trait]
 impl vak_tools::Tool for MailCalendarTool {
@@ -706,7 +740,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
         // owner-controlled surface may exercise that broad Agent grant.
         // Channel-specific access needs an explicit channel grant in a later
         // UI; never reinterpret a channel audience as the Agent audience.
-        if audience_id != "local" {
+        if audience_id != OWNER_AUDIENCE {
             return vak_tools::ToolOutput::error(
                 Fault::Refused,
                 "This account is not shared with the current conversation. Do not retry through another identity or route; only the local owner can manage account access.",
@@ -1958,30 +1992,9 @@ mod tests {
 
     #[test]
     fn mail_calendar_tool_prompt_states_authority_evidence_and_action_boundaries() {
-        let system_prompt = crate::DEFAULT_SYSTEM_PROMPT
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_ascii_lowercase();
-        for required in [
-            "connected mail and calendars",
-            "list_accounts",
-            "masked identity hint",
-            "identity_hint",
-            "today canvas",
-            "untrusted evidence",
-            "exact source token",
-            "append-only agent history",
-            "explicit confirmation",
-            "does not prove delivery",
-            "result is unknown",
-            "do not repeat the action",
-        ] {
-            assert!(
-                system_prompt.contains(required),
-                "system prompt omits {required:?}"
-            );
-        }
+        // The tool is offered only with a connected account, so its rules
+        // travel in its own description; the seed never names it.
+        assert!(!crate::DEFAULT_SYSTEM_PROMPT.contains("mail_calendar"));
         let tool = MailCalendarTool {
             agent_id: Some("agent-one".into()),
             audience_id: Some("local".into()),
@@ -2088,6 +2101,26 @@ mod tests {
             worker_exe: std::path::PathBuf::new(),
             routine_items_used: Arc::new(AtomicUsize::new(0)),
         };
+        assert!(tool.has_account());
+        let elsewhere = MailCalendarTool {
+            audience_id: Some("telegram:chat".into()),
+            agent_id: tool.agent_id.clone(),
+            routine_scope: None,
+            worker_exe: std::path::PathBuf::new(),
+            routine_items_used: Arc::new(AtomicUsize::new(0)),
+        };
+        assert!(
+            !elsewhere.has_account(),
+            "a channel audience is not the owner's"
+        );
+        let unlinked = MailCalendarTool {
+            agent_id: Some(format!("mailcal-unlinked-{}", uuid::Uuid::now_v7())),
+            audience_id: Some("local".into()),
+            routine_scope: None,
+            worker_exe: std::path::PathBuf::new(),
+            routine_items_used: Arc::new(AtomicUsize::new(0)),
+        };
+        assert!(!unlinked.has_account());
         let result = tool
             .execute(
                 &json!({"operation":"list_accounts", "purpose":"mail"}),

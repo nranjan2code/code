@@ -47,11 +47,8 @@ Short progress lines."
 
 ## Where things stand
 
-**Now (2026-10-17, end of second session).** Pushed today: doc 98 S5
-living pages (5a6e1b98a), pages leave as text and `ControlLimits`
-(9dcad8b3b), deliverable checks and `automations` always loaded
-(4372613c5), `result_to` and the no-plan refusal (a013263c1), P3 markup
-libraries (6c1d1531d). Uncommitted work is described in Next item 0.
+**Now (2026-10-17, end of third session).** Next item 0 is done and
+pushed; the tree is clean. Pick up at Next item 1.
 
 
 **Next (2026-10-16): the tool audit is built; doc 95 waits for the
@@ -403,34 +400,23 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-0. **Uncommitted at session end (2026-10-17), two pieces in the tree:**
-   - **P3 required `libraries` + draw-when-sized** (verified live, gate
-     was mid-run, not finished): `crates/vak-core/src/presentation_tools.rs`
-     (`libraries` required), `crates/vak-client-ui/src/previewLibraries.ts`
-     (Mermaid draws once the frame has a size), the rebuilt
-     `crates/vak-client-ui/dist-web`, and docs (decisions, doc 96,
-     open-items, this handover). Run `scripts/gate.sh`, then commit these
-     paths alone.
-   - **Mail/calendar ledger onto RecordChain, step 1 in progress, NOT
-     verified:** `crates/vak-session/src/chain.rs` (new
-     `RecordChain::append_decided`: decide and append under the chain's
-     writer lock), `crates/vak-config/src/scope.rs`
-     (`AgentScope::mail_calendar_connections` and `_rollup`),
-     `crates/vak-mail-calendar/src/connection_ledger.rs` (storage is now a
-     chain read through a `Rollup` of `State {accounts, fences, broken}`;
-     JSONL, flock, symlink and size limits deleted; `LedgerError` is now
-     `Write | InvalidRecord | Conflict`; its unit tests compile, not run).
-     Next: `cargo check --workspace --tests` (vak-server and vak-core may
-     match removed `LedgerError` variants), run vak-mail-calendar tests,
-     add an `append_decided` test in vak-session, then step 2: a
-     connected-accounts read for the turn (the rollup) used by
-     `Core::scoped_tools` to push `MailCalendarTool` only when the turn's
-     Agent has a connected account (and `MailCalendarTool::execute`
-     already reads through the rollup now). Measure a calendar question
-     with an account connected (`scripts/measure_tool_form.py replay`,
-     launch entries `ollama-capture` + `vak-inv-live`), live check on
-     `vak-e1-live`, docs (doc 80, doc 97 §7, open-items "Card forms",
-     CHANGELOG), gate, commit each step.
+0. **Done 2026-10-17 (third session), pushed:** P3 `libraries` required
+   and Mermaid drawn once its frame has a size (52044b227); the mail and
+   calendar connection ledger is a `RecordChain` read through a rollup,
+   with `RecordChain::append_decided` for a fence check and vault write
+   under the chain's writer lock (1b851db55); `mail_calendar` is offered
+   only when `MailCalendarTool::has_account` (the rollup) finds an account
+   serving the turn's Agent and conversation, and the seed prompt's mail
+   bullet, which named the tool on every turn and repeated its own
+   description, is gone (doc 07 diff note). Live on `vak-e1-live` with no
+   account: the turn's interface held no `mail_calendar`, and two
+   calendar questions were answered without inventing events (the first
+   suggested connecting an account, the second did not). Not measured:
+   a calendar question with a real account connected (needs the
+   maintainer's OAuth; the loading is covered by the vak-core test).
+   For the maintainer at release: connections stored in the old
+   `connections.jsonl` are not read; an account connected before this
+   must be connected again (CHANGELOG).
 1. Doc 98 is built (S1 to S5). Done 2026-10-17: card `deliverable` is
    checked against any plan and refused with no plan; `automations` is
    always loaded (replay 0/16 deferred, 11/16 loaded); its `result_to`
