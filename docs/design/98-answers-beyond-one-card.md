@@ -261,8 +261,12 @@ Each stage is its own commit with the full gate and a live turn.
   `Trigger::page`. The owner sets it with Keep current on a page in the
   Library (a schedule; the prompt is the page's request), which posts
   `/triggers` with `page`; the Agent sets it with the automation tool's
-  `as_page` (a new page named like the automation, declared at once, its
-  first version the first run) or `page` (an existing page's id).
+  `result_to`, which says where each run's answer goes: `conversation`
+  (the default), `new_page` (a new page named like the automation,
+  declared at once, its first version the first run) or an existing
+  page's id. It replaced an optional `as_page` flag a live turn left out;
+  the next live turn set `result_to: new_page`, and a run made the page's
+  first version (2026-10-17).
   `Trigger::page_refusal` is the one check: only a prompt automation, and
   only a Library page outside the trash.
 - A page automation's run ends in `automations::keep_page`: its answer

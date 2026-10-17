@@ -20,7 +20,9 @@ listed here unless the maintainer reopens it.
   top-level `choices`, each naming its step, never records nested in a
   step (doc 30 §30.1, `docs/plans/open-items.md` "Card forms").
 - Markup previews get libraries by the client inlining a pinned library
-  into the opaque frame's srcdoc, not from a preview origin
+  into the opaque frame's srcdoc, not from a preview origin; for now only
+  the diagram library the client already pins, and only when the card's
+  typed `libraries` field names it; charts stay the chart card's
   (`docs/design/96-answer-projection-gaps.md` P3).
 - An MCP tool's UI resource is shown as text only; Vakyartha never mounts
   a server's UI (`docs/design/96-answer-projection-gaps.md` P4).

@@ -319,7 +319,7 @@ async fn an_unreadable_call_is_regenerated_under_its_schema_and_runs() {
     let ledger = SessionPath::new_session_file(&home, dir.path(), "card-regenerated");
     let log = SessionLog::create(ledger.clone(), header).unwrap();
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
-    let rewritten = json!({"semantic_type": "table", "deliverable": "comparison",
+    let rewritten = json!({"semantic_type": "table",
         "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"], "then": "done"});
     let mut agent = Agent::new(
         Arc::new(Scripted {
@@ -423,7 +423,7 @@ async fn a_call_of_the_wrong_shape_is_regenerated_under_its_schema_at_once() {
     let ledger = SessionPath::new_session_file(&home, dir.path(), "card-shape-regenerated");
     let log = SessionLog::create(ledger.clone(), header).unwrap();
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
-    let rewritten = json!({"semantic_type": "table", "deliverable": "comparison",
+    let rewritten = json!({"semantic_type": "table",
         "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"], "then": "done"});
     let mut agent = Agent::new(
         Arc::new(Scripted {
@@ -525,7 +525,7 @@ async fn a_blind_call_to_a_deferred_tool_is_regenerated_at_once() {
     let ledger = SessionPath::new_session_file(&home, dir.path(), "card-blind-regenerated");
     let log = SessionLog::create(ledger.clone(), header).unwrap();
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
-    let rewritten = json!({"semantic_type": "table", "deliverable": "comparison",
+    let rewritten = json!({"semantic_type": "table",
         "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"], "then": "done"});
     let mut agent = Agent::new(
         Arc::new(Scripted {

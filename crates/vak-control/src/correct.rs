@@ -307,6 +307,15 @@ pub fn card_unplanned(answers: &str, open: &[String], shown: &[String]) -> Strin
     )
 }
 
+/// What a card is told when it names a `deliverable` and the answer has no
+/// plan: there is nothing for it to name.
+pub fn card_without_plan(answers: &str) -> String {
+    format!(
+        "[card-plan]: not shown — `deliverable` is \"{answers}\", but this answer has no plan. \
+         Call it again with `deliverable` left out."
+    )
+}
+
 /// What a card is told when its `replaces` names no card shown in this
 /// answer: the card is not shown, and the answer's cards are given by id.
 pub fn card_replaces_unknown(named: &str, shown: &[String]) -> String {

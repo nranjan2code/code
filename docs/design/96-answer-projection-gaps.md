@@ -284,9 +284,10 @@ a grant reads it and nothing else.
 - Decided 2026-10-17 (docs/decisions.md): the client inlines a pinned
   library's code into the opaque frame's srcdoc when the markup names it;
   an opaque frame has no stable origin to load from, so nothing is served
-  from a preview origin. The libraries (a chart library and a diagram
-  library) are listed in `emit_markup_preview_card`'s description;
-  `connect-src` stays closed.
+  from a preview origin. Only the diagram library the client already pins
+  for now; charts stay the chart card's. A card names what it needs in a
+  typed `libraries` field (an enum of what is vendored), never by the
+  client reading the markup; `connect-src` stays closed.
 - Each library is a workspace dependency under the dependency rule:
   pinned, justified, and rebuilt into the bundle manifest.
 

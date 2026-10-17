@@ -457,6 +457,52 @@ async fn a_plan_with_no_card_refuses_a_named_deliverable() {
     assert!(!results[1].0, "{results:?}");
 }
 
+/// With no plan at all, a card that names a `deliverable` is refused and
+/// the card sent again without one is shown.
+#[tokio::test]
+async fn a_card_naming_a_deliverable_with_no_plan_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, _) = agent(
+        &dir,
+        "no-plan",
+        vec![
+            call(
+                "a1",
+                "steps_block",
+                serde_json::json!({"deliverable": "a name", "steps": ["Wake"]}),
+            ),
+            call("a2", "steps_block", serde_json::json!({"steps": ["Wake"]})),
+            text("Done."),
+        ],
+    );
+    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let results: Vec<(bool, String)> = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } if tool_use_id.starts_with('a') => Some((is_error, content)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 2, "{results:?}");
+    assert!(
+        results[0].0 && results[0].1.contains("this answer has no plan"),
+        "{results:?}"
+    );
+    assert!(!results[1].0, "{results:?}");
+}
+
 /// A card sent in the same step as the plan is checked against that plan,
 /// and the plan's result asks for the cards together in one step.
 #[tokio::test]

@@ -6489,8 +6489,9 @@ impl Agent {
         // A card names only a card deliverable the plan has; one that names
         // none is shown after the plan's sections, and covers no planned card
         // in the plan check (docs/audits/cards-in-answers-2026-10-11.md, F4).
-        // A plan with no card still checks the name: a model that filled the
-        // field with its own description was shown (found live 2026-10-17).
+        // A plan with no card, and no plan at all, still check the name: a
+        // model that filled the field with its own description was shown
+        // (found live 2026-10-17).
         let plan = self
             .declared_plan
             .lock()
@@ -6513,7 +6514,14 @@ impl Agent {
             .cloned()
             .partition(|planned| named.iter().any(|name| name.eq_ignore_ascii_case(planned)));
         if let Some(name) = answers.as_deref()
-            && plan.is_some()
+            && plan.is_none()
+        {
+            return (
+                ToolRunOutput::Err(Fault::Shape, vak_control::card_without_plan(name)),
+                CallVerdict::Refused(Refusal::Tool),
+            );
+        }
+        if let Some(name) = answers.as_deref()
             && !planned
                 .iter()
                 .any(|planned| planned.eq_ignore_ascii_case(name))

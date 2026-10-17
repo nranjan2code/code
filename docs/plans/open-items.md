@@ -249,7 +249,7 @@ Carried over from 7.2.0:
   delivered a file draws that file's card, whose Review needs the
   conversation it came from. Keep current names its automation after the
   page, which is the whole request when the page was saved from a chat.
-- [ ] The Agent's `as_page` (dev route, 2026-10-17, "a Library page that
+- [x] The Agent's living page (dev route, 2026-10-17, "a Library page that
   stays current every Monday at 9"). Deferred, `automations` was never
   called: two live turns wrote a file, and a replay of the captured first
   request reached it in 0 of 16 trials (`commitments`, whose description
@@ -258,8 +258,10 @@ Carried over from 7.2.0:
   after that called `add` but left `as_page` out, putting "remain visible
   on the user's Library page" in its prompt, and wrote cron `0 9 * * *`
   (every day) for Mondays although the result said "Every day at 9:00 AM".
-  Open: how the call says where its result goes so a page is not an
-  optional flag a model leaves out.
+  Decided (docs/decisions.md): one `result_to` argument replaced `as_page`
+  and `page`. Live after it: the Agent called `add` with `result_to:
+  new_page` and cron `0 9 * * 1`, and a run made the page's version 1, a
+  stats card. A card naming a `deliverable` with no plan is now refused.
 - [x] A card call's `deliverable` was the field's own description, copied
   verbatim, and the card was shown; a card naming a deliverable the plan
   did not have was shown too (2026-10-17). Cause: the check ran only when
@@ -268,8 +270,6 @@ Carried over from 7.2.0:
   field's description reads as an instruction, not a value
   (`a_plan_with_no_card_refuses_a_named_deliverable`). Not yet seen in a
   live turn.
-- [ ] With no plan at all, a card's `deliverable` is not checked and is
-  recorded as written. Decide: refuse it, or record none.
 - [ ] A guest's shared view asks for `/app/fonts/InterVariable.woff2` and
   is refused (401), so it falls back to the system font; seen 2026-10-17,
   older than S5.

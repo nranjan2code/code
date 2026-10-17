@@ -58,7 +58,7 @@ the whole answer in the Canvas (multi-column, scrolling, live), S4
 generated pages in the product's look (one client stylesheet, preview
 slot, live theme switch), S5 living pages (doc 98 §12: a saved answer is
 a page of its own items; `Trigger::page` keeps one current, set by Keep
-current or the automation tool's `as_page`/`page`; checked live on the dev
+current or the automation tool's `result_to`; checked live on the dev
 route: a routine run added version 2, the page opened in the Canvas, and a
 guest with a viewer share saw only the page); a page downloads as its
 text and is attached to the Agent as its text; `vak_control::TimeLimits`
@@ -418,7 +418,7 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 1. Doc 98 is built (S1 to S5). Fixed 2026-10-17: a card's `deliverable`
    is checked against any declared plan; `automations` is always loaded
    (replay 0/16 deferred, 11/16 loaded). Open (open-items "Card forms"):
-   the Agent leaves `as_page` out when it makes the automation; file
+   file
    cards inside a page; `deliverable` with no plan at all.
 2. Open from today (docs/plans/open-items.md):
    - A kilometres-to-miles converter has not drawn as controls live.
