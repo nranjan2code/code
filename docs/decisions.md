@@ -9,6 +9,18 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-17
 
+- Steps cards stay flat: a step's alternatives are not records nested in
+  the step; choices go in a card of their own after the steps (doc 30
+  §30.1, `docs/plans/open-items.md` "Card forms").
+- Markup previews get libraries by the client inlining a pinned library
+  into the opaque frame's srcdoc, not from a preview origin
+  (`docs/design/96-answer-projection-gaps.md` P3).
+- An MCP tool's UI resource is shown as text only; Vakyartha never mounts
+  a server's UI (`docs/design/96-answer-projection-gaps.md` P4).
+- `mail_calendar` loads only when an account is connected, decided from a
+  connected-accounts rollup Document, never by replaying the connection
+  ledger on the turn path (`docs/design/97-cards-end-the-answer.md` §7).
+
 - Living pages (`docs/design/98-answers-beyond-one-card.md` §6 S5, §12):
   a saved answer is a page of its own items, never Markdown; an automation
   keeps a page current through one field, `Trigger::page`, set by the

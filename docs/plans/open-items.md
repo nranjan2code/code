@@ -245,22 +245,27 @@ Carried over from 7.2.0:
 
 ## Card forms (docs/design/92)
 
-- [ ] Living pages (docs/design/98 §12), left from S5 (2026-10-17): Keep
-  current's schedule form in the Library was not clicked through live (the
-  same automation was made through `/triggers` with `page`, and its run
-  added version 2); the Agent's `as_page` was tested only in a unit test,
-  not in a live turn; a page made from an answer that delivered a file
-  draws that file's card, whose Review needs the conversation it came
-  from; Download on a page gives its JSON.
+- [ ] Living pages (docs/design/98 §12): a page made from an answer that
+  delivered a file draws that file's card, whose Review needs the
+  conversation it came from. Keep current names its automation after the
+  page, which is the whole request when the page was saved from a chat.
+- [ ] The Agent's `as_page` never reached in a live turn (dev route,
+  2026-10-17, two turns asking for "a Library page that stays current
+  every Monday at 9"): the first wrote an HTML file into `Library/`; after
+  `automations`' first sentence (the line "More tools" shows) named pages,
+  the second planned three text deliverables, showed cards, then wrote a
+  Markdown file. `automations` is deferred (`serves: orchestration`) and
+  was never called. Open: what in the deferred index or the plan leads
+  away from it; capture the turn's first request to see what it carried.
+- [ ] A card call's `deliverable` was the field's own description, copied
+  verbatim ("plan deliverable this card delivers, by its name; leave it
+  out when your plan does not list it"), twice in one turn, and the card
+  was shown; a stats card naming "Weekly Stats Card", which the plan did
+  not have, was shown too. AGENTS.md says a card naming a deliverable the
+  plan lacks is refused with the plan's names. Same turn as above.
 - [ ] A guest's shared view asks for `/app/fonts/InterVariable.woff2` and
   is refused (401), so it falls back to the system font; seen 2026-10-17,
   older than S5.
-
-- [ ] `vak_control::TimeLimits` now holds a non-time limit
-  (`series_points`); rename it to what `[control.limits]` is (the
-  operator's limits) across Rust, the client and the admin console, which
-  lists only the time limits. The name `Limits` is taken by the intent
-  kernel.
 
 - A map, a board, a graph and a form to fill in are not built; places go in
   a list or details with a link. Build one only when real turns show a
@@ -308,9 +313,9 @@ Carried over from 7.2.0:
     and three fresh runs of "let me choose between French press, pour-over
     and moka pot" each drew a steps card (two before drew details cards),
     but none wrote `choices`: each put the alternatives in a step's text.
-    Open for the maintainer: choices nested in their step is the shape
-    the model reached for, and the flat-schema rule (no list of records
-    inside a list of records, doc 30 §30.1) forbids it.
+    Decided 2026-10-17: keep flat (docs/decisions.md). Open: the steps
+    tool's description and refusal should say a step's alternatives go in
+    a card of their own after the steps, not in a step.
   - [x] A tick while a turn runs says why (checked 2026-10-17): the tick
     goes back and the notice reads "Agent is working; try again after this
     turn settles". The open line was stale.

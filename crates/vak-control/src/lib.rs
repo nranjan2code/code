@@ -444,7 +444,7 @@ impl StepOverride {
 /// (docs/design/98 §2). Each is configuration, shown in Settings beside
 /// its shipped default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TimeLimits {
+pub struct ControlLimits {
     /// One request of the background capacity probe.
     pub probe_secs: u64,
     /// How long a channel waits for a turn's reply before it answers that
@@ -467,7 +467,7 @@ pub struct TimeLimits {
     pub series_points: u64,
 }
 
-impl TimeLimits {
+impl ControlLimits {
     /// The limits a new install runs with.
     pub const fn shipped() -> Self {
         Self {
@@ -485,7 +485,7 @@ impl TimeLimits {
 
     /// These limits with a configuration layer's set fields applied. A
     /// limit of zero would end every wait at once, so it is read as unset.
-    pub fn with(self, over: TimeLimitsOverride) -> Self {
+    pub fn with(self, over: ControlLimitsOverride) -> Self {
         let pick = |set: Option<u64>, lower: u64| set.filter(|secs| *secs > 0).unwrap_or(lower);
         Self {
             probe_secs: pick(over.probe_secs, self.probe_secs),
@@ -501,17 +501,17 @@ impl TimeLimits {
     }
 }
 
-impl Default for TimeLimits {
+impl Default for ControlLimits {
     fn default() -> Self {
         Self::shipped()
     }
 }
 
-/// The time limits one configuration layer sets: a field set there
+/// The limits one configuration layer sets: a field set there
 /// overrides the layer below, an unset one inherits it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct TimeLimitsOverride {
+pub struct ControlLimitsOverride {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub probe_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -532,7 +532,7 @@ pub struct TimeLimitsOverride {
     pub series_points: Option<u64>,
 }
 
-impl TimeLimitsOverride {
+impl ControlLimitsOverride {
     /// This layer over `lower`: each field this one sets wins.
     pub fn over(self, lower: Self) -> Self {
         Self {
@@ -968,26 +968,26 @@ mod tests {
     }
 
     #[test]
-    fn time_limits_take_the_narrowest_layer_and_ignore_zero() {
-        let wide = TimeLimitsOverride {
+    fn limits_take_the_narrowest_layer_and_ignore_zero() {
+        let wide = ControlLimitsOverride {
             command_secs: Some(300),
             hook_secs: Some(20),
             ..Default::default()
         };
-        let narrow = TimeLimitsOverride {
+        let narrow = ControlLimitsOverride {
             command_secs: Some(45),
             command_max_secs: Some(0),
             approval_secs: Some(0),
             ..Default::default()
         };
-        let limits = TimeLimits::shipped().with(narrow.over(wide));
+        let limits = ControlLimits::shipped().with(narrow.over(wide));
         assert_eq!(limits.command_secs, 45);
         assert_eq!(
             limits.command_max_secs,
-            TimeLimits::shipped().command_max_secs
+            ControlLimits::shipped().command_max_secs
         );
         assert_eq!(limits.hook_secs, 20);
-        assert_eq!(limits.approval_secs, TimeLimits::shipped().approval_secs);
-        assert_eq!(limits.reply_secs, TimeLimits::shipped().reply_secs);
+        assert_eq!(limits.approval_secs, ControlLimits::shipped().approval_secs);
+        assert_eq!(limits.reply_secs, ControlLimits::shipped().reply_secs);
     }
 }

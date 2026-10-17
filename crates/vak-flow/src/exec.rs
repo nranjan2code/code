@@ -84,7 +84,7 @@ pub struct ExecutorDeps {
     pub max_retries: u32,
     pub retry_base_backoff_ms: u64,
     pub request_timeout: Option<std::time::Duration>,
-    pub time_limits: vak_control::TimeLimits,
+    pub control_limits: vak_control::ControlLimits,
     pub circuit_breaker: Option<Arc<vak_agent::CircuitBreaker>>,
     pub run_retry_attempts: u32,
     pub run_retry_base_backoff_ms: u64,
@@ -663,7 +663,7 @@ async fn execute_node(
             cfg.max_retries = deps.max_retries;
             cfg.retry_base_backoff_ms = deps.retry_base_backoff_ms;
             cfg.request_timeout = deps.request_timeout;
-            cfg.time_limits = deps.time_limits;
+            cfg.control_limits = deps.control_limits;
             cfg.circuit_breaker = deps.circuit_breaker.clone();
             cfg.run_retry_attempts = deps.run_retry_attempts;
             cfg.run_retry_base_backoff_ms = deps.run_retry_base_backoff_ms;

@@ -1,7 +1,7 @@
 import type {
   CapabilityInventory,
   ControlLayer,
-  TimeLimits,
+  ControlLimits,
   TurnStep,
   StepOverride,
   DataRulesPreview,
@@ -235,7 +235,7 @@ export const api = {
       body: JSON.stringify({ keep_days: keepDays, digest }),
     }).then((r) => handle(r)),
   /** One layer's `[control]` and the effective step settings on the current route (docs/design/88). */
-  control: (scope: "user" | "project"): Promise<{ control: ControlLayer; route: string; effective: Record<string, StepOverride>; limits: TimeLimits; shipped_limits: TimeLimits }> =>
+  control: (scope: "user" | "project"): Promise<{ control: ControlLayer; route: string; effective: Record<string, StepOverride>; limits: ControlLimits; shipped_limits: ControlLimits }> =>
     fetch(`/config/control?scope=${scope}`).then((r) => handle(r)),
   setControl: (scope: "user" | "project", control: ControlLayer): Promise<{ saved: boolean }> =>
     fetch(`/config/control?scope=${scope}`, {

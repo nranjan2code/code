@@ -7,7 +7,7 @@
 mod fences;
 use fences::{find_malformed_vak_fence, vak_fence_bodies};
 mod cards;
-pub use vak_control::TimeLimits;
+pub use vak_control::ControlLimits;
 pub mod circuit;
 pub mod goal;
 pub mod questions;
@@ -477,7 +477,7 @@ pub struct AgentConfig {
     /// The operator's time limits (docs/design/88-control-plane.md §5a):
     /// what a command runs under when its call names no limit, and how
     /// long a worker's question waits for a person.
-    pub time_limits: vak_control::TimeLimits,
+    pub control_limits: vak_control::ControlLimits,
     /// What the record says about a workspace path a call touched (doc 90
     /// §3.2): the path in, the note out. Attached to the call's result,
     /// whether it succeeded or failed. None adds nothing.
@@ -645,7 +645,7 @@ impl AgentConfig {
             max_retries: 3,
             retry_base_backoff_ms: 500,
             request_timeout: Some(std::time::Duration::from_secs(600)),
-            time_limits: vak_control::TimeLimits::shipped(),
+            control_limits: vak_control::ControlLimits::shipped(),
             file_note: None,
             circuit_breaker: None,
             run_retry_attempts: 6,
@@ -2522,7 +2522,7 @@ impl Agent {
                     &mut response,
                     &self.config.tools,
                     &mcp_index,
-                    self.config.time_limits,
+                    self.config.control_limits,
                 );
                 // Some small models cannot emit a structured `tool_use` block
                 // and spell one out as text instead: rewrite `response` BEFORE
@@ -4562,7 +4562,7 @@ impl Agent {
         let input = vak_tools::command_call(
             tool.as_ref(),
             cmd,
-            self.config.time_limits.command_secs.saturating_mul(1000),
+            self.config.control_limits.command_secs.saturating_mul(1000),
         )
         .ok_or_else(|| "the command tool declares no command argument".to_string())?;
         let out = tool.execute(&input, &ctx).await;
@@ -6688,7 +6688,7 @@ impl Agent {
         let bound = if form == "controls" {
             // Its series are computed under the operator's limit, which the
             // card keeps so a client recomputes under the same one.
-            let max_points = self.config.time_limits.series_points;
+            let max_points = self.config.control_limits.series_points;
             info.payload["max_points"] = Value::from(max_points);
             vak_delivery::controls::series(&info.payload, max_points)
                 .and_then(|_| vak_delivery::controls::published(&info.payload))
@@ -7009,7 +7009,7 @@ impl Agent {
                                     self.config.trace.as_ref(),
                                     self.held(),
                                     &self.call_yields,
-                                    self.config.time_limits,
+                                    self.config.control_limits,
                                     self.config.file_note.as_ref(),
                                     self.config.artifacts.as_ref(),
                                     &read_first,
@@ -7103,7 +7103,7 @@ impl Agent {
                 let trace = self.config.trace.clone();
                 let yields = self.call_yields.clone();
                 let held = self.held();
-                let limits = self.config.time_limits;
+                let limits = self.config.control_limits;
                 let file_note = self.config.file_note.clone();
                 let artifacts = self.config.artifacts.clone();
                 let read_first = read_first.clone();
@@ -7936,7 +7936,7 @@ async fn execute_one(
     trace: Option<&vak_session::trace::TraceKey>,
     held: vak_control::Provenance,
     yields: &CallYields,
-    limits: vak_control::TimeLimits,
+    limits: vak_control::ControlLimits,
     file_note: Option<&FileNote>,
     artifacts: Option<&Arc<dyn vak_tools::ArtifactSink>>,
     read_first: &[vak_tools::ReadInput],
@@ -9156,7 +9156,7 @@ fn normalize_response_tool_uses(
     response: &mut AssistantMessage,
     tools: &[Arc<dyn Tool>],
     mcp_index: &std::collections::HashMap<String, String>,
-    limits: vak_control::TimeLimits,
+    limits: vak_control::ControlLimits,
 ) {
     for block in &mut response.content {
         let ContentBlock::ToolUse { id, name, input } = block else {
@@ -9193,7 +9193,7 @@ fn fill_time_limit(
     name: &str,
     input: &mut Value,
     tools: &[Arc<dyn Tool>],
-    limits: vak_control::TimeLimits,
+    limits: vak_control::ControlLimits,
 ) {
     let Some(argument) = tools
         .iter()
@@ -10006,10 +10006,10 @@ mod time_limit_tests {
         }
     }
 
-    fn limits() -> vak_control::TimeLimits {
-        vak_control::TimeLimits {
+    fn limits() -> vak_control::ControlLimits {
+        vak_control::ControlLimits {
             command_secs: 45,
-            ..vak_control::TimeLimits::shipped()
+            ..vak_control::ControlLimits::shipped()
         }
     }
 
@@ -10035,7 +10035,7 @@ mod time_limit_tests {
     fn a_limit_above_the_operators_maximum_is_clamped() {
         let tools: Vec<std::sync::Arc<dyn Tool>> =
             vec![std::sync::Arc::new(Timed(Some("wait_ms")))];
-        let capped = vak_control::TimeLimits {
+        let capped = vak_control::ControlLimits {
             command_max_secs: 60,
             ..limits()
         };

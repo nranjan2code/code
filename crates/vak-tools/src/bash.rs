@@ -94,7 +94,7 @@ impl Tool for BashTool {
         let timeout_ms = args
             .get("timeout_ms")
             .and_then(|t| t.as_u64())
-            .unwrap_or(vak_control::TimeLimits::shipped().command_secs * 1000)
+            .unwrap_or(vak_control::ControlLimits::shipped().command_secs * 1000)
             .max(1000);
 
         // The command works in the workspace, where `read`/`write`/`edit`

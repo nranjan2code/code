@@ -278,4 +278,6 @@ Each stage is its own commit with the full gate and a live turn.
   the Canvas subject `page` (`PageViewer`, always the newest version, so a
   reload shows the latest run) and by a guest's shared view, which draws
   the newest version it was shown beside the version list.
-
+- A page leaves the Library as its text form (Download, for the owner and
+  a guest), and Continue working or Make another gives the Agent that text
+  and asks it to answer again, never to edit the page's stored file.

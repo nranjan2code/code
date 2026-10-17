@@ -149,7 +149,7 @@ fn make_deps(provider: Arc<ScriptedPlanner>) -> Arc<ExecutorDeps> {
         max_retries: 0,
         retry_base_backoff_ms: 100,
         request_timeout: Some(std::time::Duration::from_secs(600)),
-        time_limits: vak_control::TimeLimits::shipped(),
+        control_limits: vak_control::ControlLimits::shipped(),
         circuit_breaker: None,
         run_retry_attempts: 0,
         run_retry_base_backoff_ms: 1000,

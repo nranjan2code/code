@@ -3321,7 +3321,7 @@ async fn gateway_inbound(
     // A `wait: true` inbound message long-polls for the operator's reply
     // limit (`[control.limits] reply_secs`); past it the caller is told the
     // turn is still running, and the turn goes on.
-    let reply_wait = Duration::from_secs(core_for_turn.time_limits().reply_secs);
+    let reply_wait = Duration::from_secs(core_for_turn.control_limits().reply_secs);
     match tokio::time::timeout(reply_wait, reply_rx).await {
         Ok(Ok(reply)) => {
             let accepts_files = body

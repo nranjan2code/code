@@ -256,7 +256,7 @@ code went by. A wait ends on an observed state:
   the work.
 
 The operator's limits are `[control.limits]`, in seconds, each with its
-shipped default (`vak_control::TimeLimits`): `command_secs` 120 (a command
+shipped default (`vak_control::ControlLimits`): `command_secs` 120 (a command
 whose call names no limit), `command_max_secs` 600 (the longest limit a
 command's call may name; a call that names more runs with this), `script_secs` 120 (a scheduled script),
 `hook_secs` 10 (a hook that sets none of its own), `approval_secs` 900 and
@@ -264,7 +264,7 @@ command's call may name; a call that names more runs with this), `script_secs` 1
 invariant 15), `reply_secs` 240 (how long a channel's `wait` request is
 held before it is told the turn is still running; the turn goes on) and
 `probe_secs` 30 (one request of the background capacity probe). They are
-layered like the step settings, read live (`Core::time_limits`), edited
+layered like the step settings, read live (`Core::control_limits`), edited
 through `/config/control` (which returns the limits in force beside the
 shipped ones), the client's Settings › Time limits and the admin console's
 Models panel. A limit of zero is read as unset. An untrusted project sets

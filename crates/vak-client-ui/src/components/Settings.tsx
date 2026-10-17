@@ -185,7 +185,7 @@ function StepSettingsGroup() {
 }
 
 /** A limit's key, title, description, whether it is technical, and its unit. */
-const TIME_LIMITS: [keyof api.TimeLimits, string, string, boolean, "seconds" | "points"][] = [
+const LIMITS: [keyof api.ControlLimits, string, string, boolean, "seconds" | "points"][] = [
   ["command_secs", "A command", "How long a command may run when the request sets no time of its own.", false, "seconds"],
   ["command_max_secs", "Longest command limit", "The most time a command may be given. A longer request runs with this.", false, "seconds"],
   ["script_secs", "A scheduled script", "How long a script run by an automation may take.", false, "seconds"],
@@ -202,13 +202,13 @@ function secondsInWords(seconds: number): string {
   return seconds === 1 ? "1 second" : `${seconds} seconds`;
 }
 
-/// The time limits a person sets, shared by every agent
+/// The limits a person sets, shared by every agent
 /// (docs/design/88-control-plane.md §5a). Nothing else ends work that is
 /// still going: an empty field uses the default named beside it.
-function TimeLimitsGroup() {
+function LimitsGroup() {
   const [layer, { refetch }] = createResource(() => api.getControl("user"));
   const [error, setError] = createSignal("");
-  const save = async (key: keyof api.TimeLimits, text: string) => {
+  const save = async (key: keyof api.ControlLimits, text: string) => {
     const current = layer()?.control ?? {};
     const limits = { ...(current.limits ?? {}) };
     const value = Math.floor(Number(text));
@@ -222,7 +222,7 @@ function TimeLimitsGroup() {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
-  const row = ([key, title, description, , unit]: (typeof TIME_LIMITS)[number]) => {
+  const row = ([key, title, description, , unit]: (typeof LIMITS)[number]) => {
     const shipped = layer()?.shipped_limits[key] ?? 0;
     const fallback = unit === "seconds" ? secondsInWords(shipped) : `${shipped.toLocaleString()} points`;
     return (
@@ -236,8 +236,8 @@ function TimeLimitsGroup() {
     <Group title="Limits">
       <Show when={error()}><p class="connect-error" role="alert">{error()}</p></Show>
       <Show when={layer()}>
-        <For each={TIME_LIMITS.filter((limit) => !limit[3])}>{row}</For>
-        <TechnicalRow><For each={TIME_LIMITS.filter((limit) => limit[3])}>{row}</For></TechnicalRow>
+        <For each={LIMITS.filter((limit) => !limit[3])}>{row}</For>
+        <TechnicalRow><For each={LIMITS.filter((limit) => limit[3])}>{row}</For></TechnicalRow>
       </Show>
     </Group>
   );
@@ -2264,7 +2264,7 @@ export default function Settings() {
                   </Show>
                 </TechnicalRow>
               </Group>
-              <Show when={scope() === "user"}><StepSettingsGroup /><TimeLimitsGroup /></Show>
+              <Show when={scope() === "user"}><StepSettingsGroup /><LimitsGroup /></Show>
               <Show when={technicalDetails()}><div class="settings-actions">
                 <button class="btn primary" disabled={saving() || !agentDirty()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button>
                 <Show when={technicalDetails()}>

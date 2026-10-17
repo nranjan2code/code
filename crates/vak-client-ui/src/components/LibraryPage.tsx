@@ -431,7 +431,11 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
   const download = async (found: ArtifactDetail, at: string) => {
     await act(async () => {
       const bytes = await api.libraryVersionBytes(found.id, at);
-      await host.saveFile(found.path.split("/").pop() || found.name, bytes, "application/octet-stream");
+      const name = found.path.split("/").pop() || found.name;
+      // A page leaves as its text form: its cards' text, then the reply.
+      const page = found.kind === "page" ? readPage(bytes) : null;
+      if (page) await host.saveFile(name.replace(/\.json$/, ".md"), new TextEncoder().encode(page.text), "text/markdown");
+      else await host.saveFile(name, bytes, "application/octet-stream");
     });
   };
 

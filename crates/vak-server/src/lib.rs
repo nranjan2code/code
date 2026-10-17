@@ -5403,7 +5403,7 @@ fn spawn_http_turn_chain(
 ) {
     let hub = state.hub.clone();
     let chain_handle = handle;
-    let approval_wait = Duration::from_secs(core.time_limits().approval_secs);
+    let approval_wait = Duration::from_secs(core.control_limits().approval_secs);
     tokio::spawn(async move {
         let approver_handle = chain_handle.clone();
         let settle_handle = chain_handle.clone();
@@ -18787,7 +18787,7 @@ async fn get_hooks(
     } else {
         Vec::new()
     };
-    let limit_ms = state.core.time_limits().hook_secs * 1000;
+    let limit_ms = state.core.control_limits().hook_secs * 1000;
     let hooks = hooks
         .iter()
         .map(|h| {
@@ -18876,8 +18876,8 @@ async fn get_control_layer(
         "control": layer,
         "route": format!("{}/{}", route.provider, route.model),
         "effective": effective,
-        "limits": state.core.time_limits(),
-        "shipped_limits": vak_control::TimeLimits::shipped(),
+        "limits": state.core.control_limits(),
+        "shipped_limits": vak_control::ControlLimits::shipped(),
     }))
     .into_response()
 }
@@ -18920,7 +18920,7 @@ async fn put_control_layer(
 
 async fn get_global_hooks(State(state): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let limit_ms = state.core.time_limits().hook_secs * 1000;
+    let limit_ms = state.core.control_limits().hook_secs * 1000;
     let Some(path) = vak_config::global_path() else {
         return (StatusCode::INTERNAL_SERVER_ERROR, "user home unavailable").into_response();
     };
@@ -19763,7 +19763,7 @@ async fn side_chat(
         activity_buffer: side_activity.clone(),
         answerable: true,
         shows_questions: false,
-        wait: Duration::from_secs(state.core.time_limits().approval_secs),
+        wait: Duration::from_secs(state.core.control_limits().approval_secs),
     });
     let events = mpsc_to_broadcast(side_tx.clone());
     let cancel = handle
@@ -20207,7 +20207,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
         activity_buffer: handle.activity_buffer.clone(),
         answerable: attended,
         shows_questions: false,
-        wait: Duration::from_secs(core.time_limits().approval_secs),
+        wait: Duration::from_secs(core.control_limits().approval_secs),
     });
     let core = core.clone().with_approver(approver.as_ref());
     let events = mpsc_to_broadcast(handle.events_tx.clone());
@@ -20633,9 +20633,11 @@ async fn execute_script(
         executions: None,
         provenance: vak_control::Provenance::NONE,
     };
-    let Some(args) =
-        vak_tools::command_call(bash.as_ref(), script, core.time_limits().script_secs * 1000)
-    else {
+    let Some(args) = vak_tools::command_call(
+        bash.as_ref(),
+        script,
+        core.control_limits().script_secs * 1000,
+    ) else {
         return ScriptOutcome {
             ok: false,
             text: "script task failed: the command tool declares no command argument".to_string(),

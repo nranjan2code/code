@@ -999,7 +999,7 @@ async fn time_limits_round_trip_and_apply_live() {
     assert_eq!(body["limits"]["command_secs"], 45);
     assert_eq!(body["shipped_limits"]["command_secs"], 120);
     assert_eq!(body["limits"]["hook_secs"], 10);
-    let limits = core.time_limits();
+    let limits = core.control_limits();
     assert_eq!(limits.command_secs, 45);
     assert_eq!(limits.approval_secs, 60);
 }

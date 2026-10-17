@@ -931,7 +931,7 @@ impl Tool for CapabilityTool {
             .as_object_mut()
             .and_then(|object| object.remove(TIME_LIMIT_ARGUMENT))
             .and_then(|value| value.as_u64())
-            .unwrap_or(vak_control::TimeLimits::shipped().command_secs * 1000)
+            .unwrap_or(vak_control::ControlLimits::shipped().command_secs * 1000)
             .max(1000);
         let execution = ctx
             .sandbox_sink

@@ -7,7 +7,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
 import { pushToast } from "./store";
-import type { ControlLayer, StepOverride, TimeLimits } from "./types";
+import type { ControlLayer, StepOverride, ControlLimits } from "./types";
 
 const PURPOSES: [string, string][] = [
   ["act", "Working"],
@@ -102,28 +102,30 @@ export function StepSettingsPanel() {
   );
 }
 
-const TIME_LIMITS: [keyof TimeLimits, string, string][] = [
-  ["command_secs", "A command", "When the call names no limit of its own"],
-  ["command_max_secs", "Longest command limit", "The most a command's call may name; a longer one runs with this"],
-  ["script_secs", "A scheduled script", "A script an automation runs"],
-  ["hook_secs", "A hook", "When the hook sets no limit of its own"],
-  ["approval_secs", "An approval", "Waiting for a person; no answer means no"],
-  ["question_secs", "A worker's question", "Waiting for a person before the worker goes on without an answer"],
-  ["reply_secs", "A channel reply", "How long a channel waits before saying the work is still running"],
-  ["probe_secs", "A capacity probe request", "One request of the background check of a model's limits"],
+const LIMITS: [keyof ControlLimits, string, string, "s" | "points"][] = [
+  ["command_secs", "A command", "When the call names no limit of its own", "s"],
+  ["command_max_secs", "Longest command limit", "The most a command's call may name; a longer one runs with this", "s"],
+  ["script_secs", "A scheduled script", "A script an automation runs", "s"],
+  ["hook_secs", "A hook", "When the hook sets no limit of its own", "s"],
+  ["approval_secs", "An approval", "Waiting for a person; no answer means no", "s"],
+  ["question_secs", "A worker's question", "Waiting for a person before the worker goes on without an answer", "s"],
+  ["reply_secs", "A channel reply", "How long a channel waits before saying the work is still running", "s"],
+  ["probe_secs", "A capacity probe request", "One request of the background check of a model's limits", "s"],
+  ["series_points", "Points in a calculated series", "How many points a calculator card may compute for a chart that follows it", "points"],
 ];
 
-/// Settings › Models: the operator's time limits
-/// (docs/design/88-control-plane.md §5a). These are the only numbers that
-/// end work still in progress; an empty field uses the shipped default.
-export function TimeLimitsPanel() {
+/// Settings › Models: the operator's limits (`[control.limits]`,
+/// docs/design/88-control-plane.md §5a): the time limits, the only numbers
+/// that end work still in progress, and the size of a calculated series.
+/// An empty field uses the shipped default.
+export function LimitsPanel() {
   const [layer, { refetch }] = createResource(() => api.control("user"));
-  const save = async (key: keyof TimeLimits, text: string) => {
+  const save = async (key: keyof ControlLimits, text: string) => {
     const current: ControlLayer = layer()?.control ?? {};
     const limits = { ...(current.limits ?? {}) };
-    const seconds = Math.floor(Number(text));
-    if (text === "" || !Number.isFinite(seconds) || seconds < 1) delete limits[key];
-    else limits[key] = seconds;
+    const value = Math.floor(Number(text));
+    if (text === "" || !Number.isFinite(value) || value < 1) delete limits[key];
+    else limits[key] = value;
     try {
       await api.setControl("user", { ...current, limits });
       await refetch();
@@ -135,21 +137,21 @@ export function TimeLimitsPanel() {
     <section class="panel">
       <div class="panel-title-row">
         <div>
-          <h2>Time limits</h2>
-          <p class="dim">How long each kind of wait may last, in seconds. Empty fields use the default shown.</p>
+          <h2>Limits</h2>
+          <p class="dim">How long each kind of wait may last, and how large a calculated series may be. Empty fields use the default shown.</p>
         </div>
       </div>
       <Show when={layer()} fallback={<p class="dim">Loading…</p>}>
         <table class="step-settings">
-          <thead><tr><th>Wait</th><th>Applies</th><th>Seconds</th><th>In force</th></tr></thead>
+          <thead><tr><th>Limit</th><th>Applies</th><th>Value</th><th>In force</th></tr></thead>
           <tbody>
-            <For each={TIME_LIMITS}>
-              {([key, label, applies]) => (
+            <For each={LIMITS}>
+              {([key, label, applies, unit]) => (
                 <tr>
                   <td>{label}</td>
                   <td class="dim">{applies}</td>
-                  <td><input aria-label={`${label}: seconds`} type="number" min="1" step="1" placeholder={String(layer()!.shipped_limits[key])} value={layer()!.control.limits?.[key] ?? ""} onChange={(e) => void save(key, e.currentTarget.value)} /></td>
-                  <td>{layer()!.limits[key]} s</td>
+                  <td><input aria-label={`${label}: ${unit === "s" ? "seconds" : unit}`} type="number" min="1" step="1" placeholder={String(layer()!.shipped_limits[key])} value={layer()!.control.limits?.[key] ?? ""} onChange={(e) => void save(key, e.currentTarget.value)} /></td>
+                  <td>{layer()!.limits[key]} {unit}</td>
                 </tr>
               )}
             </For>

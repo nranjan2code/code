@@ -233,7 +233,7 @@ impl AskParentTool {
             asked: AtomicU32::new(0),
             events,
             approver,
-            timeout: Duration::from_secs(vak_control::TimeLimits::shipped().question_secs),
+            timeout: Duration::from_secs(vak_control::ControlLimits::shipped().question_secs),
         }
     }
 

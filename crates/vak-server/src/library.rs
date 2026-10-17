@@ -758,12 +758,32 @@ pub(crate) fn attach(
         }
         _ => "with `edit`, or `write` the whole file",
     };
-    let ask = match reference.mode {
-        vak_session::ArtifactMode::Continue => format!(
+    // A page is an answer, not a file in the workspace: it is shown to the
+    // model as its text, and changing it is answering again
+    // (docs/design/98 §12).
+    let page = (artifact.kind == vak_core::artifacts::ArtifactKind::Page)
+        .then(|| core.artifacts().bytes(&artifact, &head.id).ok())
+        .flatten()
+        .and_then(|bytes| vak_delivery::page::Page::read(&bytes));
+    let ask = match (&page, reference.mode) {
+        (Some(page), mode) => format!(
+            "It is a saved answer to \"{}\", which reads:\n{}\n{}",
+            page.title,
+            page.text,
+            match mode {
+                vak_session::ArtifactMode::Continue => {
+                    "The person wants it changed: answer again with the change, in cards as before."
+                }
+                vak_session::ArtifactMode::Another => {
+                    "The person wants a new one like it: answer with a new one, in cards as before."
+                }
+            }
+        ),
+        (None, vak_session::ArtifactMode::Continue) => format!(
             "The person wants to keep working on it: change {} {how}; each change becomes a new version.",
             artifact.path
         ),
-        vak_session::ArtifactMode::Another => format!(
+        (None, vak_session::ArtifactMode::Another) => format!(
             "The person wants a new one like it: write a new file, and do not change {}.",
             artifact.path
         ),

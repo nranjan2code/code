@@ -824,10 +824,10 @@ export function instantiateAgentTemplate(
 /// (docs/design/88-control-plane.md §4); an unset field inherits.
 export type StepOverride = { reasoning?: string; temperature?: number; top_p?: number; top_k?: number };
 /// The operator's time limits, in seconds (docs/design/88-control-plane.md §5a).
-export type TimeLimits = { probe_secs: number; reply_secs: number; command_secs: number; command_max_secs: number; script_secs: number; hook_secs: number; question_secs: number; approval_secs: number; series_points: number };
-export type ControlLayer = { steps?: Record<string, StepOverride>; routes?: Record<string, Record<string, StepOverride>>; limits?: Partial<TimeLimits> };
+export type ControlLimits = { probe_secs: number; reply_secs: number; command_secs: number; command_max_secs: number; script_secs: number; hook_secs: number; question_secs: number; approval_secs: number; series_points: number };
+export type ControlLayer = { steps?: Record<string, StepOverride>; routes?: Record<string, Record<string, StepOverride>>; limits?: Partial<ControlLimits> };
 
-export function getControl(scope: "user" | "project"): Promise<{ control: ControlLayer; route: string; effective: Record<string, StepOverride>; limits: TimeLimits; shipped_limits: TimeLimits }> {
+export function getControl(scope: "user" | "project"): Promise<{ control: ControlLayer; route: string; effective: Record<string, StepOverride>; limits: ControlLimits; shipped_limits: ControlLimits }> {
   return req(`/config/control?scope=${scope}`);
 }
 

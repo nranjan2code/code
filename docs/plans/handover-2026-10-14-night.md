@@ -60,8 +60,10 @@ slot, live theme switch), S5 living pages (doc 98 §12: a saved answer is
 a page of its own items; `Trigger::page` keeps one current, set by Keep
 current or the automation tool's `as_page`/`page`; checked live on the dev
 route: a routine run added version 2, the page opened in the Canvas, and a
-guest with a viewer share saw only the page). All card wording is
-domain-neutral.
+guest with a viewer share saw only the page); a page downloads as its
+text and is attached to the Agent as its text; `vak_control::TimeLimits`
+is `ControlLimits`, and the admin console shows `series_points`. All card
+wording is domain-neutral.
 
 
 **Next (2026-10-16): the tool audit is built; doc 95 waits for the
@@ -413,24 +415,19 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Doc 98 is built (S1 to S5). What S5 left is in open-items "Card
-   forms": Keep current's form and the Agent's `as_page` not yet run
-   live, file cards inside a page, Download of a page.
+1. Doc 98 is built (S1 to S5). Open in open-items "Card forms": the
+   Agent's `as_page` not reached in two live turns, and a card's
+   `deliverable` copied from its description and not refused (both need
+   investigating); file cards inside a page. Keep current's form was
+   clicked through live (2026-10-17).
 2. Open from today (docs/plans/open-items.md):
-   - Rename `vak_control::TimeLimits` (it now holds `series_points`) to
-     what `[control.limits]` is; `Limits` is taken by the intent kernel.
    - A kilometres-to-miles converter has not drawn as controls live.
-   - Steps choices: the model nests them inside a step; the flat-schema
-     rule forbids it. Keep flat, or allow? (maintainer)
    - In the chat an answer is one reading column unless the model sets
      `beside_previous`; the Canvas is where it takes the width.
-3. Open questions for the maintainer (ask together):
-   - P3: preview origins are per preview, so an opaque markup frame has
-     no stable origin for vendored libraries; alternative: the client
-     inlines a pinned library into the srcdoc.
-   - P4 (MCP UI resources): text only, or Vakyartha's own renderer.
-   - Doc 97 §7: `mail_calendar` needs a connected-accounts rollup to
-     load only when an account is connected.
+3. Decided by the maintainer 2026-10-17 (docs/decisions.md), to build:
+   steps stay flat (say so in the steps tool); P3 the client inlines a
+   pinned library into the srcdoc; P4 MCP UI is text only (nothing to
+   build); `mail_calendar` loads only with a connected-accounts rollup.
 4. P6 (live eval of format choice); the OpenAI route with `then`.
 5. Release questions (data baseline, purge) are the maintainer's.
 

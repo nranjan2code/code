@@ -267,7 +267,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             }
         };
         let deps = vak_flow::ExecutorDeps {
-            time_limits: self.core.time_limits(),
+            control_limits: self.core.control_limits(),
             steps: self.core.step_defaults(),
             objects,
             provider: match self.core.provider() {
@@ -1716,10 +1716,10 @@ impl Core {
 
     /// The operator's time limits (docs/design/88-control-plane.md §5a):
     /// the shipped ones with the live `[control.limits]` layers applied.
-    pub fn time_limits(&self) -> vak_control::TimeLimits {
+    pub fn control_limits(&self) -> vak_control::ControlLimits {
         Self::read_override(&self.inner.control_override)
             .unwrap_or_else(|| self.config().control.clone())
-            .time_limits()
+            .control_limits()
     }
 
     /// The operator's per-request timeout (`request_timeout_secs`); `0`
@@ -4469,7 +4469,7 @@ impl Core {
             .into_iter()
             .filter(|hook| hook.enabled)
         {
-            if let Err(reason) = hook_def(&hook, self.time_limits().hook_secs * 1000) {
+            if let Err(reason) = hook_def(&hook, self.control_limits().hook_secs * 1000) {
                 out.push(CapabilityDiagnostic {
                     kind: "hook".into(),
                     name: format!("{}/{}", hook.event, hook.command),
@@ -5681,7 +5681,7 @@ impl Core {
         } = metadata;
         // The operator's limit on one probe request: a hung provider must
         // not stall the background probe (docs/design/88 §5a).
-        let request_limit = std::time::Duration::from_secs(self.time_limits().probe_secs);
+        let request_limit = std::time::Duration::from_secs(self.control_limits().probe_secs);
         let mut ladder = vak_context::capacity::Ladder::new(declared_window);
         let mut rungs: Vec<vak_context::capacity::Rung> = Vec::new();
         let mut signals: Vec<String> = Vec::new();
@@ -6962,7 +6962,7 @@ impl Core {
             reach_standings: &reach_standings,
             mcp_inventory: &mcp_inventory,
             builtin_names: &builtin_names,
-            hook_limit_ms: self.time_limits().hook_secs * 1000,
+            hook_limit_ms: self.control_limits().hook_secs * 1000,
         });
         let revoke_registry = registry.clone();
         {
@@ -7114,7 +7114,7 @@ impl Core {
         cfg.run_retry_base_backoff_ms = self.inner.config.run_retry_base_backoff_ms;
         cfg.dispatch_ceiling = (cfg.max_retries.saturating_add(1))
             .saturating_mul(cfg.run_retry_attempts.saturating_add(1));
-        cfg.time_limits = self.time_limits();
+        cfg.control_limits = self.control_limits();
         // What the record says about a file a call touches (doc 90 §3.2).
         // Built from values, so the loop's closure outlives this Core borrow.
         let file_artifacts = self.artifacts();
@@ -7527,7 +7527,7 @@ impl Core {
                 max_retries: cfg.max_retries,
                 retry_base_backoff_ms: cfg.retry_base_backoff_ms,
                 request_timeout: cfg.request_timeout,
-                time_limits: cfg.time_limits,
+                control_limits: cfg.control_limits,
                 circuit_breaker: cfg.circuit_breaker.clone(),
                 run_retry_attempts: cfg.run_retry_attempts,
                 run_retry_base_backoff_ms: cfg.run_retry_base_backoff_ms,
@@ -10005,7 +10005,10 @@ fn uuid_like() -> String {
 }
 
 pub fn build_hooks(config: &vak_config::Config) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
-    build_hooks_from(&config.hooks, config.control.time_limits().hook_secs * 1000)
+    build_hooks_from(
+        &config.hooks,
+        config.control.control_limits().hook_secs * 1000,
+    )
 }
 
 fn normalize_capability_message(

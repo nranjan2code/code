@@ -598,17 +598,17 @@ pub struct ControlSettings {
     >,
     /// `[control.limits]`: the operator's time limits (doc 88 §5a).
     #[serde(skip_serializing_if = "is_default_limits")]
-    pub limits: vak_control::TimeLimitsOverride,
+    pub limits: vak_control::ControlLimitsOverride,
 }
 
-fn is_default_limits(limits: &vak_control::TimeLimitsOverride) -> bool {
-    *limits == vak_control::TimeLimitsOverride::default()
+fn is_default_limits(limits: &vak_control::ControlLimitsOverride) -> bool {
+    *limits == vak_control::ControlLimitsOverride::default()
 }
 
 impl ControlSettings {
     /// The time limits in force: the shipped ones with the layers applied.
-    pub fn time_limits(&self) -> vak_control::TimeLimits {
-        vak_control::TimeLimits::shipped().with(self.limits)
+    pub fn control_limits(&self) -> vak_control::ControlLimits {
+        vak_control::ControlLimits::shipped().with(self.limits)
     }
 
     /// The step defaults for a turn on this route.
@@ -3069,7 +3069,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             fc.lifecycle = LifecycleSettings::default();
             // Time limits are the operator's: how long an approval waits or
             // a scheduled script may run is not a cloned repository's call.
-            fc.control.limits = vak_control::TimeLimitsOverride::default();
+            fc.control.limits = vak_control::ControlLimitsOverride::default();
             fc.plugins.network_allow = None;
             fc.plugins.allow = None;
             warnings.push(format!(
@@ -5508,23 +5508,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_project_config(dir.path(), "[control.limits]\ncommand_secs = 45\n");
         let cfg = load_with_trust(dir.path(), true).unwrap();
-        let limits = cfg.control.time_limits();
+        let limits = cfg.control.control_limits();
         assert_eq!(limits.command_secs, 45);
         assert_eq!(
             limits.approval_secs,
-            vak_control::TimeLimits::shipped().approval_secs
+            vak_control::ControlLimits::shipped().approval_secs
         );
         let untrusted = load_with_trust(dir.path(), false).unwrap();
         assert_eq!(
-            untrusted.control.time_limits(),
-            vak_control::TimeLimits::shipped(),
+            untrusted.control.control_limits(),
+            vak_control::ControlLimits::shipped(),
             "an untrusted project sets no time limit"
         );
         persist_control(&project_path(dir.path()), &ControlSettings::default()).unwrap();
         let cfg = load_with_trust(dir.path(), true).unwrap();
         assert_eq!(
-            cfg.control.time_limits(),
-            vak_control::TimeLimits::shipped()
+            cfg.control.control_limits(),
+            vak_control::ControlLimits::shipped()
         );
     }
 

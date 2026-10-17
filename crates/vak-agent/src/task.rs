@@ -99,7 +99,7 @@ pub struct TaskDeps {
     pub max_retries: u32,
     pub retry_base_backoff_ms: u64,
     pub request_timeout: Option<std::time::Duration>,
-    pub time_limits: vak_control::TimeLimits,
+    pub control_limits: vak_control::ControlLimits,
     pub circuit_breaker: Option<Arc<crate::CircuitBreaker>>,
     pub run_retry_attempts: u32,
     pub run_retry_base_backoff_ms: u64,
@@ -1004,7 +1004,7 @@ impl TaskTool {
                     self.deps.approver.clone(),
                 )
                 .waiting(std::time::Duration::from_secs(
-                    self.deps.time_limits.question_secs,
+                    self.deps.control_limits.question_secs,
                 )),
             );
             child_only_definitions.push(vak_llm::ToolDefinition::new(
@@ -1048,7 +1048,7 @@ impl TaskTool {
         cfg.max_retries = self.deps.max_retries;
         cfg.retry_base_backoff_ms = self.deps.retry_base_backoff_ms;
         cfg.request_timeout = self.deps.request_timeout;
-        cfg.time_limits = self.deps.time_limits;
+        cfg.control_limits = self.deps.control_limits;
         cfg.circuit_breaker = self.deps.circuit_breaker.clone();
         cfg.run_retry_attempts = self.deps.run_retry_attempts;
         cfg.run_retry_base_backoff_ms = self.deps.run_retry_base_backoff_ms;

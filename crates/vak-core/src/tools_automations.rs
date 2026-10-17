@@ -420,7 +420,7 @@ impl vak_tools::Tool for AutomationsTool {
 
     fn description(&self) -> &str {
         "Manage the owner's automations: prompts or shell checks that run on \
-         their own later. Use for any request to be reminded, checked in on, \
+         their own later, and Library pages a scheduled prompt keeps current. Use for any request to be reminded, checked in on, \
          or have something run on a schedule, and to change, pause, resume, \
          run now or remove one ('remind me on Friday at 9', 'every weekday \
          at 8 send me the headlines', 'move my morning line to 9', 'pause \

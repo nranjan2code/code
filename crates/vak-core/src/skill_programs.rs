@@ -67,7 +67,7 @@ impl Core {
         let ctx = vak_tools::ToolContext::new(self.cwd().to_path_buf())
             .with_agent_id(agent)
             .with_trace(trace.child());
-        let limit_ms = self.time_limits().command_secs.saturating_mul(1000);
+        let limit_ms = self.control_limits().command_secs.saturating_mul(1000);
         let cases = tracing::Instrument::instrument(
             async {
                 let mut cases = Vec::new();

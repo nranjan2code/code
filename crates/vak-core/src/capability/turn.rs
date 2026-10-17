@@ -317,7 +317,7 @@ mod tests {
                 reach_standings: &self.standings,
                 mcp_inventory: &self.inventory,
                 builtin_names: &self.builtins,
-                hook_limit_ms: vak_control::TimeLimits::shipped().hook_secs * 1000,
+                hook_limit_ms: vak_control::ControlLimits::shipped().hook_secs * 1000,
             })
         }
     }

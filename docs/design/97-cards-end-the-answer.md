@@ -149,7 +149,8 @@ every card.
   deferred; reverted in `c0dcc4439`), and loading it only when an account
   is connected needs a connected-accounts rollup: reading the connection
   ledger at turn start would replay a chain on the turn path, which the
-  data rules forbid.
+  data rules forbid. Decided 2026-10-17 (docs/decisions.md): build that
+  rollup, and load `mail_calendar` only when it names a connected account.
 
 - Composition guidance (the `answer-layouts` skills) reaches only a model
   that calls the skill loader; luna does, the small route does not.

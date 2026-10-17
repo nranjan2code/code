@@ -281,10 +281,12 @@ a grant reads it and nothing else.
 
 ### P3 Libraries for markup previews
 
-- A fixed set of vendored libraries at pinned versions (a chart library
-  and a diagram library), served from the preview origin under a fixed
-  path, listed in `emit_markup_preview_card`'s description. `connect-src`
-  stays closed; only `script-src` names the preview origin's path.
+- Decided 2026-10-17 (docs/decisions.md): the client inlines a pinned
+  library's code into the opaque frame's srcdoc when the markup names it;
+  an opaque frame has no stable origin to load from, so nothing is served
+  from a preview origin. The libraries (a chart library and a diagram
+  library) are listed in `emit_markup_preview_card`'s description;
+  `connect-src` stays closed.
 - Each library is a workspace dependency under the dependency rule:
   pinned, justified, and rebuilt into the bundle manifest.
 
@@ -293,7 +295,8 @@ works offline in the opaque frame and the isolation tests pass.
 
 ### P4 MCP UI resources
 
-The maintainer chooses, recorded in docs/decisions.md:
+Decided 2026-10-17 (docs/decisions.md): **text only**. The second
+option below is not built.
 
 1. **Text only** (today): the tool's text result is shown; a declared UI
    resource is ignored.

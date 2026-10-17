@@ -58,11 +58,15 @@ export default function SharedArtifact() {
 
   const download = async (version: SharedVersion) => {
     try {
-      const blob = await (await call(`/shared/artifact/versions/${encodeURIComponent(version.id)}`)).blob();
+      const fetched = await (await call(`/shared/artifact/versions/${encodeURIComponent(version.id)}`)).blob();
+      // A page leaves as its text form: its cards' text, then the reply.
+      const page = view()?.kind === "page" ? readPage(new Uint8Array(await fetched.arrayBuffer())) : null;
+      const blob = page ? new Blob([page.text], { type: "text/markdown" }) : fetched;
+      const name = view()?.file_name || view()?.name || "file";
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = view()?.file_name || view()?.name || "file";
+      a.download = page ? name.replace(/\.json$/, ".md") : name;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
