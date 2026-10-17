@@ -32,7 +32,7 @@ Catalog::search(query, audience, scope, limit)
         │  profile notes and intake items, filtered by Agent,
         │  audience, space, the trash and intake's holds before ranking
         ▼
-{this_conversation: [{open, record}], elsewhere: [{from, id, date, text, open?}]}
+{this_conversation: [{open, record}], elsewhere: [{from, id, date, text, open?, made_in?}]}
         │
 returned as one ordinary tool result → appended to the ledger
 ```
@@ -47,7 +47,12 @@ excluded, and the current conversation is searched as this conversation,
 never as elsewhere. `recall` is the only model-visible search (one tool,
 2026-10-16: a model offered two picked the one that cannot search this
 conversation 13 times in 16; docs/audits/history-lookup-2026-10-16.md);
-`[memory] search_enabled = false` keeps it to this conversation. A memory note derived from a conversation keeps
+`[memory] search_enabled = false` keeps it to this conversation. A note `remember` writes names the conversation
+and turn it was written in, and a hit on it carries `made_in`, that
+turn's record (its calls and which failed, what it planned and did not
+deliver, how it ended; docs/design/99-turns-that-do-not-poison.md §4 E),
+so a note from a turn that went wrong is never read as an ordinary one.
+A memory note derived from a conversation keeps
 that conversation's audience; profile notes belong to the owner's local
 audience. The model sees a search answer only through a logged
 `tool_result`, preserving invariant 1. The catalog is Derived; the ledgers

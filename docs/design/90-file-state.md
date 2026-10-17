@@ -96,9 +96,10 @@ successes both get it:
 | A draft was undone | "Draft `…` was accepted, then undone by the person." |
 | A draft was erased | "The draft from turn 9 was erased; its contents are gone." |
 | Another Agent owns the file | "`plan.xlsx` belongs to Agent Ops; this Agent cannot continue it." |
+| A turn made the workspace copy (doc 99 §4 E) | "`findings.md` in the workspace was made in turn T of this conversation: calls read (failed), write, remember; not delivered: \"summary\"; ended: failed." That turn's record (`TurnCard::made_in`), read through `Core::turn_card`; said whenever the turn has closed, however it went. |
 
-Nothing is noted when the workspace file is the only version, or there is
-no record. The note states facts. It never chooses for the model, and it
+Nothing is noted when the workspace file is the only version and no turn
+made it, or there is no record. The note states facts. It never chooses for the model, and it
 never changes a call.
 
 ### 3.3 Found without the name
