@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Any card in a conversation opens in the Canvas at full size, and keeps
+  following the calculator it is linked to.
+
 - A chart can follow a calculator card above it: change an input and the
   line is drawn again across the range the calculator gives.
 

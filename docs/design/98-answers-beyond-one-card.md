@@ -1,7 +1,7 @@
 # 98 — Answers beyond one card
 
-Status: in progress (2026-10-17): accepted by the maintainer; S1 and S2
-built and drawn linked in live turns (2026-10-17). Written at
+Status: in progress (2026-10-17): accepted by the maintainer; S1, S2 and
+S3 built and checked live (2026-10-17). Written at
 the maintainer's direction ("we cannot build a card for every scenario";
 "make this the best out there"). Builds on docs/design/92-card-forms.md
 (forms), docs/design/87-composed-answers.md (composition),
@@ -184,3 +184,19 @@ Each stage is its own commit with the full gate and a live turn.
   `readings.*.value`, the table's `rows.*.*`); binding walks whatever a
   tool declares, with `*` for every index. A new form or pack declares
   its own; nothing in the binding names a form.
+
+## 10. S3 as built (2026-10-17)
+
+- A card is a Canvas subject: `{kind: "card", sessionId, presentationId}`
+  (`canvasSubject.ts`), with its own entry in `canvasViewers.ts` (no
+  comments, no path) and `CardViewer`, which reads the card from the
+  conversation's presentation by id and draws it with the same
+  `StructuredView`, so its actions and the values it follows stay live.
+- Every card of a conversation carries "Open in Canvas" in its shell (no
+  size threshold decides it); inside the Canvas the action is not drawn
+  (`InCanvasContext`).
+- Checked in the browser on the linked salary and rent cards: the stats
+  card opened in the Canvas, and with the Canvas beside the conversation
+  a new rent moved the Canvas copy from 35,000 to 25,000 a month. The
+  Canvas opens focused when the window is narrow, as it does for every
+  subject.

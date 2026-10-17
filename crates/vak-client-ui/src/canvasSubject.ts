@@ -10,7 +10,7 @@
 
 import { isOfficePath } from "./officeFiles.ts";
 
-export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office" | "automation" | "daily_mail_calendar";
+export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office" | "automation" | "daily_mail_calendar" | "card";
 
 interface SubjectBase {
   title: string;
@@ -34,6 +34,8 @@ export type CanvasSubject =
   | (SubjectBase & { kind: "automation"; taskId: string })
   /** A live, owner-only daily view of connected mail and calendar accounts. */
   | (SubjectBase & { kind: "daily_mail_calendar"; agentId: string })
+  /** A card of a conversation, by the presentation it was recorded as (docs/design/98 §3). */
+  | (SubjectBase & { kind: "card"; sessionId: string; presentationId: string })
   /** A dev server the session's launch configuration names. */
   | (SubjectBase & { kind: "live_server"; serverName: string; sessionId: string; candidateId?: string; path?: string });
 
@@ -79,6 +81,7 @@ export function previewSource(subject: CanvasSubject): PreviewSource | null {
     case "inline":
     case "automation":
     case "daily_mail_calendar":
+    case "card":
     case "live_server": return null;
   }
 }
@@ -104,6 +107,7 @@ export function subjectPath(subject: CanvasSubject): string {
     case "live_server": return subject.path ?? "";
     case "automation": return "";
     case "daily_mail_calendar": return "";
+    case "card": return "";
     default: return subject.path;
   }
 }
@@ -132,6 +136,7 @@ export function subjectKey(subject: CanvasSubject): string {
     case "live_server": return `server:${subject.sessionId}:${subject.candidateId ?? ""}:${subject.serverName}`;
     case "automation": return `task:${subject.taskId}`;
     case "daily_mail_calendar": return `daily_mail_calendar:${subject.agentId}`;
+    case "card": return `card:${subject.sessionId}:${subject.presentationId}`;
     case "inline": return `inline:${subject.basePath ?? ""}:${subject.title}:${digest(subject.html)}`;
   }
 }
@@ -196,6 +201,7 @@ export function displayType(subject: CanvasSubject): ArtifactDisplayType {
   if (subject.kind === "inline") return "html";
   if (subject.kind === "automation") return "automation";
   if (subject.kind === "daily_mail_calendar") return "daily_mail_calendar";
+  if (subject.kind === "card") return "card";
   const path = subject.path.toLowerCase();
   if (path.endsWith(".pdf")) return "pdf";
   if (path.endsWith(".csv") || path.endsWith(".tsv")) return "table";

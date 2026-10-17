@@ -13,7 +13,7 @@ commit'), then this handover's 'Now' and 'Next', then
 docs/design/96-answer-projection-gaps.md.
 
 Run `git status` and `git log --oneline -8`; the newest commit should be
-'Card tool descriptions: neutral examples only'. Stage only your own paths; keep only
+'Doc 98 S3: cards open in the Canvas'. Stage only your own paths; keep only
 `main`. We are on a Claude Code Pro plan: be lean (grep and line ranges,
 batched commands), check usage with get_usage, run the full gate in the
 background once per finished step, commit each verified step, and rewrite
@@ -414,8 +414,8 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
    (series, a following chart) built and drawn live (doc 98 §8). Larger
    route for a one-off check: `target/debug/vak -C /tmp/vak-live/s1-luna
    exec --provider openai-responses --model gpt-6-luna --json "…"`, then
-   read the session through the 8907 server. Next: S3 Canvas, S4 product
-   look for HTML (all card wording must
+   read the session through the 8907 server. S3 (cards open in the Canvas) built and checked
+   live (doc 98 §10). Next: S4 product look for HTML, then S5 living pages (all card wording must
    stay domain-neutral: no domain names, units or solutions in tool
    descriptions or acknowledgements). Its outline:
    - Shared values within an answer: a controls card publishes its inputs
