@@ -1,4 +1,4 @@
-## Unreleased
+## 8.8.0 — 2026-10-17
 
 - On OpenAI, Anthropic and Gemini routes the Agent can use every tool it
   has, including Word, Excel, PowerPoint and PDF files, mail, calendar and
