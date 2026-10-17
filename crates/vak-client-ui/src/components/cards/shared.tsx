@@ -1,5 +1,4 @@
-import { Show, createContext, useContext, type JSX } from "solid-js";
-import { openArtifactCanvas } from "../../store";
+import { Show, createContext, type JSX } from "solid-js";
 import { renderMarkdown } from "../../md";
 
 /** A stored card payload: the form's fields, as the host built them. */
@@ -18,8 +17,6 @@ export const PresentationInteractionContext = createContext<{
 /** The presentation a card was recorded as: what a controls card publishes
  *  its values under (docs/design/98 §2). */
 export const CardIdContext = createContext<string | undefined>();
-/** True inside the Canvas, where a card is already open at full size. */
-export const InCanvasContext = createContext(false);
 /** The conversation a card belongs to: a preview reads its files from that
  *  conversation's folder, which is its Agent's own. */
 export const PresentationSessionContext = createContext<string | undefined>();
@@ -51,17 +48,7 @@ export function Card(props: {
   children: JSX.Element;
   tag?: "section" | "aside";
 }) {
-  // Any card of a conversation opens at full size in the Canvas
-  // (docs/design/98 §3), where its actions and followed values stay live.
-  const sessionId = useContext(PresentationSessionContext);
-  const cardId = useContext(CardIdContext);
-  const inCanvas = useContext(InCanvasContext);
-  const openable = () => !!sessionId && !!cardId && !inCanvas;
-  const open = () => {
-    if (!sessionId || !cardId) return;
-    openArtifactCanvas({ kind: "card", title: text(props.title) ?? text(props.label) ?? "Card", sessionId, presentationId: cardId });
-  };
-  const header = () => text(props.label) || text(props.title) || props.actions || openable();
+  const header = () => text(props.label) || text(props.title) || props.actions;
   const body = (
     <>
       <Show when={header()}>
@@ -70,12 +57,7 @@ export function Card(props: {
             <Show when={text(props.label)}>{(label) => <span class="card-eyebrow">{label()}</span>}</Show>
             <Show when={text(props.title)}>{(title) => <h3 class="card-title">{title()}</h3>}</Show>
           </div>
-          <Show when={props.actions || openable()}>
-            <div class="card-actions">
-              {props.actions}
-              <Show when={openable()}><button type="button" class="card-button card-open" onClick={open}>Open in Canvas</button></Show>
-            </div>
-          </Show>
+          <Show when={props.actions}><div class="card-actions">{props.actions}</div></Show>
         </header>
       </Show>
       {props.children}

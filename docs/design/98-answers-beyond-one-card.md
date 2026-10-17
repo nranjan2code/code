@@ -187,16 +187,32 @@ Each stage is its own commit with the full gate and a live turn.
 
 ## 10. S3 as built (2026-10-17)
 
-- A card is a Canvas subject: `{kind: "card", sessionId, presentationId}`
-  (`canvasSubject.ts`), with its own entry in `canvasViewers.ts` (no
-  comments, no path) and `CardViewer`, which reads the card from the
-  conversation's presentation by id and draws it with the same
-  `StructuredView`, so its actions and the values it follows stay live.
-- Every card of a conversation carries "Open in Canvas" in its shell (no
-  size threshold decides it); inside the Canvas the action is not drawn
-  (`InCanvasContext`).
-- Checked in the browser on the linked salary and rent cards: the stats
-  card opened in the Canvas, and with the Canvas beside the conversation
-  a new rent moved the Canvas copy from 35,000 to 25,000 a month. The
-  Canvas opens focused when the window is narrow, as it does for every
-  subject.
+> **Historical record:** the first S3 opened single cards in the Canvas
+> (a `card` subject and "Open in Canvas" on every card). The maintainer
+> set the unit right the same day: an answer is seen whole. It was
+> replaced, and the per-card subject, viewer and button removed.
+
+- The Canvas opens an answer: `{kind: "answer", sessionId, turnId}`
+  (`canvasSubject.ts`, `canvasViewers.ts`, `AnswerViewer`). The viewer
+  draws the turn with the conversation's own `PresentationTimelineView`,
+  given only that turn's items, so text, cards and files appear in the
+  model's order and placement, and everything works as in the
+  conversation: inputs, actions, and the values cards publish and follow.
+- Layout is CSS alone: inside `.answer-in-canvas` the reading-width caps
+  are lifted and the answer's material flows into columns of at least
+  24rem, as many as fit; a card never splits across columns. One column
+  on a phone, two at a wide window. The viewer scrolls.
+- "Open in Canvas" sits with the answer's actions, beside Save to
+  Library; inside the Canvas it is not drawn (`InCanvasContext`).
+- Checked in the browser on a support-operations dashboard of four cards
+  (controls, stats, a chart following a series, a table), built by the
+  installed route: in the Canvas at a wide window the cards stood in two
+  columns; raising agents on shift from 4 to 6 in the Canvas moved the
+  stats (throughput 128 to 144, utilisation 112.5% to 75%), redrew the
+  chart and changed the table; at 390 px it was one scrolling column.
+- In the conversation an answer stays one reading column, and the model
+  may set cards side by side with `beside_previous`; the Canvas is where
+  an answer takes the width.
+- The same request, asked for "a dashboard" without saying cards, was
+  answered with an HTML page (the free-form path, §5), which drew in the
+  Canvas in its own colours: S4's work.

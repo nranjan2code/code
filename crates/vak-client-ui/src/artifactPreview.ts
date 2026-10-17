@@ -23,7 +23,7 @@ export function subjectReader(subject: CanvasSubject): ArtifactPreviewReader | n
     case "live_server":
     case "automation":
     case "daily_mail_calendar":
-    case "card":
+    case "answer":
       return null;
   }
 }

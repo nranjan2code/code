@@ -1,7 +1,8 @@
 ## Unreleased
 
-- Any card in a conversation opens in the Canvas at full size, and keeps
-  following the calculator it is linked to.
+- A whole answer opens in the Canvas: its text and every card, laid out
+  in as many columns as fit, scrolling, and still working there; change
+  an input and the linked figures, charts and tables follow.
 
 - A chart can follow a calculator card above it: change an input and the
   line is drawn again across the range the calculator gives.

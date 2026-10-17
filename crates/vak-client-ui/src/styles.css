@@ -6780,7 +6780,11 @@ html[data-theme="dark"] .map-tiles, html[data-theme="frosted-dark"] .map-tiles, 
 .controls-outputs { padding-top: var(--space-3); border-top: 1px solid var(--border); }
 .controls-error { margin: 0; color: var(--muted); font-size: var(--fs-control); }
 .controls-actions { display: flex; justify-content: flex-end; }
-.card-in-canvas { padding: var(--space-4); }
+.answer-in-canvas { position: relative; height: 100%; overflow: auto; padding: var(--space-4); background: var(--bg); }
+.answer-in-canvas .semantic-timeline, .answer-in-canvas .semantic-turn, .answer-in-canvas .semantic-document { max-width: none; }
+.answer-in-canvas .primary-result { width: 100%; }
+.answer-in-canvas .primary-result-material { display: block; column-width: 24rem; column-gap: var(--space-4); }
+.answer-in-canvas .answer-block { break-inside: avoid; margin-bottom: var(--space-4); }
 .canvas-card-gone { margin: var(--space-4); color: var(--muted); font-size: var(--fs-control); }
 
 .pack-row { display: flex; flex-wrap: wrap; gap: var(--space-4); }

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, ErrorBoundary, For, onCleanup, Show } from "solid-js";
+import { createContext, createEffect, createMemo, createResource, createSignal, ErrorBoundary, For, onCleanup, Show, useContext } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import type {
@@ -1025,7 +1025,12 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
   return <Show when={files() !== 1 && props.resultId}>
     <nav class="primary-result-actions" aria-label="Result actions">
       <button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for changes"}</button>
-      <Show when={files() === 0}><SaveAnswerToLibrary sessionId={props.sessionId} turnId={props.turnId} /></Show>
+      <Show when={files() === 0}>
+        <Show when={!useContext(InCanvasContext)}>
+          <button type="button" onClick={() => openArtifactCanvas({ kind: "answer", title: "Answer", sessionId: props.sessionId, turnId: props.turnId })}>Open in Canvas</button>
+        </Show>
+        <SaveAnswerToLibrary sessionId={props.sessionId} turnId={props.turnId} />
+      </Show>
     </nav>
   </Show>;
 }
@@ -1613,6 +1618,9 @@ export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRende
     </section>
   );
 }
+
+/** True when an answer is drawn in the Canvas, where it is already open. */
+export const InCanvasContext = createContext(false);
 
 export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean }) {
   // The automations a turn made or changed (docs/design/94 §5), read again
