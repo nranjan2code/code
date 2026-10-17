@@ -759,6 +759,21 @@ Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
 
 ## Needs the maintainer
 
+- Remembered preferences reach a later turn only through `recall`, which
+  the model may not call: on 2026-10-17 "use a map card for routes" was
+  stored and the next route request ignored it. Carrying the owner's
+  preference notes in the per-turn tail would fix it, but a note can be
+  written in a turn that read someone else's words, and memory never
+  writes a prompt layer (`memory_notes_never_become_prompt_guardrails`).
+  Choose: carry preference notes only from turns that held no untrusted
+  content (notes would record their turn's provenance), carry them for the
+  owner to confirm once, or leave memory retrieval-only.
+- A repair step asks for no reasoning (`StepDefaults::shipped`), and on
+  the Responses wire the one repair step seen (2026-10-17, receipt 125)
+  missed the provider cache: 19.6k input tokens uncached in a turn that
+  was otherwise cached. Measure over more repair steps before changing the
+  shipped default.
+
 - V4.3: drag, double-click and full screen in the running desktop app
   (built; no mouse input to native windows here).
 - V4.6: who draws the character glyphs. V4.5 (close out the visual

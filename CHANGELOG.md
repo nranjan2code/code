@@ -4,6 +4,19 @@
   that turn and everything after it leave the conversation the Agent sees.
   Nothing is deleted.
 
+- On OpenAI and Anthropic routes, tool calls are held to their tools'
+  schemas again. Since 8.8.0 the document tool's schema was refused in its
+  strict form, and that switched schema enforcement off for every tool,
+  so a plan could lose a deliverable to a malformed call.
+
+- A message you stop before anything happens no longer stands between
+  your next message and the reply before it: the next turn sees the last
+  real exchange.
+
+- When a card's link cannot be fetched, the Agent is told to give the link
+  in its reply and plan that part as text, rather than asking again for a
+  card it cannot show.
+
 ## 8.8.0 — 2026-10-17
 
 - On OpenAI, Anthropic and Gemini routes the Agent can use every tool it

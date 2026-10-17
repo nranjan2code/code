@@ -174,7 +174,8 @@ pub fn uncited_source(urls: &[String]) -> String {
     format!(
         "[uncited-source]: not shown — this card cites {} which nothing in this conversation \
          retrieved or was given. A card cites only the exact URLs of pages a tool fetched here. \
-         Fetch the page first, or answer in text and say what could not be verified.",
+         Fetch the page first. If it cannot be fetched, give the link in your text, say what \
+         could not be verified, and call `plan` again with that deliverable's form as text.",
         urls.iter()
             .map(|url| format!("`{url}`"))
             .collect::<Vec<_>>()
