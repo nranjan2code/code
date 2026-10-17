@@ -10,41 +10,53 @@ history keeps them); every note of theirs that is still true is under
 AGENTS.md first (especially 'The data rules', 'No word lists, no tuned
 limits', 'Investigating a failure' and 'Verification before every
 commit'), then this handover's 'Now' and 'Next', then
-docs/design/96-answer-projection-gaps.md.
+docs/design/98-answers-beyond-one-card.md (§7 to §11 say what S1 to S4
+built) and docs/design/96-answer-projection-gaps.md.
 
 Run `git status` and `git log --oneline -8`; the newest commit should be
-'Doc 98 S4: generated pages in the product's look'. Stage only your own paths; keep only
-`main`. We are on a Claude Code Pro plan: be lean (grep and line ranges,
-batched commands), check usage with get_usage, run the full gate in the
-background once per finished step, commit each verified step, and rewrite
-'Now' and 'Next' here after every step so a cut-off session loses nothing.
-The maintainer is the only user: rewrite a wrong design rather than patch
-it, never blame the model, and ask on open design choices.
+'Handover: doc 98 S1 to S4 done, S5 next'. Stage only your own paths;
+keep only `main`. The maintainer is the only user, there are no users to
+keep compatible with: write clean code, delete what is not needed,
+rewrite a wrong design rather than patch it, never blame the model, ask
+on open design choices. Nothing domain-specific or hard-coded: no domain,
+unit, place or solution in code, tool descriptions or refusals; behaviour
+comes from data and declarations. We are on a Claude Code Pro plan: be
+lean (grep and line ranges, batched commands), check usage with
+get_usage, batch finished steps under one full gate (`scripts/gate.sh`,
+about 12 minutes, run in the background), commit each verified step, and
+rewrite 'Now' and 'Next' here after every step.
 
-Live runs: launch entry `vak-e1-live` (port 8905, VAK_HOME
-/tmp/vak-live/e1-home, Ollama qwen3.5:4b-mlx; sign-in link
-http://127.0.0.1:8905/app?token=<contents of /tmp/vak-live/test-gateway-token>).
-ONE TURN AT A TIME on the local model: never start a request while one
-runs (two overlapping turns stall Ollama; the watchdog then waits 600 s).
-Drive turns with the scratchpad pattern: POST /sessions (fresh session),
-POST /sessions/{id}/run {prompt}, poll GET /sessions until that session is
-not running, read /sessions/{id}/transcript. After a client change: `npm
-run build` in crates/vak-client-ui, then `cargo build -p vak -p vak-server
---bins`, restart the server, and RELOAD the browser tab (a hash change
-does not reload the bundle). Short progress lines."
+Live runs, ONE TURN AT A TIME (overlapping turns stall Ollama):
+- Dev route: launch entry `vak-e1-live` (port 8905, VAK_HOME
+  /tmp/vak-live/e1-home, Ollama qwen3.5:4b-mlx; sign-in
+  http://127.0.0.1:8905/app?token=<contents of /tmp/vak-live/test-gateway-token>).
+  Drive turns over HTTP: POST /sessions, POST /sessions/{id}/run
+  {prompt}, poll GET /sessions until it is not running, read
+  /sessions/{id}/transcript.
+- Larger route, sparingly (the maintainer allows it): `target/debug/vak
+  -C /tmp/vak-live/s4 exec --provider openai-responses --model
+  gpt-6-luna --json "…" > /tmp/vak-live/runs/x.json 2> /tmp/vak-live/runs/x.txt`
+  (keep outputs OUT of the workspace folder: the model reads them), then
+  view it on the installed home with launch entry `vak-installed-live`
+  (port 8907, same token).
+- After a client change: `npm run build` in crates/vak-client-ui, then
+  `cargo build -p vak -p vak-server --bins`, restart the server, and
+  RELOAD the browser tab (a hash change does not reload the bundle). A
+  preview-origin page can take a few seconds to draw the first time.
+Short progress lines."
 
 ## Where things stand
 
-**Now (2026-10-17).** Pushed today: mid-turn reload draws recorded cards
-(pinned by a test) and restores a waiting approval or question at once
-(`keepLiveGates`, restores start from an empty list); doc 96 P5 map drew
-live; card tools refuse a field they do not name (closed `call_schema`)
-instead of dropping it; steps description says a step can offer choices.
-Doc 96 P1, the `controls` form, is built and verified live (bill split,
-loan; "Ask about this" starts a turn with host-computed values); the
-model writes no results, the builder computes them
-(`vak_delivery::expression`, `::controls`, client
-`controlsExpression.ts`, shared `tests/expression_cases.json`).
+**Now (2026-10-17, end of session).** Done and pushed: mid-turn reload
+draws recorded cards and restores waiting approvals and questions; the
+map form drew live; card tools refuse a field they do not name; the
+`controls` form (doc 96 P1); doc 98 S1 shared values (a stat's `follows`,
+a table cell's `= expression`), S2 series and charts that follow them,
+the series cap as `[control.limits] series_points` (Settings → Limits),
+card tools declaring followable fields (`Tool::followable_fields`), S3
+the whole answer in the Canvas (multi-column, scrolling, live), S4
+generated pages in the product's look (one client stylesheet, preview
+slot, live theme switch). All card wording is domain-neutral.
 
 
 **Next (2026-10-16): the tool audit is built; doc 95 waits for the
@@ -396,54 +408,28 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-0. If 'Doc 96 P1: the controls form' is not the newest commit, the gate
-   or commit did not finish: run the full gate and commit the P1 paths
-   (controls.rs, expression.rs, expression_cases.json, Controls.tsx,
-   controlsExpression.ts, controls-expression.mjs, card_actions on both
-   sides, presentation_tools, skills, docs 92/96, open-items, CHANGELOG,
-   dist-web).
-1. Answers beyond single cards (maintainer, 2026-10-17: "we cannot build
-   a card for every scenario"; "make this the best out there"; HTML must
-   follow the product's styling, theme and tokens). The proposal is
-   written: docs/design/98-answers-beyond-one-card.md (S1 shared values,
-   S2 series, S3 Canvas, S4 product look for HTML, S5 living pages). Get
-   the maintainer's yes (given 2026-10-17). S1 is built and committed
-   (doc 98 §7) and drawn linked live (installed route, gpt-6-luna; the
-   dev route answers with one controls card). A dev server on the
-   installed home: launch entry `vak-installed-live` (port 8907). S2
-   (series, a following chart) built and drawn live (doc 98 §8). Larger
-   route for a one-off check: `target/debug/vak -C /tmp/vak-live/s1-luna
-   exec --provider openai-responses --model gpt-6-luna --json "…"`, then
-   read the session through the 8907 server. S3 (the whole answer opens in the Canvas, multi-column, live) built
-   and checked live (doc 98 §10). S4 (pages in the product's look, live theme switch) built and checked
-   (doc 98 §11). Next: S5 living pages (doc 96 P2) (all card wording must
-   stay domain-neutral: no domain names, units or solutions in tool
-   descriptions or acknowledgements). Its outline:
-   - Shared values within an answer: a controls card publishes its inputs
-     and outputs by name; any card's field may be an expression over them
-     in the same closed language; the client recomputes live, the host
-     checks every expression and computes the starting values. Linked,
-     concurrent cards with no new card type.
-   - Bigger results open in the Canvas (doc 66) to view and work with.
-   - Free-form HTML (markup and file previews, dashboards) must follow the
-     product's styling, theme and tokens: Q1 already injects `--vak-*`
-     tokens into previews; extend to a token stylesheet and the type scale
-     every generated page gets, and describe it in the preview card tools.
-   - Living dashboards: doc 96 P2 (a Library page versioned by an
-     automation), composed of cards.
-2. Open questions for the maintainer (ask together):
-   - P3 as designed does not fit: preview origins are per preview on fresh
-     ports, so an opaque markup frame has no stable origin for vendored
-     libraries. Alternative: the client inlines a pinned library into the
-     srcdoc (script-src already allows inline). Bundle size is the cost.
-   - Steps choices: the model nests them inside the step; the flat-schema
-     rule (doc 30 §30.1 rule 4) forbids that. Keep flat, or allow?
+1. Doc 98 S5, living pages (doc 96 P2): a Library page whose content is
+   an answer's composed cards and whose versions come from an automation
+   (`Trigger`) whose run ends by recording a new version; its controls
+   and shared values work as in an answer. Write its design into doc 98
+   §6/S5 first if it needs choices, and ask on them.
+2. Open from today (docs/plans/open-items.md):
+   - Rename `vak_control::TimeLimits` (it now holds `series_points`) to
+     what `[control.limits]` is; `Limits` is taken by the intent kernel.
+   - A kilometres-to-miles converter has not drawn as controls live.
+   - Steps choices: the model nests them inside a step; the flat-schema
+     rule forbids it. Keep flat, or allow? (maintainer)
+   - In the chat an answer is one reading column unless the model sets
+     `beside_previous`; the Canvas is where it takes the width.
+3. Open questions for the maintainer (ask together):
+   - P3: preview origins are per preview, so an opaque markup frame has
+     no stable origin for vendored libraries; alternative: the client
+     inlines a pinned library into the srcdoc.
    - P4 (MCP UI resources): text only, or Vakyartha's own renderer.
-   - Doc 97 §7: `mail_calendar` needs a connected-accounts rollup to load
-     only when an account is connected.
-3. P6 (live eval of format choice), the converter that has not drawn as
-   controls yet (open-items), the OpenAI route with `then`.
-4. Release questions (data baseline, purge) are the maintainer's.
+   - Doc 97 §7: `mail_calendar` needs a connected-accounts rollup to
+     load only when an account is connected.
+4. P6 (live eval of format choice); the OpenAI route with `then`.
+5. Release questions (data baseline, purge) are the maintainer's.
 
 ## Working notes
 
