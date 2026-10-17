@@ -289,8 +289,9 @@ a grant reads it and nothing else.
   typed `libraries` field (an enum of what is vendored), never by the
   client reading the markup; `connect-src` stays closed. Built
   2026-10-17 (`vak_delivery::skills::MARKUP_LIBRARIES`,
-  `crates/vak-client-ui/src/previewLibraries.ts`); not yet drawn live, see
-  docs/plans/open-items.md.
+  `crates/vak-client-ui/src/previewLibraries.ts`); `libraries` is
+  required (an empty list when none), after two live turns left an
+  optional one out. Drawn live in the card and the Canvas, offline.
 - Each library is a workspace dependency under the dependency rule:
   pinned, justified, and rebuilt into the bundle manifest.
 

@@ -47,23 +47,11 @@ Short progress lines."
 
 ## Where things stand
 
-**Now (2026-10-17, end of session).** Done and pushed: mid-turn reload
-draws recorded cards and restores waiting approvals and questions; the
-map form drew live; card tools refuse a field they do not name; the
-`controls` form (doc 96 P1); doc 98 S1 shared values (a stat's `follows`,
-a table cell's `= expression`), S2 series and charts that follow them,
-the series cap as `[control.limits] series_points` (Settings → Limits),
-card tools declaring followable fields (`Tool::followable_fields`), S3
-the whole answer in the Canvas (multi-column, scrolling, live), S4
-generated pages in the product's look (one client stylesheet, preview
-slot, live theme switch), S5 living pages (doc 98 §12: a saved answer is
-a page of its own items; `Trigger::page` keeps one current, set by Keep
-current or the automation tool's `result_to`; checked live on the dev
-route: a routine run added version 2, the page opened in the Canvas, and a
-guest with a viewer share saw only the page); a page downloads as its
-text and is attached to the Agent as its text; `vak_control::TimeLimits`
-is `ControlLimits`, and the admin console shows `series_points`. All card
-wording is domain-neutral.
+**Now (2026-10-17, end of second session).** Pushed today: doc 98 S5
+living pages (5a6e1b98a), pages leave as text and `ControlLimits`
+(9dcad8b3b), deliverable checks and `automations` always loaded
+(4372613c5), `result_to` and the no-plan refusal (a013263c1), P3 markup
+libraries (6c1d1531d). Uncommitted work is described in Next item 0.
 
 
 **Next (2026-10-16): the tool audit is built; doc 95 waits for the
@@ -415,21 +403,46 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Doc 98 is built (S1 to S5). Fixed 2026-10-17: a card's `deliverable`
-   is checked against any declared plan; `automations` is always loaded
-   (replay 0/16 deferred, 11/16 loaded). Open (open-items "Card forms"):
-   file
-   cards inside a page; `deliverable` with no plan at all.
-2. Open from today (docs/plans/open-items.md):
-   - A kilometres-to-miles converter has not drawn as controls live.
-   - In the chat an answer is one reading column unless the model sets
-     `beside_previous`; the Canvas is where it takes the width.
-3. Decided by the maintainer 2026-10-17 (docs/decisions.md): steps stay
-   flat (done: `steps` points to `choices`); P3 built (typed `libraries`,
-   the client inlines Mermaid) but two live turns left `libraries` out, a
-   question for the maintainer in open-items; P4 MCP UI is text only
-   (nothing to build); next to build: `mail_calendar` loads only with a
-   connected-accounts rollup.
+0. **Uncommitted at session end (2026-10-17), two pieces in the tree:**
+   - **P3 required `libraries` + draw-when-sized** (verified live, gate
+     was mid-run, not finished): `crates/vak-core/src/presentation_tools.rs`
+     (`libraries` required), `crates/vak-client-ui/src/previewLibraries.ts`
+     (Mermaid draws once the frame has a size), the rebuilt
+     `crates/vak-client-ui/dist-web`, and docs (decisions, doc 96,
+     open-items, this handover). Run `scripts/gate.sh`, then commit these
+     paths alone.
+   - **Mail/calendar ledger onto RecordChain, step 1 in progress, NOT
+     verified:** `crates/vak-session/src/chain.rs` (new
+     `RecordChain::append_decided`: decide and append under the chain's
+     writer lock), `crates/vak-config/src/scope.rs`
+     (`AgentScope::mail_calendar_connections` and `_rollup`),
+     `crates/vak-mail-calendar/src/connection_ledger.rs` (storage is now a
+     chain read through a `Rollup` of `State {accounts, fences, broken}`;
+     JSONL, flock, symlink and size limits deleted; `LedgerError` is now
+     `Write | InvalidRecord | Conflict`; its unit tests compile, not run).
+     Next: `cargo check --workspace --tests` (vak-server and vak-core may
+     match removed `LedgerError` variants), run vak-mail-calendar tests,
+     add an `append_decided` test in vak-session, then step 2: a
+     connected-accounts read for the turn (the rollup) used by
+     `Core::scoped_tools` to push `MailCalendarTool` only when the turn's
+     Agent has a connected account (and `MailCalendarTool::execute`
+     already reads through the rollup now). Measure a calendar question
+     with an account connected (`scripts/measure_tool_form.py replay`,
+     launch entries `ollama-capture` + `vak-inv-live`), live check on
+     `vak-e1-live`, docs (doc 80, doc 97 §7, open-items "Card forms",
+     CHANGELOG), gate, commit each step.
+1. Doc 98 is built (S1 to S5). Done 2026-10-17: card `deliverable` is
+   checked against any plan and refused with no plan; `automations` is
+   always loaded (replay 0/16 deferred, 11/16 loaded); its `result_to`
+   (conversation, new_page, a page id) replaced `as_page`/`page` and a
+   live turn made a living page end to end. Open (open-items "Card
+   forms"): file cards inside a page.
+2. Open from today (docs/plans/open-items.md): a kilometres-to-miles
+   converter has not drawn as controls live; in the chat an answer is one
+   reading column unless the model sets `beside_previous`.
+3. Decided 2026-10-17 (docs/decisions.md): steps stay flat (done); P3
+   (done, see 0); P4 MCP UI text only (nothing to build); `mail_calendar`
+   loads only with a connected account (in progress, see 0).
 4. P6 (live eval of format choice); the OpenAI route with `then`.
 5. Release questions (data baseline, purge) are the maintainer's.
 

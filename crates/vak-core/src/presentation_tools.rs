@@ -1484,16 +1484,16 @@ fn build_file_preview(args: &Map<String, Value>) -> Result<Value, String> {
 fn markup_preview_fields() -> Value {
     fields(
         serde_json::json!({
-            "html": string("The HTML markup to preview, written in full. Markup that draws with a library names it in `libraries`, or nothing draws it."),
+            "html": string("The HTML markup to preview, written in full."),
             "libraries": {
                 "type": "array",
-                "description": "Optional. Libraries the markup uses, put into its frame with no network: diagram (Mermaid; write each diagram's source in <pre class=\"mermaid\">...</pre>).",
+                "description": "The libraries the markup draws with, put into its frame with no network; an empty list when it uses none. diagram: Mermaid, each diagram's source written in <pre class=\"mermaid\">...</pre>.",
                 "items": {"type": "string", "enum": vak_delivery::skills::MARKUP_LIBRARIES}
             },
             "title": string(TITLE),
             "status": string("Optional. The state of the work, in a word.")
         }),
-        &["html"],
+        &["html", "libraries"],
     )
 }
 
@@ -2112,7 +2112,7 @@ fn fixture_for(form: &str) -> Value {
             serde_json::json!({"format": "image", "url": "https://example.com/a.png", "alt": "A chart"})
         }
         "file_preview" => serde_json::json!({"artifact_path": "index.html"}),
-        "markup_preview" => serde_json::json!({"html": "<p>Hello</p>"}),
+        "markup_preview" => serde_json::json!({"html": "<p>Hello</p>", "libraries": []}),
         "diff" => {
             serde_json::json!({"files": [{"filename": "a.rs", "hunks": "@@ -1 +1 @@", "additions": 1, "deletions": 0}]})
         }

@@ -245,16 +245,26 @@ Carried over from 7.2.0:
 
 ## Card forms (docs/design/92)
 
-- [ ] P3 (docs/design/96, 2026-10-17): `emit_markup_preview_card` takes a
-  typed `libraries` list (`vak_delivery::skills::MARKUP_LIBRARIES`, only
-  `diagram`), and the client inlines the pinned Mermaid build into the
-  opaque frame (`previewLibraries.ts`), in the card and in the Canvas. Two
-  live turns asking for a markup preview of a flow diagram wrote Mermaid
-  in `<pre class="mermaid">` and left `libraries` out, the second after
-  the `html` field's description named it; so the inlining has not drawn
-  in a live turn. Open for the maintainer: the same pattern as `as_page`
-  (an optional field a call leaves out); a diagram already draws when the
-  model writes a Mermaid fence in its text.
+- [ ] `mail_calendar` loads only when an account is connected (decided
+  2026-10-17, docs/decisions.md). Found first: the connection ledger
+  (`vak_mail_calendar::connection_ledger`, `agents/<id>/mail-calendar/
+  connections.jsonl`) is a raw JSONL file under its own flock, which the
+  data rules forbid (a side ledger is a `RecordChain`; what a turn reads
+  is a rollup). Do it in two steps: move the ledger onto `RecordChain`
+  with its OAuth fences and erasure (42 call sites in 8 files:
+  vak-mail-calendar, vak-core `mail_calendar.rs`/`erasure.rs`, vak-server
+  `mail_calendar.rs`/`lib.rs`, tests), then a connected-accounts rollup
+  that `scoped_tools` reads to load the tool.
+
+- [x] P3 (docs/design/96, 2026-10-17): `emit_markup_preview_card`
+  requires a typed `libraries` list (`vak_delivery::skills::MARKUP_LIBRARIES`,
+  only `diagram`; an empty list when none), and the client inlines the
+  pinned Mermaid build into the opaque frame (`previewLibraries.ts`), in
+  the card and the Canvas. Optional, two live turns left it out; required,
+  a turn sent `[]` with plain HTML, and one asked for a Mermaid flowchart
+  sent `["diagram"]`, which drew in the card and the Canvas, offline. It
+  first drew at zero size: Mermaid ran before the frame had a size; it now
+  draws once the frame has one.
 - [ ] Living pages (docs/design/98 §12): a page made from an answer that
   delivered a file draws that file's card, whose Review needs the
   conversation it came from. Keep current names its automation after the

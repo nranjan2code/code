@@ -11,13 +11,27 @@ const PREVIEW_LIBRARIES: Record<string, () => Promise<string>> = {
   diagram: async () => {
     const { default: source } = await import("mermaid/dist/mermaid.min.js?raw");
     const config = {
-      startOnLoad: true,
+      startOnLoad: false,
       theme: "base",
       securityLevel: "strict",
       fontFamily: "var(--vak-font, sans-serif)",
       themeVariables: tokenThemeVariables(),
     };
-    return `${source}\nmermaid.initialize(${JSON.stringify(config)});`;
+    // Mermaid measures text as it draws, so it draws once the frame has a
+    // size: a frame laid out after it loaded drew every diagram at zero
+    // size (found live 2026-10-17).
+    return `${source}\nmermaid.initialize(${JSON.stringify(config)});
+(() => {
+  let drawn = false;
+  const draw = () => {
+    if (drawn || innerWidth === 0) return;
+    drawn = true;
+    removeEventListener("resize", draw);
+    mermaid.run();
+  };
+  addEventListener("resize", draw);
+  addEventListener("load", draw);
+})();`;
   },
 };
 
