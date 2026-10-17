@@ -247,6 +247,12 @@ pub struct ModelCapabilities {
     /// (structured output; docs/design/89 §4.3).
     #[serde(default)]
     pub schema_output: Support,
+    /// Whether the wire hands back a call to a tool the request did not
+    /// list. Only where it does can a tool stay off the wire until the
+    /// model calls it by name (docs/design/68-context-engine.md §5); where
+    /// it does not, or nobody knows, every admitted tool is sent.
+    #[serde(default)]
+    pub unlisted_calls: Support,
 }
 
 impl ModelCapabilities {
@@ -317,6 +323,7 @@ impl ModelCapabilities {
             tool_choice: self.tool_choice.meet(other.tool_choice),
             strict_tools: self.strict_tools.meet(other.strict_tools),
             schema_output: self.schema_output.meet(other.schema_output),
+            unlisted_calls: self.unlisted_calls.meet(other.unlisted_calls),
         }
     }
 }

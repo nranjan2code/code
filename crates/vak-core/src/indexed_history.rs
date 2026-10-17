@@ -34,7 +34,7 @@ impl Core {
     ) -> Result<vak_agent::Recalled, String> {
         let warming = || {
             serde_json::json!({"type":"history_unavailable",
-                "message":"History is warming, unavailable, or exceeds its lookup budget. This is not evidence of no matches; retry a narrower query or ask for the needed detail."})
+                "message":"This conversation's history is still being indexed. This is not evidence of no matches; retry, or ask for the needed detail."})
             .to_string()
         };
         match request {
@@ -96,10 +96,16 @@ impl Core {
                         .to_string(),
                         reached_elsewhere: false,
                     }),
-                    Err(_) => {
+                    Err(CoreError::HistoryNotIndexed(_)) => {
                         self.queue_history_index(session);
                         Err(warming())
                     }
+                    Err(CoreError::Cancelled) => Err(serde_json::json!({"type":"cancelled",
+                        "message":"history lookup cancelled"})
+                    .to_string()),
+                    Err(error) => Err(serde_json::json!({"type":"history_unavailable",
+                        "message":format!("That turn could not be read: {error}.")})
+                    .to_string()),
                 }
             }
             vak_tools::RecallRequest::Elsewhere {
@@ -373,27 +379,18 @@ impl Core {
             .catalog
             .locate_turn_record(session_id, turn_id, leaf)?
             .ok_or_else(|| CoreError::HistoryNotIndexed(turn_id.into()))?;
+        // The walk is one turn's own entries, from its closing record back to
+        // the directive that opened it: the turn bounds it, and only a cancel
+        // ends it early. A cap of a time, a count or a size picked here once
+        // turned a long turn into "history is warming" (2026-10-17).
         let mut cursor = Some(record_id);
         let mut entries = Vec::new();
-        let mut bytes = 0usize;
-        let started = std::time::Instant::now();
         let mut found = false;
         while let Some(id) = cursor {
-            if cancel.is_cancelled()
-                || started.elapsed() > std::time::Duration::from_millis(250)
-                || entries.len() >= 512
-            {
-                return Err(SessionError::Corrupt {
-                    line: 0,
-                    message: "selected history exceeds its read budget or was cancelled".into(),
-                }
-                .into());
+            if cancel.is_cancelled() {
+                return Err(CoreError::Cancelled);
             }
             let entry = history.load(session_id, &id)?;
-            bytes = bytes.saturating_add(serde_json::to_vec(&entry).map_or(0, |b| b.len()));
-            if bytes > 8 * 1024 * 1024 {
-                return Err(SessionError::Corrupt { line: 0, message: "selected history exceeds its byte budget; use a narrower evidence reference".into() }.into());
-            }
             if entries.is_empty()
                 && !matches!(&entry.payload, EntryPayload::TurnCard(record) if record.turn_id == turn_id)
             {

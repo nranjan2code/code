@@ -297,6 +297,17 @@ pub struct SkillTool {
     /// already a tool of the turn, and this one is found under "More
     /// tools" for loading an ability to improve it.
     instructions: bool,
+    /// The turn's other tools, by what each serves: a loaded skill names
+    /// those that serve what it serves, so its work is done with the
+    /// platform's own tools (docs/design/99-turns-that-do-not-poison.md).
+    companions: Vec<Companion>,
+}
+
+#[derive(Debug, Clone)]
+struct Companion {
+    name: String,
+    summary: String,
+    serves: Vec<String>,
 }
 
 impl SkillTool {
@@ -322,7 +333,49 @@ impl SkillTool {
             skills,
             description: DESCRIPTION.into(),
             instructions,
+            companions: Vec::new(),
         }
+    }
+
+    /// The turn's tools a loaded skill may name, read from each tool's own
+    /// `serves`; a tool that serves nothing in particular is named by none.
+    pub fn with_companions(mut self, tools: &[std::sync::Arc<dyn vak_tools::Tool>]) -> Self {
+        self.companions = tools
+            .iter()
+            .filter(|tool| !tool.serves().is_empty())
+            .map(|tool| Companion {
+                name: tool.name().to_string(),
+                summary: first_sentence(tool.description()).to_string(),
+                serves: tool.serves().iter().map(|s| s.to_string()).collect(),
+            })
+            .collect();
+        self
+    }
+
+    /// The companions serving any of `serves`, as lines a model reads.
+    fn companions_for(&self, serves: &[String]) -> String {
+        let lines: Vec<String> = self
+            .companions
+            .iter()
+            .filter(|tool| tool.serves.iter().any(|s| serves.contains(s)))
+            .map(|tool| format!("- {} — {}", tool.name, tool.summary))
+            .collect();
+        if lines.is_empty() {
+            return String::new();
+        }
+        format!(
+            "\n<skill-tools>\nTools of this turn for this skill's work; use them rather than \
+             another format or a script:\n{}\n</skill-tools>",
+            lines.join("\n")
+        )
+    }
+}
+
+fn first_sentence(description: &str) -> &str {
+    let trimmed = description.trim();
+    match trimmed.find(". ") {
+        Some(at) => &trimmed[..=at],
+        None => trimmed.lines().next().unwrap_or(trimmed),
     }
 }
 
@@ -385,7 +438,14 @@ impl vak_tools::Tool for SkillTool {
             );
         };
         match skill.load() {
-            Ok(content) => vak_tools::ToolOutput::ok(content),
+            Ok(content) => {
+                let serves = std::fs::read_to_string(&skill.path)
+                    .ok()
+                    .and_then(|text| parse_text(&text, &skill.path))
+                    .and_then(|parsed| parsed.serves)
+                    .unwrap_or_default();
+                vak_tools::ToolOutput::ok(content + &self.companions_for(&serves))
+            }
             Err(error) => vak_tools::ToolOutput::error(Fault::Tool, error),
         }
     }
@@ -817,6 +877,61 @@ mod tests {
             .await;
         assert!(stale.is_error());
         assert!(stale.content.contains("capability_stale"));
+        Ok(())
+    }
+
+    /// A loaded skill names the turn's tools that serve what it serves,
+    /// read from each tool's declaration, and no others.
+    #[tokio::test]
+    async fn a_loaded_skill_names_the_tools_that_serve_its_work()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("SKILL.md");
+        std::fs::write(
+            &path,
+            "---\nname: writing\ndescription: write things\nserves: documents\n---\nWrite well.",
+        )?;
+        let skill = parse(&path).ok_or("skill should parse")?;
+        let digest = skill.digest()?;
+        let tools: Vec<std::sync::Arc<dyn vak_tools::Tool>> = vec![
+            std::sync::Arc::new(vak_tools::office_apply::OfficeApplyTool),
+            std::sync::Arc::new(vak_tools::glob::GlobTool),
+        ];
+        let tool = SkillTool::new([FrozenSkill {
+            name: skill.name,
+            description: skill.description,
+            path: path.clone(),
+            digest,
+            provenance: None,
+        }])
+        .with_companions(&tools);
+        let ctx = vak_tools::ToolContext {
+            cwd: dir.path().to_path_buf(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            sandbox: None,
+            sandbox_sink: None,
+            agent_id: None,
+            trace: None,
+            new_documents: Vec::new(),
+            executions: None,
+            provenance: vak_control::Provenance::NONE,
+        };
+        use vak_tools::Tool;
+        let loaded = tool
+            .execute(&serde_json::json!({"name": "writing"}), &ctx)
+            .await;
+        assert!(!loaded.is_error(), "{}", loaded.content);
+        assert!(
+            loaded.content.contains("<skill-tools>"),
+            "{}",
+            loaded.content
+        );
+        assert!(
+            loaded.content.contains("- office_apply — "),
+            "{}",
+            loaded.content
+        );
+        assert!(!loaded.content.contains("- glob"), "serves filesystem only");
         Ok(())
     }
 

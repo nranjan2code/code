@@ -81,6 +81,7 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     // docs/design/89-constrained-tool-arguments.md §2: function calling mode `VALIDATED` is not yet verified live, so arguments are not asked to be enforced; `responseJsonSchema` constrains output.
     strict_tools: vak_control::Support::No,
     schema_output: vak_control::Support::Unknown,
+    unlisted_calls: vak_control::Support::No,
 };
 
 pub fn build_body(
@@ -555,6 +556,10 @@ fn append_text_block(content: &mut Vec<ContentBlock>, text: &str) {
 
 #[async_trait::async_trait]
 impl Provider for GoogleProvider {
+    fn reach(&self) -> vak_control::ModelCapabilities {
+        REACH
+    }
+
     fn name(&self) -> &str {
         "google"
     }

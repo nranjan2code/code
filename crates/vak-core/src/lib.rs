@@ -381,6 +381,8 @@ pub enum CoreError {
     Catalog(#[from] vak_catalog::CatalogError),
     #[error("history is not indexed: {0}")]
     HistoryNotIndexed(String),
+    #[error("cancelled")]
+    Cancelled,
     #[error("provider auth missing: set {env} for provider '{provider}'")]
     MissingAuth { env: String, provider: String },
     /// The data home predates the 7.0 baseline (invariant 29).
@@ -7404,8 +7406,10 @@ impl Core {
 
         let mut tools = self.scoped_tools(&tool_scope);
         let frozen_skills = std::mem::take(&mut turn_capabilities.frozen_skills);
-        let skill_tool = (!frozen_skills.is_empty())
-            .then(|| Arc::new(skills::SkillTool::new(frozen_skills)) as Arc<dyn vak_tools::Tool>);
+        let skill_tool = (!frozen_skills.is_empty()).then(|| {
+            Arc::new(skills::SkillTool::new(frozen_skills).with_companions(&tools))
+                as Arc<dyn vak_tools::Tool>
+        });
         if let Some(skill_tool) = &skill_tool {
             tools.push(skill_tool.clone());
         }

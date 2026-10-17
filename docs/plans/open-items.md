@@ -58,6 +58,21 @@ failed, the same request that had been answered well failed three times.
   refused, where neither clean answer had a refusal. One run of a live
   model: repeat it, and read that call and what Vak answered in the
   ledger, before naming a cause. Not yet run on the installed route.
+- [x] A2: a deferred tool was never sent on any wire, so on the Responses,
+  Messages and Gemini wires it could not be called; the adapter now
+  declares `unlisted_calls` and only such a wire defers.
+- [x] A3: a loaded skill names the turn's tools that serve its work.
+- [x] A4: reopening a turn had a 250 ms / 512-entry / 8 MB cap and called
+  every failure "warming"; the turn bounds the walk now.
+- [ ] `vak export` finds only the built-in Agent's sessions (a
+  `research-analyst` session was "no session ledger"); it should find a
+  session through the catalog.
+- [ ] Tests that spawn the `vak` binary (sync_roundtrip, sync_erasure) give
+  it a scratch `HOME` and assume no OS keychain is reached; the binary is
+  not a test binary, so on macOS it may reach the login keychain. Check
+  where their secrets land and keep them in the home.
+- [ ] The "More tools" catalogue is still written into the prompt on a wire
+  that is sent every tool; it should follow the same wire capability.
 
 ## Installed route failures (qwen3.5:0.8b-mlx, 2026-10-15)
 

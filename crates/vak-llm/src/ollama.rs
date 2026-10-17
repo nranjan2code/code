@@ -190,6 +190,7 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     // docs/design/89-constrained-tool-arguments.md §2: tool-call arguments are parsed from the model text and never constrained; `format` constrains output.
     strict_tools: vak_control::Support::No,
     schema_output: vak_control::Support::Yes,
+    unlisted_calls: vak_control::Support::Yes,
 };
 
 fn append_message(
@@ -506,6 +507,10 @@ fn append_thinking_block(content: &mut Vec<ContentBlock>, text: &str) {
 
 #[async_trait::async_trait]
 impl Provider for OllamaProvider {
+    fn reach(&self) -> vak_control::ModelCapabilities {
+        REACH
+    }
+
     fn name(&self) -> &str {
         "ollama"
     }

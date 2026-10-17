@@ -103,4 +103,4 @@ Counts: 3 proposal, 20 in progress, 57 implemented, 3 reference, 8 superseded, 4
 | [96-answer-projection-gaps.md](96-answer-projection-gaps.md) | 96 — Answer projection gaps | in progress | (2026-10-16): Q1, Q2 and Q3 are built, Q2's card shell superseded by live cards and the plan wheel |
 | [97-cards-end-the-answer.md](97-cards-end-the-answer.md) | 97 — Cards end the answer, on every provider | in progress | (2026-10-16): stages A to C built and verified live on the dev route |
 | [98-answers-beyond-one-card.md](98-answers-beyond-one-card.md) | 98 — Answers beyond one card | implemented | (2026-10-17): accepted by the maintainer |
-| [99-turns-that-do-not-poison.md](99-turns-that-do-not-poison.md) | 99 — Turns that do not poison later turns | in progress | (2026-10-17): stages A to F built, A to D and F checked live on the installed route (B and C seen in the model's own reading) |
+| [99-turns-that-do-not-poison.md](99-turns-that-do-not-poison.md) | 99 — Turns that do not poison later turns | in progress | (2026-10-17): stages A to F and A2 to A4 built |

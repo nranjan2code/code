@@ -1,9 +1,9 @@
 # 99 — Turns that do not poison later turns
 
-Status: in progress (2026-10-17): stages A to F built, A to D and F
-checked live on the installed route (B and C seen in the model's own
-reading); the poison replay (§5) is a repeatable check; retry from a turn
-and the rest are open in docs/plans/open-items.md. Builds on docs/design/68-context-engine.md (the planner and
+Status: in progress (2026-10-17): stages A to F and A2 to A4 built; A to
+D, A2 and F checked live on the installed route (B and C seen in the
+model's own reading); the poison replay (§5) is a repeatable check; retry
+from a turn and the rest are open in docs/plans/open-items.md. Builds on docs/design/68-context-engine.md (the planner and
 recall), docs/design/85-turn-graph.md (turn ids), docs/design/86-model-plans-runtime-checks.md
 (the plan check) and docs/design/30-render-architecture.md §30.1
 (citations).
@@ -42,6 +42,9 @@ reading of words, and never a judgement of quality.
 | Plan check | `card_unplanned`, `vak_judge::plan` | A card naming a deliverable the plan listed as text was refused ("Your plan lists no card"), so the content fell to prose. |
 | Workspace files | shell and `write` | A file written in a turn whose calls failed carries nothing to say so. |
 | Memory notes | `remember` | Same as files: a note from a failed turn reads like any other. |
+| Deferred tools | `tools_for_leg` | Never sent on any wire, so on a wire that only returns calls to tools it was sent, a deferred tool (`office_apply`, `mail_calendar`, …) could not be called at all. A turn asked for a Word file said the document tool was not available and wrote HTML. |
+| Loaded skills | `SkillTool` | A skill that serves documents never named the turn's tools that serve them; the model looked for the document tool through `recall` and the shell. |
+| Reopened turns | `read_session_turn` | A time, count and size cap picked in code made a long turn read back as "history is warming". |
 
 ## 4. Stages
 
@@ -78,6 +81,29 @@ history still warming).
 The plan is the model's own declaration. A card whose `deliverable`
 names a planned deliverable of form text delivers it: shown, and covering
 it in the plan check. A name the plan does not have is still refused.
+
+### A2. Every admitted tool is callable on every wire
+
+Each adapter declares whether its wire hands back a call to a tool it was
+not sent (`ModelCapabilities::unlisted_calls`, through `Provider::reach`):
+the local wire does; the Responses, Messages and Gemini wires do not; an
+OpenAI-compatible server is not known. Only where it does is a deferred
+tool kept off the wire until called by name. Everywhere else every
+admitted tool is sent.
+
+### A3. A loaded skill names the tools for its work
+
+A skill's result ends with the turn's tools whose `serves` meets the
+skill's own `serves` (`<skill-tools>`), read from each tool's
+declaration: no tool is named in any skill's text, and a tool an
+integration brings that declares what it serves is named the same way.
+
+### A4. A turn reads back whole
+
+Reopening a turn walks its own entries from its closing record to its
+directive; only a cancel ends the walk early. "Still being indexed" is
+said only when the turn is not indexed yet; any other failure says what
+it was.
 
 ### E. Files and notes are read with the turn that made them
 

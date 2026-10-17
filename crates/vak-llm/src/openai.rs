@@ -238,6 +238,7 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     // docs/design/89-constrained-tool-arguments.md §2: `strict` tools and a `json_schema` response format exist on OpenAI and on many compatible servers; one that refuses is learned.
     strict_tools: vak_control::Support::Unknown,
     schema_output: vak_control::Support::Unknown,
+    unlisted_calls: vak_control::Support::Unknown,
 };
 
 pub fn build_body(
@@ -642,6 +643,10 @@ fn append_text_block(content: &mut Vec<ContentBlock>, text: &str) {
 
 #[async_trait::async_trait]
 impl Provider for OpenAiCompletionsProvider {
+    fn reach(&self) -> vak_control::ModelCapabilities {
+        REACH
+    }
+
     fn name(&self) -> &str {
         "openai-completions"
     }

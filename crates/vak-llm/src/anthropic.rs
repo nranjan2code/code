@@ -143,6 +143,7 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     // docs/design/89-constrained-tool-arguments.md §2: strict tool use and `output_config.format` exist on the models that support them; the rest refuse, which is learned.
     strict_tools: vak_control::Support::Unknown,
     schema_output: vak_control::Support::Unknown,
+    unlisted_calls: vak_control::Support::No,
 };
 
 /// `settings` (what the model can honour of the step's) and `fast_mode` are
@@ -644,6 +645,10 @@ fn parse_usage(v: &Value) -> Option<Usage> {
 
 #[async_trait::async_trait]
 impl Provider for AnthropicProvider {
+    fn reach(&self) -> vak_control::ModelCapabilities {
+        REACH
+    }
+
     fn name(&self) -> &str {
         "anthropic"
     }

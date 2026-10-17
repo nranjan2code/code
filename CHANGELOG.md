@@ -1,3 +1,16 @@
+## Unreleased
+
+- On OpenAI, Anthropic and Gemini routes the Agent can use every tool it
+  has, including Word, Excel, PowerPoint and PDF files, mail, calendar and
+  automations. Before, a tool kept back until asked for could not be
+  reached there, and a request for a Word document came back as a web page.
+
+- A skill, once the Agent opens it, names the tools that do its kind of
+  work, such as the document tools for writing.
+
+- A long earlier turn reopens whole, instead of being reported as history
+  still being prepared.
+
 ## 8.7.0 — 2026-10-17
 
 - A turn can be set aside from the conversation: later replies no longer

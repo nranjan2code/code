@@ -374,9 +374,14 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
   turn (`Agent::load_called_deferred`, `load_promoted`). A tool any turn of
   the conversation called is loaded from its next turn on
   (`SessionLog::called_tools`, read from the ledger, so a restart or another
-  process serving the conversation changes nothing). No wire sends a
-  deferred schema: every provider gets the loaded set (`tools_for_leg`), so
-  one path serves them all. This replaced `find_tools` and Anthropic's
+  process serving the conversation changes nothing). A wire that hands
+  back a call to a tool it was not sent (the adapter's
+  `ModelCapabilities::unlisted_calls`, `Provider::reach`) gets the loaded
+  set alone (`tools_for_leg`); every other wire, and one nobody knows, gets
+  every admitted tool, since a deferred tool could never be called there
+  (2026-10-17: on the Responses API a turn asked for a Word file said the
+  document tool was not available and wrote HTML;
+  docs/design/99-turns-that-do-not-poison.md). This replaced `find_tools` and Anthropic's
   `defer_loading` with its server-side tool search: measured on the
   installed route, the model called `find_tools` for tools it already had
   (compare 8 of 16, table 5 of 16), and a second deferral mechanism on one

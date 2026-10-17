@@ -850,12 +850,28 @@ fn strip_replayed_thinking(messages: &mut [Message]) {
     }
 }
 
-/// The tools a request sends (docs/design/68-context-engine.md §5): the
-/// loaded ones. A deferred tool is never sent on any wire: the model sees
-/// its catalogue line, calls it by name, and from then on it is promoted
-/// (`load_promoted`), so one path serves every provider.
-fn tools_for_leg(tools: &[vak_llm::ToolDefinition]) -> Vec<vak_llm::ToolDefinition> {
-    tools.iter().filter(|t| !t.defer).cloned().collect()
+/// The tools a request sends (docs/design/68-context-engine.md §5). On a
+/// wire that hands back a call to a tool it was not sent
+/// (`ModelCapabilities::unlisted_calls`), only the loaded ones: the model
+/// sees a deferred tool's catalogue line, calls it by name, and from then on
+/// it is promoted (`load_promoted`). Anywhere else a deferred tool could
+/// never be called, so every admitted tool is sent (found 2026-10-17: a
+/// Responses-API turn told to make a Word file said the document tool was
+/// not available, and wrote HTML).
+fn tools_for_leg(
+    tools: &[vak_llm::ToolDefinition],
+    reach: vak_control::ModelCapabilities,
+) -> Vec<vak_llm::ToolDefinition> {
+    let defers = reach.unlisted_calls == vak_control::Support::Yes;
+    tools
+        .iter()
+        .filter(|t| !(defers && t.defer))
+        .cloned()
+        .map(|mut t| {
+            t.defer = false;
+            t
+        })
+        .collect()
 }
 
 /// Promote tools this turn called by name, or whose grounding fact appeared
@@ -971,16 +987,43 @@ mod tool_loading_tests {
         ToolDefinition::new(name, "d", serde_json::json!({"type": "object"}))
     }
 
+    fn wire(unlisted_calls: vak_control::Support) -> vak_control::ModelCapabilities {
+        vak_control::ModelCapabilities {
+            unlisted_calls,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn a_deferred_tool_is_sent_once_promoted_and_never_duplicated() {
+        let takes_unlisted = wire(vak_control::Support::Yes);
         let mut defs = vec![def("read"), def("bash").deferred()];
         assert!(
-            !tools_for_leg(&defs).iter().any(|d| d.name == "bash"),
-            "a deferred tool is never sent"
+            !tools_for_leg(&defs, takes_unlisted)
+                .iter()
+                .any(|d| d.name == "bash"),
+            "a deferred tool is not sent where a call to it by name comes back"
         );
         load_promoted(&mut defs, vec![def("bash")]);
         assert_eq!(defs.len(), 2, "promoted in place, never duplicated");
-        assert!(tools_for_leg(&defs).iter().any(|d| d.name == "bash"));
+        assert!(
+            tools_for_leg(&defs, takes_unlisted)
+                .iter()
+                .any(|d| d.name == "bash")
+        );
+    }
+
+    /// A wire that only returns calls to tools it was sent, or one nobody
+    /// knows, is sent every admitted tool: a deferred one could never be
+    /// called there.
+    #[test]
+    fn every_admitted_tool_is_sent_where_unlisted_calls_never_come_back() {
+        let defs = vec![def("read"), def("office").deferred()];
+        for support in [vak_control::Support::No, vak_control::Support::Unknown] {
+            let sent = tools_for_leg(&defs, wire(support));
+            assert_eq!(sent.len(), 2, "{support:?}");
+            assert!(sent.iter().all(|d| !d.defer), "sent as ordinary tools");
+        }
     }
 }
 
@@ -5066,7 +5109,7 @@ impl Agent {
         // Count what that leg was sent: only a leg that defers tools carries
         // the deferred set.
         let mut sent = request.clone();
-        sent.tools = tools_for_leg(&request.tools);
+        sent.tools = tools_for_leg(&request.tools, self.provider.reach());
         let chars_sent = chat_request_chars(&sent);
         let cache_miss = usage.cache_read_input_tokens.unwrap_or(0) == 0;
         profile.observe_usage(chars_sent, usage, first_token_latency_ms, cache_miss);
@@ -5097,7 +5140,7 @@ impl Agent {
         reason: String,
     ) -> CapacityProfile {
         let mut sent = request.clone();
-        sent.tools = tools_for_leg(&request.tools);
+        sent.tools = tools_for_leg(&request.tools, self.provider.reach());
         let request_tokens = profile.estimate_tokens(chat_request_chars(&sent));
         let mut lowered = profile.clone();
         lowered.observe_over_length(
@@ -5263,7 +5306,7 @@ impl Agent {
                     .unwrap_or_else(|| provider_arc.name().to_string())
             };
             ledger.receipt.stamp_leg(&route_provider, model);
-            leg_req.tools = tools_for_leg(&request.tools);
+            leg_req.tools = tools_for_leg(&request.tools, provider_arc.reach());
             if li > 0 && forward {
                 self.record_activity(
                     vak_session::ActivityKind::RouteFallback,

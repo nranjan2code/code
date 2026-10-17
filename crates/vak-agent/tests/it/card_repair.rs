@@ -42,6 +42,15 @@ impl Provider for Scripted {
         "scripted"
     }
 
+    /// A wire that hands back calls to tools it was not sent, so deferred
+    /// tools stay off it until called by name.
+    fn reach(&self) -> vak_control::ModelCapabilities {
+        vak_control::ModelCapabilities {
+            unlisted_calls: vak_control::Support::Yes,
+            ..Default::default()
+        }
+    }
+
     fn rate_limit_key(&self) -> String {
         self.capacity_key.clone()
     }

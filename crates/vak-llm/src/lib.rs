@@ -56,6 +56,12 @@ use tokio_util::sync::CancellationToken;
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
 
+    /// What this adapter's wire can pass through (its `REACH`). The default
+    /// knows nothing, so a caller deciding by it takes the safe side.
+    fn reach(&self) -> vak_control::ModelCapabilities {
+        vak_control::ModelCapabilities::default()
+    }
+
     /// Stable in-process health identity. Implementations with independent
     /// credentials must include that credential's fingerprint so one bad key
     /// cannot open the circuit for another key.
