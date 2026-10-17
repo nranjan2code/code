@@ -873,6 +873,7 @@ impl Turn {
                     args_digest: args_digest(&evidence.tool, &evidence.input),
                     evidence_id: id.clone(),
                     shape: evidence_shape(&evidence),
+                    failed: evidence.is_error,
                 })
             })
             .collect()
@@ -1040,6 +1041,7 @@ impl Turn {
             tokens_full,
             tokens_card: 0,
             provenance: self.provenance,
+            unmet: Vec::new(),
         };
         // Rendered card cost is unrelated to the richer search projection.
         // Planning remeasures with the actual ordinal and current profile.
@@ -1431,6 +1433,11 @@ pub struct TraceLine {
     pub args_digest: Value,
     pub evidence_id: String,
     pub shape: String,
+    /// The call's result was an error: it failed, or the runtime refused
+    /// it (a card not shown). A later turn reads a failed call as one
+    /// (docs/design/99-turns-that-do-not-poison.md §4 B).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub failed: bool,
 }
 
 /// A card emitted in this turn, as referenced from its `TurnCard`.
@@ -1471,6 +1478,11 @@ pub struct TurnCard {
     /// "Provenance"): a request that carries this card carries it.
     #[serde(default, skip_serializing_if = "vak_control::Provenance::is_none")]
     pub provenance: vak_control::Provenance,
+    /// Deliverables the turn's own plan listed that it ended without, as
+    /// the plan check found them (docs/design/99-turns-that-do-not-poison.md
+    /// §4 B): a later turn never reads such a turn as one that delivered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmet: Vec<String>,
 }
 
 /// Tool-result references as `recall`'s `open` takes them: `ev:a ev:b`.
@@ -1510,6 +1522,13 @@ impl TurnCard {
         let line = self.line(0);
         let description = line.strip_prefix("#0 ").unwrap_or(&line);
         format!("<turns>\n[turn:{}] {description}\n</turns>", self.turn_id)
+    }
+
+    /// The turn's calls by tool, with how many failed:
+    /// `webfetch×3 (2 failed), bash`. A later turn and `recall` read a
+    /// turn's record with it (docs/design/99-turns-that-do-not-poison.md).
+    pub fn calls(&self) -> String {
+        summarize_trace(&self.did)
     }
 
     pub fn line(&self, n: usize) -> String {
@@ -1554,10 +1573,24 @@ impl TurnCard {
             "" | "completed" => String::new(),
             outcome => format!(" \u{2192} ended: {outcome}"),
         };
+        let unmet = if self.unmet.is_empty() {
+            String::new()
+        } else {
+            format!(" \u{2192} not delivered: {}", self.unmet_names())
+        };
         format!(
-            "#{n} asked: {} \u{2192} did: {did_summary} \u{2192} {outcome_part}{ended}",
+            "#{n} asked: {} \u{2192} did: {did_summary} \u{2192} {outcome_part}{unmet}{ended}",
             self.asked
         )
+    }
+
+    /// The plan's deliverables the turn ended without, quoted.
+    pub fn unmet_names(&self) -> String {
+        self.unmet
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -1565,20 +1598,29 @@ fn summarize_trace(did: &[TraceLine]) -> String {
     if did.is_empty() {
         return "nothing".to_string();
     }
-    let mut counts: Vec<(String, usize)> = Vec::new();
+    let mut counts: Vec<(String, usize, usize)> = Vec::new();
     for trace in did {
-        match counts.iter_mut().find(|(name, _)| *name == trace.tool) {
-            Some(existing) => existing.1 += 1,
-            None => counts.push((trace.tool.clone(), 1)),
+        let failed = usize::from(trace.failed);
+        match counts.iter_mut().find(|(name, ..)| *name == trace.tool) {
+            Some(existing) => {
+                existing.1 += 1;
+                existing.2 += failed;
+            }
+            None => counts.push((trace.tool.clone(), 1, failed)),
         }
     }
     counts
         .into_iter()
-        .map(|(name, n)| {
-            if n > 1 {
+        .map(|(name, n, failed)| {
+            let name = if n > 1 {
                 format!("{name}\u{d7}{n}")
             } else {
                 name
+            };
+            match failed {
+                0 => name,
+                f if f == n => format!("{name} (failed)"),
+                f => format!("{name} ({f} failed)"),
             }
         })
         .collect::<Vec<_>>()
@@ -1968,6 +2010,28 @@ mod tests {
             failed.line(2).ends_with("\u{2192} ended: failed"),
             "{}",
             failed.line(2)
+        );
+    }
+
+    #[test]
+    fn a_card_line_counts_the_calls_that_failed() {
+        let line = |tool: &str, failed: bool| TraceLine {
+            tool: tool.into(),
+            args_digest: Value::Null,
+            evidence_id: "e".into(),
+            shape: String::new(),
+            failed,
+        };
+        let did = [
+            line("webfetch", true),
+            line("webfetch", false),
+            line("webfetch", true),
+            line("emit_link_card", true),
+            line("bash", false),
+        ];
+        assert_eq!(
+            summarize_trace(&did),
+            "webfetch\u{d7}3 (2 failed), emit_link_card (failed), bash"
         );
     }
 

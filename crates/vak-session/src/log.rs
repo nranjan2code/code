@@ -1536,15 +1536,19 @@ impl SessionLog {
     }
 
     /// Everything this conversation holds that a card may cite: the
-    /// person's own messages, every non-card tool call's arguments and
-    /// result, and the whole body behind a windowed result. A card that
-    /// names a source URL found nowhere in it names a page nothing here
-    /// retrieved and nobody gave (docs/design/30-render-architecture.md
-    /// §30.1, "Citations").
-    pub fn evidence_text(&self, is_card_tool: impl Fn(&str) -> bool) -> String {
+    /// person's own messages, the result of every call that succeeded and
+    /// whose tool `retrieves` says is a receipt, and the whole body behind
+    /// a windowed result. A call's arguments are what the model wrote,
+    /// never evidence; a tool `retrieves` refuses (a card, `recall`, which
+    /// re-quotes results already counted where they first arrived or never
+    /// counted) adds nothing. A card that names a source URL found nowhere
+    /// in it names a page nothing here retrieved and nobody gave
+    /// (docs/design/30-render-architecture.md §30.1, "Citations";
+    /// docs/design/99-turns-that-do-not-poison.md §4 A).
+    pub fn evidence_text(&self, retrieves: impl Fn(&str) -> bool) -> String {
         let chain = self.chain_to_root();
-        // A failed call retrieved nothing: its arguments and its error text
-        // (which names the URL it could not fetch) are not evidence.
+        // A failed call retrieved nothing: its error text (which names the
+        // URL it could not fetch) is not evidence.
         let mut excluded: std::collections::HashSet<String> = chain
             .iter()
             .filter_map(|entry| match &entry.payload {
@@ -1573,13 +1577,8 @@ impl SessionLog {
                                 out.push_str(text);
                                 out.push('\n');
                             }
-                            vak_llm::ContentBlock::ToolUse { id, name, input } => {
-                                if is_card_tool(name) {
-                                    excluded.insert(id.clone());
-                                } else if !excluded.contains(id) {
-                                    out.push_str(&input.to_string());
-                                    out.push('\n');
-                                }
+                            vak_llm::ContentBlock::ToolUse { id, name, .. } if !retrieves(name) => {
+                                excluded.insert(id.clone());
                             }
                             vak_llm::ContentBlock::ToolResult {
                                 tool_use_id,

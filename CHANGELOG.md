@@ -1,3 +1,17 @@
+## Unreleased
+
+- A turn whose calls failed, whose cards were refused or that ended
+  without what it planned now says so wherever a later turn sees it: in
+  the conversation's carried history, in search and when reopened. A page
+  address the Agent only typed, or one that failed to load, can no longer
+  be cited by a card.
+
+- A card may now give what the Agent planned as text, instead of being
+  turned away and replaced by plain prose.
+
+- Asking the Agent to reopen "turn #2" opens it, instead of reporting
+  history as still being prepared.
+
 ## 8.5.0 — 2026-10-17
 
 - The Agent is offered mail and calendar reading only while an account

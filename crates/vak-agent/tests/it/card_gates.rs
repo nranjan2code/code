@@ -462,6 +462,39 @@ async fn a_card_citing_an_unretrieved_page_is_never_shown() {
     assert_eq!(refused, 2, "each card is refused, naming the URL");
 }
 
+/// A URL the model wrote into a call's arguments is not retrieved by
+/// writing it: a call that succeeded without returning it leaves it
+/// uncited (docs/design/99-turns-that-do-not-poison.md §4 A).
+#[tokio::test]
+async fn a_url_only_in_call_arguments_is_not_citable() {
+    let dir = tempdir().unwrap();
+    let url = "https://typed-by-model.example/directions";
+    let cited = serde_json::json!({"sources": [{"url": url}]});
+    let (mut agent, _) = build_agent(
+        &dir,
+        "pc-arguments",
+        vec![
+            tool_call_msg("a1", "census", serde_json::json!({"url": url})),
+            tool_call_msg("c1", "emit_chart_card", cited),
+            text_msg("No source to show."),
+        ],
+    )
+    .await;
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    assert!(session.presentations().is_empty(), "no card is recorded");
+    let refused = session
+        .message_chain()
+        .iter()
+        .flat_map(|(_, message)| message.content.iter())
+        .any(|block| matches!(block, ContentBlock::ToolResult { content, is_error: true, .. } if content.contains("[uncited-source]") && content.contains("typed-by-model.example")));
+    assert!(refused, "the card is refused, naming the URL");
+}
+
 /// A card showing what a command printed shows what the call that ran it
 /// returned, whatever the model wrote; one naming a command no call ran is
 /// refused with the command named.

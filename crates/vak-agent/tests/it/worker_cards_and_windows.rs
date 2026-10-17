@@ -368,7 +368,14 @@ async fn a_workers_card_is_shown_and_recallable_in_the_delegating_conversation()
         "{outcome:?}"
     );
     let session = parent.session.lock().await;
-    assert_eq!(tool_result(&session, "r1"), payload.to_string());
+    let reopened: serde_json::Value = serde_json::from_str(&tool_result(&session, "r1")).unwrap();
+    assert_eq!(reopened["card"], payload, "the card, as it was recorded");
+    assert!(
+        reopened["from_turn"]
+            .as_str()
+            .is_some_and(|line| line.contains("asked:")),
+        "with the record of the turn that showed it: {reopened}"
+    );
 }
 
 #[tokio::test]

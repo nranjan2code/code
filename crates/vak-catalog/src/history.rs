@@ -63,7 +63,20 @@ pub fn compact_turn_record(record: &vak_session::TurnCardRecord) -> String {
         .map(|p| words(&p.title, 12))
         .collect::<Vec<_>>()
         .join(" ");
-    format!("Asked: {asked}\nAnswered: {answer}\nOutputs: {titles}")
+    // How its calls ended is part of the record: a turn whose calls failed
+    // or whose cards were refused is never read as an ordinary one
+    // (docs/design/99-turns-that-do-not-poison.md §4 C).
+    let calls = record.card.calls();
+    let ended = match record.card.outcome.as_str() {
+        "" | "completed" => String::new(),
+        outcome => format!("\nEnded: {outcome}"),
+    };
+    let unmet = if record.card.unmet.is_empty() {
+        String::new()
+    } else {
+        format!("\nNot delivered: {}", record.card.unmet_names())
+    };
+    format!("Asked: {asked}\nCalls: {calls}\nAnswered: {answer}\nOutputs: {titles}{unmet}{ended}")
 }
 
 /// Records where `entry` is, its place in the branch tree, and a settled

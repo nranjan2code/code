@@ -156,7 +156,11 @@ fn parse_open(open: &str, args: &Value) -> Result<RecallRequest, String> {
         });
     }
     if let Some(rest) = open.strip_prefix("turn:") {
-        return match rest.trim().parse::<u64>() {
+        // `turn:#2` is the card line's `#2` under the `turn:` prefix: one
+        // turn number, never an id (found live 2026-10-17, reported as
+        // history still warming).
+        let rest = rest.trim();
+        return match rest.strip_prefix('#').unwrap_or(rest).parse::<u64>() {
             Ok(n) if n > 0 => Ok(RecallRequest::Turn(n)),
             _ => Ok(RecallRequest::TurnId(id(rest)?)),
         };
@@ -323,6 +327,7 @@ mod tests {
         assert_eq!(open("#3").unwrap(), RecallRequest::Turn(3));
         assert_eq!(open("3").unwrap(), RecallRequest::Turn(3));
         assert_eq!(open("turn:3").unwrap(), RecallRequest::Turn(3));
+        assert_eq!(open("turn:#3").unwrap(), RecallRequest::Turn(3));
         assert_eq!(
             open("turn:01a1-xyz").unwrap(),
             RecallRequest::TurnId("01a1-xyz".into())

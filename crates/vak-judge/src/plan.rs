@@ -59,8 +59,8 @@ pub fn verdict(gap: &Gap) -> AnswerVerdict {
     }
 }
 
-/// Compares the plan with the receipts. A card covers the planned card its
-/// `answers` names, and only that one.
+/// Compares the plan with the receipts. A card covers the planned card or
+/// text its `answers` names, and only that one.
 pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
     let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     let mut covered = vec![false; plan.len()];
@@ -69,7 +69,10 @@ pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
         let named = answers.as_deref().and_then(|name| {
             plan.iter().enumerate().position(|(at, deliverable)| {
                 !covered[at]
-                    && deliverable.form == DeliverableForm::Card
+                    && matches!(
+                        deliverable.form,
+                        DeliverableForm::Card | DeliverableForm::Text
+                    )
                     && same(&deliverable.name, name)
             })
         });
@@ -206,6 +209,19 @@ mod tests {
             cards_withdrawn: false,
         };
         assert_eq!(verdict(&gap(&declared, &all)), AnswerVerdict::Accepted);
+    }
+
+    #[test]
+    fn a_card_delivers_the_text_deliverable_it_names() {
+        let plan = plan(&[
+            ("route", DeliverableForm::Text),
+            ("link", DeliverableForm::Text),
+        ]);
+        let cards = [Some("route".to_string())];
+        let gap = gap(&plan, &produced(&cards, ""));
+        assert_eq!(gap.cards_unattributed, 0);
+        let left: Vec<&str> = gap.others.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(left, ["link"], "the card covers only the text it names");
     }
 
     #[test]

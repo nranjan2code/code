@@ -457,6 +457,74 @@ async fn a_plan_with_no_card_refuses_a_named_deliverable() {
     assert!(!results[1].0, "{results:?}");
 }
 
+/// A turn that ends without what its own plan listed says so on its card,
+/// so a later turn never reads it as one that delivered
+/// (docs/design/99-turns-that-do-not-poison.md §4 B).
+#[tokio::test]
+async fn a_turn_short_of_its_plan_says_so_on_its_card() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, _) = agent(
+        &dir,
+        "short-plan",
+        vec![
+            plan("card"),
+            text("Water on Monday."),
+            text("Water on Monday."),
+        ],
+    );
+    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let index = vak_session::TurnIndex::from_log(&session);
+    let card = index.turns[0].card.as_ref().expect("the turn's card");
+    assert_eq!(card.unmet, ["watering"]);
+    assert!(
+        card.line(1).contains("not delivered: \"watering\""),
+        "{}",
+        card.line(1)
+    );
+}
+
+/// A card that names a deliverable the plan listed as text delivers it:
+/// it is shown, not refused into prose (found live 2026-10-17;
+/// docs/design/99-turns-that-do-not-poison.md §4 D).
+#[tokio::test]
+async fn a_card_delivers_a_deliverable_planned_as_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, _) = agent(
+        &dir,
+        "text-plan-card",
+        vec![
+            plan("text"),
+            call(
+                "a1",
+                "steps_block",
+                serde_json::json!({"deliverable": "watering", "steps": ["Wake"]}),
+            ),
+            text("Water on Monday."),
+        ],
+    );
+    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let refused = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .any(|block| {
+            matches!(block, ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "a1")
+        });
+    assert!(!refused, "the card is shown");
+}
+
 /// With no plan at all, a card that names a `deliverable` is refused and
 /// the card sent again without one is shown.
 #[tokio::test]

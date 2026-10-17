@@ -15,6 +15,32 @@ item says what is missing and what closes it. A design doc's own Status
 line says what of that doc is built; this file lists only what is open
 across them. Nothing here is started unless it says so.
 
+## Turns that poison later turns (doc 99, 2026-10-17)
+
+Found in an installed-home conversation: after a few turns whose calls
+failed, the same request that had been answered well failed three times.
+
+- [x] A: citation evidence counted model-written call arguments and
+  `recall` results; now only results that succeeded and the person's words.
+- [x] B: a turn card says which calls failed and which planned deliverables
+  the turn ended without.
+- [x] C: recall reopens a card, a turn or a failed result with its turn's
+  record; search hits carry it.
+- [x] D: a card may deliver a deliverable planned as text.
+- [x] `recall` `turn:#n` read `#n` as a turn id and reported history as
+  warming; it is the turn number now, and an id the conversation lacks is
+  not found.
+- [ ] E: files and memory notes written in a turn whose calls failed name
+  that turn's record. Designed in doc 99 §4 E.
+- [ ] F: set a turn aside (and undo) from the conversation, skipped by the
+  planner, recall, evidence and memory; retry from a turn. Designed in
+  doc 99 §4 F; needs the server route and the client surface.
+- [ ] Poison replay (doc 99 §5) as a repeatable check. Live on luna
+  2026-10-17 the carried labels reached the model ("the calls failed"),
+  but the run that tested imitation was confounded: the poisoned turn's
+  request itself named the approach. Still open whether labels alone stop
+  a model copying a failed turn's approach.
+
 ## Installed route failures (qwen3.5:0.8b-mlx, 2026-10-15)
 
 Read from the installed home's ledger through its API, then replayed on a
