@@ -6670,8 +6670,9 @@ impl Agent {
             {
                 scope.insert(name, (value, entry_id.clone()));
             }
+            let max_points = record.payload["max_points"].as_u64().unwrap_or_default();
             for (name, points) in
-                vak_delivery::controls::series(&record.payload).unwrap_or_default()
+                vak_delivery::controls::series(&record.payload, max_points).unwrap_or_default()
             {
                 series_scope.insert(name, (points, entry_id.clone()));
             }
@@ -6680,8 +6681,18 @@ impl Agent {
             .block
             .clone()
             .unwrap_or_else(|| info.semantic_type.clone());
+        let followable = self
+            .tool_named(call.name.as_str())
+            .map(|tool| tool.followable_fields())
+            .unwrap_or_default();
         let bound = if form == "controls" {
-            vak_delivery::controls::published(&info.payload).and_then(|names| {
+            // Its series are computed under the operator's limit, which the
+            // card keeps so a client recomputes under the same one.
+            let max_points = self.config.time_limits.series_points;
+            info.payload["max_points"] = Value::from(max_points);
+            vak_delivery::controls::series(&info.payload, max_points)
+                .and_then(|_| vak_delivery::controls::published(&info.payload))
+                .and_then(|names| {
                 match names.iter().find(|(name, _)| scope.contains_key(name)) {
                     Some((name, _)) => Err(format!(
                         "`{name}` is already published by a controls card of this answer; give it another name"
@@ -6690,7 +6701,13 @@ impl Agent {
                 }
             })
         } else {
-            vak_delivery::controls::bind(&form, &mut info.payload, &scope, &series_scope)
+            vak_delivery::controls::bind(
+                &form,
+                &followable,
+                &mut info.payload,
+                &scope,
+                &series_scope,
+            )
         };
         if let Err(message) = bound {
             return (

@@ -438,9 +438,11 @@ impl StepOverride {
     }
 }
 
-/// The operator's time limits (doc 88 §5a), in seconds: the only numbers
-/// that end a wait which is still within its rights to go on. Each is
-/// configuration, shown in Settings beside its shipped default.
+/// The operator's limits (`[control.limits]`, doc 88 §5a): the time limits,
+/// in seconds, the only numbers that end a wait which is still within its
+/// rights to go on, and how many points a computed series may have
+/// (docs/design/98 §2). Each is configuration, shown in Settings beside
+/// its shipped default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimeLimits {
     /// One request of the background capacity probe.
@@ -461,6 +463,8 @@ pub struct TimeLimits {
     pub question_secs: u64,
     /// An approval waiting for a person; silence means no.
     pub approval_secs: u64,
+    /// The most points a controls card's series may have.
+    pub series_points: u64,
 }
 
 impl TimeLimits {
@@ -475,6 +479,7 @@ impl TimeLimits {
             hook_secs: 10,
             question_secs: 900,
             approval_secs: 900,
+            series_points: 10_000,
         }
     }
 
@@ -491,6 +496,7 @@ impl TimeLimits {
             hook_secs: pick(over.hook_secs, self.hook_secs),
             question_secs: pick(over.question_secs, self.question_secs),
             approval_secs: pick(over.approval_secs, self.approval_secs),
+            series_points: pick(over.series_points, self.series_points),
         }
     }
 }
@@ -522,6 +528,8 @@ pub struct TimeLimitsOverride {
     pub question_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series_points: Option<u64>,
 }
 
 impl TimeLimitsOverride {
@@ -536,6 +544,7 @@ impl TimeLimitsOverride {
             hook_secs: self.hook_secs.or(lower.hook_secs),
             question_secs: self.question_secs.or(lower.question_secs),
             approval_secs: self.approval_secs.or(lower.approval_secs),
+            series_points: self.series_points.or(lower.series_points),
         }
     }
 }

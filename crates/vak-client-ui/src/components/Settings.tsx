@@ -184,15 +184,17 @@ function StepSettingsGroup() {
   );
 }
 
-const TIME_LIMITS: [keyof api.TimeLimits, string, string, boolean][] = [
-  ["command_secs", "A command", "How long a command may run when the request sets no time of its own.", false],
-  ["command_max_secs", "Longest command limit", "The most time a command may be given. A longer request runs with this.", false],
-  ["script_secs", "A scheduled script", "How long a script run by an automation may take.", false],
-  ["approval_secs", "An approval", "How long a request for your approval waits. With no answer it is refused.", false],
-  ["question_secs", "A question from a helper", "How long a helper's question waits for your answer before it works without one.", false],
-  ["reply_secs", "A reply in a chat app", "How long a chat app waits for the answer before saying the work is still running.", false],
-  ["hook_secs", "A hook", "How long a hook may run when it sets no time of its own.", true],
-  ["probe_secs", "A model capacity check", "How long one request of the background check of a model's limits may take.", true],
+/** A limit's key, title, description, whether it is technical, and its unit. */
+const TIME_LIMITS: [keyof api.TimeLimits, string, string, boolean, "seconds" | "points"][] = [
+  ["command_secs", "A command", "How long a command may run when the request sets no time of its own.", false, "seconds"],
+  ["command_max_secs", "Longest command limit", "The most time a command may be given. A longer request runs with this.", false, "seconds"],
+  ["script_secs", "A scheduled script", "How long a script run by an automation may take.", false, "seconds"],
+  ["approval_secs", "An approval", "How long a request for your approval waits. With no answer it is refused.", false, "seconds"],
+  ["question_secs", "A question from a helper", "How long a helper's question waits for your answer before it works without one.", false, "seconds"],
+  ["reply_secs", "A reply in a chat app", "How long a chat app waits for the answer before saying the work is still running.", false, "seconds"],
+  ["series_points", "Points in a calculated series", "How many points a calculator card may compute for a chart that follows it.", true, "points"],
+  ["hook_secs", "A hook", "How long a hook may run when it sets no time of its own.", true, "seconds"],
+  ["probe_secs", "A model capacity check", "How long one request of the background check of a model's limits may take.", true, "seconds"],
 ];
 
 function secondsInWords(seconds: number): string {
@@ -209,9 +211,9 @@ function TimeLimitsGroup() {
   const save = async (key: keyof api.TimeLimits, text: string) => {
     const current = layer()?.control ?? {};
     const limits = { ...(current.limits ?? {}) };
-    const seconds = Math.floor(Number(text));
-    if (text === "" || !Number.isFinite(seconds) || seconds < 1) delete limits[key];
-    else limits[key] = seconds;
+    const value = Math.floor(Number(text));
+    if (text === "" || !Number.isFinite(value) || value < 1) delete limits[key];
+    else limits[key] = value;
     try {
       await api.putControl("user", { ...current, limits });
       setError("");
@@ -220,14 +222,18 @@ function TimeLimitsGroup() {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
-  const row = ([key, title, description]: [keyof api.TimeLimits, string, string, boolean]) => (
-    <Row title={title} description={`${description} Default: ${secondsInWords(layer()?.shipped_limits[key] ?? 0)}.`}>
-      <input class="settings-number" type="number" min="1" step="1" aria-label={`${title}: seconds`} placeholder={String(layer()?.shipped_limits[key] ?? "")} value={layer()?.control.limits?.[key] ?? ""} onChange={(event) => void save(key, event.currentTarget.value)} />
-      <span class="setting-unit">seconds</span>
-    </Row>
-  );
+  const row = ([key, title, description, , unit]: (typeof TIME_LIMITS)[number]) => {
+    const shipped = layer()?.shipped_limits[key] ?? 0;
+    const fallback = unit === "seconds" ? secondsInWords(shipped) : `${shipped.toLocaleString()} points`;
+    return (
+      <Row title={title} description={`${description} Default: ${fallback}.`}>
+        <input class="settings-number" type="number" min="1" step="1" aria-label={`${title}: ${unit}`} placeholder={String(shipped || "")} value={layer()?.control.limits?.[key] ?? ""} onChange={(event) => void save(key, event.currentTarget.value)} />
+        <span class="setting-unit">{unit}</span>
+      </Row>
+    );
+  };
   return (
-    <Group title="Time limits">
+    <Group title="Limits">
       <Show when={error()}><p class="connect-error" role="alert">{error()}</p></Show>
       <Show when={layer()}>
         <For each={TIME_LIMITS.filter((limit) => !limit[3])}>{row}</For>

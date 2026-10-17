@@ -166,3 +166,18 @@ Each stage is its own commit with the full gate and a live turn.
   with a test); run 2 sent fixed `data` without a series (static, valid);
   run 3 drew a series and a following chart, and in the browser a growth
   rate of 15% redrew the curve and rescaled its axis.
+
+## 9. From the audit (2026-10-17)
+
+- The series point cap is the operator's: `[control.limits]
+  series_points` (shipped 10,000), shown in Settings under Limits as a
+  technical row. When a controls card is recorded the host computes its
+  series under it and stores it on the card (`max_points`), so the client
+  recomputes under the same limit. The validator checks a range's
+  structure and no longer computes it. Not yet looked at in the browser:
+  the Settings row (served by `/config/control`, checked).
+- What may follow published values is declared by each card tool
+  (`Tool::followable_fields`, from its shape: the stats card's
+  `readings.*.value`, the table's `rows.*.*`); binding walks whatever a
+  tool declares, with `*` for every index. A new form or pack declares
+  its own; nothing in the binding names a form.

@@ -245,6 +245,12 @@ Carried over from 7.2.0:
 
 ## Card forms (docs/design/92)
 
+- [ ] `vak_control::TimeLimits` now holds a non-time limit
+  (`series_points`); rename it to what `[control.limits]` is (the
+  operator's limits) across Rust, the client and the admin console, which
+  lists only the time limits. The name `Limits` is taken by the intent
+  kernel.
+
 - A map, a board, a graph and a form to fill in are not built; places go in
   a list or details with a link. Build one only when real turns show a
   shape the forms cannot carry.

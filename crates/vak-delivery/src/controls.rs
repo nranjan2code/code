@@ -148,15 +148,12 @@ pub type Points = Vec<(f64, f64)>;
 /// Published series by name, each with the presentation that published it.
 pub type SeriesScope = BTreeMap<String, (Points, String)>;
 
-/// The most points one series may have: the same bound a card's lists
-/// have (`skills::Record::list`).
-pub const MAX_POINTS: usize = 10_000;
-
 /// Every series output of a stored card: its expression computed across a
 /// range of one of the card's inputs (`vary` from `from` to `to` by
 /// `step`), each point the input's value and the output's
 /// (docs/design/98 §2).
-pub fn series(payload: &Value) -> Result<Vec<(String, Points)>, String> {
+/// `max_points` is the operator's limit (`[control.limits] series_points`).
+pub fn series(payload: &Value, max_points: u64) -> Result<Vec<(String, Points)>, String> {
     let inputs = payload["inputs"].as_array().cloned().unwrap_or_default();
     let outputs = payload["outputs"].as_array().cloned().unwrap_or_default();
     let mut base = BTreeMap::new();
@@ -194,9 +191,9 @@ pub fn series(payload: &Value) -> Result<Vec<(String, Points)>, String> {
                 "output `{name}`: `step` must come to more than zero"
             ));
         }
-        if (to - from) / step > MAX_POINTS as f64 {
+        if (to - from) / step > max_points as f64 {
             return Err(format!(
-                "output `{name}`: the range gives more than {MAX_POINTS} points; take a larger step"
+                "output `{name}`: the range gives more than {max_points} points; take a larger step"
             ));
         }
         let mut points = Vec::new();
@@ -237,39 +234,31 @@ pub fn published(payload: &Value) -> Result<Vec<(String, f64)>, String> {
     Ok(out)
 }
 
-/// The fields of a form that may hold `= expression` over published
-/// values: a stat's value and a table's cells.
-fn value_paths(form: &str, payload: &Value) -> Vec<Vec<Value>> {
-    let mut paths = Vec::new();
-    match form {
-        "stats" => {
-            for (at, _) in payload["readings"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .enumerate()
-            {
-                paths.push(vec![
-                    Value::from("readings"),
-                    Value::from(at),
-                    Value::from("value"),
-                ]);
+/// The concrete paths in `payload` that match the declared patterns, where
+/// `*` stands for every index of a list (docs/design/98 §2).
+fn value_paths(payload: &Value, patterns: &[Vec<String>]) -> Vec<Vec<Value>> {
+    fn expand(value: &Value, pattern: &[String], at: Vec<Value>, out: &mut Vec<Vec<Value>>) {
+        let Some((step, rest)) = pattern.split_first() else {
+            out.push(at);
+            return;
+        };
+        if step == "*" {
+            for (index, item) in value.as_array().into_iter().flatten().enumerate() {
+                let mut next = at.clone();
+                next.push(Value::from(index));
+                expand(item, rest, next, out);
             }
+        } else if let Some(item) = value.get(step.as_str()) {
+            let mut next = at;
+            next.push(Value::from(step.as_str()));
+            expand(item, rest, next, out);
         }
-        "table" => {
-            for (row, cells) in payload["rows"].as_array().into_iter().flatten().enumerate() {
-                for (cell, _) in cells.as_array().into_iter().flatten().enumerate() {
-                    paths.push(vec![
-                        Value::from("rows"),
-                        Value::from(row),
-                        Value::from(cell),
-                    ]);
-                }
-            }
-        }
-        _ => {}
     }
-    paths
+    let mut out = Vec::new();
+    for pattern in patterns {
+        expand(payload, pattern, Vec::new(), &mut out);
+    }
+    out
 }
 
 fn at_path<'a>(value: &'a mut Value, path: &[Value]) -> Option<&'a mut Value> {
@@ -284,8 +273,11 @@ fn at_path<'a>(value: &'a mut Value, path: &[Value]) -> Option<&'a mut Value> {
 /// `scope` (name to value and the presentation that published it), and
 /// record the binding in the card's `bound` list so a client recomputes it
 /// when those values change. A name nothing earlier published is refused.
+/// `followable` is what the card's tool declares may follow published
+/// values (`Tool::followable_fields`).
 pub fn bind(
     form: &str,
+    followable: &[Vec<String>],
     payload: &mut Value,
     scope: &BTreeMap<String, (f64, String)>,
     series_scope: &SeriesScope,
@@ -324,7 +316,7 @@ pub fn bind(
             bound.push(serde_json::json!({"path": ["series", at, "points"], "series": name, "from": [from]}));
         }
     }
-    for path in value_paths(form, payload) {
+    for path in value_paths(payload, followable) {
         let Some(field) = at_path(payload, &path) else {
             continue;
         };
@@ -379,7 +371,7 @@ mod binding_tests {
             {"name": "year", "kind": "number", "value": 0}],
             "outputs": [{"name": "grown", "expression": "start * (1 + rate / 100) ^ year",
              "vary": "year", "from": "0", "to": "3", "step": "1"}]});
-        let all = series(&card).expect("computes");
+        let all = series(&card, 10_000).expect("computes");
         assert_eq!(all[0].0, "grown");
         assert_eq!(all[0].1.len(), 4);
         assert!((all[0].1[3].1 - 133.1).abs() < 1e-9);
@@ -389,7 +381,7 @@ mod binding_tests {
         )]);
         let mut chart = serde_json::json!({"chart_type": "line", "accessible_summary": "Growth.",
             "series": [{"name": "grown", "follows": "grown", "points": []}]});
-        bind("chart", &mut chart, &BTreeMap::new(), &series_scope).expect("binds");
+        bind("chart", &[], &mut chart, &BTreeMap::new(), &series_scope).expect("binds");
         assert_eq!(
             chart["series"][0]["points"][0],
             serde_json::json!({"x": 0, "y": 100})
@@ -397,7 +389,7 @@ mod binding_tests {
         assert_eq!(chart["bound"][0]["series"], "grown");
         let mut wide = card.clone();
         wide["outputs"][0]["step"] = serde_json::json!("0.0001");
-        assert!(series(&wide).is_err());
+        assert!(series(&wide, 10_000).is_err());
     }
 
     #[test]
@@ -408,7 +400,14 @@ mod binding_tests {
         ]);
         let mut stats = serde_json::json!({"readings": [
             {"label": "Monthly", "value": "= emi"}, {"label": "Fixed", "value": "3"}]});
-        bind("stats", &mut stats, &scope, &BTreeMap::new()).expect("binds");
+        bind(
+            "stats",
+            &[vec!["readings".into(), "*".into(), "value".into()]],
+            &mut stats,
+            &scope,
+            &BTreeMap::new(),
+        )
+        .expect("binds");
         assert_eq!(stats["readings"][0]["value"], 8884.88);
         assert_eq!(stats["readings"][1]["value"], "3");
         assert_eq!(
@@ -418,11 +417,24 @@ mod binding_tests {
         assert_eq!(stats["bound"][0]["from"], serde_json::json!(["pres-1"]));
         let mut table =
             serde_json::json!({"columns": [{"label": "Total"}], "rows": [["= round(emi * n, 2)"]]});
-        bind("table", &mut table, &scope, &BTreeMap::new()).expect("binds");
+        bind(
+            "table",
+            &[vec!["rows".into(), "*".into(), "*".into()]],
+            &mut table,
+            &scope,
+            &BTreeMap::new(),
+        )
+        .expect("binds");
         assert_eq!(table["rows"][0][0], 106618.56);
         let mut unknown = serde_json::json!({"readings": [{"label": "X", "value": "= rate"}]});
-        let refused =
-            bind("stats", &mut unknown, &scope, &BTreeMap::new()).expect_err("no such name");
+        let refused = bind(
+            "stats",
+            &[vec!["readings".into(), "*".into(), "value".into()]],
+            &mut unknown,
+            &scope,
+            &BTreeMap::new(),
+        )
+        .expect_err("no such name");
         assert!(
             refused.contains("`rate`") && refused.contains("emi, n"),
             "{refused}"

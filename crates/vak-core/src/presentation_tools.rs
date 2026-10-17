@@ -48,6 +48,9 @@ struct CardShape {
     /// The stored card for validated arguments, or a refusal the model can
     /// act on.
     build: fn(&Map<String, Value>) -> Result<Value, String>,
+    /// Fields of the stored card that may follow published values
+    /// (`Tool::followable_fields`, docs/design/98 §2).
+    followable: &'static [&'static [&'static str]],
 }
 
 type Map<K, V> = serde_json::Map<K, V>;
@@ -1620,6 +1623,7 @@ const fn shape(
         grounded_in: None,
         fields,
         build,
+        followable: &[],
     }
 }
 
@@ -1827,14 +1831,17 @@ const SHAPES: &[CardShape] = &[
         build_details,
         fill_nothing,
     ),
-    shape(
-        "table",
-        "emit_table_card",
-        "Records under the same columns. Rows are strings with the header first and cells separated by |.",
-        table_fields,
-        build_table,
-        fill_table,
-    ),
+    CardShape {
+        followable: &[&["rows", "*", "*"]],
+        ..shape(
+            "table",
+            "emit_table_card",
+            "Records under the same columns. Rows are strings with the header first and cells separated by |.",
+            table_fields,
+            build_table,
+            fill_table,
+        )
+    },
     shape(
         "comparison",
         "emit_comparison_card",
@@ -1843,14 +1850,17 @@ const SHAPES: &[CardShape] = &[
         build_comparison,
         fill_comparison,
     ),
-    shape(
-        "stats",
-        "emit_stats_card",
-        "A few key figures shown large: each a label and value, with its unit and change when known.",
-        stats_fields,
-        build_stats,
-        fill_stats,
-    ),
+    CardShape {
+        followable: &[&["readings", "*", "value"]],
+        ..shape(
+            "stats",
+            "emit_stats_card",
+            "A few key figures shown large: each a label and value, with its unit and change when known.",
+            stats_fields,
+            build_stats,
+            fill_stats,
+        )
+    },
     shape(
         "chart",
         "emit_chart_card",
@@ -2316,6 +2326,14 @@ impl Tool for EmitCardTool {
         true
     }
 
+    fn followable_fields(&self) -> Vec<Vec<String>> {
+        self.shape
+            .followable
+            .iter()
+            .map(|path| path.iter().map(|step| (*step).to_string()).collect())
+            .collect()
+    }
+
     fn card_block(&self) -> Option<&str> {
         Some(self.shape.form)
     }
@@ -2380,11 +2398,14 @@ impl Tool for EmitCardTool {
                 {
                     let names: Vec<&str> =
                         published.iter().map(|(name, _)| name.as_str()).collect();
-                    if let Ok(series) = vak_delivery::controls::series(&output.payload)
-                        && !series.is_empty()
-                    {
-                        let series: Vec<&str> =
-                            series.iter().map(|(name, _)| name.as_str()).collect();
+                    let series: Vec<&str> = output.payload["outputs"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|output| output.get("vary").is_some())
+                        .filter_map(|output| output["name"].as_str())
+                        .collect();
+                    if !series.is_empty() {
                         ack.push_str(&format!(
                             " Its series {} can be drawn by a later chart card with follows set to their names.",
                             series.join(", ")

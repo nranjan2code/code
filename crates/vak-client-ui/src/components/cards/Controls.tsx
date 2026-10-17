@@ -65,7 +65,7 @@ export default function ControlsCard(props: { payload: Payload }) {
       series = seriesOf(outputs().map((output) => ({
         name: text(output.name) ?? "", expression: text(output.expression) ?? "",
         vary: text(output.vary), from: text(output.from), to: text(output.to), step: text(output.step),
-      })), values);
+      })), values, num(p().max_points) ?? 0);
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };
     }

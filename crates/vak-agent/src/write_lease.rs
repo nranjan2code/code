@@ -208,6 +208,10 @@ impl Tool for ScopedWriteTool {
         self.inner.grounded_in()
     }
 
+    fn followable_fields(&self) -> Vec<Vec<String>> {
+        self.inner.followable_fields()
+    }
+
     fn fill_from_data(
         &self,
         args: &mut serde_json::Value,

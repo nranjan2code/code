@@ -889,7 +889,8 @@ fn control_name(record: &Record<'_>, names: &mut Vec<String>) -> Check {
 /// from them in the closed expression language, and the card's own values
 /// as a worked example every output must agree with.
 fn validate_controls(card: &Record<'_>, payload: &Value) -> Check {
-    card.only(&["title", "inputs", "outputs"])?;
+    card.only(&["title", "inputs", "outputs", "max_points"])?;
+    card.whole("max_points")?;
     card.optional_text("title")?;
     let mut names: Vec<String> = Vec::new();
     for input in card.records("inputs", false)? {
@@ -1019,7 +1020,7 @@ fn validate_controls(card: &Record<'_>, payload: &Value) -> Check {
     }
     let computed = crate::controls::compute(payload, &std::collections::BTreeMap::new())
         .map_err(|error| card.err(error))?;
-    crate::controls::series(payload).map_err(|error| card.err(error))?;
+
     for (output, (name, value)) in items(payload, "outputs").iter().zip(computed) {
         let stated = output["equals"].as_f64().unwrap_or_default();
         let decimals = output["decimals"].as_u64().unwrap_or(0);

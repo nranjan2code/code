@@ -362,6 +362,13 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// The fields of a card this tool shows that may follow the values
+    /// another card of the answer publishes: paths into the stored card,
+    /// `*` standing for every index of a list (docs/design/98 §2).
+    fn followable_fields(&self) -> Vec<Vec<String>> {
+        Vec::new()
+    }
+
     /// The form a card this tool shows is drawn as (`StructuredOutput.block`),
     /// for a tool that presents cards of one form. The client draws an empty
     /// shell of it while a call is written.
