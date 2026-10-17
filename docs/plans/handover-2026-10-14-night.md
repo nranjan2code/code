@@ -13,7 +13,7 @@ commit'), then this handover's 'Now' and 'Next', then
 docs/design/96-answer-projection-gaps.md.
 
 Run `git status` and `git log --oneline -8`; the newest commit should be
-'Doc 96 P1: the controls form'. Stage only your own paths; keep only
+'Doc 98: answers beyond one card (proposal)'. Stage only your own paths; keep only
 `main`. We are on a Claude Code Pro plan: be lean (grep and line ranges,
 batched commands), check usage with get_usage, run the full gate in the
 background once per finished step, commit each verified step, and rewrite
@@ -402,10 +402,12 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
    controlsExpression.ts, controls-expression.mjs, card_actions on both
    sides, presentation_tools, skills, docs 92/96, open-items, CHANGELOG,
    dist-web).
-1. Answers beyond single cards, asked for by the maintainer 2026-10-17
-   ("we cannot build a card for every scenario"; "make this the best out
-   there"). Write docs/design/98 as a proposal FIRST and show it before
-   building:
+1. Answers beyond single cards (maintainer, 2026-10-17: "we cannot build
+   a card for every scenario"; "make this the best out there"; HTML must
+   follow the product's styling, theme and tokens). The proposal is
+   written: docs/design/98-answers-beyond-one-card.md (S1 shared values,
+   S2 series, S3 Canvas, S4 product look for HTML, S5 living pages). Get
+   the maintainer's yes on it, then build S1. Its outline:
    - Shared values within an answer: a controls card publishes its inputs
      and outputs by name; any card's field may be an expression over them
      in the same closed language; the client recomputes live, the host
