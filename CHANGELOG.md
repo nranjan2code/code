@@ -1,3 +1,9 @@
+## Unreleased
+
+- A turn can be asked again: Retry on your message answers it afresh, and
+  that turn and everything after it leave the conversation the Agent sees.
+  Nothing is deleted.
+
 ## 8.8.0 — 2026-10-17
 
 - On OpenAI, Anthropic and Gemini routes the Agent can use every tool it
@@ -10,10 +16,6 @@
 
 - A long earlier turn reopens whole, instead of being reported as history
   still being prepared.
-
-- A turn can be asked again: Retry on your message answers it afresh, and
-  that turn and everything after it leave the conversation the Agent sees.
-  Nothing is deleted.
 
 ## 8.7.0 — 2026-10-17
 
