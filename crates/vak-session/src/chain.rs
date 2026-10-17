@@ -100,6 +100,27 @@ impl RecordChain {
         self.write_if(rows, true, Some(after))
     }
 
+    /// Appends what `decide` returns, deciding and appending as one step
+    /// under the chain's writer lock, which every process takes: `decide`
+    /// reads what the chain holds (through its rollup) and may do work of
+    /// its own that must not race a row another writer would add, such as
+    /// saving a credential only while an account is still connected. Its
+    /// error appends nothing and is handed back.
+    pub fn append_decided<T: Serialize, E>(
+        &self,
+        decide: impl FnOnce() -> Result<Vec<T>, E>,
+    ) -> Result<Result<(), E>, SessionError> {
+        let mut refused = None;
+        self.write_with(true, None, || match decide() {
+            Ok(rows) => rows,
+            Err(error) => {
+                refused = Some(error);
+                Vec::new()
+            }
+        })?;
+        Ok(refused.map_or(Ok(()), Err))
+    }
+
     fn write<T: Serialize>(&self, rows: &[T], sync: bool) -> Result<(), SessionError> {
         self.write_if(rows, sync, None).map(|_| ())
     }
@@ -113,6 +134,15 @@ impl RecordChain {
         if rows.is_empty() {
             return Ok(true);
         }
+        self.write_with(sync, after, || rows)
+    }
+
+    fn write_with<R: AsRef<[T]>, T: Serialize>(
+        &self,
+        sync: bool,
+        after: Option<crate::tail::Position>,
+        rows: impl FnOnce() -> R,
+    ) -> Result<bool, SessionError> {
         std::fs::create_dir_all(&self.dir)?;
         let segments = vak_storage::segments::SegmentSet::open(&self.dir).map_err(storage_error)?;
         let lock = segments.lock().map_err(storage_error)?;
@@ -127,6 +157,11 @@ impl RecordChain {
             if moved {
                 return Ok(false);
             }
+        }
+        let rows = rows();
+        let rows = rows.as_ref();
+        if rows.is_empty() {
+            return Ok(true);
         }
         let key = match (crate::keys::of(&self.dir)?, &self.scope) {
             (Some(key), _) => Some(key),
@@ -339,6 +374,45 @@ mod tests {
         assert_eq!(
             rows,
             vec![serde_json::json!({ "n": 1 }), serde_json::json!({ "n": 3 })]
+        );
+    }
+
+    #[test]
+    fn an_append_decided_sees_every_row_written_before_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("decided-under-lock");
+        let writers: Vec<_> = (0..8)
+            .map(|_| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let chain = RecordChain::at(&path);
+                    for _ in 0..10 {
+                        chain
+                            .append_decided(|| {
+                                let seen: Vec<serde_json::Value> = RecordChain::at(&path).read();
+                                Ok::<_, ()>(vec![serde_json::json!({ "n": seen.len() })])
+                            })
+                            .unwrap()
+                            .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        let chain = RecordChain::at(&path);
+        let refused = chain
+            .append_decided(|| Err::<Vec<serde_json::Value>, _>("refused"))
+            .unwrap();
+        assert_eq!(refused, Err("refused"));
+        let rows: Vec<serde_json::Value> = chain.read();
+        assert_eq!(
+            rows,
+            (0..80)
+                .map(|n| serde_json::json!({ "n": n }))
+                .collect::<Vec<_>>(),
+            "every decision saw the rows before it, and a refusal wrote nothing"
         );
     }
 

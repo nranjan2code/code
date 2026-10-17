@@ -221,9 +221,11 @@ Google and Microsoft calendar-write consent is broader than this limited
 create operation; the credential stays in the Agent vault and effects remain
 broker-only. OAuth authorization attempts are bounded and single-use;
 disconnect serializes with new links and atomically advances a durable,
-Agent/provider OAuth fence in the append-only connection ledger. Each OAuth
+Agent/provider OAuth fence in the Agent's connection ledger, a record chain
+(`agents/<id>/mail-calendar/connections`, read through a rollup). Each OAuth
 attempt captures that fence at initiation; callback credential persistence
-checks it under the same cross-process ledger lock as the vault write. A
+checks it and writes the vault under the chain's writer lock
+(`RecordChain::append_decided`), which every process takes. A
 disconnect in another server process therefore invalidates a callback already
 in flight. The separate in-memory callback fence table is capped so eviction
 invalidates stale commits instead of authorizing them.

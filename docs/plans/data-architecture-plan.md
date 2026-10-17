@@ -665,7 +665,8 @@ coworking grants are record chains whose decision readers fail on an
 undecodable row; the plugin invocation log, which duplicated Activity rows
 and sat in the project's `.vak`, is gone with its unused endpoint; and
 `Core` no longer falls back to a data home inside the project. The mail and
-calendar connection ledger stays its own encrypted file (doc 80). Kept as paths, by
+calendar connection ledger stays its own encrypted file (doc 80; moved onto
+a record chain on 2026-10-17). Kept as paths, by
 decision: `CorePool` keys (a `Core` is rooted at a folder, and one space's
 Agent workspaces are separate folders) and `[server] workspace_roots` (a
 browsing boundary, not a space).

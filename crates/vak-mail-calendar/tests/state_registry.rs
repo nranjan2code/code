@@ -14,7 +14,7 @@ fn agent_connection_ledger_is_covered_by_the_durable_state_registry() {
 
     assert_eq!(
         relative,
-        Path::new("agents/registry-agent/mail-calendar/connections.jsonl")
+        Path::new("agents/registry-agent/mail-calendar/connections")
     );
     assert!(
         state::is_declared(Root::Data, relative),

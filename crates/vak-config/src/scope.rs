@@ -189,6 +189,19 @@ impl AgentScope {
         self.root.join("commitments")
     }
 
+    /// The Agent's mail and calendar account connections, a record chain
+    /// (docs/design/80-mail-and-calendar.md).
+    pub fn mail_calendar_connections(&self) -> PathBuf {
+        self.root.join("mail-calendar").join("connections")
+    }
+
+    /// The Document rolling up `mail_calendar_connections()`: each
+    /// account's state and each provider's fence, read without replaying
+    /// the chain.
+    pub fn mail_calendar_connections_rollup(&self) -> PathBuf {
+        self.root.join("mail-calendar").join("connections-rollup")
+    }
+
     /// The Document rolling up `commitments()` so a turn reads each
     /// commitment's state without replaying the chain (plan M6.3).
     pub fn commitments_rollup(&self) -> PathBuf {

@@ -254,7 +254,11 @@ Carried over from 7.2.0:
   with its OAuth fences and erasure (42 call sites in 8 files:
   vak-mail-calendar, vak-core `mail_calendar.rs`/`erasure.rs`, vak-server
   `mail_calendar.rs`/`lib.rs`, tests), then a connected-accounts rollup
-  that `scoped_tools` reads to load the tool.
+  that `scoped_tools` reads to load the tool. Step 1 done 2026-10-17: the
+  ledger is a `RecordChain` at `agents/<id>/mail-calendar/connections`
+  read through a rollup, and a decision that must not race another writer
+  (a fence check before a vault write) runs under the chain's writer lock
+  (`RecordChain::append_decided`). Step 2 is open.
 
 - [x] P3 (docs/design/96, 2026-10-17): `emit_markup_preview_card`
   requires a typed `libraries` list (`vak_delivery::skills::MARKUP_LIBRARIES`,
