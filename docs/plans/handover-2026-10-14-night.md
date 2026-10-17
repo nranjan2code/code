@@ -47,8 +47,12 @@ Short progress lines."
 
 ## Where things stand
 
-**Now (2026-10-17, end of third session).** Next item 0 is done and
-pushed; the tree is clean. Pick up at Next item 1.
+**Now (2026-10-17, late).** 8.7.0 is released (`2e94d5962`, tag
+`v8.7.0`, artifacts in `dist/8.7.0`) and installed on this Mac (additive,
+no purge): doc 99 E (a file or note is read with the record of the turn
+that made it), F (set a turn aside, Undo) and the poison replay
+(`scripts/poison_replay.sh`). Uncommitted in the checkout: the retry-from-
+a-turn work (doc 99 F's open item), not in 8.7.0. Then Next item 1.
 
 
 **Next (2026-10-16): the tool audit is built; doc 95 waits for the
@@ -97,8 +101,8 @@ and about half of first steps on the 0.8b route are a history or discovery
 lookup on a fresh request, which is the next thing to investigate (the
 wording audit). The maintainer asked for no full gate until a build is
 cut; the touched crates' tests pass, and `vak/tests/sync_roundtrip.rs`
-failed once in a full gate run, unrelated to these changes and not yet
-looked at.
+failed once in a full gate run (fixed 2026-10-17: it damaged a blob a
+fresh puller already held and so never read).
 
 **8.2.0 released 2026-10-15** (`6957c0dd5`, tag `v8.2.0`, artifacts in
 `dist/8.2.0`, feed at the local 127.0.0.1:8899 URL like 8.1.0): doc 93
