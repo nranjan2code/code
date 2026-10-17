@@ -21,7 +21,8 @@ function bindings(payload: Record<string, unknown>): Binding[] {
 export function withBoundValues(payload: Record<string, unknown>): Record<string, unknown> {
   const bound = bindings(payload);
   if (bound.length === 0) return payload;
-  const next = structuredClone(payload);
+  // A store proxy cannot be structured-cloned; the payload is plain JSON.
+  const next = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
   for (const binding of bound) {
     const values = Object.assign({}, ...binding.from.map((id) => published[id] ?? {}));
     if (binding.from.some((id) => !published[id])) continue;

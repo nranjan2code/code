@@ -49,7 +49,7 @@ export function FormView(props: { block: string; payload: Payload; fallback: str
   const payload = createMemo(() => withBoundValues(props.payload));
   return (
     <Show when={form()} fallback={<pre class="card-text">{props.fallback}</pre>}>
-      {(draw) => draw()({ payload: payload() })}
+      {(draw) => draw()({ get payload() { return payload(); } })}
     </Show>
   );
 }

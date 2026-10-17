@@ -75,6 +75,15 @@ pub fn compute(payload: &Value, set: &BTreeMap<String, f64>) -> Result<Vec<(Stri
     Ok(outputs)
 }
 
+/// A computed number as JSON: a whole number stays whole.
+pub fn number(value: f64) -> Value {
+    if value.fract() == 0.0 && value.abs() < 9.0e15 {
+        Value::from(value as i64)
+    } else {
+        Value::from(value)
+    }
+}
+
 /// A number written to `decimals` places.
 pub fn shown(value: f64, decimals: u64) -> String {
     format!("{value:.*}", decimals.min(12) as usize)
@@ -229,7 +238,7 @@ pub fn bind(
             .collect();
         let value = expression::evaluate(&expr, &values)
             .map_err(|error| format!("`= {source}`: {error}"))?;
-        *field = Value::from(value);
+        *field = number(value);
         let mut from: Vec<String> = names.iter().map(|name| scope[name].1.clone()).collect();
         from.sort();
         from.dedup();

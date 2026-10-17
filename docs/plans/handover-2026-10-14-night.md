@@ -13,7 +13,7 @@ commit'), then this handover's 'Now' and 'Next', then
 docs/design/96-answer-projection-gaps.md.
 
 Run `git status` and `git log --oneline -8`; the newest commit should be
-'Doc 98 S1: shared values between an answer's cards'. Stage only your own paths; keep only
+'Doc 98 S1: linked cards drawn live'. Stage only your own paths; keep only
 `main`. We are on a Claude Code Pro plan: be lean (grep and line ranges,
 batched commands), check usage with get_usage, run the full gate in the
 background once per finished step, commit each verified step, and rewrite
@@ -408,9 +408,12 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
    written: docs/design/98-answers-beyond-one-card.md (S1 shared values,
    S2 series, S3 Canvas, S4 product look for HTML, S5 living pages). Get
    the maintainer's yes (given 2026-10-17). S1 is built and committed
-   (doc 98 §7); open: no live turn has drawn two linked cards on the dev
-   route yet. Next: try S1 again live (one turn at a time), then S2
-   series, S3 Canvas, S4 product look for HTML. Its outline:
+   (doc 98 §7) and drawn linked live (installed route, gpt-6-luna; the
+   dev route answers with one controls card). A dev server on the
+   installed home: launch entry `vak-installed-live` (port 8907). Next:
+   S2 series, S3 Canvas, S4 product look for HTML (all card wording must
+   stay domain-neutral: no domain names, units or solutions in tool
+   descriptions or acknowledgements). Its outline:
    - Shared values within an answer: a controls card publishes its inputs
      and outputs by name; any card's field may be an expression over them
      in the same closed language; the client recomputes live, the host

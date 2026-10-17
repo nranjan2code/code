@@ -439,7 +439,7 @@ fn table_fields() -> Value {
                 "type": "array",
                 "items": {
                     "type": "string",
-                    "description": "One line of the table with its cells separated by |: the first line names every column, each later line gives one row's cells in the same order. A cell may be `= expression` over what a controls card earlier in this answer publishes (= emi * 12)."
+                    "description": "One line of the table with its cells separated by |: the first line names every column, each later line gives one row's cells in the same order. A cell may be `= expression` over what a controls card earlier in this answer publishes (= a * b)."
                 },
                 "description": "The table, one string per line: first the column names in one string, then one string for each row. Example: [\"Item | Amount\", \"Rice | 2 kg\", \"Oil | 1 l\"]."
             }
@@ -827,11 +827,12 @@ fn stats_fields() -> Value {
                 "Each figure, in the order to show them.",
                 serde_json::json!({
                     "label": string("What the figure is."),
-                    "value": string("The figure, or a word for a descriptive reading such as light rain, or `= expression` over the inputs and outputs a controls card earlier in this answer publishes (= emi * months), which then follows them as the person changes them."),
+                    "follows": string("Optional. An expression over the names a controls card earlier in this answer publishes (a * b); the figure is computed from it and changes as the person changes them."),
+                    "value": string("Optional when follows is given. The figure, or a word for a descriptive reading such as light rain."),
                     "unit": string("Optional. Its unit, for a number (°C, km/h, %, $)."),
                     "change": string("Optional. How it moved, as given (+3% since last week).")
                 }),
-                &["label", "value"],
+                &["label"],
             )
         }),
         &["readings"],
@@ -853,9 +854,15 @@ fn build_stats(args: &Map<String, Value>) -> Result<Value, String> {
         }
         // A figure is shown as written ("13,400", "light rain"); a number
         // sent as a number stays one.
-        let built = record_copy(reading, &["label", "value", "unit", "change"]);
+        let mut built = record_copy(reading, &["label", "value", "unit", "change"]);
+        // A figure that follows published values is bound when the card is
+        // recorded (docs/design/98 §2).
+        let follows = text(reading, "follows");
+        if !follows.is_empty() {
+            built["value"] = Value::String(format!("= {follows}"));
+        }
         if built.get("value").is_none() {
-            return Err(format!("readings[{at}].value is empty"));
+            return Err(format!("readings[{at}] needs value or follows"));
         }
         readings.push(built);
     }
@@ -1197,7 +1204,7 @@ fn number(description: &str) -> Value {
     serde_json::json!({"type": "number", "description": description})
 }
 
-const EXPRESSION: &str = "How it is computed from the inputs and earlier outputs, by their names: numbers, + - * / % ^, parentheses, comparisons (< <= > >= == != give 1 or 0), and if(condition, then, else), min, max, round(x, places), floor, ceil, abs, sqrt, log, exp, sum, avg. A toggle reads 1 when on, a date as a count of days. Example: bill * (1 + tip / 100) / people.";
+const EXPRESSION: &str = "How it is computed from the inputs and earlier outputs, by their names: numbers, + - * / % ^, parentheses, comparisons (< <= > >= == != give 1 or 0), and if(condition, then, else), min, max, round(x, places), floor, ceil, abs, sqrt, log, exp, sum, avg. A toggle reads 1 when on, a date as a count of days. Example: amount * (1 + rate / 100) / count.";
 
 fn controls_fields() -> Value {
     fields(
@@ -1206,14 +1213,14 @@ fn controls_fields() -> Value {
             "inputs": list_of(
                 "What the person sets, with the values the card starts from.",
                 serde_json::json!({
-                    "name": string("The name expressions use for it: letters, digits and _, starting with a letter (bill, tip_percent)."),
+                    "name": string("The name expressions use for it: letters, digits and _, starting with a letter (amount, rate_percent)."),
                     "kind": one_of(CONTROL_KINDS, "number for any number, range for a number on a slider between min and max, choice for one of the options, toggle for on or off, date for a day."),
                     "value": string("Its value in the example, as text: a number for number, range and choice (a choice's value is one of its options' values), true or false for a toggle, YYYY-MM-DD for a date."),
                     "min": number("Optional for number, needed for range. The smallest value."),
                     "max": number("Optional for number, needed for range. The largest value."),
                     "step": number("Optional. How much the value moves at a time."),
-                    "options": string("Optional, needed for choice. The options separated by semicolons, each a number or a name with its number: Low=10; Usual=15; Generous=20."),
-                    "unit": string("Optional. The unit shown beside it (₹, km, %)."),
+                    "options": string("Optional, needed for choice. The options separated by semicolons, each a number or a name with its number: Low=10; Middle=15; High=20."),
+                    "unit": string("Optional. The unit shown beside it (the unit's symbol or name)."),
                     "label": string("What it is called on the card.")
                 }),
                 &["name", "kind", "value", "label"],
@@ -1328,7 +1335,7 @@ fn build_controls(args: &Map<String, Value>) -> Result<Value, String> {
         for (output, (_, value)) in outputs.iter_mut().zip(computed) {
             let decimals = output["decimals"].as_u64().unwrap_or(0);
             let scale = 10_f64.powi(decimals as i32);
-            output["equals"] = Value::from((value * scale).round() / scale);
+            output["equals"] = vak_delivery::controls::number((value * scale).round() / scale);
         }
     }
     Ok(payload)
@@ -1867,7 +1874,7 @@ const SHAPES: &[CardShape] = &[
     shape(
         "controls",
         "emit_controls_card",
-        "Inputs a person changes and results that update as they do: a bill split, a loan payment, a unit conversion, a what-if. Each result is an expression over the inputs; Vakyartha computes it. Later cards of the answer can follow its values: a stat's value or a table cell written `= name`.",
+        "Inputs a person changes and results that update as they do: a calculation, a conversion or a what-if. Each result is an expression over the inputs; Vakyartha computes it. Later cards of the answer can follow its values: a stat through `follows`, a table cell written `= name`.",
         controls_fields,
         build_controls,
         fill_nothing,
@@ -2342,7 +2349,23 @@ impl Tool for EmitCardTool {
             args,
             &vak_delivery::built_in_skill_registry(),
         ) {
-            Ok(output) => ToolOutput::ok(format!("Shown to the user ({}).", output.semantic_type)),
+            Ok(output) => {
+                let mut ack = format!("Shown to the user ({}).", output.semantic_type);
+                // What a later card of the answer can follow (docs/design/98 §2).
+                if output.block == "controls"
+                    && let Ok(published) = vak_delivery::controls::published(&output.payload)
+                {
+                    let names: Vec<&str> =
+                        published.iter().map(|(name, _)| name.as_str()).collect();
+                    if let Some(last) = names.last() {
+                        ack.push_str(&format!(
+                            " It publishes {}. A later stats card follows them with a reading like {{\"label\": \"…\", \"follows\": \"{last}\"}}; a table cell with = {last}.",
+                            names.join(", ")
+                        ));
+                    }
+                }
+                ToolOutput::ok(ack)
+            }
             Err(reason) => ToolOutput::error(
                 Fault::Shape,
                 format!("Card not displayed: {reason}. Fix these fields."),

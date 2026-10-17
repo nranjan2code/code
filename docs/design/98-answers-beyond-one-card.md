@@ -1,7 +1,7 @@
 # 98 — Answers beyond one card
 
 Status: in progress (2026-10-17): accepted by the maintainer; S1 built
-(host and client, tested), not yet drawn linked in a live turn. Written at
+and drawn linked in a live turn (2026-10-17). Written at
 the maintainer's direction ("we cannot build a card for every scenario";
 "make this the best out there"). Builds on docs/design/92-card-forms.md
 (forms), docs/design/87-composed-answers.md (composition),
@@ -109,9 +109,17 @@ Each stage is its own commit with the full gate and a live turn.
 
 ## 7. S1 as built (2026-10-17)
 
-- Marker: `= expression` in a stat's `value` or a table cell, both text
-  fields, so no schema changed; the controls, stats and table tool
-  descriptions say so.
+- A stat follows published values through its own optional field,
+  `follows` (an expression); its `value` is optional when `follows` is
+  given. The `= expression` marker inside `value` was tried first and
+  failed live in both tries (the figure written as prose, then as fixed
+  numbers): one field for two things, as doc 30 §30.1 rule 9 measured. A
+  table cell keeps the `= expression` marker (cells have no sibling
+  field), so far unmeasured live. The builder turns `follows` into the
+  same binding.
+- The controls card's acknowledgement names what it publishes and shows a
+  reading built from those names, so the next step knows what it can
+  follow.
 - Host: `show_card` (vak-agent) collects what this turn's controls cards
   publish (`vak_delivery::controls::published`: inputs and computed
   outputs, by name, with the publishing presentation id), refuses a
@@ -127,5 +135,15 @@ Each stage is its own commit with the full gate and a live turn.
   with one controls card holding every result, and, asked for a separate
   table, wrote textbook names (`P`, `r`, `n`) and an assignment; both
   refusals now list the names to use and say an expression has no
-  assignment. No turn has yet drawn two linked cards.
+  assignment.
+- Then, on the same request: the dev route answered with one controls
+  card holding every result three times (each a fair answer; nothing may
+  read the request to insist on a second card), and once wrote "Follows"
+  into `value`. The installed route (gpt-6-luna) drew a controls card and
+  a stats card whose readings use `follows`, beside each other, on the
+  first try. In the browser, changing the rent moved the stats card from
+  35,000 to 30,000 a month. Found and fixed on the way: `FormView` passed
+  the form a plain props object, so a bound payload never redrew (now a
+  getter), and the client cloned a store proxy with `structuredClone`,
+  which threw. Whole computed numbers are stored as integers.
 
