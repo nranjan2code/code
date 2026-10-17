@@ -174,8 +174,11 @@ Each stage is its own commit with the full gate and a live turn.
   technical row. When a controls card is recorded the host computes its
   series under it and stores it on the card (`max_points`), so the client
   recomputes under the same limit. The validator checks a range's
-  structure and no longer computes it. Not yet looked at in the browser:
-  the Settings row (served by `/config/control`, checked).
+  structure and no longer computes it. Seen in Settings → the Agent's
+  shared defaults → Limits → Technical details, default 10,000 points.
+- Every example in the card tools' descriptions and refusals is neutral
+  (no groceries, weather, units, places or bookings); domain examples
+  remain only in test fixtures.
 - What may follow published values is declared by each card tool
   (`Tool::followable_fields`, from its shape: the stats card's
   `readings.*.value`, the table's `rows.*.*`); binding walks whatever a

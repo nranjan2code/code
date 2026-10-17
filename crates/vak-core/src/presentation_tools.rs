@@ -350,7 +350,7 @@ fn list_fields() -> Value {
     fields(
         serde_json::json!({
             "title": string(TITLE),
-            "checkable": boolean("Optional. true when the items are things to tick off (to bring, buy or do)."),
+            "checkable": boolean("Optional. true when the items are to be ticked off."),
             "items": list_of(
                 "The items, in the order to show them.",
                 serde_json::json!({
@@ -444,7 +444,7 @@ fn table_fields() -> Value {
                     "type": "string",
                     "description": "One line of the table with its cells separated by |: the first line names every column, each later line gives one row's cells in the same order. A cell may be `= expression` over what a controls card earlier in this answer publishes (= a * b)."
                 },
-                "description": "The table, one string per line: first the column names in one string, then one string for each row. Example: [\"Item | Amount\", \"Rice | 2 kg\", \"Oil | 1 l\"]."
+                "description": "The table, one string per line: first the column names in one string, then one string for each row. Example: [\"Name | Value\", \"A | 1\", \"B | 2\"]."
             }
         }),
         &["rows"],
@@ -460,8 +460,8 @@ fn build_table(args: &Map<String, Value>) -> Result<Value, String> {
     if labels.len() < 2 {
         return Err(
             "every line has one cell, so this is not a table: a table's first string \
-             names two or more columns separated by | (\"Item | Amount\"), and each later string \
-             gives one row's cells the same way (\"Rice | 2 kg\"). For one value per item use \
+             names two or more columns separated by | (\"Name | Value\"), and each later string \
+             gives one row's cells the same way (\"A | 1\"). For one value per item use \
              emit_list_card; for labels with their values use emit_details_card."
                 .into(),
         );
@@ -831,9 +831,9 @@ fn stats_fields() -> Value {
                 serde_json::json!({
                     "label": string("What the figure is."),
                     "follows": string("Optional. An expression over the names a controls card earlier in this answer publishes (a * b); the figure is computed from it and changes as the person changes them."),
-                    "value": string("Optional when follows is given. The figure, or a word for a descriptive reading such as light rain."),
-                    "unit": string("Optional. Its unit, for a number (°C, km/h, %, $)."),
-                    "change": string("Optional. How it moved, as given (+3% since last week).")
+                    "value": string("Optional when follows is given. The figure, or words for a reading that is not a number."),
+                    "unit": string("Optional. Its unit, for a number, as a symbol or a short name."),
+                    "change": string("Optional. How it moved, as given (+3%).")
                 }),
                 &["label"],
             )
@@ -907,7 +907,7 @@ fn chart_fields() -> Value {
             "title": string(TITLE),
             "chart_type": one_of(&["line", "bar", "area"], "How to draw it: line or area for a value over an ordered x, bar for values across categories."),
             "x_label": string("Optional. What the x axis measures."),
-            "y_label": string("Optional. What the y axis measures, with its unit (Share (%))."),
+            "y_label": string("Optional. What the y axis measures, with its unit."),
             "accessible_summary": string("Optional. One sentence saying what the chart shows."),
             "follows": string("Optional. The names of series a controls card earlier in this answer publishes, separated by commas; the chart draws them and changes as the person changes the controls. Leave data out then."),
             "data": list_of(
@@ -1136,7 +1136,7 @@ fn map_fields() -> Value {
                 "The places, in order for a route or an area.",
                 serde_json::json!({
                     "label": string("The place's name, short."),
-                    "position": string("Its latitude and longitude in decimal degrees, latitude first, separated by a comma (18.5204, 73.8567). South and west are negative."),
+                    "position": string("Its latitude and longitude in decimal degrees, latitude first, separated by a comma (12.5, -45.25). South and west are negative."),
                     "detail": string("Optional. One line about it.")
                 }),
                 &["label", "position"],
@@ -1166,7 +1166,7 @@ fn build_map(args: &Map<String, Value>) -> Result<Value, String> {
         }
         let Some((latitude, longitude)) = position(text(place, "position")) else {
             return Err(format!(
-                "places[{at}].position must be latitude and longitude in decimal degrees, latitude first: \"18.5204, 73.8567\""
+                "places[{at}].position must be latitude and longitude in decimal degrees, latitude first: \"12.5, -45.25\""
             ));
         };
         let mut built = copy(
@@ -1740,7 +1740,7 @@ fn ability_chart_fields() -> Value {
             "y": string("The key of a record that holds the value to plot, a number. One chart shows one measure."),
             "series": string("Optional. The key of a record that holds the name of its series; one series named after `y` when left out."),
             "x_label": string("Optional. What the x axis measures."),
-            "y_label": string("Optional. What the y axis measures, with its unit (Share (%))."),
+            "y_label": string("Optional. What the y axis measures, with its unit."),
             "accessible_summary": string("Optional. One sentence saying what the chart shows.")
         }),
         &["chart_type", "from", "x", "y"],
@@ -1810,7 +1810,7 @@ const SHAPES: &[CardShape] = &[
     shape(
         "steps",
         "emit_steps_card",
-        "Things done in order: a how-to, a routine, an itinerary, an agenda or any plan in time. Each step has a short label, and a detail, time or duration when they help. A step can offer alternatives the person picks one of (`choices`), and their pick comes back to you.",
+        "Things done in order, one after another. Each step has a short label, and a detail, time or duration when they help. A step can offer alternatives the person picks one of (`choices`), and their pick comes back to you.",
         steps_fields,
         build_steps,
         fill_steps,
@@ -1818,7 +1818,7 @@ const SHAPES: &[CardShape] = &[
     shape(
         "list",
         "emit_list_card",
-        "Items in no particular order: things to bring, buy, read or note, search results, places or people. Mark it checkable when the items are to be ticked off.",
+        "Items in no particular order. Mark it checkable when the items are to be ticked off.",
         list_fields,
         build_list,
         fill_list,
@@ -1826,7 +1826,7 @@ const SHAPES: &[CardShape] = &[
     shape(
         "details",
         "emit_details_card",
-        "Labelled facts about one subject (a place, a person, a product, a booking), or questions with their answers.",
+        "Labelled facts about one subject, or questions with their answers.",
         details_fields,
         build_details,
         fill_nothing,
@@ -1872,7 +1872,7 @@ const SHAPES: &[CardShape] = &[
     shape(
         "callout",
         "emit_callout_card",
-        "One short note set apart: a tip, a note, a warning, or something important not to miss.",
+        "One short note set apart, with its tone: a tip, a note, a warning or something important.",
         callout_fields,
         build_callout,
         fill_nothing,
@@ -1891,7 +1891,7 @@ const SHAPES: &[CardShape] = &[
     shape(
         "calendar",
         "emit_calendar_card",
-        "Events on dates and times: a schedule across days, availability, bookings or deadlines.",
+        "Events placed on dates and times.",
         calendar_fields,
         build_calendar,
         fill_nothing,
