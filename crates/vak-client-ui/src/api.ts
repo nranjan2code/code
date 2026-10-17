@@ -985,6 +985,17 @@ export function setTurnAside(id: string, turn: string, aside: boolean): Promise<
   });
 }
 
+/** Asks for a turn again, on a new branch from the turn before it: that
+ *  turn and every turn after it leave the conversation the model sees
+ *  (docs/design/99-turns-that-do-not-poison.md §4 F). Nothing is deleted. */
+export function retryTurn(id: string, turn: string): Promise<{ request_id: string | null; state: string }> {
+  return req(`/sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(turn)}/retry`, {
+    method: "POST",
+    // This client draws a worker's question and sends the answer back.
+    body: JSON.stringify({ can_show_questions: true }),
+  });
+}
+
 export function sandboxExecutions(id: string): Promise<{ session_id: string; events: Array<Record<string, unknown>> }> {
   return req(`/sessions/${encodeURIComponent(id)}/sandbox/executions`);
 }

@@ -2,8 +2,9 @@ import { createSignal, Show } from "solid-js";
 import Icon from "./Icon";
 
 /** `onSetAside`, on a person's message whose turn has ended, sets that turn
- *  aside so later replies no longer see it (docs/design/99 §4 F). */
-export default function MessageActions(props: { text: string; role: "user" | "assistant"; onSetAside?: () => void }) {
+ *  aside so later replies no longer see it; `onRetry` asks for that turn
+ *  again in place of it and everything after it (docs/design/99 §4 F). */
+export default function MessageActions(props: { text: string; role: "user" | "assistant"; onSetAside?: () => void; onRetry?: () => void }) {
   const [copied, setCopied] = createSignal(false);
   const [copyFailed, setCopyFailed] = createSignal(false);
   const copy = async () => {
@@ -44,6 +45,18 @@ export default function MessageActions(props: { text: string; role: "user" | "as
         >
           <Icon name="code" size={11} />
           <span>Edit</span>
+        </button>
+      </Show>
+      <Show when={props.onRetry}>
+        <button
+          type="button"
+          class="msg-action-btn"
+          title="Ask this again: a new reply replaces this one and everything after it. Nothing is deleted."
+          aria-label="Ask this again"
+          onClick={() => props.onRetry?.()}
+        >
+          <Icon name="sync" size={11} />
+          <span>Retry</span>
         </button>
       </Show>
       <Show when={props.onSetAside}>

@@ -36,6 +36,7 @@ mod page_reader_worker;
 mod persistent_preview_worker;
 mod personal_os_endpoints;
 mod plugin_catalog_lifecycle;
+mod retry_turn;
 mod scheduled_runs;
 mod scheduler_personal_os;
 mod search_endpoint;

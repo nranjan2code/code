@@ -2,7 +2,7 @@ import { createEffect, createMemo, createResource, createSignal, For, Index, onC
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, turnsSetAside, turnSettled, setTurnAside, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item, openInLibrary } from "../store";
-import { activate, approve, isApprovalPending, openFileSmart } from "../App";
+import { activate, approve, isApprovalPending, openFileSmart, retryTurn } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
 import AgentMark from "./AgentMark";
@@ -639,6 +639,9 @@ function itemBody(item: Item, sessionId?: string | null): JSX.Element {
               role="user"
               onSetAside={sessionId && item.entryId && turnSettled(sessionId, item.entryId) && !turnsSetAside(sessionId).includes(item.entryId)
                 ? () => { void setTurnAside(sessionId, item.entryId!, true).catch(() => undefined); }
+                : undefined}
+              onRetry={sessionId && item.entryId && !isRunning(sessionId)
+                ? () => { void retryTurn(sessionId, item.entryId!); }
                 : undefined}
             />
           </Show>

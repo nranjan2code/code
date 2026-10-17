@@ -1106,6 +1106,11 @@ pub enum EntryPayload {
     TurnSetAside(crate::turn_marks::TurnMarkRecord),
     /// A person undid setting a turn aside: later turns see it again.
     TurnRestored(crate::turn_marks::TurnMarkRecord),
+    /// A person asked for a turn again (doc 99 §4 F): the first entry of a
+    /// new branch whose parent is the last entry before that turn, so the
+    /// turn sent again follows it and the turn retried, with everything
+    /// after it, leaves the chain. Never model-visible.
+    TurnRetried(crate::turn_marks::TurnMarkRecord),
 }
 
 /// One effect of one tool call, named by the call's id.

@@ -3,7 +3,9 @@
 //! (`TurnSetAside`, `TurnRestored`) naming the turn; nothing is removed.
 //! A turn set aside stays in the ledger and in turn numbering, but no later
 //! turn sees it: the planner, recall, citation evidence and what is learned
-//! from turns skip it, as they skip a turn behind a reset.
+//! from turns skip it, as they skip a turn behind a reset. Retrying a turn
+//! (`TurnRetried`, `SessionLog::retry_turn`) uses the same record to start
+//! the branch that asks for it again.
 
 use crate::ids::PrincipalId;
 use crate::trace::TraceKey;

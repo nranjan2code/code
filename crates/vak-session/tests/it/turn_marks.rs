@@ -112,3 +112,76 @@ fn a_turn_set_aside_is_neither_cited_nor_sent_until_restored() {
     assert!(cites(&log));
     assert!(sent(&log));
 }
+
+/// Retrying a turn starts a branch before it: the turn sent again follows
+/// the turn before, the retried turn and everything after it leave the
+/// chain, and the branch is what a reopened ledger follows (doc 99 §4 F).
+#[test]
+fn a_retried_turn_is_answered_again_on_a_new_branch() {
+    let dir = tempdir().unwrap();
+    let mut log = open(dir.path());
+    let first = append(&mut log, Message::user_text("name the codename"));
+    append(
+        &mut log,
+        Message::assistant(vec![ContentBlock::text("It is Heron.")]),
+    );
+    let second = append(&mut log, Message::user_text("what is the route?"));
+    append(
+        &mut log,
+        Message::assistant(vec![ContentBlock::text("The route is made up.")]),
+    );
+    append(&mut log, Message::user_text("and after that?"));
+    append(
+        &mut log,
+        Message::assistant(vec![ContentBlock::text("Nothing after.")]),
+    );
+
+    let directive = log.retry_turn(&second, None).unwrap();
+    assert_eq!(directive.message.text_content(), "what is the route?");
+    let turns = |log: &SessionLog| -> Vec<String> {
+        TurnIndex::from_log(log)
+            .turns
+            .iter()
+            .map(|turn| turn.directive.text_content())
+            .collect()
+    };
+    assert_eq!(turns(&log), ["name the codename"]);
+    let retried = append(&mut log, directive.message);
+    assert_ne!(retried, second);
+    append(
+        &mut log,
+        Message::assistant(vec![ContentBlock::text("The route is the river path.")]),
+    );
+    assert_eq!(turns(&log), ["name the codename", "what is the route?"]);
+    let spoken = |log: &SessionLog| -> String {
+        log.derive_transcript()
+            .iter()
+            .map(|item| item.message.text_content())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(spoken(&log).contains("river path"));
+    assert!(!spoken(&log).contains("made up"));
+    assert!(!spoken(&log).contains("Nothing after"));
+    assert!(
+        log.derive_messages()
+            .iter()
+            .all(|m| !m.text_content().contains("made up"))
+    );
+
+    let path = log.path().to_path_buf();
+    drop(log);
+    let reopened = SessionLog::open(path).unwrap();
+    assert_eq!(
+        turns(&reopened),
+        ["name the codename", "what is the route?"]
+    );
+    assert_eq!(TurnIndex::from_log(&reopened).turns[1].id, retried);
+    assert!(!spoken(&reopened).contains("made up"));
+
+    // The first turn retried leaves only the header behind it.
+    let mut reopened = reopened;
+    reopened.retry_turn(&first, None).unwrap();
+    assert!(turns(&reopened).is_empty());
+    assert!(reopened.retry_turn(&second, None).is_err());
+}

@@ -1,9 +1,9 @@
 # 99 — Turns that do not poison later turns
 
-Status: in progress (2026-10-17): stages A to F and A2 to A4 built; A to
-D, A2 and F checked live on the installed route (B and C seen in the
-model's own reading); the poison replay (§5) is a repeatable check; retry
-from a turn and the rest are open in docs/plans/open-items.md. Builds on docs/design/68-context-engine.md (the planner and
+Status: in progress (2026-10-17): stages A to F and A2 to A4 built, with
+retry from a turn; A to D, A2 and F checked live on the installed route (B
+and C seen in the model's own reading); the poison replay (§5) is a
+repeatable check; the rest is open in docs/plans/open-items.md. Builds on docs/design/68-context-engine.md (the planner and
 recall), docs/design/85-turn-graph.md (turn ids), docs/design/86-model-plans-runtime-checks.md
 (the plan check) and docs/design/30-render-architecture.md §30.1
 (citations).
@@ -154,9 +154,31 @@ A turn still going cannot be set aside. `PUT /sessions/{id}/turns/{turn}/aside`
 (`{"aside": true|false}`, owner only) records the mark and answers the
 turns set aside now; `/transcript` names them in `set_aside`. The client
 offers Set aside on a person's message once its turn has ended and draws
-a set-aside turn folded, with Show and Undo. "Retry from here" (a new
-directive whose parent is the turn before) is not built: it is open in
-docs/plans/open-items.md. Erasing bytes stays `Core::erase_conversation`.
+a set-aside turn folded, with Show and Undo. Erasing bytes stays
+`Core::erase_conversation`.
+
+A person can also ask for a turn again. The ledger already branches by
+`parent_id` (invariant 2), and a reopened ledger follows its newest
+entry, so a retry is a branch: `SessionLog::retry_turn` appends
+`TurnRetried` (the same `TurnMarkRecord`, with the owner as actor, synced
+like a directive) whose parent is the last entry on the chain before the
+turn began (its first entry naming it, else its directive; at least the
+header), and hands back the turn's directive as recorded. That directive,
+words, files and all, is sent again as a new turn whose parent is the
+`TurnRetried` entry, so the turn retried and every turn after it leave the
+chain: the planner, `derive_messages`, recall and the transcript follow the
+new branch, as they follow any chain. The catalog takes the turn retried,
+and every turn after it on its branch, into `turns_aside`, so no search
+finds their calls or the notes naming them. Nothing is removed.
+
+`POST /sessions/{id}/turns/{turn}/retry` (owner only,
+`{"can_show_questions": bool}`) refuses a busy session and a turn still
+going, writes nothing when it refuses (no provider, a ledger another
+process holds), and answers 202 as `/run` does; it shares `/run`'s start
+(`writable`, `start_http_turn`). The client offers Retry beside Set aside
+on a person's message when nothing is running, drops that turn and what
+follows from the view, and shows the words being answered again. A goal,
+managed or automatic turn is retried as the message it began with.
 
 ## 5. How to find more of these
 

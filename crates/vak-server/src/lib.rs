@@ -1238,6 +1238,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/steering", post(send_steering))
         .route("/sessions/{id}/card-actions", post(card_actions::post))
         .route("/sessions/{id}/turns/{turn}/aside", put(turn_marks::put))
+        .route("/sessions/{id}/turns/{turn}/retry", post(turn_marks::retry))
         .route("/sessions/{id}/compact", post(compact_session))
         .route("/sessions/{id}/cancel", post(cancel_run))
         .route("/sessions/{id}/pause", post(pause_run))
@@ -4794,7 +4795,8 @@ fn summarize_jsonl(
                 | vak_session::EntryPayload::Decision(_)
                 | vak_session::EntryPayload::CardAction(_)
                 | vak_session::EntryPayload::TurnSetAside(_)
-                | vak_session::EntryPayload::TurnRestored(_) => {}
+                | vak_session::EntryPayload::TurnRestored(_)
+                | vak_session::EntryPayload::TurnRetried(_) => {}
                 vak_session::EntryPayload::ContextSelection(_) => {}
             }
         }
@@ -5448,6 +5450,96 @@ fn spawn_http_turn_chain(
     });
 }
 
+/// The taken ledger, reopened for writing when the handle held it read-only.
+/// A ledger another process holds is put back and refused.
+fn writable(
+    handle: &SessionHandle,
+    taken: SessionLog,
+) -> Result<SessionLog, Box<axum::response::Response>> {
+    use axum::response::IntoResponse;
+    if !taken.is_read_only() {
+        return Ok(taken);
+    }
+    match vak_session::SessionLog::open(taken.path().to_path_buf()) {
+        Ok(writable) => Ok(writable),
+        Err(error) => {
+            *handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+            let message = match error {
+                vak_session::SessionError::Locked(_) => "This conversation is currently active in Vakyartha Desktop. Close or finish the task in Desktop before continuing here.".to_string(),
+                error => error.to_string(),
+            };
+            Err(Box::new(
+                (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": message })),
+                )
+                    .into_response(),
+            ))
+        }
+    }
+}
+
+/// Starts an admitted turn chain on `taken` and answers 202: the preview
+/// intent `/control-state` reports until the ledger has the real one, then
+/// the chain itself.
+async fn start_http_turn(
+    state: &AppState,
+    handle: Arc<SessionHandle>,
+    taken: SessionLog,
+    start: TurnStart,
+    expanded_prompt: &str,
+    request_id: Option<String>,
+    shows_questions: bool,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let queue_message = start.preview_message();
+    // Preview intent so `/control-state` has something to report even
+    // before the ledger reflects a real IntentRecord entry for this leg.
+    let core = handle.core.clone();
+    let preview_intent = core.resolve_turn_intent(&taken, &queue_message);
+    let mut preview_outcome =
+        vak_intent::OutcomeSpec::from_intent(expanded_prompt, &preview_intent);
+    preview_outcome.evidence_max_age_secs = Some(core.effective_evidence_max_age_secs());
+    *handle
+        .intent
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some(vak_session::types::IntentRecord {
+            reading: preview_intent.reading,
+            strands: preview_intent.strands,
+            engagement: preview_intent.engagement,
+            provenance: preview_intent.provenance,
+            outcome: Some(preview_outcome),
+            model_visible: None,
+            commitment_id: None,
+            strand_commitments: Default::default(),
+        });
+
+    // Give SSE consumers a moment to attach so terminal events are seen —
+    // but only when nobody is watching yet (finding 2).
+    wait_for_external_subscriber(&handle).await;
+
+    let response_request_id = request_id.clone();
+    spawn_http_turn_chain(
+        state,
+        handle,
+        core,
+        taken,
+        start,
+        request_id,
+        shows_questions,
+    );
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({"request_id": response_request_id, "state": "started"})),
+    )
+        .into_response()
+}
+
 async fn run_prompt(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -5648,7 +5740,7 @@ async fn run_prompt(
     // a goal/managed/auto request that cannot be queued, is rejected
     // explicitly. Never a bare 202 that silently discards the input
     // (finding 1). ----
-    let mut taken = match admit_or_queue(&handle, restricted, queue_message.clone()) {
+    let taken = match admit_or_queue(&handle, restricted, queue_message.clone()) {
         Admission::RejectedBusy => {
             return (
                 StatusCode::CONFLICT,
@@ -5685,37 +5777,10 @@ async fn run_prompt(
         Admission::Started(taken) => *taken,
     };
 
-    if taken.is_read_only() {
-        match vak_session::SessionLog::open(taken.path().to_path_buf()) {
-            Ok(writable) => {
-                taken = writable;
-            }
-            Err(vak_session::SessionError::Locked(_)) => {
-                *handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-                return (
-                    StatusCode::CONFLICT,
-                    Json(serde_json::json!({
-                        "error": "This conversation is currently active in Vakyartha Desktop. Close or finish the task in Desktop before continuing here."
-                    })),
-                )
-                    .into_response();
-            }
-            Err(e) => {
-                *handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-                return (
-                    StatusCode::CONFLICT,
-                    Json(serde_json::json!({ "error": e.to_string() })),
-                )
-                    .into_response();
-            }
-        }
-    }
+    let mut taken = match writable(&handle, taken) {
+        Ok(taken) => taken,
+        Err(refused) => return *refused,
+    };
     if let Some(request_id) = request_id.as_deref()
         // A ref that cannot be read is treated as admitted: a retried
         // request is never run twice.
@@ -5767,48 +5832,16 @@ async fn run_prompt(
             .insert(request_id.to_owned());
     }
 
-    // Preview intent so `/control-state` has something to report even
-    // before the ledger reflects a real IntentRecord entry for this leg.
-    let core = handle.core.clone();
-    let preview_intent = core.resolve_turn_intent(&taken, &queue_message);
-    let mut preview_outcome =
-        vak_intent::OutcomeSpec::from_intent(&expanded_prompt, &preview_intent);
-    preview_outcome.evidence_max_age_secs = Some(core.effective_evidence_max_age_secs());
-    *handle
-        .intent
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) =
-        Some(vak_session::types::IntentRecord {
-            reading: preview_intent.reading,
-            strands: preview_intent.strands,
-            engagement: preview_intent.engagement,
-            provenance: preview_intent.provenance,
-            outcome: Some(preview_outcome),
-            model_visible: None,
-            commitment_id: None,
-            strand_commitments: Default::default(),
-        });
-
-    // Give SSE consumers a moment to attach so terminal events are seen —
-    // but only when nobody is watching yet (finding 2).
-    wait_for_external_subscriber(&handle).await;
-
-    let response_request_id = request_id.clone();
-    spawn_http_turn_chain(
+    start_http_turn(
         &state,
         handle,
-        core,
         taken,
         start,
+        &expanded_prompt,
         request_id,
         shows_questions,
-    );
-
-    (
-        StatusCode::ACCEPTED,
-        Json(serde_json::json!({"request_id": response_request_id, "state": "started"})),
     )
-        .into_response()
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -23421,6 +23454,118 @@ mod sandbox_promotion_tests {
             .unwrap();
         assert_eq!(restored.status(), StatusCode::OK);
         assert_eq!(read(restored).await["set_aside"], serde_json::json!([]));
+    }
+
+    /// Only the owner retries a turn, and only one that ended and is on the
+    /// chain; a retry refused leaves the chain as it was (docs/design/99
+    /// §4 F).
+    #[tokio::test]
+    async fn a_turn_is_retried_by_the_owner_only() {
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            dir.path().to_path_buf(),
+        ));
+        let mut log = seed_session_at(&core, "session-retry", core.cwd());
+        let first = log
+            .append_message(vak_session::types::MessageRecord {
+                message: vak_llm::Message::user_text("Plan a ride"),
+                meta: None,
+            })
+            .unwrap()
+            .id;
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(
+                "Here is a route.",
+            )]),
+            meta: None,
+        })
+        .unwrap();
+        let open = log
+            .append_message(vak_session::types::MessageRecord {
+                message: vak_llm::Message::user_text("Again please"),
+                meta: None,
+            })
+            .unwrap()
+            .id;
+        let entries = log.chain_to_root().len();
+        drop(log);
+        let state = AppState::new(core);
+        let guest = "retry-guest-secret";
+        coworking::invite(
+            &coworking::grants(&state),
+            coworking::AudienceGrant {
+                grant_id: coworking::test_grant_id("grant-retry"),
+                principal_id: "person-retry".into(),
+                display_name: "Asha".into(),
+                conversation_id: "session-retry".into(),
+                audience_id: "local".into(),
+                capabilities: vec!["read".into(), "message".into()],
+                token_hash: coworking::token_hash(guest),
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                trace: None,
+                actor: None,
+            },
+        )
+        .unwrap();
+        let app = Router::new()
+            .route("/sessions/{id}/turns/{turn}/retry", post(turn_marks::retry))
+            .with_state(state.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                enforce_participant_audience,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                AuthPolicy {
+                    token: "operator-secret".into(),
+                    home: dir.path().into(),
+                    shared: dir.path().into(),
+                    trusted_hosts: Vec::new(),
+                    public_url: None,
+                    browser_sessions: web::BrowserSessions::default(),
+                },
+                require_bearer,
+            ));
+        let retry = |bearer: &str, turn: &str| {
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri(format!("/sessions/session-retry/turns/{turn}/retry"))
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {bearer}"),
+                )
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from("{}"))
+                .unwrap()
+        };
+        let status = |request: axum::http::Request<axum::body::Body>| {
+            let app = app.clone();
+            async move { app.oneshot(request).await.unwrap().status() }
+        };
+
+        assert_eq!(status(retry(guest, &first)).await, StatusCode::FORBIDDEN);
+        assert_eq!(
+            status(retry("operator-secret", &open)).await,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            status(retry("operator-secret", "no-such-turn")).await,
+            StatusCode::NOT_FOUND
+        );
+        // No provider is connected: the retry is refused before anything is
+        // written.
+        assert_eq!(
+            status(retry("operator-secret", &first)).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let handle = state.get("session-retry").unwrap();
+        let guard = handle.session.lock().unwrap();
+        let session = guard.as_ref().expect("the session is idle");
+        assert_eq!(session.chain_to_root().len(), entries);
     }
 
     fn seed_session_at(
