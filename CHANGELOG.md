@@ -1,4 +1,4 @@
-## Unreleased
+## 8.7.0 — 2026-10-17
 
 - A turn can be set aside from the conversation: later replies no longer
   see it, find it or cite it, and Undo brings it back. Nothing is deleted;
