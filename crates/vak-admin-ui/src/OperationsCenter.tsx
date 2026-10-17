@@ -208,10 +208,20 @@ function OperationsContextBar(props: {
 }
 
 function Breadcrumbs(props: { path: string }) {
-  const pieces = props.path.replace(/^#\//, "").split("/").filter(Boolean);
+  const pieces = createMemo(() => props.path.replace(/^#\//, "").split("/").filter(Boolean));
+  const labels: Record<string, string> = {
+    work: "Live work",
+    runtime: "Runtime & pools",
+    channels: "Channels & delivery",
+    automations: "Automations",
+    providers: "Providers",
+    incidents: "Incidents",
+    sandbox: "Sandbox",
+    runs: "Runs",
+  };
   return <nav class="ops-breadcrumbs" aria-label="Breadcrumb">
     <button type="button" class="link-button" onClick={() => navigate(operationHref("#/operations"))}>Operations</button>
-    <For each={pieces.slice(1)}>{(piece, index) => <><span aria-hidden="true">/</span><span class={index() === pieces.length - 2 ? "current" : ""}>{piece.replaceAll("-", " ")}</span></>}</For>
+    <For each={pieces().slice(1)}>{(piece, index) => <><span aria-hidden="true">/</span><span class={index() === pieces().length - 2 ? "current" : ""}>{labels[piece] ?? piece.replaceAll("-", " ")}</span></>}</For>
   </nav>;
 }
 

@@ -9,6 +9,14 @@
 - The admin console's Limits panel shows the size of a calculated series
   beside the time limits.
 
+- Hovering a selected admin theme or tab keeps its selected colours and
+  readable label.
+
+- On a phone, admin cards and controls stay inside the screen; long tables
+  can scroll within their own panel.
+
+- Operations breadcrumbs follow the section you open.
+
 - Pages Vakyartha writes and previews look like the app: its colours,
   fonts and type in light and dark, following a theme switch while open.
 

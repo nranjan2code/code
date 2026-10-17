@@ -73,7 +73,7 @@ export function StepSettingsPanel() {
         <label class="dim"><input type="checkbox" checked={routeOnly()} onChange={(e) => setRouteOnly(e.currentTarget.checked)} /> Only for {layer()?.route ?? "this model"}</label>
       </div>
       <Show when={layer()} fallback={<p class="dim">Loading…</p>}>
-        <table class="step-settings">
+        <div class="step-settings-wrap"><table class="step-settings">
           <thead><tr><th>Step</th><th>Thinking</th><th>Temperature</th><th>Top-p</th><th>Top-k</th></tr></thead>
           <tbody>
             <For each={PURPOSES}>
@@ -96,7 +96,7 @@ export function StepSettingsPanel() {
               }}
             </For>
           </tbody>
-        </table>
+        </table></div>
       </Show>
     </section>
   );
@@ -142,7 +142,7 @@ export function LimitsPanel() {
         </div>
       </div>
       <Show when={layer()} fallback={<p class="dim">Loading…</p>}>
-        <table class="step-settings">
+        <div class="step-settings-wrap"><table class="step-settings">
           <thead><tr><th>Limit</th><th>Applies</th><th>Value</th><th>In force</th></tr></thead>
           <tbody>
             <For each={LIMITS}>
@@ -156,7 +156,7 @@ export function LimitsPanel() {
               )}
             </For>
           </tbody>
-        </table>
+        </table></div>
       </Show>
     </section>
   );

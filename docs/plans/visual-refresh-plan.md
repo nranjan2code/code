@@ -237,7 +237,7 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   literals.
 - [x] **V2.9 One palette, used.** The admin console's `:root` and theme
   blocks become Ink and Saffron (the client's values, token for token) with
-  the client's four theme choices; DESIGN.md records every shipped light and
+  the client's six theme choices; DESIGN.md records every shipped light and
   dark ground and text colour; rules use the type, spacing, motion and
   float-shadow tokens V2.2 defined. Done when: `cargo test -p vak-config
   --test design_tokens` passes 7 of 7 and both surfaces are checked live.
@@ -1211,3 +1211,28 @@ what was not.
   High contrast themes, cards from a real turn (the one live turn produced
   no card, because the model's `answer` calls were refused; see the
   transcript note in the session report), and a real device at 390.
+
+- 2026-10-17: Reviewed all 44 admin routes in all six themes at 1440 × 900
+  and 390 × 844. Selected the conversation's seven main panels and four
+  forensic inspector tabs, all four security panels, all three commitment
+  panels, all seven inbox categories, both Overview queue filters, the prompt
+  preview's full/section views, all three Sources panels, and all three
+  Measurements filters against the installed `vak-home` data. The selected
+  theme exposed a hover cascade that changed its
+  background without changing its dark label; the base button hover now yields
+  to component and selected-state rules. Verified the correction in the
+  running browser and ran the admin typecheck and production build. The
+  populated conversation's Lifecycle panel returned HTTP 404 from the
+  installed server; that data/API issue is outside this visual pass.
+
+- 2026-10-17: Walked all 45 admin routes again at 1440 × 900 and 390 × 844,
+  including the Operations subsections from top to bottom. The deeper pass
+  found route breadcrumbs stuck on the first Operations section, mobile width
+  overflow in Home readiness, resolved incidents, Data, Extensions, Prompts,
+  and Model settings, plus FinOps rollup tables growing their columns past the
+  page. Breadcrumbs now track route changes, long identifiers wrap, data and
+  settings tables stay in their own scroll area, and constrained grids shrink
+  within the viewport. The hover cascade fix and the Home label/action-row
+  fixes were also checked in the running browser. `npm run check` and
+  `npm run build` passed; mobile and desktop route scans report no page-width
+  overflow. The installed conversation Lifecycle request still returns 404.
