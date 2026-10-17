@@ -1,4 +1,4 @@
-## Unreleased
+## 8.6.0 — 2026-10-17
 
 - A turn whose calls failed, whose cards were refused or that ended
   without what it planned now says so wherever a later turn sees it: in
