@@ -1592,6 +1592,63 @@ impl TurnCard {
             .collect::<Vec<_>>()
             .join(", ")
     }
+
+    /// The record a later turn reads beside something this turn made: a
+    /// file's version, a saved note (docs/design/99-turns-that-do-not-poison.md
+    /// §4 E). `conversation` is the one it was made in, left out when the
+    /// reader is in it.
+    pub fn made_in(&self, conversation: Option<&str>) -> MadeIn {
+        MadeIn {
+            turn: self.turn_id.clone(),
+            conversation: conversation.map(str::to_string),
+            calls: self.calls(),
+            not_delivered: self.unmet.clone(),
+            ended: match self.outcome.as_str() {
+                "" | "completed" => None,
+                outcome => Some(outcome.to_string()),
+            },
+        }
+    }
+}
+
+/// How the turn that made something went, from its card's receipts (its
+/// calls and which failed, the planned deliverables it ended without, how
+/// it ended), never from its words. Nothing it made is withheld; it is
+/// read with this (docs/design/99-turns-that-do-not-poison.md §4 E).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MadeIn {
+    pub turn: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
+    pub calls: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_delivered: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended: Option<String>,
+}
+
+impl MadeIn {
+    /// `made in turn <id>: calls webfetch×3 (2 failed); not delivered:
+    /// "route map"; ended: failed`.
+    pub fn line(&self) -> String {
+        let place = match &self.conversation {
+            Some(conversation) => format!("turn {} of conversation {conversation}", self.turn),
+            None => format!("turn {} of this conversation", self.turn),
+        };
+        let mut line = format!("made in {place}: calls {}", self.calls);
+        if !self.not_delivered.is_empty() {
+            let names: Vec<String> = self
+                .not_delivered
+                .iter()
+                .map(|name| format!("\"{name}\""))
+                .collect();
+            line.push_str(&format!("; not delivered: {}", names.join(", ")));
+        }
+        if let Some(ended) = &self.ended {
+            line.push_str(&format!("; ended: {ended}"));
+        }
+        line
+    }
 }
 
 fn summarize_trace(did: &[TraceLine]) -> String {
@@ -2010,6 +2067,59 @@ mod tests {
             failed.line(2).ends_with("\u{2192} ended: failed"),
             "{}",
             failed.line(2)
+        );
+    }
+
+    #[test]
+    fn what_a_turn_made_carries_its_record() {
+        let card = TurnCard {
+            turn_id: "t1".into(),
+            asked: "route".into(),
+            did: vec![
+                TraceLine {
+                    tool: "webfetch".into(),
+                    args_digest: Value::Null,
+                    evidence_id: "e1".into(),
+                    shape: String::new(),
+                    failed: true,
+                },
+                TraceLine {
+                    tool: "write".into(),
+                    args_digest: Value::Null,
+                    evidence_id: "e2".into(),
+                    shape: String::new(),
+                    failed: false,
+                },
+            ],
+            answered: Answer::default(),
+            outcome: "failed".into(),
+            reading: ReadingKey::default(),
+            tokens_full: 0,
+            tokens_card: 0,
+            provenance: vak_control::Provenance::NONE,
+            unmet: vec!["route map".into()],
+        };
+        let here = card.made_in(None);
+        assert_eq!(
+            here.line(),
+            "made in turn t1 of this conversation: calls webfetch (failed), write; \
+             not delivered: \"route map\"; ended: failed"
+        );
+        let elsewhere = card.made_in(Some("c9"));
+        assert!(
+            elsewhere
+                .line()
+                .starts_with("made in turn t1 of conversation c9:")
+        );
+        let clean = TurnCard {
+            did: Vec::new(),
+            outcome: "completed".into(),
+            unmet: Vec::new(),
+            ..card
+        };
+        assert_eq!(
+            serde_json::to_value(clean.made_in(None)).unwrap(),
+            serde_json::json!({"turn": "t1", "calls": "nothing"})
         );
     }
 

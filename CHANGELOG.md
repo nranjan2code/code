@@ -1,3 +1,13 @@
+## Unreleased
+
+- A file or a saved note the Agent made in an earlier turn is read back
+  with how that turn went: which of its steps failed, what it planned and
+  did not deliver, and how it ended. Nothing is hidden; it is labelled.
+
+- `scripts/poison_replay.sh` (`vak eval --poison-replay`) asks one
+  request in a clean conversation and after a turn that went wrong, on the
+  same route, and compares the two answers.
+
 ## 8.6.0 — 2026-10-17
 
 - A turn whose calls failed, whose cards were refused or that ended

@@ -160,6 +160,25 @@ impl Core {
         Ok(entry)
     }
 
+    /// The card of turn `turn_id` of `session_id`, read through the same
+    /// scoped, trash-checked path as `recall`: what a later turn reads
+    /// beside a file version or a note that turn made
+    /// (docs/design/99-turns-that-do-not-poison.md §4 E). `None` when the
+    /// conversation is out of reach or the turn has no card (it has not
+    /// closed). Blocking.
+    pub fn turn_card(&self, session_id: &str, turn_id: &str) -> Option<vak_session::TurnCard> {
+        let history = self.scoped_history(session_id).ok()?;
+        let leaf = history.catalog.newest_entry(session_id).ok()??;
+        let record = history
+            .catalog
+            .locate_turn_record(session_id, turn_id, &leaf)
+            .ok()??;
+        match history.load(session_id, &record).ok()?.payload {
+            EntryPayload::TurnCard(record) if record.turn_id == turn_id => Some(record.card),
+            _ => None,
+        }
+    }
+
     /// The session's history through the catalog, once its header says it
     /// is this Core's Agent's and audience's, and its ledger is where this
     /// Core's workspace keeps it.

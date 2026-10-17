@@ -30,8 +30,13 @@ failed, the same request that had been answered well failed three times.
 - [x] `recall` `turn:#n` read `#n` as a turn id and reported history as
   warming; it is the turn number now, and an id the conversation lacks is
   not found.
-- [ ] E: files and memory notes written in a turn whose calls failed name
-  that turn's record. Designed in doc 99 §4 E.
+- [x] E: a file whose workspace copy a turn made, and a memory note, are
+  read back with that turn's record (`TurnCard::made_in`): the file note
+  on any call touching it, and `made_in` on a recall hit.
+- [ ] A file no version holds names no turn: a `write` with no title to a
+  path that is not yet an artifact, or a file a command made, is not
+  recorded (doc 82 §3), so a later read of it carries no record. Whether
+  every file a turn writes should be versioned is a Library decision.
 - [ ] F: set a turn aside (and undo) from the conversation, skipped by the
   planner, recall, evidence and memory; retry from a turn. Designed in
   doc 99 §4 F; needs the server route and the client surface.

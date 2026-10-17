@@ -30,10 +30,17 @@ pub struct Elsewhere {
     /// What the record says about a deliverable a hit names: its workspace
     /// path and state (docs/design/90-file-state.md §3.3), by artifact id.
     pub file: Option<FileLookup>,
+    /// The card of a turn, by conversation and turn id: a saved note is
+    /// read with the record of the turn that wrote it
+    /// (docs/design/99-turns-that-do-not-poison.md §4 E).
+    pub turn: Option<TurnLookup>,
 }
 
 /// An artifact id in, its file and state out (`Elsewhere::file`).
 pub type FileLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// A conversation and a turn id in, that turn's card out (`Elsewhere::turn`).
+pub type TurnLookup = Arc<dyn Fn(&str, &str) -> Option<vak_session::TurnCard> + Send + Sync>;
 
 /// Where a hit is from, and the id `forget_memory` takes for a note.
 fn hit_label(node: &vak_catalog::Node) -> (String, &'static str) {
@@ -112,6 +119,20 @@ impl Elsewhere {
         {
             out["link"] = json!(link);
         }
+        // A note is read with how the turn that wrote it went: its calls,
+        // what it left undelivered, how it ended.
+        if hit.node.kind == "memory"
+            && let (Some(conversation), Some(turn), Some(lookup)) = (
+                conversation_id(&hit.node),
+                hit.node.turn.as_deref(),
+                self.turn.as_ref(),
+            )
+        {
+            let turn = turn.trim_start_matches("trn_");
+            if let Some(card) = lookup(&conversation, turn) {
+                out["made_in"] = json!(card.made_in(Some(&conversation)));
+            }
+        }
         // A deliverable names its file and what the record says of it now,
         // so a later turn can reach it by name.
         if hit.node.kind == "artifact"
@@ -147,6 +168,7 @@ mod tests {
             space: Some(vak_session::trace::local::space(cwd).to_string()),
             trash: vak_config::scope::SharedScope::new(home),
             file: None,
+            turn: None,
         }
     }
 

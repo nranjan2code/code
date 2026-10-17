@@ -29,8 +29,8 @@ pub mod work;
 
 pub use log::{SessionLog, SessionPath, TailSections};
 pub use turns::{
-    Answer, CONTEXT_PLAN_LABEL, CONTEXT_PLAN_POLICY_VERSION, Evidence, Fidelity, LinkKind, Packet,
-    PresentationRef, ReadingKey, Step, TraceLine, Turn, TurnCard, TurnIndex, TurnLink,
+    Answer, CONTEXT_PLAN_LABEL, CONTEXT_PLAN_POLICY_VERSION, Evidence, Fidelity, LinkKind, MadeIn,
+    Packet, PresentationRef, ReadingKey, Step, TraceLine, Turn, TurnCard, TurnIndex, TurnLink,
     WorkingSetPlan, bash_digest, evidence_digest, evidence_shape, transcript_result,
 };
 pub use types::{

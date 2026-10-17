@@ -156,8 +156,18 @@ pub(crate) enum Command {
         /// offered for review (docs/design/88-control-plane.md, C7)
         #[arg(long, conflicts_with_all = ["live", "report"])]
         ledgers: bool,
-        /// With --ledgers, print the report as JSON
-        #[arg(long, requires = "ledgers")]
+        /// Ask one request in a clean conversation and in one where a
+        /// scripted turn's calls failed and wrote an unchecked claim, on the
+        /// configured route, and compare the answers' receipts
+        /// (docs/design/99-turns-that-do-not-poison.md §5). Needs VAK_HOME
+        /// set to a disposable data home; see scripts/poison_replay.sh
+        #[arg(long, conflicts_with_all = ["live", "report", "ledgers"])]
+        poison_replay: bool,
+        /// With --poison-replay, the request to ask
+        #[arg(long, requires = "poison_replay")]
+        request: Option<String>,
+        /// With --ledgers or --poison-replay, print the report as JSON
+        #[arg(long)]
         json: bool,
     },
     /// Serve the agent over HTTP+SSE, including the web client at /app

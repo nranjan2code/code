@@ -27,6 +27,7 @@ mod ledger_lock_during_spawns;
 mod library_api;
 mod library_editing;
 mod library_sharing;
+mod made_in_turn;
 mod mail_calendar_worker;
 mod mcp_endpoints;
 mod media_passthrough;

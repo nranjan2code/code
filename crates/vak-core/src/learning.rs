@@ -235,7 +235,7 @@ impl vak_tools::Tool for RememberTool {
         })
     }
 
-    async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+    async fn execute(&self, args: &Value, ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let Some(note) = args.get("note").and_then(Value::as_str).map(str::trim) else {
             return vak_tools::ToolOutput::error(Fault::Shape, "missing required argument 'note'");
         };
@@ -247,12 +247,20 @@ impl vak_tools::Tool for RememberTool {
             );
         }
         let tag = args.get("tag").and_then(Value::as_str).unwrap_or("");
-        match memory::append_note(
+        // The note names the turn it was written in, so reading it back
+        // reads that turn's record with it (docs/design/99 §4 E).
+        let turn = ctx
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.turn)
+            .map(|turn| turn.uuid().to_string());
+        match memory::append_note_from_turn(
             &self.sessions_home,
             &self.cwd,
             kind,
             tag,
             &self.session_id,
+            turn.as_deref(),
             note,
         ) {
             Ok(note) => vak_tools::ToolOutput::ok(format!(

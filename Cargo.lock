@@ -6578,6 +6578,7 @@ dependencies = [
  "vak-catalog",
  "vak-commit",
  "vak-config",
+ "vak-control",
  "vak-core",
  "vak-delivery",
  "vak-eval",

@@ -100,6 +100,16 @@ pub struct FileState {
     pub owner: Option<String>,
     /// The workspace file is an edit Vak found made outside it (D2).
     pub changed_outside: bool,
+    /// The turn a call made the workspace's current copy in; `None` when
+    /// no turn did (docs/design/99-turns-that-do-not-poison.md §4 E).
+    pub workspace_made: Option<MadeBy>,
+}
+
+/// The conversation and turn a version was made in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MadeBy {
+    pub session: String,
+    pub turn: String,
 }
 
 /// The state of `path` given its artifact (if recorded) and what the
@@ -113,6 +123,7 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
             drafts: Vec::new(),
             owner: None,
             changed_outside: false,
+            workspace_made: None,
         };
     };
     let workspace_is = workspace_is(artifact, &workspace);
@@ -180,6 +191,17 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
                     && matches!(v.source, VersionSource::Workspace)
             })
         }),
+        workspace_made: current
+            .and_then(|current| artifact.versions.iter().find(|v| v.id == current))
+            .and_then(|version| match (&version.source, &version.turn) {
+                (VersionSource::Call { session, .. }, Some(turn)) if !session.is_empty() => {
+                    Some(MadeBy {
+                        session: session.clone(),
+                        turn: turn.clone(),
+                    })
+                }
+                _ => None,
+            }),
     }
 }
 
@@ -625,6 +647,23 @@ pub fn note(state: &FileState, reader: Reader<'_>) -> Option<String> {
         ));
     }
     Some(format!("[file] {}", lines.join("\n")))
+}
+
+/// [`note`] with the record of the turn that made the workspace's copy
+/// (`made`, that turn's card read for `state.workspace_made`): a file a
+/// turn whose calls failed wrote is read as that turn's, never as an
+/// ordinary file (docs/design/99-turns-that-do-not-poison.md §4 E).
+pub fn note_with_turn(
+    state: &FileState,
+    reader: Reader<'_>,
+    made: Option<&vak_session::MadeIn>,
+) -> Option<String> {
+    let line = made.map(|made| format!("`{}` in the workspace was {}.", state.path, made.line()));
+    match (note(state, reader), line) {
+        (Some(note), Some(line)) => Some(format!("{note}\n{line}")),
+        (None, Some(line)) => Some(format!("[file] {line}")),
+        (note, None) => note,
+    }
 }
 
 fn draft_line(draft: &Draft, session: Option<&str>) -> String {

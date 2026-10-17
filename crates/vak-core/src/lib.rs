@@ -4155,6 +4155,7 @@ impl Core {
             .map(|agent| agent.id.clone())
             .unwrap_or_else(|| "vak".into());
         let session = scope.session_id.clone();
+        let turn_core = self.clone();
         Some(Arc::new(elsewhere::Elsewhere {
             catalog: self.catalog().ok(),
             audience,
@@ -4170,6 +4171,9 @@ impl Core {
                         session: Some(&session),
                     },
                 )
+            })),
+            turn: Some(Arc::new(move |conversation: &str, turn: &str| {
+                turn_core.turn_card(conversation, turn)
             })),
         }))
     }
@@ -7127,16 +7131,25 @@ impl Core {
             .agent_identity()
             .map(|agent| agent.id.clone())
             .unwrap_or_else(|| "vak".into());
+        // The record of the turn that made a file's workspace copy is read
+        // through this Core's scoped history (doc 99 §4 E).
+        let file_core = self.clone();
         cfg.file_note = Some(Arc::new(
             move |query: vak_agent::FileQuery<'_>| match query {
                 vak_agent::FileQuery::Path(path) => {
                     let state = file_state::observe(&file_artifacts, &file_space, &file_cwd, path)?;
-                    file_state::note(
+                    let made = state.workspace_made.as_ref().and_then(|made| {
+                        let card = file_core.turn_card(&made.session, &made.turn)?;
+                        let elsewhere = file_session.as_deref() != Some(made.session.as_str());
+                        Some(card.made_in(elsewhere.then_some(made.session.as_str())))
+                    });
+                    file_state::note_with_turn(
                         &state,
                         file_state::Reader {
                             agent: &file_agent,
                             session: file_session.as_deref(),
                         },
+                        made.as_ref(),
                     )
                 }
                 vak_agent::FileQuery::Pattern(pattern) => file_state::matching_note(

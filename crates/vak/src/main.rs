@@ -18,6 +18,7 @@ mod digest;
 mod doctor;
 mod effects;
 mod eval_ledgers;
+mod eval_poison;
 mod format;
 mod inbox;
 mod install;
@@ -848,10 +849,14 @@ async fn main() {
             provider,
             model,
             ledgers,
+            poison_replay,
+            request,
             json,
         }) => {
             if ledgers {
                 eval_ledgers::run(cwd, json)
+            } else if poison_replay {
+                eval_poison::run(cwd, provider, model, request, json).await
             } else {
                 run_eval(report, generated, seed, offset, live, provider, model).await
             }

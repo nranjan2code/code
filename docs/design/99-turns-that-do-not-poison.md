@@ -1,8 +1,9 @@
 # 99 — Turns that do not poison later turns
 
-Status: in progress (2026-10-17): stages A to D built and checked live on
-the installed route (B and C seen in the model's own reading); E and F
-designed, open in docs/plans/open-items.md. Builds on docs/design/68-context-engine.md (the planner and
+Status: in progress (2026-10-17): stages A to E built, A to D checked live
+on the installed route (B and C seen in the model's own reading); the
+poison replay (§5) is a repeatable check; F designed, open in
+docs/plans/open-items.md. Builds on docs/design/68-context-engine.md (the planner and
 recall), docs/design/85-turn-graph.md (turn ids), docs/design/86-model-plans-runtime-checks.md
 (the plan check) and docs/design/30-render-architecture.md §30.1
 (citations).
@@ -78,11 +79,27 @@ The plan is the model's own declaration. A card whose `deliverable`
 names a planned deliverable of form text delivers it: shown, and covering
 it in the plan check. A name the plan does not have is still refused.
 
-### E. Files and notes made in a turn that failed (designed)
+### E. Files and notes are read with the turn that made them
 
-A file version recorded for a turn (`vak_core::artifacts`) and a memory
-note record the turn id they came from; reading either back names that
-turn's counts. Nothing is withheld; it is labelled.
+A file version recorded for a call (`vak_core::artifacts`) already named
+its turn (doc 90 §3.5); a memory note now does too: `remember` writes the
+turn of its call's trace key. Reading either back names that turn's
+record, `TurnCard::made_in` (`vak_session::MadeIn`: the turn, its
+conversation when it is another, its calls with how many failed, the
+planned deliverables it ended without, how it ended), read through
+`Core::turn_card`, the same scoped, trash-checked path as `recall`:
+
+- a call that touches a workspace file whose current copy a turn made
+  (`FileState::workspace_made`) carries, in the file note of doc 90 §3.2,
+  `` `findings.md` in the workspace was made in turn … of this
+  conversation: calls read (failed), webfetch (failed), write, remember ``;
+- a `recall` hit on a saved note carries `made_in` with the same record.
+
+Every such file and note is labelled, whether its turn went well or not:
+the label is the record, never a judgement of it. Nothing is withheld. A
+turn still open has no card and adds nothing; a file no version holds (a
+`write` with no title to a path that is not yet an artifact, a file a
+command made) has no turn to name: open in docs/plans/open-items.md.
 
 ### F. Setting a turn aside (designed)
 
@@ -98,11 +115,20 @@ before), already the ledger's shape. Erasing bytes stays
 
 ## 5. How to find more of these
 
-- **Poison replay.** In a scratch data home, take a conversation where a
-  request succeeded, append one turn of failed calls and an unchecked
-  claim, then ask the same request again on the same route. Compare the
-  plan check, card refusals and citations with the clean history. A
-  difference is a path in §3 that still carries something unlabelled.
+- **Poison replay** (`scripts/poison_replay.sh --provider … --model …`,
+  `vak eval --poison-replay`). In a disposable data home and workspace,
+  one request is asked twice in a clean conversation, and in a poisoned
+  one asked, then answered once by a scripted turn whose `read` and
+  `webfetch` fail and which writes an unchecked claim to `findings.md` and
+  a note, then asked a third time, every live turn on the same provider
+  instance. The scripted turn's request is the same words, so nothing the
+  person said carries over: only what that turn did (the 2026-10-17 run
+  was confounded because the poisoned turn's request named its approach).
+  The last answers are compared by receipts alone: calls and failures,
+  refusals, cards shown, unmet deliverables, corrections, cited links,
+  the ending, and any tool only the poisoned turn had called. A difference
+  exits 1 and is a lead to read in the ledger: a path in §3 that still
+  carries something unlabelled, or the model's own variance.
 - **Repeat audit.** Over a conversation's turn records, pair turns that
   carry the same request and compare their counts and plan verdicts; a
   later turn doing worse is a lead.
