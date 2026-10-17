@@ -263,13 +263,11 @@ Carried over from 7.2.0:
   - [ ] No live controls: a `controls` form of typed inputs with outputs
     written in a closed set of pure expressions evaluated in the client,
     and a worked example the builder checks. No code runs.
-  - [ ] A map form (P5) is built (`emit_map_card`, `[maps]` tile
-    allowance, `/maps/tiles`) but no real turn has drawn one yet: on the
-    dev route the model spent the turn looking coordinates up on the web
-    (Wikipedia guesses 404, Google 403) instead of giving the ones it
-    knows. Closes when the tool's description lets it write known
-    coordinates and a live turn draws a map at 1440×900 and 390×844, light
-    and dark, tiles off and on.
+  - [x] A map form (P5) drew in a real turn (2026-10-17): one
+    `emit_map_card` call with the model's own coordinates, at 1440×900
+    and 390×844, light and dark, tiles off and on; the tile route refuses
+    while the switch is off. No change was needed; the earlier turn that
+    looked coordinates up on the web did not recur.
   - [ ] webfetch gets 403 from Google where curl with the same User-Agent
     gets 200 (also over HTTP/1.1): reqwest with rustls is refused, so the
     cause is likely the TLS fingerprint, not a header. Not investigated

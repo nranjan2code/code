@@ -2,7 +2,7 @@
 
 Status: in progress (2026-10-16): Q1, Q2 and Q3 are built, Q2's card
 shell superseded by live cards and the plan wheel; P5 (the map form) is
-built but not yet seen in a live turn; P1 to P4 and P6 are open. Written from a review of what an answer can do on screen.
+built and seen in a live turn (2026-10-17); P1 to P4 and P6 are open. Written from a review of what an answer can do on screen.
 
 ## 1. What is wrong
 
@@ -333,6 +333,15 @@ tool, `validate_form` and `structured_markdown`, `Primitive`, the client's
 `FORMS`), the shape tests pass, the tile route refuses while the switch is
 off, and a real turn draws a map in the running app at 1440 × 900 and
 390 × 844, light and dark, with tiles off and on.
+
+Checked live on 2026-10-17, dev route: "Show me the drive from Pune to
+Lonavala to Mumbai on a map" was one `emit_map_card` call with the
+model's own coordinates and no lookup (the earlier turn that searched the
+web did not recur). It drew at 1440 × 900 and 390 × 844, light and dark,
+with no sideways scroll; with Map tiles on, nine tiles came through
+`/maps/tiles` and lined up with the markers; with it off the route
+answered "map tiles are off". One coordinate the model gave was wrong
+(Lonavala), and the card says positions are as given.
 
 ### P6 Measuring format choice
 
