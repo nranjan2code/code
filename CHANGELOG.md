@@ -1,5 +1,8 @@
 ## Unreleased
 
+- A chart can follow a calculator card above it: change an input and the
+  line is drawn again across the range the calculator gives.
+
 - Cards in one answer can move together: a figure or a table cell can
   follow the values of a calculator card above it, and changes as you
   change the calculator.

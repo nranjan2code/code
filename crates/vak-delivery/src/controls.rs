@@ -142,6 +142,88 @@ mod tests {
     }
 }
 
+/// A series' points: the varied input's value and the output's.
+pub type Points = Vec<(f64, f64)>;
+
+/// Published series by name, each with the presentation that published it.
+pub type SeriesScope = BTreeMap<String, (Points, String)>;
+
+/// The most points one series may have: the same bound a card's lists
+/// have (`skills::Record::list`).
+pub const MAX_POINTS: usize = 10_000;
+
+/// Every series output of a stored card: its expression computed across a
+/// range of one of the card's inputs (`vary` from `from` to `to` by
+/// `step`), each point the input's value and the output's
+/// (docs/design/98 §2).
+pub fn series(payload: &Value) -> Result<Vec<(String, Points)>, String> {
+    let inputs = payload["inputs"].as_array().cloned().unwrap_or_default();
+    let outputs = payload["outputs"].as_array().cloned().unwrap_or_default();
+    let mut base = BTreeMap::new();
+    for input in &inputs {
+        let name = input["name"].as_str().unwrap_or_default().to_string();
+        base.insert(
+            name.clone(),
+            input_value(input).ok_or_else(|| format!("input `{name}` has no value"))?,
+        );
+    }
+    for (name, value) in compute(payload, &BTreeMap::new())? {
+        base.insert(name, value);
+    }
+    let parsed = outputs
+        .iter()
+        .map(|output| expression::parse(output["expression"].as_str().unwrap_or_default()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let mut out = Vec::new();
+    for (at, output) in outputs.iter().enumerate() {
+        let Some(vary) = output["vary"].as_str() else {
+            continue;
+        };
+        let name = output["name"].as_str().unwrap_or_default().to_string();
+        let bound = |key: &str| -> Result<f64, String> {
+            let source = output[key].as_str().unwrap_or_default();
+            let expr = expression::parse(source)
+                .map_err(|error| format!("output `{name}` `{key}`: {error}"))?;
+            expression::evaluate(&expr, &base)
+                .map_err(|error| format!("output `{name}` `{key}`: {error}"))
+        };
+        let (from, to, step) = (bound("from")?, bound("to")?, bound("step")?);
+        if step <= 0.0 {
+            return Err(format!(
+                "output `{name}`: `step` must come to more than zero"
+            ));
+        }
+        if (to - from) / step > MAX_POINTS as f64 {
+            return Err(format!(
+                "output `{name}`: the range gives more than {MAX_POINTS} points; take a larger step"
+            ));
+        }
+        let mut points = Vec::new();
+        let mut index = 0_u32;
+        loop {
+            let x = from + step * f64::from(index);
+            if x > to + step * 1e-9 {
+                break;
+            }
+            let mut values = base.clone();
+            values.insert(vary.to_string(), x);
+            for (earlier, expr) in outputs.iter().zip(&parsed).take(at + 1) {
+                let value = expression::evaluate(expr, &values)
+                    .map_err(|error| format!("output `{name}` at {vary} = {x}: {error}"))?;
+                values.insert(
+                    earlier["name"].as_str().unwrap_or_default().to_string(),
+                    value,
+                );
+            }
+            points.push((x, values[&name]));
+            index += 1;
+        }
+        out.push((name, points));
+    }
+    Ok(out)
+}
+
 /// What a controls card publishes to the cards after it in its answer
 /// (docs/design/98 §2): each input's value and each output's, by name.
 pub fn published(payload: &Value) -> Result<Vec<(String, f64)>, String> {
@@ -206,8 +288,42 @@ pub fn bind(
     form: &str,
     payload: &mut Value,
     scope: &BTreeMap<String, (f64, String)>,
+    series_scope: &SeriesScope,
 ) -> Result<(), String> {
     let mut bound = Vec::new();
+    // A chart series that follows a published series takes its points.
+    if form == "chart" {
+        // `get_mut`, never `payload["series"]`, which would add the key.
+        for (at, series) in payload
+            .get_mut("series")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            let Some(name) = series["follows"].as_str().map(str::to_string) else {
+                continue;
+            };
+            let Some((points, from)) = series_scope.get(&name) else {
+                let known: Vec<&str> = series_scope.keys().map(String::as_str).collect();
+                return Err(format!(
+                    "the chart follows `{name}`, which no controls card before it in the answer publishes as a series{}",
+                    if known.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (series published: {})", known.join(", "))
+                    }
+                ));
+            };
+            series["points"] = Value::Array(
+                points
+                    .iter()
+                    .map(|(x, y)| serde_json::json!({"x": number(*x), "y": number(*y)}))
+                    .collect(),
+            );
+            bound.push(serde_json::json!({"path": ["series", at, "points"], "series": name, "from": [from]}));
+        }
+    }
     for path in value_paths(form, payload) {
         let Some(field) = at_path(payload, &path) else {
             continue;
@@ -256,6 +372,35 @@ mod binding_tests {
     use super::*;
 
     #[test]
+    fn a_series_varies_an_input_and_a_chart_follows_it() {
+        let card = serde_json::json!({"inputs": [
+            {"name": "start", "kind": "number", "value": 100},
+            {"name": "rate", "kind": "number", "value": 10},
+            {"name": "year", "kind": "number", "value": 0}],
+            "outputs": [{"name": "grown", "expression": "start * (1 + rate / 100) ^ year",
+             "vary": "year", "from": "0", "to": "3", "step": "1"}]});
+        let all = series(&card).expect("computes");
+        assert_eq!(all[0].0, "grown");
+        assert_eq!(all[0].1.len(), 4);
+        assert!((all[0].1[3].1 - 133.1).abs() < 1e-9);
+        let series_scope = BTreeMap::from([(
+            "grown".to_string(),
+            (all[0].1.clone(), "pres-1".to_string()),
+        )]);
+        let mut chart = serde_json::json!({"chart_type": "line", "accessible_summary": "Growth.",
+            "series": [{"name": "grown", "follows": "grown", "points": []}]});
+        bind("chart", &mut chart, &BTreeMap::new(), &series_scope).expect("binds");
+        assert_eq!(
+            chart["series"][0]["points"][0],
+            serde_json::json!({"x": 0, "y": 100})
+        );
+        assert_eq!(chart["bound"][0]["series"], "grown");
+        let mut wide = card.clone();
+        wide["outputs"][0]["step"] = serde_json::json!("0.0001");
+        assert!(series(&wide).is_err());
+    }
+
+    #[test]
     fn a_card_binds_its_fields_to_values_published_before_it() {
         let scope = BTreeMap::from([
             ("emi".to_string(), (8884.88, "pres-1".to_string())),
@@ -263,7 +408,7 @@ mod binding_tests {
         ]);
         let mut stats = serde_json::json!({"readings": [
             {"label": "Monthly", "value": "= emi"}, {"label": "Fixed", "value": "3"}]});
-        bind("stats", &mut stats, &scope).expect("binds");
+        bind("stats", &mut stats, &scope, &BTreeMap::new()).expect("binds");
         assert_eq!(stats["readings"][0]["value"], 8884.88);
         assert_eq!(stats["readings"][1]["value"], "3");
         assert_eq!(
@@ -273,10 +418,11 @@ mod binding_tests {
         assert_eq!(stats["bound"][0]["from"], serde_json::json!(["pres-1"]));
         let mut table =
             serde_json::json!({"columns": [{"label": "Total"}], "rows": [["= round(emi * n, 2)"]]});
-        bind("table", &mut table, &scope).expect("binds");
+        bind("table", &mut table, &scope, &BTreeMap::new()).expect("binds");
         assert_eq!(table["rows"][0][0], 106618.56);
         let mut unknown = serde_json::json!({"readings": [{"label": "X", "value": "= rate"}]});
-        let refused = bind("stats", &mut unknown, &scope).expect_err("no such name");
+        let refused =
+            bind("stats", &mut unknown, &scope, &BTreeMap::new()).expect_err("no such name");
         assert!(
             refused.contains("`rate`") && refused.contains("emi, n"),
             "{refused}"

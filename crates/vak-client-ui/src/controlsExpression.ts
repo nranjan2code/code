@@ -189,3 +189,35 @@ export function daysOf(date: string): number | undefined {
   if (month < 1 || month > 12 || day < 1 || day > 31) return undefined;
   return Math.round(Date.UTC(year, month - 1, day) / 86_400_000);
 }
+
+/** The most points one series may have, as the host bounds it. */
+const MAX_POINTS = 10_000;
+
+type SeriesOutput = { name: string; expression: string; vary?: string; from?: string; to?: string; step?: string };
+
+/** Every series output computed across its range of one input, as the host
+ *  computes it (`vak-delivery` `controls::series`): `base` holds the inputs
+ *  and the outputs at the inputs' current values. */
+export function seriesOf(outputs: SeriesOutput[], base: Record<string, number>): Record<string, [number, number][]> {
+  const parsed = outputs.map((output) => parseExpression(output.expression));
+  const out: Record<string, [number, number][]> = {};
+  outputs.forEach((output, at) => {
+    if (!output.vary) return;
+    const bound = (source?: string) => evaluateExpression(parseExpression(source ?? ""), base);
+    const [from, to, step] = [bound(output.from), bound(output.to), bound(output.step)];
+    if (step <= 0) throw new Error(`${output.name}: step must come to more than zero`);
+    if ((to - from) / step > MAX_POINTS) throw new Error(`${output.name}: too many points`);
+    const points: [number, number][] = [];
+    for (let index = 0; ; index += 1) {
+      const x = from + step * index;
+      if (x > to + step * 1e-9) break;
+      const values = { ...base, [output.vary]: x };
+      for (let earlier = 0; earlier <= at; earlier += 1) {
+        values[outputs[earlier].name] = evaluateExpression(parsed[earlier], values);
+      }
+      points.push([x, values[output.name]]);
+    }
+    out[output.name] = points;
+  });
+  return out;
+}

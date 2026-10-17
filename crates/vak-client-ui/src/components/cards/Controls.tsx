@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, useContext } from "solid-js";
 import { publish } from "../../answerValues";
-import { daysOf, evaluateExpression, parseExpression } from "../../controlsExpression";
+import { daysOf, evaluateExpression, parseExpression, seriesOf } from "../../controlsExpression";
 import { Card, CardIdContext, PresentationInteractionContext, num, records, text, type Payload } from "./shared";
 
 let nextControl = 0;
@@ -60,12 +60,21 @@ export default function ControlsCard(props: { payload: Payload }) {
         return { error: `${text(output.label) ?? ""}: ${error instanceof Error ? error.message : String(error)}` };
       }
     }
-    return { shown, values };
+    let series: Record<string, [number, number][]> = {};
+    try {
+      series = seriesOf(outputs().map((output) => ({
+        name: text(output.name) ?? "", expression: text(output.expression) ?? "",
+        vary: text(output.vary), from: text(output.from), to: text(output.to), step: text(output.step),
+      })), values);
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+    return { shown, values, series };
   });
   const cardId = useContext(CardIdContext);
   createEffect(() => {
     const now = results();
-    if (cardId && now.values) publish(cardId, now.values);
+    if (cardId && now.values) publish(cardId, { ...now.values, ...now.series });
   });
   const changed = () => inputs().some((input) => (setting()[text(input.name) ?? ""] ?? "") !== initial(input));
   const ask = () => {

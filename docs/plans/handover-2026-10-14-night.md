@@ -13,7 +13,7 @@ commit'), then this handover's 'Now' and 'Next', then
 docs/design/96-answer-projection-gaps.md.
 
 Run `git status` and `git log --oneline -8`; the newest commit should be
-'Doc 98 S1: linked cards drawn live'. Stage only your own paths; keep only
+'Doc 98 S2: a chart follows a controls card'. Stage only your own paths; keep only
 `main`. We are on a Claude Code Pro plan: be lean (grep and line ranges,
 batched commands), check usage with get_usage, run the full gate in the
 background once per finished step, commit each verified step, and rewrite
@@ -410,8 +410,12 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
    the maintainer's yes (given 2026-10-17). S1 is built and committed
    (doc 98 §7) and drawn linked live (installed route, gpt-6-luna; the
    dev route answers with one controls card). A dev server on the
-   installed home: launch entry `vak-installed-live` (port 8907). Next:
-   S2 series, S3 Canvas, S4 product look for HTML (all card wording must
+   installed home: launch entry `vak-installed-live` (port 8907). S2
+   (series, a following chart) built and drawn live (doc 98 §8). Larger
+   route for a one-off check: `target/debug/vak -C /tmp/vak-live/s1-luna
+   exec --provider openai-responses --model gpt-6-luna --json "…"`, then
+   read the session through the 8907 server. Next: S3 Canvas, S4 product
+   look for HTML (all card wording must
    stay domain-neutral: no domain names, units or solutions in tool
    descriptions or acknowledgements). Its outline:
    - Shared values within an answer: a controls card publishes its inputs

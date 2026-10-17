@@ -906,8 +906,9 @@ fn chart_fields() -> Value {
             "x_label": string("Optional. What the x axis measures."),
             "y_label": string("Optional. What the y axis measures, with its unit (Share (%))."),
             "accessible_summary": string("Optional. One sentence saying what the chart shows."),
+            "follows": string("Optional. The names of series a controls card earlier in this answer publishes, separated by commas; the chart draws them and changes as the person changes the controls. Leave data out then."),
             "data": list_of(
-                "Every point of every series. Each series is one measure; chart unlike measures separately.",
+                "Optional when follows is given. Every point of every series. Each series is one measure; chart unlike measures separately.",
                 serde_json::json!({
                     "series": string("The name of the series this point belongs to."),
                     "x": string("The x value: a category or a number, as text."),
@@ -916,7 +917,7 @@ fn chart_fields() -> Value {
                 &["series", "x", "y"],
             )
         }),
-        &["chart_type", "data"],
+        &["chart_type"],
     )
 }
 
@@ -939,8 +940,16 @@ fn build_chart(args: &Map<String, Value>) -> Result<Value, String> {
             None => series.push((name, vec![entry])),
         }
     }
-    if series.is_empty() {
-        return Err("give `data`: every point, each with its series, x and y".into());
+    // Series that follow a controls card's are filled when the card is
+    // recorded (docs/design/98 §2).
+    let followed: Vec<String> = text(&Value::Object(args.clone()), "follows")
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect();
+    if series.is_empty() && followed.is_empty() {
+        return Err("give `data` (every point, each with its series, x and y) or `follows`".into());
     }
     let mut payload = copy(
         args,
@@ -958,15 +967,16 @@ fn build_chart(args: &Map<String, Value>) -> Result<Value, String> {
             Value::String(chart_summary(args, &series)),
         );
     }
-    payload.insert(
-        "series".into(),
-        Value::Array(
-            series
-                .into_iter()
-                .map(|(name, points)| serde_json::json!({"name": name, "points": points}))
-                .collect(),
-        ),
+    let mut drawn: Vec<Value> = series
+        .into_iter()
+        .map(|(name, points)| serde_json::json!({"name": name, "points": points}))
+        .collect();
+    drawn.extend(
+        followed
+            .iter()
+            .map(|name| serde_json::json!({"name": name, "follows": name, "points": []})),
     );
+    payload.insert("series".into(), Value::Array(drawn));
     Ok(Value::Object(payload))
 }
 
@@ -1230,6 +1240,10 @@ fn controls_fields() -> Value {
                 serde_json::json!({
                     "name": string("The name later outputs use for it."),
                     "expression": string(EXPRESSION),
+                    "vary": string("Optional. An input's name: the output is also computed across a range of that input, as a series a later chart can follow."),
+                    "from": string("Optional, needed with vary. Where the range starts: a number or an expression over the inputs."),
+                    "to": string("Optional, needed with vary. Where the range ends: a number or an expression over the inputs."),
+                    "step": string("Optional, needed with vary. How far apart the points are: a number or an expression over the inputs."),
                     "decimals": integer("Optional. How many decimal places it is shown with; whole numbers when left out."),
                     "unit": string("Optional. The unit shown beside it."),
                     "label": string("What it is called on the card.")
@@ -1310,7 +1324,16 @@ fn build_controls(args: &Map<String, Value>) -> Result<Value, String> {
     for (at, output) in records(args, "outputs").iter().enumerate() {
         let mut built = copy(
             output.as_object().unwrap_or(&Map::new()),
-            &["name", "label", "expression", "unit"],
+            &[
+                "name",
+                "label",
+                "expression",
+                "unit",
+                "vary",
+                "from",
+                "to",
+                "step",
+            ],
         );
         let decimals = match output.get("decimals") {
             None => 0,
@@ -2357,6 +2380,16 @@ impl Tool for EmitCardTool {
                 {
                     let names: Vec<&str> =
                         published.iter().map(|(name, _)| name.as_str()).collect();
+                    if let Ok(series) = vak_delivery::controls::series(&output.payload)
+                        && !series.is_empty()
+                    {
+                        let series: Vec<&str> =
+                            series.iter().map(|(name, _)| name.as_str()).collect();
+                        ack.push_str(&format!(
+                            " Its series {} can be drawn by a later chart card with follows set to their names.",
+                            series.join(", ")
+                        ));
+                    }
                     if let Some(last) = names.last() {
                         ack.push_str(&format!(
                             " It publishes {}. A later stats card follows them with a reading like {{\"label\": \"…\", \"follows\": \"{last}\"}}; a table cell with = {last}.",
@@ -2810,6 +2843,20 @@ mod tests {
             built("emit_controls_card", loan).unwrap()["outputs"][0]["equals"],
             8884.88
         );
+    }
+
+    /// A chart that follows a controls card's series is a valid card before
+    /// its points are bound (docs/design/98 §2).
+    #[test]
+    fn a_chart_may_follow_a_series_before_its_points_are_bound() {
+        let chart = built(
+            "emit_chart_card",
+            json!({"chart_type": "line", "follows": "amount"}),
+        )
+        .unwrap();
+        assert_eq!(chart["series"][0]["follows"], "amount");
+        assert_eq!(chart["series"][0]["points"], json!([]));
+        assert!(built("emit_chart_card", json!({"chart_type": "line"})).is_err());
     }
 
     /// Choices written inside a step were dropped by the builder while the

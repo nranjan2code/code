@@ -6660,6 +6660,7 @@ impl Agent {
         // (docs/design/98 §2): its `= expression` fields are computed from
         // them, and a controls card publishes no name already taken.
         let mut scope = std::collections::BTreeMap::new();
+        let mut series_scope = std::collections::BTreeMap::new();
         for (entry_id, record) in session.presentations() {
             if record.turn_id != turn_id || record.block.as_deref() != Some("controls") {
                 continue;
@@ -6668,6 +6669,11 @@ impl Agent {
                 vak_delivery::controls::published(&record.payload).unwrap_or_default()
             {
                 scope.insert(name, (value, entry_id.clone()));
+            }
+            for (name, points) in
+                vak_delivery::controls::series(&record.payload).unwrap_or_default()
+            {
+                series_scope.insert(name, (points, entry_id.clone()));
             }
         }
         let form = info
@@ -6684,7 +6690,7 @@ impl Agent {
                 }
             })
         } else {
-            vak_delivery::controls::bind(&form, &mut info.payload, &scope)
+            vak_delivery::controls::bind(&form, &mut info.payload, &scope, &series_scope)
         };
         if let Err(message) = bound {
             return (

@@ -1,7 +1,7 @@
 # 98 — Answers beyond one card
 
-Status: in progress (2026-10-17): accepted by the maintainer; S1 built
-and drawn linked in a live turn (2026-10-17). Written at
+Status: in progress (2026-10-17): accepted by the maintainer; S1 and S2
+built and drawn linked in live turns (2026-10-17). Written at
 the maintainer's direction ("we cannot build a card for every scenario";
 "make this the best out there"). Builds on docs/design/92-card-forms.md
 (forms), docs/design/87-composed-answers.md (composition),
@@ -147,3 +147,22 @@ Each stage is its own commit with the full gate and a live turn.
   getter), and the client cloned a store proxy with `structuredClone`,
   which threw. Whole computed numbers are stored as integers.
 
+
+## 8. S2 as built (2026-10-17)
+
+- A series is a controls output with `vary` (one of the card's inputs),
+  `from`, `to` and `step` (numbers or expressions over the inputs): its
+  expression is computed across that range, earlier outputs recomputed at
+  each point (`vak_delivery::controls::series`; client `seriesOf`, held to
+  the same answer by a test). No list type was added to the language. A
+  range is bounded by the same 10,000 a card's lists are.
+- A chart follows series through its own `follows` (names, comma
+  separated); `data` is optional then. The builder adds each as a series
+  marked `follows` with no points, which a validator accepts, and binding
+  fills its points and records `{path, series, from}` in `bound`.
+- The controls acknowledgement names its series for a later chart.
+- Live, installed route: run 1 drew the controls and then a following
+  chart that Vak refused (`points` must be non-empty: my validator, fixed,
+  with a test); run 2 sent fixed `data` without a series (static, valid);
+  run 3 drew a series and a following chart, and in the browser a growth
+  rate of 15% redrew the curve and rescaled its axis.

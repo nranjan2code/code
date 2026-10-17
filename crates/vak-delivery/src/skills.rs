@@ -643,9 +643,23 @@ pub fn validate_form(form: &str, payload: &Value) -> Check {
             card.one_of("chart_type", &["line", "bar", "area"])?;
             card.text("accessible_summary")?;
             for series in card.records("series", false)? {
-                series.only(&["name", "points"])?;
+                series.only(&["name", "points", "follows"])?;
                 series.optional_text("name")?;
-                for point in series.records("points", false)? {
+                series.optional_text("follows")?;
+                // A series that follows a published one gets its points
+                // when the card is recorded (docs/design/98 §2).
+                let waiting = series.fields.contains_key("follows")
+                    && series
+                        .fields
+                        .get("points")
+                        .and_then(Value::as_array)
+                        .is_some_and(Vec::is_empty);
+                let points = if waiting {
+                    Vec::new()
+                } else {
+                    series.records("points", false)?
+                };
+                for point in points {
                     point.only(&["x", "y"])?;
                     if !point
                         .fields
@@ -951,7 +965,32 @@ fn validate_controls(card: &Record<'_>, payload: &Value) -> Check {
         }
     }
     for output in card.records("outputs", false)? {
-        output.only(&["name", "label", "expression", "unit", "equals", "decimals"])?;
+        output.only(&[
+            "name",
+            "label",
+            "expression",
+            "unit",
+            "equals",
+            "decimals",
+            "vary",
+            "from",
+            "to",
+            "step",
+        ])?;
+        if let Some(vary) = output.fields.get("vary") {
+            let inputs: Vec<&str> = items(payload, "inputs")
+                .iter()
+                .filter_map(|input| input["name"].as_str())
+                .collect();
+            if !vary.as_str().is_some_and(|vary| inputs.contains(&vary)) {
+                return Err(
+                    output.err(format!("`vary` must name an input ({})", inputs.join(", ")))
+                );
+            }
+            for key in ["from", "to", "step"] {
+                output.text(key)?;
+            }
+        }
         control_name(&output, &mut names)?;
         output.text("label")?;
         output.optional_text("unit")?;
@@ -980,6 +1019,7 @@ fn validate_controls(card: &Record<'_>, payload: &Value) -> Check {
     }
     let computed = crate::controls::compute(payload, &std::collections::BTreeMap::new())
         .map_err(|error| card.err(error))?;
+    crate::controls::series(payload).map_err(|error| card.err(error))?;
     for (output, (name, value)) in items(payload, "outputs").iter().zip(computed) {
         let stated = output["equals"].as_f64().unwrap_or_default();
         let decimals = output["decimals"].as_u64().unwrap_or(0);
