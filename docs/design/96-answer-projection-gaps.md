@@ -287,7 +287,10 @@ a grant reads it and nothing else.
   from a preview origin. Only the diagram library the client already pins
   for now; charts stay the chart card's. A card names what it needs in a
   typed `libraries` field (an enum of what is vendored), never by the
-  client reading the markup; `connect-src` stays closed.
+  client reading the markup; `connect-src` stays closed. Built
+  2026-10-17 (`vak_delivery::skills::MARKUP_LIBRARIES`,
+  `crates/vak-client-ui/src/previewLibraries.ts`); not yet drawn live, see
+  docs/plans/open-items.md.
 - Each library is a workspace dependency under the dependency rule:
   pinned, justified, and rebuilt into the bundle manifest.
 

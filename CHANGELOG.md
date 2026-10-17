@@ -1,5 +1,8 @@
 ## Unreleased
 
+- A markup preview can draw diagrams offline when its card names the
+  diagram library.
+
 - A saved answer is a page in the Library, drawn with its cards working
   as they did in the chat. Keep current asks for it again on a schedule
   and adds each answer as a new version; the Agent can make such a page

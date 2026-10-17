@@ -8,6 +8,7 @@ import * as api from "../../api";
 import Icon from "../Icon";
 import { PresentationSessionContext, records, type Payload } from "./shared";
 import { themedPreview } from "../../previewTheme";
+import { withPreviewLibraries } from "../../previewLibraries";
 import { mediaSource } from "../../mediaSource";
 
 // The code and media forms: each reads its stored payload through a render
@@ -374,9 +375,10 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
     try {
       const html = inline ?? (p ? (await reader.readFile(p)).content : undefined);
       if (html === undefined) throw new Error("This page isn't available. Reload to try again.");
+      const libraries = node.props.libraries;
       const prepared = p
         ? await artifactPreviewHtml(p, html, reader).catch(() => sandboxedSrcdoc(html))
-        : sandboxedSrcdoc(html);
+        : sandboxedSrcdoc(Array.isArray(libraries) ? await withPreviewLibraries(html, libraries) : html);
       if (generation !== request) return;
       setHtmlContent(html);
       setPreviewHtml(prepared);
@@ -398,7 +400,8 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
 
   const openInCanvas = () => {
     const html = inlineHtml();
-    if (html) openArtifactCanvas({ kind: "inline", title: inlineTitle(html, str(node.props, "title")), html, basePath: path() || undefined, sessionId: session });
+    const libraries = Array.isArray(node.props.libraries) ? node.props.libraries.filter((name): name is string => typeof name === "string") : undefined;
+    if (html) openArtifactCanvas({ kind: "inline", title: inlineTitle(html, str(node.props, "title")), html, basePath: path() || undefined, sessionId: session, libraries });
     else if (path()) openArtifactFile(path(), { sessionId: session });
   };
 

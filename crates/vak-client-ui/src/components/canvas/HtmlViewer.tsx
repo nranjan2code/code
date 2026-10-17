@@ -1,3 +1,4 @@
+import { withPreviewLibraries } from "../../previewLibraries";
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import * as api from "../../api";
 import { previewSandbox, previewWindowDocument, sandboxedSrcdoc } from "../../safeUrl";
@@ -53,7 +54,8 @@ export default function HtmlViewer(props: ViewerProps) {
           warning = "Some files this page uses could not be loaded, so it may look incomplete.";
         }
       } else {
-        page = sandboxedSrcdoc(raw);
+        const libraries = subject.kind === "inline" ? subject.libraries ?? [] : [];
+        page = sandboxedSrcdoc(await withPreviewLibraries(raw, libraries));
       }
       return { raw, warning, shown: { mode: "document", page, warning } satisfies Shown };
     },

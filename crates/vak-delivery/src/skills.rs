@@ -16,6 +16,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
+/// The libraries a markup preview may name, each inlined by the client into
+/// the preview's own frame with no network (docs/design/96 P3). The client's
+/// `PREVIEW_LIBRARIES` holds the same names.
+pub const MARKUP_LIBRARIES: &[&str] = &["diagram"];
+
 pub const PRESENTATION_SKILL_API: &str = "presentation.v1";
 
 /// The built-in forms, in the order a person meets them in an answer.
@@ -765,8 +770,23 @@ pub fn validate_form(form: &str, payload: &Value) -> Check {
             card.texts(&["title", "status"])
         }
         "markup_preview" => {
-            card.only(&["html", "title", "status"])?;
+            card.only(&["html", "libraries", "title", "status"])?;
             card.text("html")?;
+            if let Some(libraries) = card.fields.get("libraries") {
+                let names = libraries
+                    .as_array()
+                    .ok_or_else(|| card.err("`libraries` must be a list"))?;
+                if let Some(named) = names.iter().find(|name| {
+                    !name
+                        .as_str()
+                        .is_some_and(|name| MARKUP_LIBRARIES.contains(&name))
+                }) {
+                    return Err(card.err(format!(
+                        "`libraries` names {named}; the libraries are {}",
+                        MARKUP_LIBRARIES.join(", ")
+                    )));
+                }
+            }
             card.texts(&["title", "status"])
         }
         "diff" => {

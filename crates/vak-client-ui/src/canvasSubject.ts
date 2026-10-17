@@ -29,7 +29,7 @@ export type CanvasSubject =
   | (SubjectBase & { kind: "draft_file"; path: string; sessionId: string; candidateId: string; executionId?: string })
   /** Markup shown from the conversation itself, with no file behind it. Files
    *  it names beside `basePath` are read from the conversation's folder. */
-  | (SubjectBase & { kind: "inline"; html: string; basePath?: string; sessionId?: string })
+  | (SubjectBase & { kind: "inline"; html: string; basePath?: string; sessionId?: string; libraries?: string[] })
   /** A scheduled routine, read from the task list. */
   | (SubjectBase & { kind: "automation"; taskId: string })
   /** A live, owner-only daily view of connected mail and calendar accounts. */

@@ -1484,7 +1484,12 @@ fn build_file_preview(args: &Map<String, Value>) -> Result<Value, String> {
 fn markup_preview_fields() -> Value {
     fields(
         serde_json::json!({
-            "html": string("The HTML markup to preview, written in full."),
+            "html": string("The HTML markup to preview, written in full. Markup that draws with a library names it in `libraries`, or nothing draws it."),
+            "libraries": {
+                "type": "array",
+                "description": "Optional. Libraries the markup uses, put into its frame with no network: diagram (Mermaid; write each diagram's source in <pre class=\"mermaid\">...</pre>).",
+                "items": {"type": "string", "enum": vak_delivery::skills::MARKUP_LIBRARIES}
+            },
             "title": string(TITLE),
             "status": string("Optional. The state of the work, in a word.")
         }),
@@ -1493,7 +1498,10 @@ fn markup_preview_fields() -> Value {
 }
 
 fn build_markup_preview(args: &Map<String, Value>) -> Result<Value, String> {
-    Ok(Value::Object(copy(args, &["html", "title", "status"])))
+    Ok(Value::Object(copy(
+        args,
+        &["html", "libraries", "title", "status"],
+    )))
 }
 
 // ---- code results ------------------------------------------------------------
@@ -2878,6 +2886,26 @@ mod tests {
         assert_eq!(chart["series"][0]["follows"], "amount");
         assert_eq!(chart["series"][0]["points"], json!([]));
         assert!(built("emit_chart_card", json!({"chart_type": "line"})).is_err());
+    }
+
+    /// A markup preview names the libraries it uses from a closed list, and
+    /// the stored card keeps them for the client to inline (docs/design/96
+    /// P3).
+    #[test]
+    fn a_markup_preview_names_its_libraries_from_the_vendored_list() {
+        let card = built(
+            "emit_markup_preview_card",
+            json!({"html": "<pre class=\"mermaid\">graph TD; A-->B</pre>", "libraries": ["diagram"]}),
+        )
+        .unwrap();
+        assert_eq!(card["libraries"], json!(["diagram"]));
+        assert!(
+            built(
+                "emit_markup_preview_card",
+                json!({"html": "<p>x</p>", "libraries": ["anything"]}),
+            )
+            .is_err()
+        );
     }
 
     /// Choices written inside a step were dropped by the builder while the

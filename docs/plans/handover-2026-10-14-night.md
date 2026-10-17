@@ -424,10 +424,12 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
    - A kilometres-to-miles converter has not drawn as controls live.
    - In the chat an answer is one reading column unless the model sets
      `beside_previous`; the Canvas is where it takes the width.
-3. Decided by the maintainer 2026-10-17 (docs/decisions.md), to build:
-   steps stay flat (the `steps` argument now points to `choices`); P3 the client inlines a
-   pinned library into the srcdoc; P4 MCP UI is text only (nothing to
-   build); `mail_calendar` loads only with a connected-accounts rollup.
+3. Decided by the maintainer 2026-10-17 (docs/decisions.md): steps stay
+   flat (done: `steps` points to `choices`); P3 built (typed `libraries`,
+   the client inlines Mermaid) but two live turns left `libraries` out, a
+   question for the maintainer in open-items; P4 MCP UI is text only
+   (nothing to build); next to build: `mail_calendar` loads only with a
+   connected-accounts rollup.
 4. P6 (live eval of format choice); the OpenAI route with `then`.
 5. Release questions (data baseline, purge) are the maintainer's.
 

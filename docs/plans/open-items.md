@@ -245,6 +245,16 @@ Carried over from 7.2.0:
 
 ## Card forms (docs/design/92)
 
+- [ ] P3 (docs/design/96, 2026-10-17): `emit_markup_preview_card` takes a
+  typed `libraries` list (`vak_delivery::skills::MARKUP_LIBRARIES`, only
+  `diagram`), and the client inlines the pinned Mermaid build into the
+  opaque frame (`previewLibraries.ts`), in the card and in the Canvas. Two
+  live turns asking for a markup preview of a flow diagram wrote Mermaid
+  in `<pre class="mermaid">` and left `libraries` out, the second after
+  the `html` field's description named it; so the inlining has not drawn
+  in a live turn. Open for the maintainer: the same pattern as `as_page`
+  (an optional field a call leaves out); a diagram already draws when the
+  model writes a Mermaid fence in its text.
 - [ ] Living pages (docs/design/98 §12): a page made from an answer that
   delivered a file draws that file's card, whose Review needs the
   conversation it came from. Keep current names its automation after the

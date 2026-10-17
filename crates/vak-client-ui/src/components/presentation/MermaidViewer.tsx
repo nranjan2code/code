@@ -6,7 +6,7 @@ let renderIdSeq = 0;
 
 /** Diagram colours come from the live theme tokens, so every theme (and a
  * future one) is covered without a second palette to keep in step. */
-function tokenThemeVariables(): Record<string, string | boolean> {
+export function tokenThemeVariables(): Record<string, string | boolean> {
   const style = getComputedStyle(document.documentElement);
   // A token may be any CSS colour (a frosted surface is a `color-mix`), and
   // the diagram library reads only hex and rgb forms; a canvas reports both.
