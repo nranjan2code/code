@@ -9,6 +9,7 @@ import re
 from collections import Counter
 
 import measure as ms
+import plant
 
 
 # ---- Markdown helpers -------------------------------------------------------
@@ -83,7 +84,7 @@ def markdown(model):
             f"| Rust source / tests | {st['rust_src']:,} / {st['rust_tests']:,} lines |",
             f"| TypeScript source | {st['ts_src']:,} lines |",
             f"| HTTP routes | {st['routes']:,} |",
-            f"| Subsystems | {st['subsystems']} |",
+            f"| Subsystems / connections / flows | {st['subsystems']} / {st['connections']:,} / {st['flows']} |",
             f"| Built-in tools / card tools / card forms | {len(model['summary']['tools'])} / {len(model['summary']['card_tools'])} / {st['forms']} |",
             f"| Worker task kinds | {st['worker_tasks']} |",
             f"| Registered durable paths | {st['state_paths']} |",
@@ -116,7 +117,8 @@ def markdown(model):
 
     out += ["## What's happening", "",
             f"{act['commits']} commits from {act['since']} to {act['until']}, by area:", "",
-            ", ".join(f"`{a}` {n}" for a, n in act["areas"]), "", "Most recent:", ""]
+            ", ".join(f"`{a}` {n}" for a, n in act["areas"]), "",
+            "By subsystem: " + ", ".join(f"{name} {n}" for _, name, n in act["by_subsystem"]) + ".", "", "Most recent:", ""]
     out += [f"- `{c['hash']}` {c['date']}: {c['subject']}" for c in act["recent"]]
     out += ["", "Not yet released ([CHANGELOG.md](../CHANGELOG.md)):", ""]
     out += [f"- {u}" for u in act["unreleased"]] or ["- Nothing."]
@@ -142,21 +144,36 @@ def markdown(model):
         out += ["", "Dependencies that point up a layer: " + "; ".join(f"`{c['name']}` uses " + ", ".join(f"`{d}`" for d in c["upward"]) for c in up) + "."]
     out += ["", "## Subsystems", "", subsystems_intro(model), ""]
     for group, items in subsystem_groups(model):
-        out += [f"### {group}", "", "| Subsystem | Lives in | Modules | Lines | Routes | `vak` | Design docs | What it does |",
-                "|---|---|---|---|---|---|---|---|"]
+        out += [f"### {group}", "", "| Subsystem | Lives in | Modules | Lines | Routes | Commits (recent) | Links out / in | `vak` | Design docs | What it does |",
+                "|---|---|---|---|---|---|---|---|---|---|"]
         for x in items:
             mods = f"{x['modules']}" + (f" + {len(x['parts'])} parts" if x["parts"] else "")
             out.append(f"| **{x['name']}** | {', '.join(f'`{h}`' for h in x['homes'])} | {mods} | {x['lines']:,} | "
-                       f"{len(x['routes'])} | {', '.join(x['cli']) or '—'} | "
+                       f"{len(x['routes'])} | {x['commits']} ({x['recent']}) | {len(x['out'])} / {len(x['in'])} | {', '.join(x['cli']) or '—'} | "
                        f"{', '.join(f'[{d[:2]}](../docs/design/{d})' for d in x['docs']) or '—'} | {cell(x['role'])} |")
         out.append("")
     cov = model["coverage"]
     if cov["docs_uncited"]:
         out += ["Design docs no subsystem cites: " + ", ".join(f"`{d}`" for d in cov["docs_uncited"]) + ".", ""]
-    out += ["### Bill of materials", "", "| Crate | Layer | Src | Tests | Commits | Deps | Used by | Role |", "|---|---|---|---|---|---|---|---|"]
+    names = {x["id"]: x["name"] for x in model["subsystems"]}
+    out += ["## How it connects", "",
+            f"{len(model['connections']):,} connections between subsystems, measured from the code: a module naming another "
+            "(a Rust path or item, a method defined once, a TypeScript import) or a client naming a route "
+            "([harness/connections.py](harness/connections.py)). The flows below are written by hand, and each step must ride "
+            "a measured connection or the harness reports it. [blueprint.html](blueprint.html) draws them as an animated plant diagram.", ""]
+    for f in model["flows"]:
+        out += [f"**{f['name']}**", ""]
+        out += [f"{i}. {names.get(s['from'], s['from'])} → {names.get(s['to'], s['to'])}: {s['what']}" for i, s in enumerate(f["steps"], 1)]
+        out.append("")
+    out += ["<details><summary><b>Every subsystem's connections</b></summary>", "",
+            "| Subsystem | Uses (weight; `http` marks route calls) |", "|---|---|"]
+    for x in sorted(model["subsystems"], key=lambda s: -(len(s["out"]) + len(s["in"]))):
+        out.append(f"| **{x['name']}** | " + (", ".join(f"{names.get(e['to'], e['to'])} {e['weight']}{' http' if e['kind'] == 'http' else ''}" for e in x["out"]) or "—") + " |")
+    out += ["", "</details>", ""]
+    out += ["### Bill of materials", "", "| Crate | Layer | Src | Tests | Commits | Deps | Used by | Subsystems | Role |", "|---|---|---|---|---|---|---|---|---|"]
     for c in sorted(model["crates"], key=lambda c: (-ms.lnum(c["layer"]), -c["src"])):
         out.append(f"| `{c['name']}` | {c['layer']} | {c['src']:,} | {c['tests']:,} | {c['commits']} | "
-                   f"{len(c['deps']) if c['kind'] == 'rust' else '—'} | {len(c['used_by'])} | {cell(c['role'])} |")
+                   f"{len(c['deps']) if c['kind'] == 'rust' else '—'} | {len(c['used_by'])} | {len(c['subsystems'])} | {cell(c['role'])} |")
 
     sz = model["size"]
     out += ["", "## Where the size is", "", "| Most complex functions | Where | Cognitive complexity |", "|---|---|---|"]
@@ -269,7 +286,7 @@ def subsystems_html(model):
     out = []
     for group, items in subsystem_groups(model):
         out.append(f'<h3>{esc(group)}</h3><div class="scroll"><table class="subs"><thead><tr><th>Subsystem</th><th>Lives in</th>'
-                   '<th class="n">Modules</th><th class="n">Lines</th><th class="n">Routes</th><th><code>vak</code></th><th>Design docs</th>'
+                   '<th class="n">Modules</th><th class="n">Lines</th><th class="n">Routes</th><th class="n">Commits</th><th class="n">Recent</th><th class="n">Links</th><th><code>vak</code></th><th>Design docs</th>'
                    '<th>What it does</th></tr></thead><tbody>')
         for x in items:
             mods = f"{x['modules']}" + (f" + {len(x['parts'])} parts" if x["parts"] else "")
@@ -279,6 +296,7 @@ def subsystems_html(model):
             out.append(f'<tr><td><details><summary><b>{esc(x["name"])}</b></summary>{units}</details></td>'
                        f'<td>{", ".join(f"<code>{esc(h)}</code>" for h in x["homes"])}</td>'
                        f'<td class="n">{mods}</td><td class="n">{x["lines"]:,}</td><td class="n">{routes}</td>'
+                       f'<td class="n">{x["commits"]}</td><td class="n">{x["recent"]}</td><td class="n">{len(x["out"])}/{len(x["in"])}</td>'
                        f'<td>{", ".join(f"<code>{esc(c)}</code>" for c in x["cli"]) or "—"}</td>'
                        f'<td>{", ".join(f"<code>{esc(d[:2])}</code>" for d in x["docs"]) or "—"}</td>'
                        f'<td>{md_inline_to_html(x["role"])}</td></tr>')
@@ -302,7 +320,7 @@ def bom(model):
             f'<tr data-layer="{c["layer"]}"><td><code>{esc(c["name"])}</code></td><td>{c["layer"]}</td><td>{"TS" if c["kind"] == "ts" else "Rust"}</td>'
             f'<td class="n">{c["src"]:,}</td><td class="n">{c["tests"]:,}</td><td class="n">{c["files"]}</td><td class="n">{c["commits"]}</td>'
             f'<td class="n">{len(c["deps"]) if c["kind"] == "rust" else "—"}{up}</td><td class="n">{len(c["used_by"])}</td><td class="n">{len(c["ext"])}</td>'
-            f'<td>{esc(c["role"])}</td><td class="note">{"; ".join(notes)}</td></tr>')
+            f'<td class="n">{len(c["subsystems"])}</td><td>{esc(c["role"])}</td><td class="note">{"; ".join(notes)}</td></tr>')
     return "\n".join(rows)
 
 
@@ -321,6 +339,14 @@ def work_bars(model):
         for c in sorted(model["crates"], key=lambda c: -c["commits"])]
     top = max(n for _, n, _ in items) or 1
     return "\n".join(f'<div class="bar"><span>{esc(name)}</span><span class="t"><i{" class=hot" if h else ""} style="width:{100*n/top:.1f}%"></i></span><span class="v">{n:,}</span></div>' for name, n, h in items)
+
+
+def work_subsystem_bars(model):
+    items = sorted(model["subsystems"], key=lambda x: -x["commits"])
+    top = max([x["commits"] for x in items] + [1])
+    hot = model["work"]["hot"]
+    return "\n".join(f'<div class="bar"><span>{esc(x["name"])}</span><span class="t"><i{" class=hot" if x["commits"] >= hot else ""} '
+                     f'style="width:{100 * x["commits"] / top:.1f}%"></i></span><span class="v">{x["commits"]:,}</span></div>' for x in items)
 
 
 def attention_html(model):
@@ -350,6 +376,7 @@ def activity_html(model):
     out = ['<div class="two"><div style="display:grid;gap:10px;align-content:start">',
            f'<h3>{act["commits"]} commits, {act["since"]} to {act["until"]}</h3>',
            '<p>' + ", ".join(f"<code>{esc(a)}</code> {n}" for a, n in act["areas"]) + "</p>",
+           '<p><b>By subsystem:</b> ' + ", ".join(f"{esc(name)} {n}" for _, name, n in act["by_subsystem"]) + "</p>",
            '<ul class="plain">' + "".join(f'<li><code>{esc(c["hash"])}</code> {esc(c["date"])}: {esc(c["subject"])}</li>' for c in act["recent"]) + "</ul></div>",
            '<div style="display:grid;gap:10px;align-content:start"><h3>Not yet released</h3><ul class="plain">'
            + ("".join(f"<li>{md_inline_to_html(u)}</li>" for u in act["unreleased"]) or "<li>Nothing.</li>") + "</ul>",
@@ -396,6 +423,7 @@ def size_tables(model):
 # The HTML's tabs, in order, and the sheets (section ids) each holds.
 TABS = [
     ("overview", "Overview", ["summary", "attention", "happening", "record"]),
+    ("plant", "Plant", ["plant", "flows", "connections"]),
     ("system", "System", ["layers", "subsystems", "processes", "turn", "data"]),
     ("inventory", "Inventory", ["bom", "size", "work"]),
     ("findings", "Findings", ["findings", "target"]),
@@ -437,7 +465,11 @@ def page(model, resolve):
     template = template.replace("../docs/brand/exports/vakyartha-songbird-reverse.svg", logo_uri("reverse"))
     template = template.replace("../docs/brand/exports/vakyartha-songbird-colour.svg", logo_uri("colour"))
     files, fns, cc = size_tables(model)
+    plant_svg, plant_review = plant.svg(model)
+    model["review"].extend(plant_review)
     blocks = {
+        "PLANT_SVG": plant_svg, "FLOWS": plant.flows_html(model), "FLOW_BUTTONS": plant.flow_buttons(model),
+        "CONNECTIONS": plant.connections_html(model), "WORK_SUBS": work_subsystem_bars(model),
         "SUMMARY": md_to_html(model["summary"]["text"]),
         "ATTENTION": attention_html(model), "ACTIVITY": activity_html(model), "DECISIONS": decisions_html(model),
         "LAYER_SVG": layer_svg(model, model["work"]["hot"]), "MATRIX": matrix(model), "UPWARD": upward_list(model),
@@ -451,6 +483,8 @@ def page(model, resolve):
     for key, val in blocks.items():
         template = template.replace("%%" + key + "%%", val)
     template = resolve(template)
+    # data, inserted after placeholders resolve: commit subjects may quote one
+    template = template.replace("%%PLANT_DATA%%", plant.data(model))
     # sheets are numbered in page order, and the title block lists them
     n = iter(range(1, 100))
     template = re.sub(r'<span class="sno">Sheet</span>', lambda _: f'<span class="sno">Sheet {next(n):02d}</span>', template)

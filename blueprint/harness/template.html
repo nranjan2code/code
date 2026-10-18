@@ -128,7 +128,7 @@ table.subs details summary { cursor: pointer }
 pre.tree { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; margin: 0; padding: 14px; border: 1px solid var(--line); background: var(--box); overflow-x: auto }
 pre.tree .c { color: var(--ink-soft) }
 .bars { display: grid; gap: 6px }
-.bar { display: grid; grid-template-columns: 130px 1fr 48px; gap: 10px; align-items: center; font-size: 13px }
+.bar { display: grid; grid-template-columns: 170px 1fr 48px; gap: 10px; align-items: center; font-size: 13px }
 .bar .t { height: 14px; background: var(--line-faint); position: relative }
 .bar .t i { position: absolute; inset: 0 auto 0 0; background: var(--line) }
 .bar .t i.hot { background: var(--hot) }
@@ -174,6 +174,93 @@ pre.tree .c { color: var(--ink-soft) }
 body { margin: 0 }
 .banner { border: 1.5px solid var(--warn); color: var(--warn); background: var(--sheet); padding: 12px 16px }
 ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
+
+/* The plant diagram (Plant tab): plant areas, units, pipes, flows and packets. */
+.plant-wrap { display: grid; gap: 12px; min-width: 0 }
+.plant-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center }
+.plant-bar .sep { flex: 1 }
+.plant-bar.flows button { border-style: dashed }
+.plant-bar.flows button[aria-pressed="true"] { border-style: solid }
+.plant-bar button, .ops-head button { font: 500 12.5px var(--font-mono); color: var(--ink); background: var(--box); border: 1px solid var(--line); padding: 5px 10px; cursor: pointer }
+.plant-bar button[aria-pressed="true"] { background: var(--line); color: var(--sheet) }
+.plant-bar button:focus-visible, .unit:focus-visible, .ops-head button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px }
+.plant-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0 }
+.plant-canvas { overflow: auto; min-width: 0; border: 1px solid var(--line-faint) }
+.plant-canvas svg { width: 100%; height: auto }
+@media (max-width: 900px) { .plant-canvas svg { min-width: 980px } }
+.plant-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; align-content: start; font-size: 13.5px; min-width: 0 }
+.plant-side .panel { border: 1px solid var(--line); padding: 10px 12px; display: grid; gap: 6px; background: var(--box) }
+.plant-side .panel h4 { margin: 0; font: 600 12px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--line) }
+.plant-side .big { font: 600 20px/1.2 var(--font-display) }
+.plant-side ul { margin: 0; padding-left: 18px; max-height: 220px; overflow: auto }
+.plant-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--ink-soft) }
+.plant-legend i { display: inline-block; width: 26px; height: 0; border-top: 2px solid var(--line); vertical-align: middle; margin-right: 6px }
+.plant-legend i.http { border-top-style: dashed }
+.plant-legend i.flow { border-top: 3px solid var(--hot) }
+.plant-legend i.live { width: 10px; height: 10px; border: 0; border-radius: 50%; background: var(--ok) }
+.area rect:first-child { fill: var(--ext); stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 7 4 }
+.area-tab { fill: var(--line-faint) }
+.area-name { font: 600 17px var(--font-display); fill: var(--line); letter-spacing: .14em }
+.pipe { fill: none; stroke: var(--line); stroke-opacity: .07; stroke-width: 1 }
+.pipe.http { stroke-dasharray: 5 4 }
+.show-all .pipe { stroke-opacity: .22 }
+.pipe.lit { stroke-opacity: .9; stroke-width: 2.2 }
+.pipe.lit.in { stroke: var(--hot) }
+.fstep { fill: none; stroke: var(--hot); stroke-width: 2.6; opacity: 0; pointer-events: none }
+.fstep.on { opacity: .5; stroke-dasharray: 9 7; animation: plant-march 1.1s linear infinite }
+.fstep.now { opacity: 1; stroke-width: 3.6 }
+.pa { fill: var(--hot) }
+@keyframes plant-march { to { stroke-dashoffset: -32 } }
+.unit { cursor: pointer }
+.u-body { fill: var(--box); stroke: var(--line); stroke-width: 1.3; transition: fill .3s, stroke .3s }
+.unit:hover .u-body { stroke-width: 2.4 }
+.unit.dim { opacity: .25 }
+.unit.inflow .u-body { stroke-width: 2 }
+.unit.active .u-body { fill: var(--hot-fill); stroke: var(--hot); stroke-width: 2.6 }
+.unit.sel .u-body { stroke: var(--hot); stroke-width: 3 }
+.unit.blip .u-body { fill: var(--hot-fill) }
+.unit.blip .u-led { fill: var(--hot) }
+.u-load { fill: var(--line); opacity: .4 }
+.u-led { fill: var(--line-faint); stroke: var(--line); stroke-width: 1 }
+.u-led.live { fill: var(--ok); stroke: none; animation: plant-pulse 2.4s ease-in-out infinite }
+@keyframes plant-pulse { 50% { opacity: .35 } }
+.u-name { font: 600 14.5px var(--font-body) }
+.u-sub { font-size: 12px; fill: var(--ink-soft) }
+.packet-glow { fill: var(--hot); opacity: .3 }
+.packet-core { fill: var(--hot) }
+.flowlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px }
+.flow { border: 1px solid var(--line-faint); padding: 12px 14px; background: var(--box) }
+.flow ol { margin: 8px 0 0; padding-left: 22px; font-size: 13.5px }
+.linkish { font: inherit; color: var(--line); background: none; border: 0; padding: 0; cursor: pointer; text-align: left; text-decoration: underline; text-underline-offset: 3px }
+.ops-head, .plant-side .panel.ops-ticker { display: none }
+/* The operations screen: the plant diagram full screen on the dark drawing theme. */
+.plant-wrap.ops {
+  --paper: #061a33; --sheet: #0a2547; --ink: #e4eefa; --ink-soft: #9fb7d3; --line: #8cc4ff; --line-faint: rgba(140,196,255,.10);
+  --box: #0e2f57; --hot: #ffb35c; --hot-fill: rgba(255,179,92,.20); --ok: #6fd6a3; --ext: rgba(140,196,255,.05);
+  position: fixed; inset: 0; z-index: 60; background: var(--paper); color: var(--ink); padding: 14px 18px; overflow: auto;
+  background-image: linear-gradient(var(--line-faint) 1px, transparent 1px), linear-gradient(90deg, var(--line-faint) 1px, transparent 1px); background-size: 24px 24px;
+  grid-template-rows: auto auto 1fr; color-scheme: dark
+}
+.ops .ops-head { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; border: 1.5px solid var(--line); padding: 8px 14px; background: var(--sheet) }
+.ops-head .ops-title { font: 700 24px var(--font-display); letter-spacing: .14em; text-transform: uppercase }
+.ops-head .kpi { display: grid; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .08em }
+.ops-head .kpi b { font: 600 22px var(--font-display); color: var(--ink); letter-spacing: 0 }
+.ops-head .sep { flex: 1 }
+.ops .plant-main { grid-template-columns: minmax(0, 1fr) 340px }
+.ops .plant-side { grid-template-columns: 1fr }
+.ops .plant-canvas { border-color: var(--line) }
+.ops .plant-canvas svg { min-width: 0; height: calc(100vh - 190px); width: 100% }
+.ops .plant-side .panel.ops-ticker { display: grid }
+.ops-ticker ol { list-style: none; margin: 0; padding: 0; max-height: 34vh; overflow: hidden; display: grid; gap: 6px; font-size: 12.5px }
+.ops-ticker li { border-left: 3px solid var(--hot); padding-left: 8px }
+.ops-ticker li code { color: var(--hot) }
+@media (max-width: 900px) {
+  .plant-bar.flows { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px }
+  .plant-bar.flows button { flex: none }
+  .ops .plant-main, .ops .plant-side { grid-template-columns: 1fr }
+  .ops .plant-canvas svg { min-width: 980px; height: auto }
+}
+@media (prefers-reduced-motion: reduce) { .fstep.on, .u-led.live { animation: none } .u-body { transition: none } }
 </style>
 </head>
 <body>
@@ -216,6 +303,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
     <div class="stat"><b>{{k:ts_src}}</b><span>TypeScript lines in the clients</span></div>
     <div class="stat"><b>{{m:routes}}</b><span>HTTP routes in one server</span></div>
     <div class="stat"><b>{{m:subsystems}}</b><span>subsystems, covering every module, route and subcommand</span></div>
+    <div class="stat"><b>{{m:connections}}</b><span>measured connections between subsystems, and {{m:flows}} flows</span></div>
     <div class="stat"><b>{{m:tools}}</b><span>built-in tools, plus {{m:card_tools}} card tools over {{m:forms}} card forms</span></div>
     <div class="stat"><b>{{m:worker_tasks}}</b><span>worker task kinds across the process boundary</span></div>
     <div class="stat"><b>{{m:state_paths}}</b><span>registered durable paths</span></div>
@@ -241,6 +329,57 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 <section class="sheet" id="record">
   <header><span class="sno">Sheet</span><h2>Decisions and specs</h2><span class="muted">Read from the decision log and every design doc's status line; each stays the one place its fact is written.</span></header>
 %%DECISIONS%%
+</section>
+
+<section class="sheet" id="plant">
+  <header><span class="sno">Sheet</span><h2>Plant diagram</h2><span class="muted">Every subsystem as a unit in its plant area, {{m:connections}} measured connections as pipes, and {{m:flows}} flows a packet travels step by step. Pick a flow, select a unit to see what it uses and what uses it, or open the operations screen.</span></header>
+  <div class="plant-wrap" id="plant-wrap">
+    <div class="ops-head">
+      <span class="ops-title">Vakyartha · Operations</span>
+      <span class="kpi">Subsystems<b data-kpi="subsystems"></b></span>
+      <span class="kpi">Connections<b data-kpi="connections"></b></span>
+      <span class="kpi">Flows<b data-kpi="flows"></b></span>
+      <span class="kpi">Routes<b data-kpi="routes"></b></span>
+      <span class="kpi">Checks ok<b data-kpi="checks"></b></span>
+      <span class="kpi">Open items<b data-kpi="open"></b></span>
+      <span class="kpi">Commits, last fortnight<b data-kpi="recent"></b></span>
+      <span class="sep"></span>
+      <span class="kpi">As of<b data-kpi="asof"></b></span>
+      <button type="button" data-plant="exit">Exit (Esc)</button>
+    </div>
+    <div class="plant-bar" role="toolbar" aria-label="Playback">
+      <button type="button" data-plant="play" aria-pressed="false">Play</button>
+      <button type="button" data-plant="prev" aria-label="Previous step">◀ Step</button>
+      <button type="button" data-plant="next" aria-label="Next step">Step ▶</button>
+      <button type="button" data-plant="all" aria-pressed="false">All pipes</button>
+      <span class="sep"></span>
+      <button type="button" data-plant="ops">Operations screen ⛶</button>
+    </div>
+    <div class="plant-bar flows" role="group" aria-label="Flows">
+      <span class="kicker">Flows</span>
+%%FLOW_BUTTONS%%
+    </div>
+    <div class="plant-main">
+      <div class="plant-canvas">%%PLANT_SVG%%</div>
+      <aside class="plant-side">
+        <div class="panel" data-plant="step" aria-live="polite"><h4>Flow</h4><div class="big">Pick a flow</div></div>
+        <div class="panel" data-plant="unit"><h4>Unit</h4><div class="muted">Select a unit to see its connections.</div></div>
+        <div class="panel ops-ticker"><h4>Recent work, replayed</h4><ol data-plant="ticker"></ol></div>
+      </aside>
+    </div>
+    <div class="plant-legend"><span><i></i>code reference</span><span><i class="http"></i>route call</span><span><i class="flow"></i>flow step</span><span><i class="live"></i>changed in the last fortnight</span><span>Bar under a unit: share of the fortnight's commits. <code>k</code> lines · <code>c</code> commits · <code>r</code> routes.</span></div>
+  </div>
+  <script type="application/json" id="plant-data">%%PLANT_DATA%%</script>
+</section>
+
+<section class="sheet" id="flows">
+  <header><span class="sno">Sheet</span><h2>Flows</h2><span class="muted">How work moves through the system, step by step. Written by hand in <code>harness/subsystems.py</code>; every step rides a measured connection or the harness reports it. Open a flow to watch it on the plant diagram.</span></header>
+%%FLOWS%%
+</section>
+
+<section class="sheet" id="connections">
+  <header><span class="sno">Sheet</span><h2>Connections</h2><span class="muted">What each subsystem uses and what uses it, measured from the code (<code>harness/connections.py</code>). The number is how many file pairs make the connection; <code>http</code> marks a client naming a route. Most connected first.</span></header>
+%%CONNECTIONS%%
 </section>
 
 
@@ -316,7 +455,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 </section>
 
 <section class="sheet" id="turn">
-  <header><span class="sno">Sheet</span><h2>One turn, end to end</h2><span class="muted">Traced through the code. Drawn by hand; the names it uses are checked on every run.</span></header>
+  <header><span class="sno">Sheet</span><h2>One turn, end to end</h2><span class="muted">Traced through the code. Drawn by hand; the names it uses are checked on every run. The same path across subsystems is the flow <button type="button" class="linkish" data-goto-flow="message">A message becomes an answer</button> on the Plant tab.</span></header>
   <div class="scroll">
   <svg viewBox="0 0 1200 780" role="img" aria-label="Sequence of one turn across client, server, core, agent loop, context and model, tools and worker, and the ledger" style="min-width:1000px">
     <defs><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0L10,5L0,10z"/></marker></defs>
@@ -418,7 +557,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
   </div>
   <div class="scroll" style="max-height:640px;overflow-y:auto">
   <table class="bom">
-    <thead><tr><th>Crate</th><th>Layer</th><th>Lang</th><th>Src lines</th><th>Test lines</th><th>Files</th><th>Commits</th><th>Deps</th><th>Used by</th><th>Ext</th><th>Role</th><th>Measured notes</th></tr></thead>
+    <thead><tr><th>Crate</th><th>Layer</th><th>Lang</th><th>Src lines</th><th>Test lines</th><th>Files</th><th>Commits</th><th>Deps</th><th>Used by</th><th>Ext</th><th>Subsystems</th><th>Role</th><th>Measured notes</th></tr></thead>
     <tbody id="bom-body">
 %%BOM%%
     </tbody>
@@ -448,8 +587,16 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 <section class="sheet" id="work">
   <header><span class="sno">Sheet</span><h2>Where the work went</h2><span class="muted">Commits touching each path, of {{m:total_commits}} since {{m:first_date}}. One commit can touch several.</span></header>
   <div class="two">
-    <div class="bars">
+    <div style="display:grid;gap:10px;align-content:start">
+      <h3>By crate and docs</h3>
+      <div class="bars">
 %%WORK%%
+      </div>
+      <h3>By subsystem</h3>
+      <p class="muted">A commit counts once for each subsystem whose files it touched, by the subsystem map, for files since moved or removed too.</p>
+      <div class="bars">
+%%WORK_SUBS%%
+      </div>
     </div>
     <div style="display:grid;gap:12px;align-content:start">
       <p>The work concentrates where the architecture is weakest. The three facade crates took most of the commits, while the well-shaped lower crates (permission, storage, ooxml, pdf, lifecycle) were written once and changed little.</p>
@@ -548,6 +695,222 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
       rows.forEach(function (r) { r.hidden = !(f === 'all' || r.getAttribute('data-layer') === f); });
     });
   });
+})();
+(function () {
+  var wrap = document.getElementById('plant-wrap');
+  var dataEl = document.getElementById('plant-data');
+  if (!wrap || !dataEl) return;
+  var D = JSON.parse(dataEl.textContent);
+  var svg = wrap.querySelector('svg.plant-svg');
+  var NS = 'http://www.w3.org/2000/svg';
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var SPEED = 380; // px per second a packet travels along a pipe
+  var units = {};
+  Array.prototype.forEach.call(svg.querySelectorAll('.unit'), function (u) { units[u.getAttribute('data-id')] = u; });
+  var pipes = Array.prototype.slice.call(svg.querySelectorAll('.pipe'));
+  var fsteps = Array.prototype.slice.call(svg.querySelectorAll('.fstep'));
+  var packets = svg.querySelector('.packets');
+  var flowButtons = Array.prototype.slice.call(wrap.querySelectorAll('.plant-bar button[data-flow]'));
+  var stepBox = wrap.querySelector('[data-plant="step"]');
+  var unitBox = wrap.querySelector('[data-plant="unit"]');
+  var playBtn = wrap.querySelector('[data-plant="play"]');
+  var ticker = wrap.querySelector('[data-plant="ticker"]');
+  var cur = -1, step = -1, playing = false, visible = false, ops = false, selected = null;
+  var raf = null, timer = null, tickTimer = null, replayAt = 0;
+
+  function name(id) { return D.units[id] ? D.units[id].name : id; }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function stop() { if (raf) cancelAnimationFrame(raf); raf = null; clearTimeout(timer); timer = null; while (packets.firstChild) packets.removeChild(packets.firstChild); }
+  function flow() { return D.flows[cur]; }
+  function stepPath(i) { return svg.querySelector('.fstep[data-flow="' + flow().id + '"][data-i="' + i + '"]'); }
+
+  function paintFlow() {
+    var f = flow();
+    flowButtons.forEach(function (b) {
+      var on = !!f && b.getAttribute('data-flow') === f.id;
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (on) b.parentNode.scrollLeft = Math.max(0, b.offsetLeft - b.parentNode.offsetLeft - 48);
+    });
+    fsteps.forEach(function (p) { p.classList.toggle('on', !!f && p.getAttribute('data-flow') === f.id); p.classList.remove('now'); });
+    var inflow = {};
+    if (f) f.steps.forEach(function (s) { inflow[s.from] = inflow[s.to] = true; });
+    Object.keys(units).forEach(function (id) {
+      units[id].classList.remove('active');
+      units[id].classList.toggle('inflow', !!inflow[id]);
+      if (!selected) units[id].classList.toggle('dim', !!f && !inflow[id]);
+    });
+  }
+  function describe() {
+    var f = flow();
+    stepBox.textContent = '';
+    stepBox.appendChild(el('h4', null, 'Flow'));
+    if (!f) { stepBox.appendChild(el('div', 'big', 'Pick a flow')); return; }
+    stepBox.appendChild(el('div', 'big', f.name));
+    if (step < 0) { stepBox.appendChild(el('div', 'muted', f.steps.length + ' steps')); return; }
+    var s = f.steps[step];
+    stepBox.appendChild(el('div', 'muted', 'Step ' + (step + 1) + ' of ' + f.steps.length));
+    var line = el('div'); line.appendChild(el('b', null, name(s.from))); line.appendChild(document.createTextNode(' → ')); line.appendChild(el('b', null, name(s.to)));
+    stepBox.appendChild(line);
+    stepBox.appendChild(el('div', null, s.what));
+  }
+  function showStep(i, animate) {
+    var f = flow();
+    step = i;
+    fsteps.forEach(function (p) { p.classList.remove('now'); });
+    Object.keys(units).forEach(function (id) { units[id].classList.remove('active'); });
+    describe();
+    if (i < 0 || i >= f.steps.length) return;
+    var s = f.steps[i], path = stepPath(i);
+    if (units[s.from]) units[s.from].classList.add('active');
+    if (units[s.to]) units[s.to].classList.add('active');
+    if (path) path.classList.add('now');
+    if (!animate) return;
+    if (reduce || !path) { timer = setTimeout(advance, 1800); return; }
+    var len = path.getTotalLength(), dur = Math.max(500, 1000 * len / SPEED), t0 = null;
+    var glow = document.createElementNS(NS, 'circle'), core = document.createElementNS(NS, 'circle');
+    glow.setAttribute('r', '9'); glow.setAttribute('class', 'packet-glow'); core.setAttribute('r', '4.5'); core.setAttribute('class', 'packet-core');
+    packets.appendChild(glow); packets.appendChild(core);
+    function frame(ts) {
+      if (t0 === null) t0 = ts;
+      var k = Math.min(1, (ts - t0) / dur), pt = path.getPointAtLength(k * len);
+      glow.setAttribute('cx', pt.x); glow.setAttribute('cy', pt.y); core.setAttribute('cx', pt.x); core.setAttribute('cy', pt.y);
+      if (k < 1) { raf = requestAnimationFrame(frame); return; }
+      raf = null; packets.removeChild(glow); packets.removeChild(core);
+      timer = setTimeout(advance, 250);
+    }
+    raf = requestAnimationFrame(frame);
+  }
+  function advance() {
+    if (!playing || !visible) return;
+    var f = flow();
+    if (step + 1 < f.steps.length) { showStep(step + 1, true); return; }
+    timer = setTimeout(function () { if (ops) setFlow(cur + 1, true); else { showStep(-1); advance(); } }, 1800);
+  }
+  function setPlaying(on) {
+    playing = on;
+    playBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    playBtn.textContent = on ? 'Pause' : 'Play';
+    stepBox.setAttribute('aria-live', on ? 'off' : 'polite');
+    stop();
+    if (on && visible) { if (step + 1 >= flow().steps.length) showStep(-1); advance(); }
+  }
+  function setFlow(i, play) {
+    stop();
+    cur = (i + D.flows.length) % D.flows.length;
+    step = -1;
+    paintFlow();
+    describe();
+    setPlaying(play);
+  }
+
+  function select(id) {
+    selected = id === selected ? null : id;
+    Object.keys(units).forEach(function (u) {
+      units[u].classList.toggle('sel', u === selected);
+      units[u].classList.remove('dim');
+    });
+    var near = {};
+    pipes.forEach(function (p) {
+      var a = p.getAttribute('data-from'), b = p.getAttribute('data-to');
+      var out = selected && a === selected, inn = selected && b === selected;
+      p.classList.toggle('lit', !!(out || inn));
+      p.classList.toggle('in', !!inn && !out);
+      if (out) near[b] = true;
+      if (inn) near[a] = true;
+    });
+    if (selected) Object.keys(units).forEach(function (u) { if (u !== selected && !near[u]) units[u].classList.add('dim'); });
+    else paintFlow();
+    unitBox.textContent = '';
+    unitBox.appendChild(el('h4', null, 'Unit'));
+    if (!selected) { unitBox.appendChild(el('div', 'muted', 'Select a unit to see its connections.')); return; }
+    var u = D.units[selected];
+    unitBox.appendChild(el('div', 'big', u.name));
+    unitBox.appendChild(el('div', 'muted', u.group + ' · lives in ' + u.homes.join(', ')));
+    unitBox.appendChild(el('div', null, u.role));
+    unitBox.appendChild(el('div', 'muted', u.lines.toLocaleString() + ' lines · ' + u.commits + ' commits (' + u.recent + ' in the fortnight, ' + u.fixes + ' fixes) · ' + u.routes + ' routes' + (u.cli.length ? ' · vak ' + u.cli.join(', ') : '')));
+    [['Uses', u.out], ['Used by', u.in]].forEach(function (pair) {
+      unitBox.appendChild(el('h4', null, pair[0] + ' (' + pair[1].length + ')'));
+      var ul = el('ul');
+      pair[1].forEach(function (r) { ul.appendChild(el('li', null, name(r[0]) + ' — ' + r[2] + (r[1] === 'http' ? ' route calls' : ' references'))); });
+      if (!pair[1].length) ul.appendChild(el('li', 'muted', 'none measured'));
+      unitBox.appendChild(ul);
+    });
+  }
+
+  function tick() {
+    if (!ops || !D.replay.length) return;
+    var c = D.replay[replayAt % D.replay.length];
+    replayAt++;
+    c.subsystems.forEach(function (id) {
+      var u = units[id];
+      if (!u) return;
+      u.classList.remove('blip'); void u.getBBox(); u.classList.add('blip');
+      setTimeout(function () { u.classList.remove('blip'); }, 1600);
+    });
+    var li = el('li');
+    li.appendChild(el('code', null, c.hash + ' ' + c.date));
+    li.appendChild(el('div', null, c.subject));
+    li.appendChild(el('div', 'muted', c.subsystems.map(name).join(' · ') || 'no subsystem'));
+    ticker.insertBefore(li, ticker.firstChild);
+    while (ticker.children.length > 30) ticker.removeChild(ticker.lastChild);
+    tickTimer = setTimeout(tick, reduce ? 4000 : 2600);
+  }
+  function enterOps() {
+    ops = true;
+    wrap.classList.add('ops');
+    var k = D.kpi;
+    var vals = { subsystems: k.subsystems, connections: k.connections, flows: k.flows, routes: k.routes, checks: k.checks_ok + '/' + k.checks, open: k.open, recent: k.recent, asof: k.version + ' · ' + k.until };
+    Object.keys(vals).forEach(function (key) { var b = wrap.querySelector('[data-kpi="' + key + '"]'); if (b) b.textContent = vals[key]; });
+    if (wrap.requestFullscreen) { wrap.requestFullscreen().catch(function () {}); }
+    visible = true;
+    if (cur < 0) setFlow(0, true); else setPlaying(true);
+    clearTimeout(tickTimer); tick();
+  }
+  function exitOps() {
+    if (!ops) return;
+    ops = false;
+    wrap.classList.remove('ops');
+    clearTimeout(tickTimer);
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {});
+    setPlaying(false);
+  }
+
+  flowButtons.forEach(function (b, i) { b.addEventListener('click', function () { setFlow(i, !reduce); }); });
+  playBtn.addEventListener('click', function () { if (cur < 0) setFlow(0, true); else setPlaying(!playing); });
+  wrap.querySelector('[data-plant="next"]').addEventListener('click', function () { if (cur < 0) setFlow(0, false); setPlaying(false); showStep(Math.min(step + 1, flow().steps.length - 1), false); });
+  wrap.querySelector('[data-plant="prev"]').addEventListener('click', function () { if (cur < 0) setFlow(0, false); setPlaying(false); showStep(Math.max(step - 1, 0), false); });
+  var allBtn = wrap.querySelector('[data-plant="all"]');
+  allBtn.addEventListener('click', function () { var on = !wrap.classList.contains('show-all'); wrap.classList.toggle('show-all', on); allBtn.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+  wrap.querySelector('[data-plant="ops"]').addEventListener('click', enterOps);
+  wrap.querySelector('[data-plant="exit"]').addEventListener('click', exitOps);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { if (ops) exitOps(); else if (selected) select(selected); }
+  });
+  document.addEventListener('fullscreenchange', function () { if (!document.fullscreenElement && ops) exitOps(); });
+  Object.keys(units).forEach(function (id) {
+    units[id].addEventListener('click', function (e) { e.stopPropagation(); select(id); });
+    units[id].addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(id); } });
+  });
+  svg.addEventListener('click', function () { if (selected) select(selected); });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-goto-flow]'), function (b) {
+    b.addEventListener('click', function () {
+      var i = D.flows.map(function (f) { return f.id; }).indexOf(b.getAttribute('data-goto-flow'));
+      location.hash = '#plant';
+      setFlow(i, !reduce);
+    });
+  });
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        var was = visible;
+        visible = e.isIntersecting || ops;
+        if (visible && !was && playing) { stop(); advance(); }
+        if (!visible) stop();
+      });
+    }).observe(svg);
+  } else { visible = true; }
+  document.addEventListener('visibilitychange', function () { if (document.hidden) stop(); else if (playing && visible) advance(); });
+  setFlow(0, false);
 })();
 </script>
 </body>

@@ -14,7 +14,7 @@ applies in full; this file adds what is specific here.
 | [measures.json](measures.json) | The slow measures (complexity, advisories), cached by `run.py deep` | generated |
 | [content.toml](content.toml) | The hand-written judgement: the summary, the findings, what to keep, the target shape | by hand |
 | [methods/](methods/) | How to work here, one method per file, with name and description front matter | by hand |
-| `harness/` | The code: `run.py` (the entry point), `measure.py`, `subsystems.py`, `evidence.py`, `record.py`, `model.py`, `render.py`, `template.html` | by hand |
+| `harness/` | The code: `run.py` (the entry point), `measure.py`, `subsystems.py`, `connections.py`, `evidence.py`, `record.py`, `model.py`, `render.py`, `plant.py`, `template.html` | by hand |
 
 Never edit a generated file. Change its source and run the harness.
 
@@ -47,6 +47,10 @@ last release tag; run `deep` before a release.
 | Open work, decisions, specs, unreleased changes, recent commits | `record.py`, reading `docs/plans/open-items.md`, `docs/decisions.md`, every design doc's `Status:` line, `CHANGELOG.md` and git |
 | Each crate's layer and role | `CRATES` in `measure.py` |
 | The subsystems: what each is for, its modules, routes, `vak` subcommands and design docs | `SUBSYSTEMS` and `GROUPS` in `harness/subsystems.py` |
+| Each subsystem's commits, fixes and recent work | `subsystems.history`, from git, by the subsystem map |
+| The connections between subsystems | `connections.py`, from the code |
+| The flows | `FLOWS` in `harness/subsystems.py`, by hand, each step checked against a measured connection |
+| The plant diagram and the operations screen | `plant.py` draws them from the model; only the areas' arrangement (`ROWS`) is by hand |
 | The summary, findings, what to keep, the target shape | `content.toml` |
 | The process topology, the turn sequence and the data tree | drawn by hand in `harness/template.html` |
 
@@ -87,6 +91,10 @@ the same change that caused it:
 | `route … has no subsystem` | A new route: add its prefix to the subsystem that serves it. |
 | `vak … has no subsystem` | A new subcommand: add it to the subsystem's verbs. |
 | `subsystem …: pattern, route prefix, vak or doc … matches nothing` | Something a subsystem names was renamed or removed: fix the entry. |
+| `flow …: a → b (…) rides no measured connection` | The code no longer connects those subsystems the way the flow says: retrace the flow in the code and fix its steps. |
+| `flow …: unknown subsystem …` | A subsystem a flow names was renamed or removed. |
+| `plant: group … is in no row` | A new group: place it in `plant.ROWS`. |
+| `measure connections: … source is missing` | Run `cargo fetch`; until then method calls draw no connection. |
 | `crate … is gone` | Remove it from `CRATES` and any content that names it. |
 | `evidence …`, `measure …`, `list …` | A check no longer produces that value. Fix the check or the placeholder. |
 | `complexity of … (run deep)` | Run `run.py deep`, or the function was renamed. |
@@ -106,6 +114,21 @@ longer literal prefix), so a feature claims its files out of a crate
 another subsystem holds. Anything left out, claimed twice or naming
 nothing is a `needs review` line, so a new part of the system cannot go
 unmapped.
+
+## Connections, flows and the plant diagram
+
+`connections.py` measures which subsystems use which: a module naming
+another (a Rust path or item, a method defined once in the workspace and
+by no locked dependency, called from a crate that depends on it; a
+TypeScript import), or a client naming a route. A name it cannot resolve
+draws nothing rather than a guess. The flows in `subsystems.py` say how
+work moves, step by step, and each step must ride a measured connection.
+The Plant tab draws all of it: units in plant areas, pipes, and a packet
+that travels each flow; select a unit for what it uses and what uses it.
+The operations screen shows the same diagram full screen with the
+headline figures, cycles the flows, and replays the last fortnight's
+commits onto the units they touched. It reads only the model, so it is as
+current as the last build.
 
 ## Findings
 
@@ -131,7 +154,7 @@ did) may be quoted as written.
 
 | Placeholder | Value |
 |---|---|
-| `{{m:key}}`, `{{k:key}}` | a measure (`version`, `revision`, `routes`, `subsystems`, `card_tools`, `cc_median`, …); `k` abbreviates thousands |
+| `{{m:key}}`, `{{k:key}}` | a measure (`version`, `revision`, `routes`, `subsystems`, `connections`, `flows`, `card_tools`, `cc_median`, …); `k` abbreviates thousands |
 | `{{e:key}}` | an evidence value (`hot.median`, `tool.wrappers`, …) |
 | `{{list:key}}` | an evidence list, as Markdown items (`wrappers`) |
 | `{{fn:name}}`, `{{file:path}}` | a function's or file's length in lines |
@@ -155,6 +178,8 @@ did) may be quoted as written.
   --offline`.
 - Recent activity is the fortnight before the last measured commit, never
   the wall clock.
-- The harness writes only the generated files here and a cache of
-  per-commit file lists in the git directory. It reads no data home. Only
+- The harness writes only the generated files here and, in the git
+  directory, caches of per-commit file lists and of the `fn` names the
+  locked dependencies define (keyed by `Cargo.lock`), read from the cargo
+  registry. It reads no data home. Only
   `deep` reaches the network.

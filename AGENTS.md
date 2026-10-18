@@ -132,7 +132,10 @@ measures the code and its history, reads the record where it is written
 findings that cost something today. It maps the system twice: crates on
 layers, and subsystems (what each part is for, across crates), where every
 source file, script, package, route and `vak` subcommand belongs to exactly
-one subsystem (`blueprint/harness/subsystems.py`). Its rules are
+one subsystem (`blueprint/harness/subsystems.py`). Its Plant tab draws the
+subsystems, the connections measured between them and the flows through
+them as an animated plant diagram, with a full-screen operations view. Its
+rules are
 [blueprint/AGENTS.md](blueprint/AGENTS.md) and its methods are in
 `blueprint/methods/`: reviewing the architecture with evidence
 (`architecture-review.md`), keeping the record true (`record-drift.md`),

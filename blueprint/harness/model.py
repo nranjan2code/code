@@ -17,6 +17,7 @@ import tomllib
 import evidence
 import measure as ms
 import record
+import connections
 import subsystems as subs
 
 ACTIVITY_DAYS = 14  # the "what's happening" window, before the last measured commit
@@ -143,9 +144,27 @@ def build(deep=False):
         spec_counts[s["status"]] = spec_counts.get(s["status"], 0) + 1
     act = record.activity(ms, m["last_date"], ACTIVITY_DAYS)
 
-    subsystem_list, coverage, sub_review = subs.build(ms, {c["name"]: c["layer"] for c in crates})
+    subsystem_list, coverage, sub_review, unit_owner, route_owner = subs.build(ms, {c["name"]: c["layer"] for c in crates})
     misses.extend(sub_review)
+    edges, edge_review = connections.measure(ms, unit_owner, route_owner, {c["name"]: c["deps"] for c in crates})
+    misses.extend(edge_review)
+    misses.extend(subs.check_flows(edges))
+    sub_history, sub_since, sub_recent = subs.history(ms, m["last_date"], ACTIVITY_DAYS)
+    for x in subsystem_list:
+        h = sub_history.get(x["id"], {"commits": 0, "fixes": 0, "recent": 0})
+        x.update(h)
+        x["fix_density"] = round(1000 * h["fixes"] / x["lines"], 1) if x["lines"] else None
+        x["out"] = [e for e in edges if e["from"] == x["id"]]
+        x["in"] = [e for e in edges if e["to"] == x["id"]]
+    flows = [{"id": fid, "name": name, "steps": [{"from": a, "to": b, "what": w} for a, b, w in steps]}
+             for fid, name, steps in subs.FLOWS]
     m["subsystems"] = len(subsystem_list)
+    m["connections"] = len(edges)
+    m["flows"] = len(flows)
+    hosted = {}
+    for x in subsystem_list:
+        for h in x["homes"]:
+            hosted.setdefault(h, []).append(x["id"])
     unassigned = [c["name"] for c in crates if c["layer"] == "L?"]
     stale = [n for n in ms.CRATES if n not in by]
     misses.extend([f"crate {n} has no layer" for n in unassigned] + [f"crate {n} is gone" for n in stale])
@@ -155,7 +174,8 @@ def build(deep=False):
             "text": resolve(content.get("summary", "")),
             "stats": {k: m[k] for k in ("rust_crates", "ts_crates", "rust_src", "rust_tests", "ts_src", "routes",
                                         "forms", "worker_tasks", "state_paths", "lock_crates", "total_commits",
-                                        "days", "peak_day", "design_docs", "agents_words", "subsystems") if k in m},
+                                        "days", "peak_day", "design_docs", "agents_words", "subsystems",
+                                        "connections", "flows") if k in m},
             "tools": m["tools"],
             "card_tools": m["card_tools"],
         },
@@ -169,7 +189,9 @@ def build(deep=False):
             "measures_revision": m.get("cc_revision"),
         },
         "activity": {"since": act["since"], "until": act["until"], "commits": len(act["commits"]),
-                     "areas": act["areas"][:12], "recent": act["commits"][:15],
+                     "areas": act["areas"][:12],
+                     "by_subsystem": sorted(((x["id"], x["name"], x["recent"]) for x in subsystem_list if x["recent"]),
+                                            key=lambda r: -r[2]), "recent": act["commits"][:15],
                      "unreleased": record.unreleased(ms.ROOT),
                      "in_progress": [s for s in specs if s["status"] == "in progress"]},
         "decisions": {"recent": recent, "total": decisions_total},
@@ -179,8 +201,13 @@ def build(deep=False):
                    for lid, name in ms.LAYERS + ([("L?", "Unassigned")] if unassigned else [])],
         "subsystems": subsystem_list,
         "coverage": coverage,
-        "crates": [{k: c[k] for k in ("name", "layer", "kind", "role", "src", "tests", "files", "commits",
-                                      "deps", "used_by", "upward", "ext", "largest")} for c in crates],
+        "connections": edges,
+        "flows": flows,
+        "replay": sub_recent,
+        "groups": [g for g, _ in subs.GROUPS],
+        "crates": [{**{k: c[k] for k in ("name", "layer", "kind", "role", "src", "tests", "files", "commits",
+                                         "deps", "used_by", "upward", "ext", "largest")},
+                    "subsystems": hosted.get(c["name"], [])} for c in crates],
         "size": {"files": [{"file": p, "lines": n} for n, p in file_sizes[:12]],
                  "functions": [{"name": name, "file": p, "line": s, "lines": n} for n, name, p, s in fns[:12]],
                  "complexity": (cc or {}).get("complexity", [])[:12]},

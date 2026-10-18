@@ -9,7 +9,7 @@ checks it (blueprint/AGENTS.md, "Needs review"):
 - a module: every source file under `crates/*/src` (Rust and TypeScript,
   tests left out);
 - a part outside the crates: the public site, each plugin package, each
-  entry of `scripts/`, and `docker/`;
+  entry of `scripts/`, `docker/` and `blueprint/`;
 - every HTTP route the server registers, by the longest prefix that claims it;
 - every `vak` subcommand.
 
@@ -387,13 +387,13 @@ SUBSYSTEMS = [
       "scripts/test_harness_500.py", "scripts/harness_selftest.py", "scripts/compound_regression.py"],
      ["/eval"], ["eval"], ["12-evals.md", "40-harness-engineering.md"]),
     ("engineering", "Build, gate and release",
-     "Builds, the gate, version and record checks, the release, platform and smoke checks",
+     "Builds, the gate, version and record checks, the release, platform and smoke checks, this blueprint",
      ["scripts/build.sh", "scripts/build-amazonlinux-arm64.sh", "scripts/bump-version.sh", "scripts/gate.sh",
       "scripts/release.sh", "scripts/version.sh", "scripts/.version-reset", "scripts/verify-macos-release.sh",
       "scripts/check-*.sh", "scripts/check_*.py", "scripts/vak.sh", "scripts/brand",
       "scripts/*-check.sh", "scripts/linux-stack.sh", "scripts/landlock_smoke.sh", "scripts/ui_bundle_check.rs",
       "scripts/ui-acceptance-check.sh", "scripts/server_smoke.py", "scripts/telegram_smoke.sh",
-      "scripts/mock_*.py", "scripts/fake_mcp_server.py", "scripts/fault_proxy.py", "scripts/chaos_driver.py",
+      "blueprint", "scripts/mock_*.py", "scripts/fake_mcp_server.py", "scripts/fault_proxy.py", "scripts/chaos_driver.py",
       "scripts/resource_watch.py", "scripts/mail-soak", "scripts/sync-lab", "scripts/test-mail-calendar-mock-pack.sh"],
      [], [], ["32-release-engineering.md"]),
 ]
@@ -413,7 +413,7 @@ GROUPS = [
 ]
 
 # What counts as a unit outside the crates' sources: each is claimed whole.
-OUTSIDE = ["crates/vak-server/site", "packages/*", "scripts/*", "docker", "video"]
+OUTSIDE = ["crates/vak-server/site", "packages/*", "scripts/*", "docker", "video", "blueprint"]
 SOURCE_EXT = (".rs", ".ts", ".tsx", ".mts", ".mjs")
 
 
@@ -562,4 +562,175 @@ def build(ms, crate_layer):
                 "routes_claimed": len(route_owner), "verbs": len(verbs),
                 "verbs_claimed": len([v for v in verbs if any(c == v for c, _ in claimed)]),
                 "docs_uncited": uncited}
-    return out, coverage, review
+    return out, coverage, review, owner, route_owner
+
+# How work moves through the system: each flow is a sequence of steps
+# (from, to, what moves). Every step must ride a measured connection
+# (connections.py), in either direction, or the harness reports it, so a
+# drawn flow cannot outlive the code it describes.
+FLOWS = [
+    ("message", "A message becomes an answer", [
+        ("client", "server", "POST the message"),
+        ("server", "turn", "run the turn"),
+        ("turn", "intent", "read the request"),
+        ("turn", "capabilities", "bind the tool surface"),
+        ("turn", "runs", "open the run"),
+        ("turn", "loop", "start the loop"),
+        ("loop", "context", "plan the working set"),
+        ("loop", "llm", "stream the model"),
+        ("loop", "permission", "authorize each call"),
+        ("loop", "tools", "run the calls"),
+        ("tools", "sandbox", "in a sandboxed worker"),
+        ("loop", "ledger", "record results"),
+        ("loop", "control", "check the plan"),
+        ("loop", "cards", "record cards"),
+        ("cards", "server", "project what a person sees"),
+        ("server", "client", "stream events"),
+    ]),
+    ("channel", "A chat message from a phone", [
+        ("gateway", "permission", "check the allowlist"),
+        ("gateway", "turn", "admit as the bound Agent"),
+        ("turn", "loop", "run the loop"),
+        ("loop", "cards", "record cards"),
+        ("cards", "delivery", "render for the channel"),
+        ("delivery", "gateway", "channel markup"),
+        ("gateway", "runs", "send once as an effect"),
+    ]),
+    ("automation", "A scheduled automation runs", [
+        ("automations", "runs", "claim the slot"),
+        ("automations", "turn", "run the turn"),
+        ("turn", "loop", "run the loop"),
+        ("loop", "ledger", "record the work"),
+        ("automations", "inbox", "report how it ended"),
+    ]),
+    ("office", "An Office edit goes through Review", [
+        ("loop", "tools", "call office_apply"),
+        ("tools", "office", "edit in the worker"),
+        ("office", "sandbox", "write a draft"),
+        ("office", "library", "record a version"),
+        ("client", "library", "the owner reviews"),
+        ("library", "sandbox", "promote, with undo"),
+    ]),
+    ("mail", "Mail is sent after review", [
+        ("client", "mail", "approve the candidate"),
+        ("mail", "runs", "send once as an effect"),
+    ]),
+    ("delegate", "A worker is delegated", [
+        ("loop", "workers", "call task"),
+        ("workers", "turn", "run a child turn"),
+        ("workers", "ledger", "keep the child's ledger"),
+    ]),
+    ("recall", "An older turn is recalled", [
+        ("loop", "recall", "call recall"),
+        ("recall", "catalog", "search the catalog"),
+        ("catalog", "ledger", "open the turn"),
+    ]),
+    ("intake", "A source is read", [
+        ("automations", "intake", "poll a source"),
+        ("intake", "tools", "fetch and parse in the worker"),
+        ("intake", "catalog", "index what was accepted"),
+        ("intake", "inbox", "alert the owner"),
+    ]),
+    ("erasure", "Data leaves by rule", [
+        ("lifecycle", "ledger", "find what is due"),
+        ("lifecycle", "grants", "end its shares"),
+        ("lifecycle", "catalog", "remove what was derived"),
+        ("lifecycle", "storage", "shred the scope key"),
+    ]),
+    ("sync", "Two machines take turns", [
+        ("sync", "ledger", "push and pull records"),
+        ("sync", "storage", "blobs and the writer epoch"),
+    ]),
+    ("doctor", "The doctor checks the install", [
+        ("cli", "doctor", "vak doctor"),
+        ("admin", "doctor", "the Diagnostics screen"),
+        ("doctor", "config", "read the configuration"),
+        ("doctor", "llm", "reach the providers"),
+        ("doctor", "state", "check the data"),
+    ]),
+]
+
+
+_COMPILED = []
+
+
+def owner_of_path(path):
+    """The subsystem a path belongs to by the module patterns, existing or not."""
+    if not _COMPILED:
+        _COMPILED.extend((p.split("*")[0], _regex(p), _specificity(p), s[0]) for s in SUBSYSTEMS for p in s[3])
+    parts = path.split("/")
+    heads = [path] + ["/".join(parts[:n]) for n in range(1, len(parts))]
+    best = None
+    for prefix, rx, spec, sid in _COMPILED:
+        if path.startswith(prefix) and (best is None or spec > best[0]) and any(rx.match(h) for h in heads):
+            best = (spec, sid)
+    return best[1] if best else None
+
+
+def _commits(ms):
+    """(hash, date, subject, files) for every measured commit, newest first. Commits never change,
+    so they are cached in the git dir (local, never committed) and only new
+    ones are read."""
+    import json
+    import os
+    git_dir = ms.run("git", "rev-parse", "--absolute-git-dir").strip()
+    path = os.path.join(git_dir, "vak-blueprint-history.json")
+    try:
+        cache = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    wanted = ms.run("git", "rev-list", "HEAD", "--", ".", *ms.SELF).split()
+    missing = [h for h in wanted if h not in cache]
+    if missing:
+        log = ms.run("git", "log", "--no-walk=unsorted", "--format=@@%H%x1f%ad%x1f%s", "--date=short", "--name-only", *missing)
+        for chunk in log.split("@@")[1:]:
+            head, _, body = chunk.partition("\n")
+            h, day, subject = head.split("\x1f", 2)
+            cache[h] = [day, subject, [f for f in body.split("\n") if f.strip()]]
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(cache, fh)
+        except OSError:
+            pass
+    return [(h[:9], *cache[h]) for h in wanted if h in cache]
+
+
+def history(ms, last_date, days):
+    """Per subsystem: commits, commits whose message names a fix, and commits
+    in the `days` before the last measured commit; and those recent commits
+    with the subsystems each touched, newest first."""
+    from datetime import date, timedelta
+    from evidence import FIX_WORDS as fix
+    since = (date.fromisoformat(last_date) - timedelta(days=days)).isoformat() if last_date else ""
+    cache, out, recent = {}, {}, []
+    for h, day, subject, files in _commits(ms):
+        touched = set()
+        for f in files:
+            if f not in cache:
+                cache[f] = owner_of_path(f)
+            if cache[f]:
+                touched.add(cache[f])
+        for sid in touched:
+            row = out.setdefault(sid, {"commits": 0, "fixes": 0, "recent": 0})
+            row["commits"] += 1
+            row["fixes"] += bool(fix.search(subject))
+            row["recent"] += day >= since
+        if day >= since:
+            recent.append({"hash": h, "date": day, "subject": subject, "subsystems": sorted(touched)})
+    return out, since, recent
+
+
+def check_flows(edges):
+    """Review lines for flows that name an unknown subsystem or ride no
+    measured connection."""
+    ids = {s[0] for s in SUBSYSTEMS}
+    linked = {frozenset((e["from"], e["to"])) for e in edges}
+    review = []
+    for fid, _, steps in FLOWS:
+        for a, b, what in steps:
+            for x in (a, b):
+                if x not in ids:
+                    review.append(f"flow {fid}: unknown subsystem {x}")
+            if a in ids and b in ids and frozenset((a, b)) not in linked:
+                review.append(f"flow {fid}: {a} → {b} ({what}) rides no measured connection")
+    return review

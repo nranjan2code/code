@@ -312,6 +312,12 @@ unless it says so.
   and card tools missed). Done 2026-10-18: `blueprint/harness/subsystems.py`
   maps every module, route and subcommand to one of 64 subsystems, and the
   harness reports anything unmapped.
+- [x] The blueprint showed no connections between subsystems and no flows.
+  Done 2026-10-18: `blueprint/harness/connections.py` measures them from
+  the code, eleven flows are written in `subsystems.py` with every step
+  checked against a measured connection, and the Plant tab draws them as an
+  animated plant diagram with an operations screen. The other sheets show
+  commits, recent work and connections by subsystem.
 - [ ] Blueprint F2: a test that fails when a wrapping `Tool` leaves a
   defaulted method unforwarded (or a delegation macro).
 - [ ] Blueprint F1: the turn's state as one type, each decision a pure
