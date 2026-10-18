@@ -918,21 +918,28 @@ fn observed(
     artifacts: &vak_core::artifacts::Artifacts,
     cwd: &std::path::Path,
     artifact: &vak_core::artifacts::Artifact,
-) -> Option<Observed> {
+) -> Result<Option<Observed>, ()> {
     let space = vak_session::trace::local::space(cwd).to_string();
     if artifact.space != space {
-        return None;
+        return Ok(None);
     }
-    let now = vak_core::file_state::observe(artifacts, &space, cwd, &artifact.path)?;
+    let Some(now) = vak_core::file_state::try_observe(artifacts, &space, cwd, &artifact.path)
+        .map_err(|_| ())?
+    else {
+        return Err(());
+    };
     // Observing records an edit made outside Vak as a version: read the
     // artifact again so its history holds it.
-    let fresh = artifacts.get(&artifact.id.to_string())?;
+    let fresh = artifacts
+        .try_get(&artifact.id.to_string())
+        .map_err(|_| ())?
+        .ok_or(())?;
     let states = vak_core::file_state::version_states(&fresh, &now);
-    Some(Observed {
+    Ok(Some(Observed {
         now,
         states,
         artifact: fresh,
-    })
+    }))
 }
 
 /// `GET /library/made/{session}/{call}`: the version a tool call made, with
@@ -950,16 +957,17 @@ async fn made_by_call(
                 VersionSource::Call { session: from, call: by, .. } if *from == session && *by == call)
         };
         let artifact = artifacts
-            .list()
+            .try_list().map_err(|_| ())?
             .into_iter()
-            .find(|artifact| artifact.versions.iter().any(made_by))?;
-        let (now, states, artifact) = match observed(&artifacts, &cwd, &artifact) {
+            .find(|artifact| artifact.versions.iter().any(made_by));
+        let Some(artifact) = artifact else { return Ok(None); };
+        let (now, states, artifact) = match observed(&artifacts, &cwd, &artifact)? {
             Some(seen) => (Some(seen.now), seen.states, seen.artifact),
             None => (None, Vec::new(), artifact),
         };
-        let index = artifact.versions.iter().position(made_by)?;
+        let index = artifact.versions.iter().position(made_by).ok_or(())?;
         let version = &artifact.versions[index];
-        Some(serde_json::json!({
+        Ok::<_, ()>(Some(serde_json::json!({
             "artifact": artifact.id,
             "name": artifact.name(),
             "version": version.id,
@@ -967,13 +975,13 @@ async fn made_by_call(
             "now": states.iter().find(|(id, _)| *id == version.id).map(|(_, is)| is),
             "newer": artifact.versions.iter().filter(|later| later.at > version.at && later.is_present()).count(),
             "needs": now.as_ref().map(|now| vak_core::file_state::needs(now, &states)),
-        }))
+        })))
     })
     .await;
     match found {
-        Ok(Some(value)) => Json(value).into_response(),
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(Ok(Some(value))) => Json(value).into_response(),
+        Ok(Ok(None)) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Err(())) | Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -981,8 +989,8 @@ async fn made_by_call(
 /// soonest first, with the day it is erased.
 async fn trashed(State(state): State<AppState>) -> Response {
     let artifacts = state.core.artifacts();
-    let listed = tokio::task::spawn_blocking(move || artifacts.list()).await;
-    let Ok(all) = listed else {
+    let listed = tokio::task::spawn_blocking(move || artifacts.try_list()).await;
+    let Ok(Ok(all)) = listed else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     let window = vak_core::lifecycle::trash_window();
@@ -1022,24 +1030,25 @@ async fn list(State(state): State<AppState>) -> Response {
     let cwd = state.core.cwd().to_path_buf();
     let listed = tokio::task::spawn_blocking(move || {
         artifacts
-            .list()
+            .try_list()
+            .map_err(|_| ())?
             .iter()
             .filter(|artifact| !artifact.in_trash())
-            .map(|artifact| match observed(&artifacts, &cwd, artifact) {
+            .map(|artifact| match observed(&artifacts, &cwd, artifact)? {
                 Some(seen) => {
                     let mut row = summary(&seen.artifact);
                     row["needs"] =
                         serde_json::json!(vak_core::file_state::needs(&seen.now, &seen.states));
-                    row
+                    Ok(row)
                 }
-                None => summary(artifact),
+                None => Ok(summary(artifact)),
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, ()>>()
     })
     .await;
     match listed {
-        Ok(all) => Json(serde_json::json!({ "artifacts": all })).into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(Ok(all)) => Json(serde_json::json!({ "artifacts": all })).into_response(),
+        Ok(Err(())) | Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -1110,6 +1119,15 @@ async fn version_origin(
     .into_response()
 }
 
+/// Only a missing file is absence; an unreadable folder copy is unknown.
+fn read_folder_bytes(path: &std::path::Path) -> Result<Option<Vec<u8>>, ()> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(()),
+    }
+}
+
 /// `GET /library/{id}/versions/{version}/compare`: a version beside what
 /// the folder holds now (docs/design/90-file-state.md §5). The folder is
 /// read first, so an edit made outside Vak is recorded as a version and
@@ -1126,20 +1144,30 @@ async fn version_compare(
     let artifacts = state.core.artifacts();
     let cwd = state.core.cwd().to_path_buf();
     let compared = tokio::task::spawn_blocking(move || {
-        let artifact = artifacts.get(&id)?;
-        let chosen = version_of(&artifact, &version)?.clone();
-        let seen = observed(&artifacts, &cwd, &artifact)?;
+        let Some(artifact) = artifacts.try_get(&id).map_err(|_| ())? else {
+            return Ok(None);
+        };
+        let Some(chosen) = version_of(&artifact, &version).cloned() else {
+            return Ok(None);
+        };
+        let Some(seen) = observed(&artifacts, &cwd, &artifact)? else {
+            return Ok(None);
+        };
         let folder_version = match seen.now.workspace_is {
             vak_core::file_state::WorkspaceIs::Version(id) => Some(id),
             _ => None,
         };
-        let folder_bytes = std::fs::read(cwd.join(&seen.artifact.path)).ok();
+        let folder_bytes = read_folder_bytes(&cwd.join(&seen.artifact.path))?;
         let folder = match (&folder_bytes, folder_version) {
             (None, _) => "absent",
             (Some(_), Some(id)) if id == chosen.id => "same",
             (Some(_), _) => "different",
         };
-        let version_bytes = artifacts.bytes(&seen.artifact, &chosen.id).ok();
+        let version_bytes = Some(
+            artifacts
+                .bytes(&seen.artifact, &chosen.id)
+                .map_err(|_| ())?,
+        );
         let document = (folder == "different" && crate::is_document_path(&seen.artifact.path))
             .then(|| version_bytes.clone())
             .flatten()
@@ -1151,7 +1179,7 @@ async fn version_compare(
         } else {
             "binary"
         };
-        Some((
+        Ok::<_, ()>(Some((
             serde_json::json!({
                 "path": seen.artifact.path,
                 "folder": folder,
@@ -1161,20 +1189,20 @@ async fn version_compare(
                 "folder_text": if kind == "text" { folder_text } else { None },
             }),
             document,
-        ))
+        )))
     })
     .await;
     match compared {
-        Ok(Some((mut value, Some((folder_path, bytes))))) => {
+        Ok(Ok(Some((mut value, Some((folder_path, bytes)))))) => {
             match document_review(&state, &folder_path, &bytes).await {
                 Ok(review) => value["review"] = review,
                 Err(error) => value["review_error"] = serde_json::Value::String(error),
             }
             Json(value).into_response()
         }
-        Ok(Some((value, None))) => Json(value).into_response(),
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(Ok(Some((value, None)))) => Json(value).into_response(),
+        Ok(Ok(None)) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Err(())) | Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -1224,22 +1252,21 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
     let cwd = state.core.cwd().to_path_buf();
     let grants = vak_core::grants::Grants::at(&state.core.shared_scope());
     let found = tokio::task::spawn_blocking(move || {
-        let artifact = artifacts.get(&id)?;
+        let Some(artifact) = artifacts.try_get(&id).map_err(|_| ())? else {
+            return Ok(None);
+        };
         let shared = grants
             .on(&vak_core::grants::GrantObject::Artifact(artifact.id))
-            .ok()
-            .is_some_and(|held| {
-                held.iter().any(|held| {
-                    held.status(chrono::Utc::now()) == vak_core::grants::GrantStatus::Active
-                })
-            });
-        let now = observed(&artifacts, &cwd, &artifact);
+            .map_err(|_| ())?
+            .iter()
+            .any(|held| held.status(chrono::Utc::now()) == vak_core::grants::GrantStatus::Active);
+        let now = observed(&artifacts, &cwd, &artifact)?;
         let artifact = now.as_ref().map_or(artifact, |seen| seen.artifact.clone());
-        Some((artifact, shared, now))
+        Ok::<_, ()>(Some((artifact, shared, now)))
     })
     .await;
     match found {
-        Ok(Some((artifact, shared, now))) => {
+        Ok(Ok(Some((artifact, shared, now)))) => {
             let mut value = summary(&artifact);
             value["held"] = serde_json::json!(state.core.artifact_held(&artifact.id.to_string()));
             // A draft nobody keeps says the day it goes to the trash.
@@ -1276,8 +1303,8 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
             value["comments"] = serde_json::json!(artifact.comments);
             Json(value).into_response()
         }
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(Ok(None)) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Err(())) | Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -2672,6 +2699,84 @@ mod tests {
         );
     }
     use vak_core::artifacts::ArtifactKind;
+
+    #[test]
+    fn library_observation_refuses_invalid_history_after_a_cached_read() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::spaces::bind(dir.path()).unwrap();
+        let space = vak_session::trace::local::space(dir.path()).to_string();
+        // Keep deliberate corruption out of the shared test Core home.
+        let data = tempfile::tempdir().unwrap();
+        let shared = vak_config::scope::SharedScope::new(data.path());
+        let artifacts = vak_core::artifacts::Artifacts::at(
+            &shared,
+            vak_config::paths::tenant_home_at(data.path(), vak_config::paths::LOCAL_TENANT),
+        );
+        let id = artifacts
+            .declare(
+                &space,
+                "vak",
+                "file.txt",
+                ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let artifact = artifacts.try_get(&id.to_string()).unwrap().unwrap();
+        // A valid sealed frame with an invalid artifact row invalidates the
+        // warmed projection rather than disappearing from its history.
+        vak_session::chain::RecordChain::at(artifacts.path())
+            .append(&serde_json::json!({"invalid_artifact_row": true}))
+            .unwrap();
+        assert!(observed(&artifacts, dir.path(), &artifact).is_err());
+    }
+
+    #[tokio::test]
+    async fn library_reports_unreadable_workspace_state_instead_of_absence() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::spaces::bind(dir.path()).unwrap();
+        let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+        let state = AppState::new(core.clone());
+        let space = vak_session::trace::local::space(core.cwd()).to_string();
+        let id = core
+            .artifacts()
+            .declare(
+                &space,
+                "vak",
+                "unreadable.txt",
+                ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        std::fs::create_dir(dir.path().join("unreadable.txt")).unwrap();
+        let artifact = core.artifacts().try_get(&id.to_string()).unwrap().unwrap();
+        assert!(observed(&core.artifacts(), core.cwd(), &artifact).is_err());
+        assert_eq!(
+            list(State(state.clone())).await.status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            get_one(State(state), Path(id.to_string())).await.status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert!(read_folder_bytes(&dir.path().join("unreadable.txt")).is_err());
+        assert_eq!(read_folder_bytes(&dir.path().join("absent.txt")), Ok(None));
+        // Another workspace is deliberately not observed by this server.
+        let mut other = artifact;
+        other.space = "another-space".into();
+        assert!(
+            observed(&core.artifacts(), core.cwd(), &other)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn accepting_review_refuses_unverifiable_file_history() {

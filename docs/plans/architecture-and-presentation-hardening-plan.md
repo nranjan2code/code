@@ -103,7 +103,7 @@ The audit remains the historical evidence; the implementation log names checks.
 | P03 | Binding transfer repaired | Durable child-card provenance |
 | P04 | Explicit interaction scopes implemented | Browser replacement/remount/reconnect lifecycle matrix |
 | P05 | All current subjects round-trip | Running-app acceptance |
-| P06 | Protected eviction and encrypted same-tab reload implemented | Conflict chooser and broader crash/new-tab recovery |
+| P06 | Protected eviction, encrypted same-tab reload and conflict choices implemented | Browser acceptance and broader crash/new-tab recovery |
 | P07 | Encrypted fenced Documents implemented | Preserve erasure/fence/router tests |
 | P08 | Stable authorized resource refs and real-router tests pass | Saved/shared page end-to-end browser acceptance |
 | P09 | Payload checks, consumed-property coverage and isolated fallback implemented | Browser acceptance; coverage is top-level property granularity |
@@ -1101,3 +1101,22 @@ the later-only ability-column regression, Canvas sync/rebase/encrypted-recovery
 checks, TypeScript wire consistency/typecheck, both client bundles, focused
 core/server/delivery Clippy, formatting, records and document-path checks.
 No manual browser check or full workspace gate ran for this follow-up.
+
+### Library authoritative-read continuation (2026-10-18)
+
+Library list/trash, made-by-call cards, artifact detail and folder comparison
+now propagate verified-history failures. Local observations use `try_observe`;
+missing files remain absent, while unreadable files and unavailable version
+bytes fail comparison. Grant lookup errors no longer imply an unshared
+artifact. Another workspace remains deliberately unobserved. Six focused
+Library tests pass, including invalid sealed rows after a cached read and
+unreadable folder state through list/detail handlers. Deliberate corruption
+uses an isolated artifact store, not the shared test Core home. This closes
+these browsing consumers only; A01 remains open for the wider audit.
+
+Five worker-card/window integration tests also pass. The new production-path
+transfer regression keeps identical payloads distinct by source call and worker
+session, deduplicating only the repeated invocation. Five pure client scope
+tests pass, including multiple viewers, source failure/replacement, series
+fallback, final-owner cleanup and reconnect. These verify state and ledger
+behavior; mounted browser/reconnect acceptance remains open.

@@ -43,9 +43,12 @@ overlapping fixes should close their original entries as well.
   repository gate. Read-only
   artifact callers are now strict through file notes/recall/promotion. The
   maintainer approved catalog encryption; SQLCipher implementation passes
-  catalog tests, with combined checks in progress. The unused streaming blob
+  catalog and integrated focused checks. Cross-platform packaging remains
+  unverified. The unused streaming blob
   module is quarantined to tests; production reintroduction requires atomic
-  ownership. Other strict decision consumers remain under audit.
+  ownership. Library lists/trash/detail, call cards and comparison also propagate read
+  failures; six focused Library tests pass. Other strict consumers remain
+  under audit.
   Routing evidence and day-budget admission now use verified rollups;
   settlement retains unresolved liabilities on failed writes. The full
   repository gate passes. Durable and cross-process pending reservation
@@ -98,7 +101,8 @@ overlapping fixes should close their original entries as well.
   imports count as emitted. Focused foreground/background/multiworker tests
   and the full gate pass. Explicit invocation provenance is now persisted on
   ability cards and transferred with the worker session source; combined
-  identity/deduplication verification is in progress.
+  identity/deduplication checks pass, including identical payloads from
+  distinct invocations/sessions. Broader lifecycle coverage remains open.
 - [ ] S4: interaction ownership/invalidation, replacement, graph scope and
   invocation/freshness provenance (P04, D01–D04).
   P04 now scopes input text and published values to session/turn or immutable
@@ -110,7 +114,9 @@ overlapping fixes should close their original entries as well.
   projection; unused sources may keep names, and source replacement with
   active dependents is explicitly refused. Automatic binding migration,
   live-event replacement and the wider lifecycle matrix remain open.
-  Focused replacement validation and the full gate pass. No live browser
+  Focused replacement validation and the full gate pass. Further pure-state
+  tests cover source failures, replacement, multiple viewers, series fallback
+  and reconnect; five scope tests pass. No live browser
   acceptance is claimed.
 - [ ] S5: subject persistence, protected drafts, encrypted fenced canvas
   Documents and authorized page resources (P05–P08, D04).
@@ -130,8 +136,7 @@ overlapping fixes should close their original entries as well.
   remote notes, and blocks competing note edits/capacity failures without
   changing the local Canvas or advancing the write revision. Copy unsent
   notes supports manual recovery. Focused tests, both client bundles and
-  the full repository gate pass for this slice. In-app conflict choices,
-  full crash/new-tab recovery remain open. The in-app note conflict chooser
+  the full repository gate pass for this slice. Full crash/new-tab recovery remains open. The in-app note conflict chooser
   is now implemented with explicit previews, durable resolution and late-edit
   protection; its browser acceptance is still open. Same-tab reload now has encrypted
   checkpoints and owner-authenticated key retrieval; final browser matrix
@@ -148,7 +153,8 @@ overlapping fixes should close their original entries as well.
   quality and checked wire outcomes (P09–P12, A11, D04).
   P10 numerical ranges, compact precise labels and overflow-safe y
   positioning pass source tests, both bundle builds and the full gate.
-  Running-app acceptance remains open. Geometry and gaps remain open.
+  Running-app acceptance remains open; numeric/time geometry and gaps are now
+  implemented with focused checks.
   The chart/map minimum-width overflow is repaired. All 25 gallery checks
   and all 39 Canvas interaction checks pass in browser fixtures at both
   required sizes, light/dark (2026-10-18). Both bundles, fixture typecheck,
@@ -161,7 +167,7 @@ overlapping fixes should close their original entries as well.
   and mechanically check client-event fixtures across Rust/TypeScript.
   Numeric/time chart geometry and missing-data gaps have focused tests.
   Streaming frames send deltas and defer prefix Markdown compilation; local
-  measurement is in progress. The [task quality corpus](../audits/answer-quality-corpus-2026-10-18.md)
+  measurement is recorded in the plan. The [task quality corpus](../audits/answer-quality-corpus-2026-10-18.md)
   supplies acceptance prompts/rubrics, not unrun semantic scores.
 - [ ] S7: narrow Core ownership and bounded history-dependent work
   (A08, A09), retaining the earlier guarantees. Effects now use a verified
@@ -169,7 +175,8 @@ overlapping fixes should close their original entries as well.
   reads in server list/detail. The whole Document snapshot still decodes on
   a read; fully bounded storage decoding and growth measurements remain.
 
-Catalog encryption is decided and in implementation. Other choices/limits
+Catalog encryption is implemented and passes focused acceptance; platform
+packaging remains unverified. Other choices/limits
 are in the plan: interaction
 scope, replacement identity, generic DAG versus controls-to-consumers,
 and ability snapshot/refresh semantics. Existing living-page control values

@@ -55,3 +55,48 @@ test("replacing a source snapshot removes names it no longer publishes", () => {
   assert.deepEqual(lease.scope.getSettings("source"), { x: "7" });
   lease.release();
 });
+
+test("failed and replaced sources restore recorded consumers across multiple viewers", () => {
+  const answer = acquireAnswerValuesScope("lifecycle:two-viewers");
+  const panel = acquireAnswerValuesScope("lifecycle:two-viewers");
+  answer.reconcile(["source", "rate"]);
+  panel.reconcile(["source", "rate"]);
+  const consumer = { value: 17, bound: [{ path: ["value"], expression: "x * rate", from: ["source", "rate"] }] };
+  answer.scope.publish("source", { x: 4 });
+  panel.scope.publish("rate", { rate: 3 });
+  assert.equal(answer.scope.withBoundValues(consumer).value, 12);
+  panel.scope.clearPublication("rate");
+  assert.equal(answer.scope.withBoundValues(consumer).value, 17);
+  panel.scope.publish("rate", { rate: 5 });
+  assert.equal(answer.scope.withBoundValues(consumer).value, 20);
+
+  answer.reconcile(["replacement", "rate"]);
+  answer.scope.publish("replacement", { x: 99 });
+  assert.equal(answer.scope.withBoundValues(consumer).value, 20, "the other viewer still owns the original source");
+  panel.reconcile(["replacement", "rate"]);
+  assert.equal(answer.scope.withBoundValues(consumer).value, 17, "a replacement never silently retargets an existing binding");
+  panel.scope.publish("source", { x: 100 });
+  assert.equal(answer.scope.withBoundValues(consumer).value, 17, "retired source callbacks cannot revive its value");
+  answer.release();
+  panel.release();
+});
+
+test("series consumers lose stale points on source failure and reconnect cleanly", () => {
+  const first = acquireAnswerValuesScope("lifecycle:series-reconnect");
+  first.reconcile(["source"]);
+  const recorded = { points: [{ x: 0, y: 9 }], bound: [{ path: ["points"], series: "trend", from: ["source"] }] };
+  first.scope.publish("source", { trend: [[1, 2], [3, 4]] });
+  assert.deepEqual(first.scope.withBoundValues(recorded).points, [{ x: 1, y: 2 }, { x: 3, y: 4 }]);
+  first.scope.clearPublication("source");
+  assert.deepEqual(first.scope.withBoundValues(recorded).points, [{ x: 0, y: 9 }]);
+  first.scope.publish("source", { trend: [[5, 6]] });
+  first.release();
+  first.release();
+  const reconnect = acquireAnswerValuesScope("lifecycle:series-reconnect");
+  reconnect.reconcile(["source"]);
+  assert.deepEqual(reconnect.scope.withBoundValues(recorded).points, [{ x: 0, y: 9 }]);
+  reconnect.scope.publish("source", { trend: [[7, 8]] });
+  assert.deepEqual(reconnect.scope.withBoundValues(recorded).points, [{ x: 7, y: 8 }]);
+  reconnect.release();
+  assert.deepEqual(recorded.points, [{ x: 0, y: 9 }], "publications never mutate the saved answer");
+});

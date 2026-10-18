@@ -150,11 +150,14 @@ fn fake_rebuild() -> vak_agent::PresentationRebuild {
     Arc::new(|_name, input| {
         let mut card = input.as_object()?.clone();
         let semantic_type = card.remove("semantic_type")?.as_str()?.to_string();
+        let data_call_id = card
+            .remove("_test_data_call_id")
+            .and_then(|id| id.as_str().map(str::to_owned));
         let payload = vak_session::types::canonicalize_json(&serde_json::Value::Object(card));
         Some(PresentationCard {
             presentation_id: None,
             block: Some(semantic_type.clone()),
-            data_call_id: None,
+            data_call_id,
             semantic_type,
             skill_id: "test".into(),
             skill_version: "1".into(),
@@ -512,6 +515,79 @@ async fn a_workers_control_bindings_are_rebased_and_duplicate_imports_reuse_pare
     assert!(first_result.contains(&format!("pres:{} stats \"Totals\"", stats.0)));
     assert!(second_result.contains(&format!("pres:{} controls \"Inputs\"", control.0)));
     assert!(second_result.contains(&format!("pres:{} stats \"Totals\"", stats.0)));
+}
+
+#[tokio::test]
+async fn identical_worker_payloads_keep_distinct_invocation_and_session_lineage() {
+    let dir = tempdir().unwrap();
+    let card = |source: &str| {
+        serde_json::json!({
+            "semantic_type": "chart", "title": "Same results",
+            "points": [{"series": "s", "x": "Jan", "y": 1}],
+            "_test_data_call_id": source,
+        })
+    };
+    let provider = scripted(vec![
+        call("t1", "task", serde_json::json!({"prompt": "first worker"})),
+        call("c1", "emit_chart_card", card("source-a")),
+        call("c2", "emit_chart_card", card("source-b")),
+        call("c3", "emit_chart_card", card("source-a")),
+        text_msg("first complete"),
+        call("t2", "task", serde_json::json!({"prompt": "second worker"})),
+        call("c1", "emit_chart_card", card("source-a")),
+        text_msg("second complete"),
+        text_msg("Both complete."),
+    ]);
+    let task = task_tool(&dir, provider.clone(), "parent-invocations");
+    let mut parent = agent(&dir, "parent-invocations", provider, vec![task]);
+    let outcome = run(&mut parent, "compare the workers").await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = parent.session.lock().await;
+    let cards: Vec<_> = session
+        .presentations()
+        .into_iter()
+        .filter(|(_, record)| matches!(record.source, PresentationSource::Delegated { .. }))
+        .collect();
+    assert_eq!(
+        cards.len(),
+        3,
+        "only the repeat of the same child invocation is deduplicated"
+    );
+    assert!(
+        cards
+            .iter()
+            .all(|(_, card)| card.payload_digest == cards[0].1.payload_digest)
+    );
+    let mut origins = std::collections::BTreeSet::new();
+    for (_, card) in &cards {
+        let PresentationSource::Delegated {
+            worker_session_id, ..
+        } = &card.source
+        else {
+            unreachable!()
+        };
+        assert!(origins.insert((
+            worker_session_id.clone(),
+            card.data_call_id.clone().unwrap()
+        )));
+    }
+    assert_eq!(
+        origins
+            .iter()
+            .filter(|(_, call)| call == "source-a")
+            .count(),
+        2
+    );
+    assert_eq!(
+        origins
+            .iter()
+            .filter(|(_, call)| call == "source-b")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]

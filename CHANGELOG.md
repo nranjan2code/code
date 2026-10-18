@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Library lists, file cards and version comparisons report unreadable history
+  or workspace files instead of silently showing missing or incomplete state.
+
 - Canvas note conflicts show both versions and let you choose what to keep
   for each note. Saving choices preserves unrelated notes and edits typed
   while saving; stale choices require another review.

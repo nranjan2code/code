@@ -5,6 +5,15 @@ artifact record of data-architecture M8 (`vak_core::artifacts`,
 docs/design/82-library.md) and the Review loop of
 docs/design/72-openxml-documents.md and 54-task-environments-and-promotion.md.
 
+## Verified Library reads
+
+Library lists, trash, tool-call file cards, artifact detail and folder comparison
+read verified artifact history. Unreadable records or workspace files return an
+error instead of an absent item, omitted state or a claim that the folder is
+empty. Only a missing file is absent. Artifacts in another workspace remain
+visible without local file state; this server does not observe their folders.
+Sharing-read errors also fail detail reads instead of implying no active share.
+
 ## 1. The failure
 
 Live on 2026-10-12, the model made `porto-notes.docx`. The draft went to
