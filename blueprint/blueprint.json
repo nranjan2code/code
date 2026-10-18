@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "2c824de10",
+  "revision": "73f8d36a3",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 331563,
+   "rust_src": 331676,
    "rust_tests": 85438,
-   "ts_src": 62157,
+   "ts_src": 62404,
    "routes": 394,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 75,
    "lock_crates": 764,
-   "total_commits": 2366,
+   "total_commits": 2367,
    "days": 59,
    "peak_day": 174,
    "design_docs": 96,
@@ -239,27 +239,27 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 514,
+  "commits": 515,
   "areas": [
    [
     "docs",
-    438
+    439
    ],
    [
     "(root)",
-    267
+    268
    ],
    [
     "vak-core",
-    225
+    226
    ],
    [
     "vak-server",
-    185
+    186
    ],
    [
     "vak-client-ui",
-    118
+    119
    ],
    [
     "vak-agent",
@@ -304,16 +304,16 @@
    [
     "client",
     "Workspace client",
-    100
-   ],
-   [
-    "loop",
-    "Agent loop",
-    94
+    101
    ],
    [
     "cards",
     "Cards and presentation",
+    95
+   ],
+   [
+    "loop",
+    "Agent loop",
     94
    ],
    [
@@ -354,7 +354,7 @@
    [
     "library",
     "Library and file state",
-    41
+    42
    ],
    [
     "lifecycle",
@@ -377,14 +377,14 @@
     28
    ],
    [
-    "engineering",
-    "Build, gate and release",
+    "delivery",
+    "Delivery",
     28
    ],
    [
-    "delivery",
-    "Delivery",
-    27
+    "engineering",
+    "Build, gate and release",
+    28
    ],
    [
     "intent",
@@ -432,13 +432,13 @@
     21
    ],
    [
-    "storage",
-    "Storage substrate",
-    20
-   ],
-   [
     "canvas",
     "Canvas and previews",
+    21
+   ],
+   [
+    "storage",
+    "Storage substrate",
     20
    ],
    [
@@ -614,6 +614,19 @@
   ],
   "recent": [
    {
+    "hash": "73f8d36a3",
+    "date": "2026-10-18",
+    "subject": "Resolve Canvas note conflicts with explicit durable choices",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-client-ui",
+     "vak-core",
+     "vak-delivery",
+     "vak-server"
+    ]
+   },
+   {
     "hash": "2c824de10",
     "date": "2026-10-18",
     "subject": "Harden catalog encryption, recorded resources and execution contracts",
@@ -768,22 +781,11 @@
      "docs",
      "vak-client-ui"
     ]
-   },
-   {
-    "hash": "8ff039582",
-    "date": "2026-10-18",
-    "subject": "Preserve worker policy, delegated card bindings and unsent notes",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-client-ui",
-     "vak-core",
-     "vak-tools"
-    ]
    }
   ],
   "unreleased": [
+   "Canvas note conflicts show both versions and let you choose what to keep for each note.",
+   "Ability tables infer columns from every recorded row, keeping later-only fields.",
    "Ability-backed tables and charts use the exact recorded call selected by the answer.",
    "Credential writes preserve an unreadable encrypted store, publish presence metadata atomically, and report incomplete install cleanup for retry.",
    "Charts support explicit numeric and time spacing and leave gaps for missing observations.",
@@ -1270,7 +1272,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 83395,
+   "lines": 83642,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1282,7 +1284,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 77910,
+   "lines": 77998,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1292,7 +1294,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 63121,
+   "lines": 63144,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1329,7 +1331,7 @@
   {
    "id": "L2",
    "name": "Domain engines",
-   "lines": 59123,
+   "lines": 59125,
    "crates": [
     "vak-mail-calendar",
     "vak-ooxml",
@@ -1463,9 +1465,9 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 502,
+   "commits": 503,
    "fixes": 73,
-   "recent": 100,
+   "recent": 101,
    "fix_density": 4.0,
    "out": [
     {
@@ -14365,9 +14367,9 @@
    ],
    "modules": 26,
    "parts": [],
-   "lines": 18798,
+   "lines": 18819,
    "largest": [
-    6218,
+    6216,
     "crates/vak-server/src/projection.rs"
    ],
    "routes": [
@@ -14433,9 +14435,9 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 294,
+   "commits": 295,
    "fixes": 52,
-   "recent": 94,
+   "recent": 95,
    "fix_density": 2.8,
    "out": [
     {
@@ -14838,9 +14840,9 @@
    ],
    "modules": 14,
    "parts": [],
-   "lines": 10215,
+   "lines": 10217,
    "largest": [
-    2328,
+    2330,
     "crates/vak-delivery/src/lib.rs"
    ],
    "routes": [],
@@ -14864,9 +14866,9 @@
     "crates/vak-delivery/src/templates.rs",
     "crates/vak-server/src/delivery.rs"
    ],
-   "commits": 130,
+   "commits": 131,
    "fixes": 25,
-   "recent": 27,
+   "recent": 28,
    "fix_density": 2.4,
    "out": [
     {
@@ -15069,7 +15071,7 @@
    ],
    "modules": 35,
    "parts": [],
-   "lines": 4576,
+   "lines": 4823,
    "largest": [
     775,
     "crates/vak-server/src/preview.rs"
@@ -15128,10 +15130,10 @@
     "crates/vak-server/src/canvas.rs",
     "crates/vak-server/src/preview.rs"
    ],
-   "commits": 66,
+   "commits": 67,
    "fixes": 5,
-   "recent": 20,
-   "fix_density": 1.1,
+   "recent": 21,
+   "fix_density": 1.0,
    "out": [
     {
      "from": "canvas",
@@ -15327,9 +15329,9 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 7625,
+   "lines": 7715,
    "largest": [
-    2846,
+    2936,
     "crates/vak-server/src/library.rs"
    ],
    "routes": [
@@ -15377,9 +15379,9 @@
     "crates/vak-server/src/library.rs",
     "crates/vak-tools/src/artifact.rs"
    ],
-   "commits": 46,
+   "commits": 47,
    "fixes": 4,
-   "recent": 41,
+   "recent": 42,
    "fix_density": 0.5,
    "out": [
     {
@@ -29783,6 +29785,18 @@
  ],
  "replay": [
   {
+   "hash": "73f8d36a3",
+   "date": "2026-10-18",
+   "subject": "Resolve Canvas note conflicts with explicit durable choices",
+   "subsystems": [
+    "canvas",
+    "cards",
+    "client",
+    "delivery",
+    "library"
+   ]
+  },
+  {
    "hash": "2c824de10",
    "date": "2026-10-18",
    "subject": "Harden catalog encryption, recorded resources and execution contracts",
@@ -35155,10 +35169,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 37421,
+   "src": 37668,
    "tests": 279,
    "files": 187,
-   "commits": 638,
+   "commits": 639,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35366,10 +35380,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 58585,
+   "src": 58608,
    "tests": 9964,
    "files": 70,
-   "commits": 633,
+   "commits": 634,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35475,10 +35489,10 @@
    "layer": "L2",
    "kind": "rust",
    "role": "Semantic output contract, Markdown fallback, channel markup",
-   "src": 8500,
+   "src": 8502,
    "tests": 4405,
    "files": 13,
-   "commits": 110,
+   "commits": 111,
    "deps": [
     "vak-intent",
     "vak-presentation",
@@ -35502,7 +35516,7 @@
     "toml"
    ],
    "largest": [
-    2328,
+    2330,
     "crates/vak-delivery/src/lib.rs"
    ],
    "subsystems": [
@@ -36202,10 +36216,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 73741,
+   "src": 73829,
    "tests": 23792,
    "files": 51,
-   "commits": 833,
+   "commits": 834,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -36593,7 +36607,7 @@
    },
    {
     "file": "crates/vak-server/src/projection.rs",
-    "lines": 6218
+    "lines": 6216
    },
    {
     "file": "crates/vak-server/src/gateway.rs",
@@ -36605,7 +36619,7 @@
    },
    {
     "file": "crates/vak-core/src/presentation_tools.rs",
-    "lines": 4038
+    "lines": 4061
    },
    {
     "file": "crates/vak-session/src/log.rs",
@@ -36636,8 +36650,8 @@
    {
     "name": "snapshot_inner",
     "file": "crates/vak-server/src/projection.rs",
-    "line": 723,
-    "lines": 995
+    "line": 727,
+    "lines": 990
    },
    {
     "name": "run_data",
@@ -36770,8 +36784,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1343,
-  "hot": 633
+  "docs_commits": 1344,
+  "hot": 634
  },
  "findings": [
   {
