@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "fb7088877",
+  "revision": "9212df52e",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -13,13 +13,13 @@
    "ts_crates": 2,
    "rust_src": 327897,
    "rust_tests": 85075,
-   "ts_src": 61570,
+   "ts_src": 61657,
    "routes": 391,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2356,
+   "total_commits": 2357,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
@@ -225,15 +225,15 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 504,
+  "commits": 505,
   "areas": [
    [
     "docs",
-    429
+    430
    ],
    [
     "(root)",
-    259
+    260
    ],
    [
     "vak-core",
@@ -245,7 +245,7 @@
    ],
    [
     "vak-client-ui",
-    114
+    115
    ],
    [
     "vak-agent",
@@ -277,6 +277,16 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "9212df52e",
+    "date": "2026-10-18",
+    "subject": "Preserve pending Canvas notes during stale replay",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-client-ui"
+    ]
+   },
    {
     "hash": "fb7088877",
     "date": "2026-10-18",
@@ -420,18 +430,10 @@
     "areas": [
      "docs"
     ]
-   },
-   {
-    "hash": "deb625ab5",
-    "date": "2026-10-18",
-    "subject": "Drop the completion-vocabularies finding: the evidence does not support it",
-    "areas": [
-     "docs",
-     "scripts"
-    ]
    }
   ],
   "unreleased": [
+   "Canvas conflict replay restores a remotely closed tab when it holds a pending local note and there is safe room.",
    "Canvas keeps unacknowledged changes after failed saves and shows a recovery message with Retry saving.",
    "Card replacements use one active-card view for runtime validation and display.",
    "Linked-card controls share current inputs across views of the same conversation turn.",
@@ -622,7 +624,7 @@
     "date": "2026-10-18",
     "text": "Commit and push directly to `main`;",
     "links": [
-     "docs/plans/handover-2026-10-18.md#current-canvas-save-failure-batch"
+     "docs/plans/handover-2026-10-18.md#current-canvas-conflict-batch"
     ]
    },
    {
@@ -895,7 +897,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 82808,
+   "lines": 82895,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -2903,9 +2905,9 @@
     "L6",
     "L7"
    ],
-   "modules": 33,
+   "modules": 34,
    "parts": [],
-   "lines": 3905,
+   "lines": 3992,
    "largest": [
     775,
     "crates/vak-server/src/preview.rs"
@@ -2928,6 +2930,7 @@
    ],
    "units": [
     "crates/vak-client-ui/src/artifactPreview.ts",
+    "crates/vak-client-ui/src/canvasRebase.ts",
     "crates/vak-client-ui/src/canvasSelection.ts",
     "crates/vak-client-ui/src/canvasStack.ts",
     "crates/vak-client-ui/src/canvasSubject.ts",
@@ -4109,8 +4112,8 @@
   }
  ],
  "coverage": {
-  "units": 693,
-  "claimed": 693,
+  "units": 694,
+  "claimed": 694,
   "routes": 391,
   "routes_claimed": 391,
   "verbs": 35,
@@ -4338,10 +4341,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 36834,
+   "src": 36921,
    "tests": 279,
-   "files": 184,
-   "commits": 634,
+   "files": 185,
+   "commits": 635,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -5759,7 +5762,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1334,
+  "docs_commits": 1335,
   "hot": 630
  },
  "findings": [
