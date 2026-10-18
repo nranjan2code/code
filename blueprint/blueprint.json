@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "e4a25bd62",
+  "revision": "6062009b6",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 68,
    "lock_crates": 764,
-   "total_commits": 2345,
+   "total_commits": 2346,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
@@ -123,14 +123,12 @@
    },
    {
     "section": "Installed route failures (qwen3.5:0.8b-mlx, 2026-10-15)",
-    "open": 10,
-    "closed": 12,
+    "open": 8,
+    "closed": 14,
     "items": [
      "Still in the recall path:",
-     "`mail_calendar` is loaded, and its long guardrail paragraph is in the seed, on every turn with no account connected.",
      "`remember` writes a workspace note;",
-     "Inside one conversation, `session_search` leaves the conversation out because \"its content is already in context\" (doc 23), but the planner carries only the previous turn's card;",
-     "Not checked live after the fix on the installed route:",
+     "Not checked live on the installed route after the fix.",
      "The repeated card-level argument descriptions (`deliverable`, `replaces`, `beside_previous`, `label`, `title`, about 600 characters on each card tool) could be shorter, with their rule stated once in the presentation contract;",
      "OpenAI Responses tool search (gpt-5.4 and later, `defer_loading`, hosted or client-executed, namespaces of under ten) is not used:",
      "Fresh requests still reach for `recall` first often (`name` 13 of 16 with the name in the carried card).",
@@ -140,12 +138,11 @@
    },
    {
     "section": "The record and the blueprint (2026-10-18)",
-    "open": 8,
-    "closed": 0,
+    "open": 7,
+    "closed": 1,
     "items": [
      "233 code names cited by 46 living documents no longer occur in the code (`python3 scripts/check_records.py --names`).",
      "Rewrite `docs/design/83-prompt-system.md` against the current code;",
-     "Check every open item in this tracker against the code and git history:",
      "`vak-intent` still derives an epistemic stance for every strand (`derive_epistemic_stance`), but no prompt has carried it since `d0875af47`.",
      "Blueprint F2:",
      "Blueprint F1:",
@@ -155,14 +152,12 @@
    },
    {
     "section": "Before the next release",
-    "open": 7,
-    "closed": 24,
+    "open": 5,
+    "closed": 26,
     "items": [
      "zip 4.6.1 to 9:",
-     "The maintainer runs `vak setup` with the provider key;",
+     "The maintainer ran `vak setup` on this home (the installed route is recorded in `9ab30dd8a`);",
      "AWS:",
-     "The maintainer runs `vak setup` with the provider key;",
-     "The maintainer runs `vak setup` with the provider key;",
      "One hosted route (a wire that enforces tool schemas):",
      "Linux:"
     ]
@@ -189,13 +184,11 @@
    },
    {
     "section": "Self-evolving capabilities (docs/design/93)",
-    "open": 4,
-    "closed": 19,
+    "open": 2,
+    "closed": 21,
     "items": [
      "Dependencies for Node programs (a lockfile and `npm ci`):",
-     "Found live (E3b):",
-     "Seen live (E4):",
-     "Found (E6a):"
+     "Seen live (E4):"
     ]
    },
    {
@@ -205,17 +198,17 @@
     "items": []
    }
   ],
-  "open_total": 50,
+  "open_total": 43,
   "measures_revision": "825b18564"
  },
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 493,
+  "commits": 494,
   "areas": [
    [
     "docs",
-    420
+    421
    ],
    [
     "(root)",
@@ -263,6 +256,14 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "6062009b6",
+    "date": "2026-10-18",
+    "subject": "Check every open item against the code and history",
+    "areas": [
+     "docs"
+    ]
+   },
    {
     "hash": "e4a25bd62",
     "date": "2026-10-18",
@@ -394,14 +395,6 @@
      "vak-agent",
      "vak-client-ui",
      "vak-tools"
-    ]
-   },
-   {
-    "hash": "5707d16dd",
-    "date": "2026-10-18",
-    "subject": "Regenerate the system blueprint",
-    "areas": [
-     "docs"
     ]
    }
   ],
@@ -2571,7 +2564,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1325,
+  "docs_commits": 1326,
   "hot": 626
  },
  "findings": [
