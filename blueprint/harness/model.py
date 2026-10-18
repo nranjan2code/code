@@ -158,6 +158,11 @@ def build(deep=False):
         x["in"] = [e for e in edges if e["to"] == x["id"]]
     flows = [{"id": fid, "name": name, "steps": [{"from": a, "to": b, "what": w} for a, b, w in steps]}
              for fid, name, steps in subs.FLOWS]
+    crate_layer = {c["name"]: c["layer"] for c in crates}
+    for x in subsystem_list:
+        # the layer of the crate holding most of its code; parts outside the crates are L0
+        x["layer"] = next((crate_layer[h] for h in x["homes"] if h in crate_layer), "L0")
+    externals = [{"id": xid, "name": name, "role": role, "reach": reach} for xid, name, role, reach in subs.EXTERNAL]
     m["subsystems"] = len(subsystem_list)
     m["connections"] = len(edges)
     m["flows"] = len(flows)
@@ -203,6 +208,7 @@ def build(deep=False):
         "coverage": coverage,
         "connections": edges,
         "flows": flows,
+        "externals": externals,
         "replay": sub_recent,
         "groups": [g for g, _ in subs.GROUPS],
         "crates": [{**{k: c[k] for k in ("name", "layer", "kind", "role", "src", "tests", "files", "commits",

@@ -1,24 +1,23 @@
-"""The plant diagram: every subsystem as a unit in its plant area, every
+"""The plant diagram: every subsystem as a unit on the layer stack's layers,
+coloured by plant area, what lies outside the repository on L0, every
 measured connection as a pipe, and every flow as a route a packet travels.
 
 Drawn as static SVG from the model, so the page is complete at rest; the
 script in template.html only animates and filters what is already drawn.
-The areas' arrangement is the one hand-made part (`ROWS`); a group missing
-from it is reported.
 """
 
 import html
 import json
 
-# Plant areas, row by row: (group, columns of units).
-ROWS = [
-    [("Surfaces", 2), ("Service and operations", 4), ("Presentation", 2)],
-    [("The turn", 3), ("Models and tools", 3), ("Safety", 2)],
-    [("Apps", 4), ("Data", 5)],
-]
+# The plant is drawn on the layer stack's bands, top to bottom, so the two
+# sheets read the same way: each subsystem on the layer of the crate that
+# holds most of its code (model.py), and what lies outside the repository on
+# L0, as the layer stack draws it. The plant areas are the units' colours.
+PER_LINE = 8
 NODE_W, NODE_H, GAP_X, GAP_Y = 172, 64, 14, 14
 FIT = 20  # characters of the unit's label font that fit on one line
-PAD, HEAD, AREA_GAP, MARGIN = 16, 34, 30, 24
+LABEL_W, PAD, BAND_GAP, MARGIN = 196, 14, 16, 18
+L0_NAME = "Host and outside"
 
 
 def esc(s):
@@ -34,41 +33,35 @@ def label_lines(name):
     return [name[:cut], name[cut + 1:]]
 
 
+def bands(model):
+    """The layer bands top to bottom, each with its units: subsystems in plant
+    area order, then the parts outside the repository."""
+    group_order = {g: i for i, g in enumerate(model["groups"])}
+    out = []
+    for layer in [l for l in model["layers"] if l["id"] != "L?"] + [{"id": "L0", "name": L0_NAME}]:
+        units = sorted((x for x in model["subsystems"] if x["layer"] == layer["id"]),
+                       key=lambda x: (group_order.get(x["group"], 99), -x["lines"]))
+        items = [{"kind": "sub", **x} for x in units]
+        if layer["id"] == "L0":
+            items += [{"kind": "ext", **e} for e in model["externals"]]
+        out.append({"id": layer["id"], "name": layer["name"], "items": items,
+                    "lines": sum(x["lines"] for x in units), "subs": len(units)})
+    return out
+
+
 def layout(model):
-    """{subsystem id: (x, y)} of each unit's top-left, the areas, the canvas
-    size, and review lines."""
-    review = []
-    by_group = {}
-    for x in model["subsystems"]:
-        by_group.setdefault(x["group"], []).append(x)
-    placed = [g for row in ROWS for g, _ in row]
-    review += [f"plant: group {g} is in no row (plant.ROWS)" for g in by_group if g not in placed]
-    review += [f"plant: row names unknown group {g}" for g in placed if g not in by_group]
-    rows = []
-    for row in ROWS:
-        areas = []
-        for group, cols in row:
-            items = by_group.get(group, [])
-            n_rows = max(1, -(-len(items) // cols))
-            w = PAD * 2 + cols * NODE_W + (cols - 1) * GAP_X
-            h = HEAD + PAD + n_rows * NODE_H + (n_rows - 1) * GAP_Y + PAD
-            areas.append({"group": group, "cols": cols, "w": w, "h": h, "items": items})
-        rows.append(areas)
-    width = max(sum(a["w"] for a in r) + AREA_GAP * (len(r) - 1) for r in rows) + 2 * MARGIN
+    """{unit id: (x, y)}, the bands as drawn, and the canvas size."""
     pos, drawn, y = {}, [], MARGIN
-    for r in rows:
-        row_w = sum(a["w"] for a in r) + AREA_GAP * (len(r) - 1)
-        row_h = max(a["h"] for a in r)
-        x = (width - row_w) / 2
-        for a in r:
-            drawn.append({"group": a["group"], "x": x, "y": y, "w": a["w"], "h": row_h})
-            for i, item in enumerate(a["items"]):
-                cx = x + PAD + (i % a["cols"]) * (NODE_W + GAP_X)
-                cy = y + HEAD + PAD + (i // a["cols"]) * (NODE_H + GAP_Y)
-                pos[item["id"]] = (cx, cy)
-            x += a["w"] + AREA_GAP
-        y += row_h + AREA_GAP
-    return pos, drawn, (width, y - AREA_GAP + MARGIN), review
+    width = MARGIN * 2 + LABEL_W + PAD * 2 + PER_LINE * NODE_W + (PER_LINE - 1) * GAP_X
+    for b in bands(model):
+        n_lines = max(1, -(-len(b["items"]) // PER_LINE))
+        h = PAD * 2 + n_lines * NODE_H + (n_lines - 1) * GAP_Y
+        drawn.append({**b, "y": y, "h": h})
+        for i, item in enumerate(b["items"]):
+            x0 = MARGIN + LABEL_W + PAD + (i % PER_LINE) * (NODE_W + GAP_X)
+            pos[item["id"]] = (x0, y + PAD + (i // PER_LINE) * (NODE_H + GAP_Y))
+        y += h + BAND_GAP
+    return pos, drawn, (width, y - BAND_GAP + MARGIN)
 
 
 def pipe(pos, a, b):
@@ -86,25 +79,35 @@ def pipe(pos, a, b):
 
 
 def svg(model):
-    pos, areas, (W, H), review = layout(model)
+    pos, drawn, (W, H) = layout(model)
+    group_index = {g: i + 1 for i, g in enumerate(model["groups"])}
     top_recent = max([x["recent"] for x in model["subsystems"]] + [1])
     out = [f'<svg class="plant-svg" viewBox="0 0 {W:.0f} {H:.0f}" role="img" '
-           f'aria-label="Plant diagram: {len(model["subsystems"])} subsystems in {len(areas)} areas, '
-           f'{len(model["connections"])} measured connections, and the flows that move through them">',
+           f'aria-label="Plant diagram on the layer stack: {len(model["subsystems"])} subsystems and '
+           f'{len(model["externals"])} outside parts on {len(drawn)} layers, {len(model["connections"])} measured connections, '
+           f'and the flows that move through them">',
            '<defs><marker id="pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">'
            '<path d="M0,0L10,5L0,10z" class="pa"/></marker>'
-           '<pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
-           '<line x1="0" y1="0" x2="0" y2="6" class="hatch"/></pattern></defs>']
-    for a in areas:
-        out.append(f'<g class="area"><rect x="{a["x"]:.0f}" y="{a["y"]:.0f}" width="{a["w"]:.0f}" height="{a["h"]:.0f}"/>'
-                   f'<rect class="area-tab" x="{a["x"]:.0f}" y="{a["y"]:.0f}" width="{a["w"]:.0f}" height="{HEAD - 6}"/>'
-                   f'<text class="area-name" x="{a["x"] + 12:.0f}" y="{a["y"] + 20:.0f}">{esc(a["group"].upper())}</text></g>')
+           '<filter id="pglow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3" result="b"/>'
+           '<feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>']
+    for b in drawn:
+        sub = f'{b["subs"]} subsystem{"s" if b["subs"] != 1 else ""}' + (f' · {b["lines"] / 1000:.0f}k lines' if b["lines"] else "")
+        if b["id"] == "L0":
+            sub = f'{len(model["externals"])} outside parts' + (f' · {b["subs"]} subsystem' if b["subs"] else "")
+        out.append(f'<g class="band-row{" ext" if b["id"] == "L0" else ""}" data-layer="{b["id"]}">'
+                   f'<rect class="band" x="{MARGIN}" y="{b["y"]:.0f}" width="{W - 2 * MARGIN:.0f}" height="{b["h"]:.0f}"/>'
+                   f'<text class="lid" x="{MARGIN + 14}" y="{b["y"] + 26:.0f}">{b["id"]}</text>'
+                   f'<text class="lname" x="{MARGIN + 14}" y="{b["y"] + 47:.0f}">{esc(b["name"])}</text>'
+                   f'<text class="lsub" x="{MARGIN + 14}" y="{b["y"] + 64:.0f}">{esc(sub)}</text></g>')
     out.append('<g class="pipes">')
     for e in model["connections"]:
         if e["from"] in pos and e["to"] in pos:
-            out.append(f'<path class="pipe {e["kind"]}" data-from="{e["from"]}" data-to="{e["to"]}" data-w="{e["weight"]}" '
-                       f'd="{pipe(pos, e["from"], e["to"])}"><title>{esc(e["from"])} → {esc(e["to"])}: '
-                       f'{e["weight"]} {"route call" if e["kind"] == "http" else "code reference"}{"s" if e["weight"] != 1 else ""}</title></path>')
+            out.append(f'<path class="pipe {e["kind"]}" data-from="{e["from"]}" data-to="{e["to"]}" '
+                       f'd="{pipe(pos, e["from"], e["to"])}"/>')
+    for x in model["externals"]:
+        for sid in x["reach"]:
+            if sid in pos and x["id"] in pos:
+                out.append(f'<path class="pipe outside" data-from="{sid}" data-to="{x["id"]}" d="{pipe(pos, sid, x["id"])}"/>')
     out.append('</g><g class="flowpipes">')
     for f in model["flows"]:
         for i, s in enumerate(f["steps"]):
@@ -112,35 +115,52 @@ def svg(model):
                 out.append(f'<path class="fstep" data-flow="{f["id"]}" data-i="{i}" marker-end="url(#pa)" '
                            f'd="{pipe(pos, s["from"], s["to"])}"/>')
     out.append('</g><g class="units">')
-    for x in model["subsystems"]:
-        if x["id"] not in pos:
-            continue
-        px, py = pos[x["id"]]
-        load = x["recent"] / top_recent
-        lines = label_lines(x["name"])
-        out.append(f'<g class="unit" data-id="{x["id"]}" tabindex="0" role="button" aria-label="{esc(x["name"])}: '
-                   f'{x["lines"]:,} lines, {x["commits"]} commits, {len(x["out"]) + len(x["in"])} connections">'
-                   f'<rect class="u-body" x="{px:.0f}" y="{py:.0f}" width="{NODE_W}" height="{NODE_H}" rx="3"/>'
-                   f'<rect class="u-load" x="{px + 1:.0f}" y="{py + NODE_H - 6:.0f}" width="{(NODE_W - 2) * load:.1f}" height="5"/>'
-                   f'<circle class="u-led{" live" if x["recent"] else ""}" cx="{px + NODE_W - 12:.0f}" cy="{py + 13:.0f}" r="4.5"/>'
-                   + "".join(f'<text class="u-name" x="{px + 10:.0f}" y="{py + (19 + 16 * i if len(lines) > 1 else 25):.0f}">{esc(t)}</text>'
-                             for i, t in enumerate(lines))
-                   + f'<text class="u-sub" x="{px + 10:.0f}" y="{py + (51 if len(lines) > 1 else 45):.0f}">{x["lines"] / 1000:.1f}k · {x["commits"]}c · {len(x["routes"])}r</text>'
-                   f'</g>')
-    out.append('</g><g class="packets"></g></svg>')
-    return "\n".join(out), review
+    for b in drawn:
+        for item in b["items"]:
+            px, py = pos[item["id"]]
+            lines = label_lines(item["name"])
+            name_y = [py + (20 + 16 * i if len(lines) > 1 else 27) for i in range(len(lines))]
+            names = "".join(f'<text class="u-name" x="{px + 14:.0f}" y="{y:.0f}">{esc(t)}</text>' for t, y in zip(lines, name_y))
+            if item["kind"] == "ext":
+                out.append(f'<g class="unit ext" data-id="{item["id"]}" tabindex="0" role="button" aria-label="{esc(item["name"])}, outside the repository">'
+                           f'<rect class="u-body" x="{px:.0f}" y="{py:.0f}" width="{NODE_W}" height="{NODE_H}" rx="10"/>{names}'
+                           f'<text class="u-sub" x="{px + 14:.0f}" y="{py + (52 if len(lines) > 1 else 46):.0f}">outside · {len(item["reach"])} link{"s" if len(item["reach"]) != 1 else ""}</text></g>')
+                continue
+            x = item
+            g = group_index.get(x["group"], 0)
+            load = x["recent"] / top_recent
+            out.append(f'<g class="unit g{g}" data-id="{x["id"]}" data-group="{esc(x["group"])}" data-homes="{esc(" ".join(x["homes"]))}" '
+                       f'tabindex="0" role="button" aria-label="{esc(x["name"])}: {x["lines"]:,} lines, {x["commits"]} commits, '
+                       f'{len(x["out"]) + len(x["in"])} connections">'
+                       f'<rect class="u-body" x="{px:.0f}" y="{py:.0f}" width="{NODE_W}" height="{NODE_H}" rx="3"/>'
+                       f'<rect class="u-stripe" x="{px:.0f}" y="{py:.0f}" width="5" height="{NODE_H}"/>'
+                       f'<rect class="u-track" x="{px + 14:.0f}" y="{py + NODE_H - 9:.0f}" width="{NODE_W - 28}" height="3"/>'
+                       f'<rect class="u-load" x="{px + 14:.0f}" y="{py + NODE_H - 9:.0f}" width="{(NODE_W - 28) * load:.1f}" height="3"/>'
+                       f'<circle class="u-led{" live" if x["recent"] else ""}" cx="{px + NODE_W - 13:.0f}" cy="{py + 13:.0f}" r="4.5"/>'
+                       f'{names}<text class="u-sub" x="{px + 14:.0f}" y="{py + (50 if len(lines) > 1 else 44):.0f}">'
+                       f'{x["lines"] / 1000:.1f}k · {x["commits"]}c · {len(x["out"]) + len(x["in"])} links</text></g>')
+    out.append('</g><g class="packets" filter="url(#pglow)"></g></svg>')
+    return "\n".join(out), []
 
 
 def data(model):
     """What the script needs and the SVG does not carry, as JSON."""
     att = model["attention"]
+    units = {x["id"]: {"name": x["name"], "group": x["group"], "layer": x["layer"], "role": x["role"], "lines": x["lines"],
+                       "commits": x["commits"], "recent": x["recent"], "fixes": x["fixes"],
+                       "homes": x["homes"], "routes": len(x["routes"]), "cli": x["cli"],
+                       "out": [[e["to"], e["kind"], e["weight"]] for e in x["out"]],
+                       "in": [[e["from"], e["kind"], e["weight"]] for e in x["in"]]}
+             for x in model["subsystems"]}
+    for e in model["externals"]:
+        units[e["id"]] = {"name": e["name"], "group": "Outside the repository", "layer": "L0", "role": e["role"], "external": True,
+                          "out": [], "in": [[sid, "outside", 1] for sid in e["reach"]]}
+        for sid in e["reach"]:
+            if sid in units:
+                units[sid]["out"].append([e["id"], "outside", 1])
     return json.dumps({
-        "units": {x["id"]: {"name": x["name"], "group": x["group"], "role": x["role"], "lines": x["lines"],
-                            "commits": x["commits"], "recent": x["recent"], "fixes": x["fixes"],
-                            "homes": x["homes"], "routes": len(x["routes"]), "cli": x["cli"],
-                            "out": [[e["to"], e["kind"], e["weight"]] for e in x["out"]],
-                            "in": [[e["from"], e["kind"], e["weight"]] for e in x["in"]]}
-                  for x in model["subsystems"]},
+        "units": units,
+        "groups": model["groups"],
         "flows": model["flows"],
         "replay": list(reversed(model["replay"])),
         "kpi": {"subsystems": len(model["subsystems"]), "connections": len(model["connections"]),
@@ -150,6 +170,11 @@ def data(model):
                 "since": model["activity"]["since"], "until": model["activity"]["until"],
                 "revision": model["meta"].get("revision", ""), "version": model["meta"].get("version", "")},
     }, ensure_ascii=False).replace("</", "<\\/")
+
+
+def area_chips(model):
+    return "\n".join(f'      <button type="button" class="area-chip g{i + 1}" data-area="{esc(g)}" aria-pressed="false"><i></i>{esc(g)}</button>'
+                     for i, g in enumerate(model["groups"]))
 
 
 def flow_buttons(model):
@@ -169,16 +194,63 @@ def flows_html(model):
     return "\n".join(out)
 
 
-def connections_html(model):
-    names = {x["id"]: x["name"] for x in model["subsystems"]}
-    out = ['<div class="scroll"><table class="subs"><thead><tr><th>Subsystem</th><th class="n">Out</th><th class="n">In</th>'
-           '<th>Uses (code references · route calls)</th><th>Used by</th></tr></thead><tbody>']
+def _merged(edges, key):
+    """{other subsystem: {"code": n, "http": n}} for one side of a unit."""
+    out = {}
+    for e in edges:
+        out.setdefault(e[key], {"code": 0, "http": 0})[e["kind"]] += e["weight"]
+    return sorted(out.items(), key=lambda kv: (-(kv[1]["code"] + kv[1]["http"]), kv[0]))
 
-    def items(rows, key):
-        return ", ".join(f'{esc(names.get(r[key], r[key]))}&nbsp;<span class="muted">{r["weight"]}{" http" if r["kind"] == "http" else ""}</span>'
-                         for r in rows) or "—"
-    for x in sorted(model["subsystems"], key=lambda s: -(len(s["out"]) + len(s["in"]))):
-        out.append(f'<tr><td><b>{esc(x["name"])}</b></td><td class="n">{len(x["out"])}</td><td class="n">{len(x["in"])}</td>'
-                   f'<td>{items(x["out"], "to")}</td><td>{items(x["in"], "from")}</td></tr>')
-    out.append("</tbody></table></div>")
-    return "\n".join(out)
+
+def connections_html(model):
+    """A picker of every subsystem by plant area, and for the one picked, what
+    it uses and what uses it: one row per neighbour, its code references and
+    route calls as one split bar."""
+    subs = {x["id"]: x for x in model["subsystems"]}
+    groups = []
+    for x in model["subsystems"]:
+        if not groups or groups[-1][0] != x["group"]:
+            groups.append((x["group"], []))
+        groups[-1][1].append(x)
+    first = max(model["subsystems"], key=lambda x: len(x["out"]) + len(x["in"]))["id"] if model["subsystems"] else ""
+    pick = ['<nav class="cx-pick" aria-label="Subsystems">']
+    for group, items in groups:
+        pick.append(f'<h4>{esc(group)}</h4>')
+        for x in items:
+            pick.append(f'<button type="button" data-cx="{x["id"]}" aria-pressed="{"true" if x["id"] == first else "false"}">'
+                        f'<span>{esc(x["name"])}</span><span class="cx-n">{len(x["out"])}↗ {len(x["in"])}↙</span></button>')
+    pick.append("</nav>")
+
+    def side(title, rows, empty):
+        if not rows:
+            return f'<div class="cx-side"><h4>{title} (0)</h4><p class="muted">{empty}</p></div>'
+        top = max(v["code"] + v["http"] for _, v in rows) or 1
+        by_group = {}
+        for other, v in rows:
+            by_group.setdefault(subs[other]["group"] if other in subs else "", []).append((other, v))
+        out = [f'<div class="cx-side"><h4>{title} ({len(rows)})</h4>']
+        for group in [g for g, _ in groups if g in by_group]:
+            out.append(f'<div class="cx-group">{esc(group)}</div>')
+            for other, v in by_group[group]:
+                n = subs[other]["name"] if other in subs else other
+                parts = [f'{v["code"]} code' if v["code"] else "", f'{v["http"]} route' if v["http"] else ""]
+                out.append(f'<div class="cx-row"><button type="button" class="linkish" data-cx="{other}">{esc(n)}</button>'
+                           f'<span class="cx-bar" aria-hidden="true"><i class="c" style="width:{100 * v["code"] / top:.1f}%"></i>'
+                           f'<i class="h" style="width:{100 * v["http"] / top:.1f}%"></i></span>'
+                           f'<span class="cx-v">{" · ".join(p for p in parts if p)}</span></div>')
+        out.append("</div>")
+        return "".join(out)
+
+    panels = []
+    for x in model["subsystems"]:
+        panels.append(
+            f'<section class="cx-panel" data-cx-panel="{x["id"]}"{"" if x["id"] == first else " hidden"}>'
+            f'<div class="cx-head"><div><div class="kicker">{esc(x["group"])}</div><h3>{esc(x["name"])}</h3>'
+            f'<p class="muted">{esc(x["role"])}</p></div>'
+            f'<button type="button" class="linkish" data-cx-plant="{x["id"]}">Show on the plant diagram</button></div>'
+            f'<div class="cx-cols">{side("Uses", _merged(x["out"], "to"), "Names no other subsystem.")}'
+            f'{side("Used by", _merged(x["in"], "from"), "No other subsystem names it.")}</div></section>')
+    legend = ('<div class="plant-legend"><span><i class="cxc"></i>code references (file pairs)</span>'
+              '<span><i class="cxh"></i>route calls (client files naming a route)</span>'
+              '<span>Bars compare neighbours of the selected subsystem.</span></div>')
+    return f'<div class="cx">{"".join(pick)}<div class="cx-detail">{"".join(panels)}{legend}</div></div>'

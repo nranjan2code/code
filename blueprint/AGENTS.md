@@ -50,7 +50,8 @@ last release tag; run `deep` before a release.
 | Each subsystem's commits, fixes and recent work | `subsystems.history`, from git, by the subsystem map |
 | The connections between subsystems | `connections.py`, from the code |
 | The flows | `FLOWS` in `harness/subsystems.py`, by hand, each step checked against a measured connection |
-| The plant diagram and the operations screen | `plant.py` draws them from the model; only the areas' arrangement (`ROWS`) is by hand |
+| The plant diagram and the operations screen | `plant.py` draws them from the model, on the layer stack's layers |
+| What lies outside the repository (model APIs, chat platforms, mail providers, the OS sandbox, …) and which subsystems reach it | `EXTERNAL` in `harness/subsystems.py`, by hand |
 | The summary, findings, what to keep, the target shape | `content.toml` |
 | The process topology, the turn sequence and the data tree | drawn by hand in `harness/template.html` |
 
@@ -93,7 +94,7 @@ the same change that caused it:
 | `subsystem …: pattern, route prefix, vak or doc … matches nothing` | Something a subsystem names was renamed or removed: fix the entry. |
 | `flow …: a → b (…) rides no measured connection` | The code no longer connects those subsystems the way the flow says: retrace the flow in the code and fix its steps. |
 | `flow …: unknown subsystem …` | A subsystem a flow names was renamed or removed. |
-| `plant: group … is in no row` | A new group: place it in `plant.ROWS`. |
+| `outside …: unknown subsystem …` | A subsystem an outside part names was renamed or removed. |
 | `measure connections: … source is missing` | Run `cargo fetch`; until then method calls draw no connection. |
 | `crate … is gone` | Remove it from `CRATES` and any content that names it. |
 | `evidence …`, `measure …`, `list …` | A check no longer produces that value. Fix the check or the placeholder. |
@@ -123,8 +124,16 @@ by no locked dependency, called from a crate that depends on it; a
 TypeScript import), or a client naming a route. A name it cannot resolve
 draws nothing rather than a guess. The flows in `subsystems.py` say how
 work moves, step by step, and each step must ride a measured connection.
-The Plant tab draws all of it: units in plant areas, pipes, and a packet
-that travels each flow; select a unit for what it uses and what uses it.
+The Plant tab draws all of it on the layer stack's layers, so the two
+sheets read the same way: each subsystem sits on the layer of the crate
+holding most of its code, coloured by its plant area, and what lies
+outside the repository (`EXTERNAL`) sits on L0. Pipes are the measured
+connections, and a packet travels each flow; hover or select a unit for
+what it uses and what uses it, pick an area to light it, or select a crate
+on the layer stack to light the subsystems with code in it. The
+Connections sheet is the same data as an explorer.
+It opens with no flow selected, the whole plant at rest; picking the
+selected flow again, None, or Esc returns there.
 The operations screen shows the same diagram full screen with the
 headline figures, cycles the flows, and replays the last fortnight's
 commits onto the units they touched. It reads only the model, so it is as

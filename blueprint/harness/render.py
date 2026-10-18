@@ -165,6 +165,8 @@ def markdown(model):
         out += [f"**{f['name']}**", ""]
         out += [f"{i}. {names.get(s['from'], s['from'])} → {names.get(s['to'], s['to'])}: {s['what']}" for i, s in enumerate(f["steps"], 1)]
         out.append("")
+    out += ["Outside the repository (declared in `subsystems.EXTERNAL`): " + "; ".join(
+        f"{e['name']} ← " + ", ".join(names.get(r, r) for r in e["reach"]) for e in model["externals"]) + ".", ""]
     out += ["<details><summary><b>Every subsystem's connections</b></summary>", "",
             "| Subsystem | Uses (weight; `http` marks route calls) |", "|---|---|"]
     for x in sorted(model["subsystems"], key=lambda s: -(len(s["out"]) + len(s["in"]))):
@@ -236,9 +238,12 @@ def layer_svg(model, hot):
         for c in items:
             w = minw + flex * c["src"] / total
             label = "vak (CLI)" if c["name"] == "vak" else c["name"].replace("vak-", "")
-            out.append(f'<g><title>{esc(c["name"])}: {c["src"]:,} source lines, {c["commits"]} commits</title><rect class="{"box hot" if c["commits"] >= hot else "box"}" x="{x:.1f}" y="{y+12}" width="{w:.1f}" height="{BAND-24}" rx="2"/>')
+            n_subs = len(c.get("subsystems", []))
+            out.append(f'<g class="crate-box" data-crate="{esc(c["name"])}" tabindex="0" role="button" aria-label="{esc(c["name"])}: show its {n_subs} subsystems on the plant diagram">'
+                       f'<title>{esc(c["name"])}: {c["src"]:,} source lines, {c["commits"]} commits, {n_subs} subsystems. Select to show them on the plant diagram.</title>'
+                       f'<rect class="{"box hot" if c["commits"] >= hot else "box"}" x="{x:.1f}" y="{y+12}" width="{w:.1f}" height="{BAND-24}" rx="2"/>')
             if w > 90:
-                out.append(f'<text class="bl" x="{x+8:.1f}" y="{y+36}">{esc(label)}</text><text class="bs" x="{x+8:.1f}" y="{y+54}">{c["src"]/1000:.1f}k · {c["commits"]}c</text>')
+                out.append(f'<text class="bl" x="{x+8:.1f}" y="{y+36}">{esc(label)}</text><text class="bs" x="{x+8:.1f}" y="{y+54}">{c["src"]/1000:.1f}k · {c["commits"]}c · {n_subs}s</text>')
             else:
                 out.append(f'<text class="bl small" x="{x+w/2:.1f}" y="{y+40}" text-anchor="middle">{esc(label)}</text><text class="bs" x="{x+w/2:.1f}" y="{y+56}" text-anchor="middle">{c["src"]/1000:.1f}k</text>')
             out.append("</g>")
@@ -469,6 +474,7 @@ def page(model, resolve):
     model["review"].extend(plant_review)
     blocks = {
         "PLANT_SVG": plant_svg, "FLOWS": plant.flows_html(model), "FLOW_BUTTONS": plant.flow_buttons(model),
+        "AREA_CHIPS": plant.area_chips(model),
         "CONNECTIONS": plant.connections_html(model), "WORK_SUBS": work_subsystem_bars(model),
         "SUMMARY": md_to_html(model["summary"]["text"]),
         "ATTENTION": attention_html(model), "ACTIVITY": activity_html(model), "DECISIONS": decisions_html(model),

@@ -564,12 +564,30 @@ def build(ms, crate_layer):
                 "docs_uncited": uncited}
     return out, coverage, review, owner, route_owner
 
+# What lies outside the repository, and which subsystems reach it. Declared
+# by hand, since the code reaches these through the network, the OS or a
+# person; each named subsystem must exist.
+EXTERNAL = [
+    ("owner", "You", "The owner, at the desktop app, a browser, a terminal or a phone",
+     ["client", "desktop", "terminal", "admin", "cli"]),
+    ("chat", "Chat platforms", "Telegram, Discord and Slack", ["gateway"]),
+    ("models", "Model APIs and local models", "Hosted providers and local model servers", ["llm", "voice"]),
+    ("mailproviders", "Mail and calendar providers", "Google, Microsoft and Apple accounts", ["mail"]),
+    ("web", "The web", "Pages, feeds and social sites a tool or connector fetches", ["tools", "intake", "social"]),
+    ("mcpservers", "MCP servers", "Integration servers the owner configured", ["mcp"]),
+    ("keychain", "Keychain", "The OS secret service, or the encrypted-file fallback", ["config"]),
+    ("ossandbox", "OS sandbox and Docker", "Seatbelt, Landlock and seccomp, and the optional Docker backend", ["sandbox"]),
+    ("services", "launchd and systemd", "The service managers that start and restart Vak", ["operations", "install"]),
+    ("nats", "NATS", "The optional distributed bus", ["bus"]),
+]
+
 # How work moves through the system: each flow is a sequence of steps
 # (from, to, what moves). Every step must ride a measured connection
 # (connections.py), in either direction, or the harness reports it, so a
 # drawn flow cannot outlive the code it describes.
 FLOWS = [
     ("message", "A message becomes an answer", [
+        ("owner", "client", "type a message"),
         ("client", "server", "POST the message"),
         ("server", "turn", "run the turn"),
         ("turn", "intent", "read the request"),
@@ -578,6 +596,7 @@ FLOWS = [
         ("turn", "loop", "start the loop"),
         ("loop", "context", "plan the working set"),
         ("loop", "llm", "stream the model"),
+        ("llm", "models", "call the provider"),
         ("loop", "permission", "authorize each call"),
         ("loop", "tools", "run the calls"),
         ("tools", "sandbox", "in a sandboxed worker"),
@@ -586,8 +605,10 @@ FLOWS = [
         ("loop", "cards", "record cards"),
         ("cards", "server", "project what a person sees"),
         ("server", "client", "stream events"),
+        ("client", "owner", "the answer, card by card"),
     ]),
     ("channel", "A chat message from a phone", [
+        ("chat", "gateway", "a message arrives"),
         ("gateway", "permission", "check the allowlist"),
         ("gateway", "turn", "admit as the bound Agent"),
         ("turn", "loop", "run the loop"),
@@ -595,6 +616,7 @@ FLOWS = [
         ("cards", "delivery", "render for the channel"),
         ("delivery", "gateway", "channel markup"),
         ("gateway", "runs", "send once as an effect"),
+        ("gateway", "chat", "the reply"),
     ]),
     ("automation", "A scheduled automation runs", [
         ("automations", "runs", "claim the slot"),
@@ -614,6 +636,7 @@ FLOWS = [
     ("mail", "Mail is sent after review", [
         ("client", "mail", "approve the candidate"),
         ("mail", "runs", "send once as an effect"),
+        ("mail", "mailproviders", "the provider sends it"),
     ]),
     ("delegate", "A worker is delegated", [
         ("loop", "workers", "call task"),
@@ -627,7 +650,8 @@ FLOWS = [
     ]),
     ("intake", "A source is read", [
         ("automations", "intake", "poll a source"),
-        ("intake", "tools", "fetch and parse in the worker"),
+        ("intake", "web", "fetch the source"),
+        ("intake", "tools", "parse in the worker"),
         ("intake", "catalog", "index what was accepted"),
         ("intake", "inbox", "alert the owner"),
     ]),
@@ -642,7 +666,8 @@ FLOWS = [
         ("sync", "storage", "blobs and the writer epoch"),
     ]),
     ("doctor", "The doctor checks the install", [
-        ("cli", "doctor", "vak doctor"),
+        ("owner", "cli", "run vak doctor"),
+        ("cli", "doctor", "collect the report"),
         ("admin", "doctor", "the Diagnostics screen"),
         ("doctor", "config", "read the configuration"),
         ("doctor", "llm", "reach the providers"),
@@ -722,10 +747,17 @@ def history(ms, last_date, days):
 
 def check_flows(edges):
     """Review lines for flows that name an unknown subsystem or ride no
-    measured connection."""
+    measured or declared connection, and for outside parts that name an
+    unknown subsystem."""
     ids = {s[0] for s in SUBSYSTEMS}
     linked = {frozenset((e["from"], e["to"])) for e in edges}
     review = []
+    for xid, _, _, reach in EXTERNAL:
+        for sid in reach:
+            if sid not in ids:
+                review.append(f"outside {xid}: unknown subsystem {sid}")
+            linked.add(frozenset((xid, sid)))
+    ids |= {x[0] for x in EXTERNAL}
     for fid, _, steps in FLOWS:
         for a, b, what in steps:
             for x in (a, b):
