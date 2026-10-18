@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "89391c7d2",
+  "revision": "49755dd58",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -11,7 +11,7 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 334923,
+   "rust_src": 335188,
    "rust_tests": 85835,
    "ts_src": 62480,
    "routes": 396,
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 77,
    "lock_crates": 764,
-   "total_commits": 2374,
+   "total_commits": 2375,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -95,6 +95,11 @@
     "id": "F3",
     "verdict": "Defects found by review",
     "title": "Storage's guarantees are not tested in the shapes that broke them"
+   },
+   {
+    "id": "F5",
+    "verdict": "Measured linear growth",
+    "title": "Budget admission decodes settled reservation history"
    }
   ],
   "health": [
@@ -248,19 +253,19 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 509,
+  "commits": 510,
   "areas": [
    [
     "docs",
-    435
+    436
    ],
    [
     "(root)",
-    267
+    268
    ],
    [
     "vak-core",
-    222
+    223
    ],
    [
     "vak-server",
@@ -308,7 +313,7 @@
    [
     "turn",
     "Turn admission",
-    107
+    108
    ],
    [
     "client",
@@ -378,7 +383,7 @@
    [
     "engineering",
     "Build, gate and release",
-    32
+    33
    ],
    [
     "catalog",
@@ -526,6 +531,11 @@
     7
    ],
    [
+    "finops",
+    "Cost and budgets",
+    7
+   ],
+   [
     "coworking",
     "Shared conversations",
     6
@@ -533,11 +543,6 @@
    [
     "doctor",
     "Doctor and health",
-    6
-   ],
-   [
-    "finops",
-    "Cost and budgets",
     6
    ],
    [
@@ -617,6 +622,17 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "49755dd58",
+    "date": "2026-10-19",
+    "subject": "Own budget policy state and bind cached gates to their data home",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs",
+     "vak-core"
+    ]
+   },
    {
     "hash": "89391c7d2",
     "date": "2026-10-19",
@@ -784,23 +800,10 @@
      "(root)",
      "docs"
     ]
-   },
-   {
-    "hash": "fbeda8f9b",
-    "date": "2026-10-18",
-    "subject": "Store Canvas state in conversation-sealed fenced Documents",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-core",
-     "vak-server",
-     "vak-session",
-     "vak-storage",
-     "vak-tools"
-    ]
    }
   ],
   "unreleased": [
+   "Relocating an embedded Core's data home no longer reuses budget gates bound to its prior home.",
    "Effect detail, filtered history and sendable-work reads use an encrypted row index instead of decoding the whole history.",
    "Card calls fail the turn if their acceptance decision cannot be recorded, and close their live call indicator with an error.",
    "FinOps lets the owner record a provider-verified actual charge for an uncertain reservation.",
@@ -1320,7 +1323,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 64644,
+   "lines": 64909,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -4292,9 +4295,9 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 14273,
+   "lines": 14188,
    "largest": [
-    12435,
+    12350,
     "crates/vak-core/src/lib.rs"
    ],
    "routes": [
@@ -4325,9 +4328,9 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 377,
+   "commits": 378,
    "fixes": 58,
-   "recent": 107,
+   "recent": 108,
    "fix_density": 4.1,
    "out": [
     {
@@ -4452,6 +4455,16 @@
     },
     {
      "from": "turn",
+     "to": "finops",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-core/src/lib.rs",
+      "crates/vak-core/src/finops.rs"
+     ]
+    },
+    {
+     "from": "turn",
      "to": "flows",
      "kind": "code",
      "weight": 3,
@@ -4508,16 +4521,6 @@
      "example": [
       "crates/vak-core/src/lib.rs",
       "crates/vak-commit/src/ledger.rs"
-     ]
-    },
-    {
-     "from": "turn",
-     "to": "finops",
-     "kind": "code",
-     "weight": 2,
-     "example": [
-      "crates/vak-core/src/lib.rs",
-      "crates/vak-core/src/finops.rs"
      ]
     },
     {
@@ -4763,6 +4766,16 @@
      ]
     },
     {
+     "from": "finops",
+     "to": "turn",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-core/src/model_call_budget.rs",
+      "crates/vak-core/src/lib.rs"
+     ]
+    },
+    {
      "from": "runs",
      "to": "turn",
      "kind": "code",
@@ -4869,16 +4882,6 @@
      "weight": 2,
      "example": [
       "crates/vak-core/src/health.rs",
-      "crates/vak-core/src/lib.rs"
-     ]
-    },
-    {
-     "from": "finops",
-     "to": "turn",
-     "kind": "code",
-     "weight": 2,
-     "example": [
-      "crates/vak-core/src/model_call_budget.rs",
       "crates/vak-core/src/lib.rs"
      ]
     },
@@ -13640,6 +13643,16 @@
      ]
     },
     {
+     "from": "finops",
+     "to": "config",
+     "kind": "code",
+     "weight": 7,
+     "example": [
+      "crates/vak-core/src/finops.rs",
+      "crates/vak-config/src/finops.rs"
+     ]
+    },
+    {
      "from": "mail",
      "to": "config",
      "kind": "code",
@@ -13657,16 +13670,6 @@
      "example": [
       "crates/vak-ops/src/lib.rs",
       "crates/vak-config/src/lib.rs"
-     ]
-    },
-    {
-     "from": "finops",
-     "to": "config",
-     "kind": "code",
-     "weight": 6,
-     "example": [
-      "crates/vak-core/src/finops.rs",
-      "crates/vak-config/src/finops.rs"
      ]
     },
     {
@@ -18817,6 +18820,16 @@
     },
     {
      "from": "server",
+     "to": "finops",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-server/src/lib.rs",
+      "crates/vak-core/src/finops.rs"
+     ]
+    },
+    {
+     "from": "server",
      "to": "inbox",
      "kind": "code",
      "weight": 3,
@@ -18903,16 +18916,6 @@
      "example": [
       "crates/vak-server/src/lib.rs",
       "crates/vak-delivery/src/presentation.rs"
-     ]
-    },
-    {
-     "from": "server",
-     "to": "finops",
-     "kind": "code",
-     "weight": 2,
-     "example": [
-      "crates/vak-server/src/lib.rs",
-      "crates/vak-core/src/finops.rs"
      ]
     },
     {
@@ -20412,11 +20415,11 @@
     "L6",
     "L7"
    ],
-   "modules": 5,
+   "modules": 6,
    "parts": [],
-   "lines": 4100,
+   "lines": 4450,
    "largest": [
-    3349,
+    3483,
     "crates/vak-core/src/finops.rs"
    ],
    "routes": [
@@ -20431,12 +20434,13 @@
     "crates/vak-client-ui/src/components/BudgetBanner.tsx",
     "crates/vak-core/src/finops.rs",
     "crates/vak-core/src/model_call_budget.rs",
+    "crates/vak-core/src/spend_services.rs",
     "crates/vak-server/src/budget_recovery.rs"
    ],
-   "commits": 33,
+   "commits": 34,
    "fixes": 4,
-   "recent": 6,
-   "fix_density": 1.0,
+   "recent": 7,
+   "fix_density": 0.9,
    "out": [
     {
      "from": "finops",
@@ -20452,7 +20456,7 @@
      "from": "finops",
      "to": "config",
      "kind": "code",
-     "weight": 6,
+     "weight": 7,
      "example": [
       "crates/vak-core/src/finops.rs",
       "crates/vak-config/src/finops.rs"
@@ -20470,22 +20474,22 @@
     },
     {
      "from": "finops",
+     "to": "turn",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-core/src/model_call_budget.rs",
+      "crates/vak-core/src/lib.rs"
+     ]
+    },
+    {
+     "from": "finops",
      "to": "llm",
      "kind": "code",
      "weight": 2,
      "example": [
       "crates/vak-agent/src/spend.rs",
       "crates/vak-llm/src/types.rs"
-     ]
-    },
-    {
-     "from": "finops",
-     "to": "turn",
-     "kind": "code",
-     "weight": 2,
-     "example": [
-      "crates/vak-core/src/model_call_budget.rs",
-      "crates/vak-core/src/lib.rs"
      ]
     },
     {
@@ -20531,20 +20535,10 @@
    ],
    "in": [
     {
-     "from": "admin",
-     "to": "finops",
-     "kind": "http",
-     "weight": 2,
-     "example": [
-      "crates/vak-admin-ui/src/api.ts",
-      "/finops"
-     ]
-    },
-    {
      "from": "server",
      "to": "finops",
      "kind": "code",
-     "weight": 2,
+     "weight": 3,
      "example": [
       "crates/vak-server/src/lib.rs",
       "crates/vak-core/src/finops.rs"
@@ -20554,10 +20548,20 @@
      "from": "turn",
      "to": "finops",
      "kind": "code",
-     "weight": 2,
+     "weight": 3,
      "example": [
       "crates/vak-core/src/lib.rs",
       "crates/vak-core/src/finops.rs"
+     ]
+    },
+    {
+     "from": "admin",
+     "to": "finops",
+     "kind": "http",
+     "weight": 2,
+     "example": [
+      "crates/vak-admin-ui/src/api.ts",
+      "/finops"
      ]
     },
     {
@@ -21333,9 +21337,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 117,
+   "commits": 118,
    "fixes": 20,
-   "recent": 32,
+   "recent": 33,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -21343,8 +21347,8 @@
   }
  ],
  "coverage": {
-  "units": 702,
-  "claimed": 702,
+  "units": 703,
+  "claimed": 703,
   "routes": 396,
   "routes_claimed": 396,
   "verbs": 35,
@@ -22025,6 +22029,16 @@
    ]
   },
   {
+   "from": "finops",
+   "to": "config",
+   "kind": "code",
+   "weight": 7,
+   "example": [
+    "crates/vak-core/src/finops.rs",
+    "crates/vak-config/src/finops.rs"
+   ]
+  },
+  {
    "from": "gateway",
    "to": "ledger",
    "kind": "code",
@@ -22252,16 +22266,6 @@
    "example": [
     "crates/vak-client-ui/src/App.tsx",
     "crates/vak-client-ui/src/soundCues.ts"
-   ]
-  },
-  {
-   "from": "finops",
-   "to": "config",
-   "kind": "code",
-   "weight": 6,
-   "example": [
-    "crates/vak-core/src/finops.rs",
-    "crates/vak-config/src/finops.rs"
    ]
   },
   {
@@ -23735,6 +23739,16 @@
    ]
   },
   {
+   "from": "finops",
+   "to": "turn",
+   "kind": "code",
+   "weight": 3,
+   "example": [
+    "crates/vak-core/src/model_call_budget.rs",
+    "crates/vak-core/src/lib.rs"
+   ]
+  },
+  {
    "from": "flows",
    "to": "permission",
    "kind": "code",
@@ -24066,6 +24080,16 @@
   },
   {
    "from": "server",
+   "to": "finops",
+   "kind": "code",
+   "weight": 3,
+   "example": [
+    "crates/vak-server/src/lib.rs",
+    "crates/vak-core/src/finops.rs"
+   ]
+  },
+  {
+   "from": "server",
    "to": "inbox",
    "kind": "code",
    "weight": 3,
@@ -24202,6 +24226,16 @@
    "example": [
     "crates/vak-core/src/lib.rs",
     "crates/vak-catalog/src/lib.rs"
+   ]
+  },
+  {
+   "from": "turn",
+   "to": "finops",
+   "kind": "code",
+   "weight": 3,
+   "example": [
+    "crates/vak-core/src/lib.rs",
+    "crates/vak-core/src/finops.rs"
    ]
   },
   {
@@ -25105,16 +25139,6 @@
    ]
   },
   {
-   "from": "finops",
-   "to": "turn",
-   "kind": "code",
-   "weight": 2,
-   "example": [
-    "crates/vak-core/src/model_call_budget.rs",
-    "crates/vak-core/src/lib.rs"
-   ]
-  },
-  {
    "from": "flows",
    "to": "intent",
    "kind": "code",
@@ -25666,16 +25690,6 @@
   },
   {
    "from": "server",
-   "to": "finops",
-   "kind": "code",
-   "weight": 2,
-   "example": [
-    "crates/vak-server/src/lib.rs",
-    "crates/vak-core/src/finops.rs"
-   ]
-  },
-  {
-   "from": "server",
    "to": "flows",
    "kind": "code",
    "weight": 2,
@@ -25922,16 +25936,6 @@
    "example": [
     "crates/vak-core/src/lib.rs",
     "crates/vak-commit/src/ledger.rs"
-   ]
-  },
-  {
-   "from": "turn",
-   "to": "finops",
-   "kind": "code",
-   "weight": 2,
-   "example": [
-    "crates/vak-core/src/lib.rs",
-    "crates/vak-core/src/finops.rs"
    ]
   },
   {
@@ -29969,6 +29973,16 @@
   }
  ],
  "replay": [
+  {
+   "hash": "49755dd58",
+   "date": "2026-10-19",
+   "subject": "Own budget policy state and bind cached gates to their data home",
+   "subsystems": [
+    "engineering",
+    "finops",
+    "turn"
+   ]
+  },
   {
    "hash": "89391c7d2",
    "date": "2026-10-19",
@@ -35484,10 +35498,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 60094,
+   "src": 60359,
    "tests": 10049,
-   "files": 72,
-   "commits": 638,
+   "files": 73,
+   "commits": 639,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35546,7 +35560,7 @@
     "walkdir"
    ],
    "largest": [
-    12435,
+    12350,
     "crates/vak-core/src/lib.rs"
    ],
    "subsystems": [
@@ -36697,7 +36711,7 @@
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12435
+    "lines": 12350
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
@@ -36733,7 +36747,7 @@
    },
    {
     "file": "crates/vak-core/src/finops.rs",
-    "lines": 3349
+    "lines": 3483
    },
    {
     "file": "crates/vak-ooxml/src/read.rs",
@@ -36750,7 +36764,7 @@
    {
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6758,
+    "line": 6626,
     "lines": 1622
    },
    {
@@ -36890,8 +36904,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1349,
-  "hot": 638
+  "docs_commits": 1350,
+  "hot": 639
  },
  "findings": [
   {
@@ -36899,7 +36913,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 194 (rank 1 of 4,348 library functions) and `Core::run_turn_recorded` at 103 (rank 3); the median is 3 and the 99th percentile 24. 153 commits changed the first (6% of all) and 210 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.1 and `vak-agent/src/lib.rs` at 8.7 per thousand lines, against a median of 4.5 over 400 files; file size alone does not predict the rate (ρ = -0.14).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 194 (rank 1 of 4,348 library functions) and `Core::run_turn_recorded` at 103 (rank 3); the median is 3 and the 99th percentile 24. 153 commits changed the first (6% of all) and 210 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.7 per thousand lines, against a median of 4.4 over 401 files; file size alone does not predict the rate (ρ = -0.14).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
@@ -36923,6 +36937,16 @@
    "matters": "These are the guarantees authorization, erasure and sync rest on. A bug here does not show as a failed turn; it shows as access that should have ended, or a write that should have been fenced.",
    "fix": "A model-based test of each chain's reader against a reference, and multi-process interleavings of every fenced write path.",
    "sources": "[docs/audits/architecture-and-presentation-review-2026-10-18.md](../docs/audits/architecture-and-presentation-review-2026-10-18.md) (A01, A02); `crates/vak-storage`, `crates/vak-session`."
+  },
+  {
+   "id": "F5",
+   "tag": "Performance",
+   "verdict": "Measured linear growth",
+   "title": "Budget admission decodes settled reservation history",
+   "evidence": "The 2026-10-19 production-path growth probe measures warm strict cost reads at 1.44 ms for 100 rows, 9.87 ms for 1,000, and 85.40 ms for 10,000. Durable reserve/release averages rise from 67.67 to 144.99 ms. DailyCostTotals retains all settled reservation identities in one Rollup Document, decoded even when a capped admission needs only its day and session totals.",
+   "matters": "Capped per-call budget checks become slower as unrelated paid history accumulates.",
+   "fix": "Use encrypted indexed reservation rows and day/session aggregates, committing their source cursor transactionally; retain strict corrections, ownership and unresolved debt.",
+   "sources": "`crates/vak-core/src/finops.rs` (`strict_cost_totals_at`, `finops_growth_100_1000_10000`); [measured evidence](../docs/audits/finops-growth-measurement-2026-10-19.md)."
   }
  ],
  "keep": [
