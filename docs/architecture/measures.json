@@ -1,5 +1,5 @@
 {
- "revision": "01a5b7393",
+ "revision": "825b18564",
  "complexity": [
   {
    "score": 194,
@@ -3737,7 +3737,7 @@
    "score": 6,
    "name": "owner_of",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 64
+   "line": 65
   },
   {
    "score": 6,
@@ -9201,27 +9201,27 @@
   },
   {
    "score": 3,
-   "name": "forget_all",
+   "name": "remove_indexed_entries",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 237
+   "line": 253
   },
   {
    "score": 3,
    "name": "remove",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 337
+   "line": 427
   },
   {
    "score": 3,
    "name": "with_lock",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 403
+   "line": 493
   },
   {
    "score": 3,
    "name": "decrypt",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 558
+   "line": 648
   },
   {
    "score": 3,
@@ -14969,79 +14969,85 @@
    "score": 2,
    "name": "fnv16",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 46
+   "line": 47
   },
   {
    "score": 2,
    "name": "bound_scope_key_for",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 109
+   "line": 110
   },
   {
    "score": 2,
    "name": "scope_key_for",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 122
+   "line": 123
   },
   {
    "score": 2,
    "name": "store",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 129
+   "line": 130
   },
   {
    "score": 2,
    "name": "store",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 135
+   "line": 136
   },
   {
    "score": 2,
    "name": "backend",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 226
+   "line": 231
   },
   {
    "score": 2,
-   "name": "index_write",
+   "name": "validate_index_component",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 283
+   "line": 276
+  },
+  {
+   "score": 2,
+   "name": "with_index_lock",
+   "file": "crates/vak-config/src/credentials.rs",
+   "line": 320
   },
   {
    "score": 2,
    "name": "index_mark_present",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 291
+   "line": 379
   },
   {
    "score": 2,
    "name": "index_mark_absent",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 300
+   "line": 389
   },
   {
    "score": 2,
    "name": "get",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 323
+   "line": 413
   },
   {
    "score": 2,
    "name": "key",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 426
+   "line": 516
   },
   {
    "score": 2,
    "name": "load_all",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 470
+   "line": 560
   },
   {
    "score": 2,
    "name": "save_all",
    "file": "crates/vak-config/src/credentials.rs",
-   "line": 478
+   "line": 568
   },
   {
    "score": 2,
@@ -26083,85 +26089,5 @@
    "file": "crates/vak-voice/src/vad.rs",
    "line": 33
   }
- ],
- "audit": {
-  "vulnerabilities": [
-   {
-    "id": "RUSTSEC-2026-0338",
-    "package": "quinn-proto",
-    "version": "0.11.17",
-    "title": "Remote peer can panic quinn-proto with zero-length STREAM frames during unordered reads"
-   },
-   {
-    "id": "RUSTSEC-2026-0340",
-    "package": "quinn-proto",
-    "version": "0.11.17",
-    "title": "Peer minimum ACK delay can panic quinn-proto when ACK_FREQUENCY transmission is enabled"
-   },
-   {
-    "id": "RUSTSEC-2026-0343",
-    "package": "quinn-proto",
-    "version": "0.11.17",
-    "title": "Outgoing datagram buffer accounting can panic the sender in quinn-proto"
-   },
-   {
-    "id": "RUSTSEC-2026-0346",
-    "package": "rustls",
-    "version": "0.23.45",
-    "title": "`Debug` impls for client session values expose TLS secrets"
-   },
-   {
-    "id": "RUSTSEC-2026-0347",
-    "package": "rustls",
-    "version": "0.23.45",
-    "title": "Buffered application data sent to outer server after ECH rejection"
-   },
-   {
-    "id": "RUSTSEC-2026-0348",
-    "package": "rustls",
-    "version": "0.23.45",
-    "title": "Brotli certificate decompression can allocate up to 1 GiB before authentication"
-   },
-   {
-    "id": "RUSTSEC-2026-0349",
-    "package": "rustls",
-    "version": "0.23.45",
-    "title": "Unauthenticated ServerHello can downgrade later connections to classical key exchange"
-   },
-   {
-    "id": "RUSTSEC-2026-0367",
-    "package": "zip",
-    "version": "4.6.1",
-    "title": " Insecure Preservation of SUID/SGID Bits during ZIP Extraction Leading to Potential Privilege Escalation"
-   },
-   {
-    "id": "RUSTSEC-2026-0368",
-    "package": "zip",
-    "version": "4.6.1",
-    "title": "zip: `ZipArchive::extract` creates symbolic links whose attacker-controlled targets are outside the destination directory"
-   },
-   {
-    "id": "RUSTSEC-2026-0369",
-    "package": "zip",
-    "version": "4.6.1",
-    "title": "ZipStreamReader::extract() and ZipArchive::extract() apply Unix permissions through symlinks without confining the target"
-   }
-  ],
-  "warnings": {
-   "unmaintained": [
-    "proc-macro-error 1.0.4",
-    "unic-char-property 0.9.0",
-    "unic-char-range 0.9.0",
-    "unic-common 0.9.0",
-    "unic-ucd-ident 0.9.0",
-    "unic-ucd-version 0.9.0",
-    "zbus_names 4.3.4",
-    "zvariant 5.15.0",
-    "zvariant_derive 5.15.0"
-   ],
-   "unsound": [
-    "glib 0.18.5"
-   ]
-  }
- }
+ ]
 }
