@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "ecdecd679",
+  "revision": "420046481",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 331676,
-   "rust_tests": 85438,
+   "rust_src": 331781,
+   "rust_tests": 85514,
    "ts_src": 62404,
    "routes": 394,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 75,
    "lock_crates": 764,
-   "total_commits": 2369,
+   "total_commits": 2370,
    "days": 59,
    "peak_day": 174,
    "design_docs": 96,
@@ -239,15 +239,15 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 517,
+  "commits": 518,
   "areas": [
    [
     "docs",
-    439
+    440
    ],
    [
     "(root)",
-    269
+    270
    ],
    [
     "vak-core",
@@ -255,15 +255,15 @@
    ],
    [
     "vak-server",
-    186
+    187
    ],
    [
     "vak-client-ui",
-    119
+    120
    ],
    [
     "vak-agent",
-    101
+    102
    ],
    [
     "vak-session",
@@ -304,7 +304,7 @@
    [
     "client",
     "Workspace client",
-    101
+    102
    ],
    [
     "cards",
@@ -354,7 +354,7 @@
    [
     "library",
     "Library and file state",
-    42
+    43
    ],
    [
     "lifecycle",
@@ -614,6 +614,18 @@
   ],
   "recent": [
    {
+    "hash": "420046481",
+    "date": "2026-10-18",
+    "subject": "Verify Library state and exercise card provenance lifecycles",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-client-ui",
+     "vak-server"
+    ]
+   },
+   {
     "hash": "ecdecd679",
     "date": "2026-10-18",
     "subject": "Make the speed simulator readable and its model resource-by-resource",
@@ -764,20 +776,10 @@
      "blueprint",
      "docs"
     ]
-   },
-   {
-    "hash": "fe772ff92",
-    "date": "2026-10-18",
-    "subject": "Preserve failed Canvas saves and expose recovery state",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-client-ui",
-     "vak-server"
-    ]
    }
   ],
   "unreleased": [
+   "Library lists, file cards and version comparisons report unreadable history or workspace files instead of silently showing missing or incomplete state.",
    "Canvas note conflicts show both versions and let you choose what to keep for each note.",
    "Ability tables infer columns from every recorded row, keeping later-only fields.",
    "Ability-backed tables and charts use the exact recorded call selected by the answer.",
@@ -1278,7 +1280,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 77998,
+   "lines": 78103,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1459,9 +1461,9 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 503,
+   "commits": 504,
    "fixes": 73,
-   "recent": 101,
+   "recent": 102,
    "fix_density": 4.0,
    "out": [
     {
@@ -15323,9 +15325,9 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 7715,
+   "lines": 7820,
    "largest": [
-    2936,
+    3041,
     "crates/vak-server/src/library.rs"
    ],
    "routes": [
@@ -15373,9 +15375,9 @@
     "crates/vak-server/src/library.rs",
     "crates/vak-tools/src/artifact.rs"
    ],
-   "commits": 47,
+   "commits": 48,
    "fixes": 4,
-   "recent": 42,
+   "recent": 43,
    "fix_density": 0.5,
    "out": [
     {
@@ -29779,6 +29781,15 @@
  ],
  "replay": [
   {
+   "hash": "420046481",
+   "date": "2026-10-18",
+   "subject": "Verify Library state and exercise card provenance lifecycles",
+   "subsystems": [
+    "client",
+    "library"
+   ]
+  },
+  {
    "hash": "ecdecd679",
    "date": "2026-10-18",
    "subject": "Make the speed simulator readable and its model resource-by-resource",
@@ -35046,9 +35057,9 @@
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
    "src": 15907,
-   "tests": 19276,
+   "tests": 19352,
    "files": 13,
-   "commits": 339,
+   "commits": 340,
    "deps": [
     "vak-config",
     "vak-context",
@@ -35180,9 +35191,9 @@
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
    "src": 37668,
-   "tests": 279,
+   "tests": 324,
    "files": 187,
-   "commits": 639,
+   "commits": 640,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -36226,10 +36237,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 73829,
+   "src": 73934,
    "tests": 23792,
    "files": 51,
-   "commits": 834,
+   "commits": 835,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -36794,7 +36805,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1344,
+  "docs_commits": 1345,
   "hot": 634
  },
  "findings": [
