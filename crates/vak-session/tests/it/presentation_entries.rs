@@ -146,6 +146,124 @@ fn presentations_are_returned_in_chain_order() {
 }
 
 #[test]
+fn active_presentations_follow_recorded_same_turn_replacements() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("active.jsonl"), header()).unwrap();
+    let user = log
+        .append_message(MessageRecord {
+            message: Message::user_text("go"),
+            meta: None,
+        })
+        .unwrap();
+    let mut target_id = String::new();
+    for (index, (call, error)) in [
+        ("call-1", false),
+        ("call-2", false),
+        ("call-3", false),
+        ("call-4", true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut input = serde_json::json!({"summary": call});
+        if index > 0 {
+            input["replaces"] = serde_json::json!(target_id);
+        }
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: call.into(),
+                name: "emit_card".into(),
+                input,
+            }]),
+            meta: None,
+        })
+        .unwrap();
+        if error {
+            // A failed attempt with no Presentation entry cannot retire a card.
+            log.append_message(MessageRecord {
+                message: Message::assistant(vec![ContentBlock::ToolResult {
+                    tool_use_id: call.into(),
+                    content: String::new(),
+                    is_error: true,
+                }]),
+                meta: None,
+            })
+            .unwrap();
+            continue;
+        }
+        let appended = log
+            .append_presentation(record_for(&user.id, call, call))
+            .unwrap();
+        target_id = appended.id;
+    }
+    let active: Vec<_> = log
+        .active_presentations()
+        .into_iter()
+        .map(|(_, record)| match &record.source {
+            PresentationSource::ToolCall { tool_use_id } => tool_use_id.clone(),
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(active, vec!["call-3"]);
+    assert_eq!(log.replaced_presentation_ids().len(), 2);
+    assert_eq!(
+        log.presentations().len(),
+        3,
+        "historical presentation entries remain recorded"
+    );
+}
+
+#[test]
+fn replacement_does_not_cross_turns() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("cross-turn.jsonl"), header()).unwrap();
+    let first = log
+        .append_message(MessageRecord {
+            message: Message::user_text("first"),
+            meta: None,
+        })
+        .unwrap();
+    let old = log
+        .append_presentation(record_for(&first.id, "old", "old"))
+        .unwrap();
+    let second = log
+        .append_message(MessageRecord {
+            message: Message::user_text("second"),
+            meta: None,
+        })
+        .unwrap();
+    log.append_message(MessageRecord {
+        message: Message::assistant(vec![ContentBlock::ToolUse {
+            id: "new".into(),
+            name: "emit_card".into(),
+            input: serde_json::json!({"replaces": old.id}),
+        }]),
+        meta: None,
+    })
+    .unwrap();
+    let current = log
+        .append_presentation(record_for(&second.id, "new", "new"))
+        .unwrap();
+    log.append_message(MessageRecord {
+        message: Message::assistant(vec![ContentBlock::ToolUse {
+            id: "newer".into(),
+            name: "emit_card".into(),
+            input: serde_json::json!({"replaces": current.id}),
+        }]),
+        meta: None,
+    })
+    .unwrap();
+    log.append_presentation(record_for(&second.id, "newer", "newer"))
+        .unwrap();
+    assert_eq!(log.active_presentations().len(), 2);
+    let latest = log.presentations_for_latest_turn();
+    assert_eq!(latest.len(), 1);
+    assert!(
+        matches!(&latest[0].source, PresentationSource::ToolCall { tool_use_id } if tool_use_id == "newer")
+    );
+}
+
+#[test]
 fn has_presentation_dedupes_by_turn_and_payload_digest() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("dedupe.jsonl");

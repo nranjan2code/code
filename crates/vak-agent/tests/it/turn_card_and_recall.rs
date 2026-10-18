@@ -31,6 +31,95 @@ struct Scripted {
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
+/// Resolves `$c1`/`$c2` in queued tool arguments from the acknowledgement
+/// the Agent actually returned for that earlier card call.
+struct RequestScripted {
+    capacity_key: String,
+    responses: Mutex<VecDeque<AssistantMessage>>,
+}
+
+fn presentation_id(request: &ChatRequest, call_id: &str) -> Option<String> {
+    request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|block| {
+            let ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                ..
+            } = block
+            else {
+                return None;
+            };
+            if tool_use_id != call_id {
+                return None;
+            }
+            let (_, tail) = content.rsplit_once("(presentation ")?;
+            Some(tail.trim_end_matches(')').to_string())
+        })
+}
+
+fn replace_presentation_placeholders(value: &mut serde_json::Value, request: &ChatRequest) {
+    match value {
+        serde_json::Value::String(text) => {
+            for key in ["c1", "c2"] {
+                if text.as_str() == format!("${key}")
+                    && let Some(id) = presentation_id(request, key)
+                {
+                    *text = id;
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                replace_presentation_placeholders(item, request);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for item in fields.values_mut() {
+                replace_presentation_placeholders(item, request);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[async_trait]
+impl Provider for RequestScripted {
+    fn name(&self) -> &str {
+        "request-scripted"
+    }
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.clone()
+    }
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        let mut next = self.responses.lock().unwrap().pop_front();
+        if let Some(message) = &mut next {
+            for block in &mut message.content {
+                if let ContentBlock::ToolUse { input, .. } = block {
+                    replace_presentation_placeholders(input, &request);
+                }
+            }
+        }
+        let (mut sink, rx) = stream::channel(64);
+        match next {
+            Some(message) => {
+                sink.push(stream::StreamEvent::Start {
+                    partial: message.clone(),
+                });
+                sink.close_message(message).await;
+            }
+            None => sink.close_error(LlmError::Parse("exhausted".into())).await,
+        }
+        Ok(rx)
+    }
+}
+
 #[async_trait]
 impl Provider for Scripted {
     fn name(&self) -> &str {
@@ -102,7 +191,7 @@ impl Tool for FakeEmitChartCard {
     }
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({"type": "object", "properties": {
-            "semantic_type": {"type": "string", "enum": ["chart"]},
+            "semantic_type": {"type": "string", "enum": ["chart", "controls", "stats"]},
             "title": {"type": "string"},
             "points": {"type": "array"}
         }})
@@ -110,9 +199,29 @@ impl Tool for FakeEmitChartCard {
     fn presents_cards(&self) -> bool {
         true
     }
+    fn followable_fields(&self) -> Vec<Vec<String>> {
+        vec![vec!["readings".into(), "*".into(), "value".into()]]
+    }
     async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
         let envelope = args.clone();
         ToolOutput::ok(envelope.to_string())
+    }
+}
+
+struct KeepGoing;
+#[async_trait]
+impl Tool for KeepGoing {
+    fn name(&self) -> &str {
+        "keep_going"
+    }
+    fn description(&self) -> &str {
+        "test turn continuation"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("continued")
     }
 }
 
@@ -144,12 +253,51 @@ fn fake_rebuild() -> vak_agent::PresentationRebuild {
     })
 }
 
+fn fake_controls_rebuild() -> vak_agent::PresentationRebuild {
+    Arc::new(|_name, input| {
+        let semantic_type = input.get("semantic_type")?.as_str()?.to_string();
+        let mut card = input.as_object()?.clone();
+        card.remove("semantic_type");
+        let payload = vak_session::types::canonicalize_json(&serde_json::Value::Object(card));
+        Some(PresentationCard {
+            presentation_id: None,
+            block: (semantic_type == "controls").then(|| "controls".into()),
+            title: payload["title"].as_str().unwrap_or("card").to_string(),
+            semantic_type,
+            skill_id: "test".into(),
+            skill_version: "1".into(),
+            schema_version: 1,
+            payload,
+            identity_digest: "digest".into(),
+        })
+    })
+}
+
 fn build_agent(
     dir: &tempfile::TempDir,
     session_id: &str,
     responses: Vec<AssistantMessage>,
     tools: Vec<Arc<dyn Tool>>,
     with_presentation_rebuild: bool,
+) -> Agent {
+    build_agent_with_provider(
+        dir,
+        session_id,
+        tools,
+        with_presentation_rebuild,
+        Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
+            responses: Mutex::new(VecDeque::from(responses)),
+        }),
+    )
+}
+
+fn build_agent_with_provider(
+    dir: &tempfile::TempDir,
+    session_id: &str,
+    tools: Vec<Arc<dyn Tool>>,
+    with_presentation_rebuild: bool,
+    provider: Arc<dyn Provider>,
 ) -> Agent {
     let header = SessionHeader {
         space: None,
@@ -192,14 +340,217 @@ fn build_agent(
     if with_presentation_rebuild {
         cfg.presentation_rebuild = Some(fake_rebuild());
     }
-    Agent::new(
-        Arc::new(Scripted {
+    Agent::new(provider, log, cfg)
+}
+
+fn calls(items: Vec<(&str, &str, serde_json::Value)>) -> AssistantMessage {
+    let mut message = tool_call_msg("unused", "keep_going", serde_json::json!({}));
+    message.content = items
+        .into_iter()
+        .map(|(id, name, input)| ContentBlock::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+        })
+        .collect();
+    message
+}
+
+fn card_controls(value: i64) -> serde_json::Value {
+    serde_json::json!({"semantic_type":"controls", "title":"Inputs",
+        "inputs":[{"label":"Base", "name":"base", "kind":"number", "value":value}],
+        "outputs":[]})
+}
+
+fn make_dynamic_agent(
+    dir: &tempfile::TempDir,
+    session_id: &str,
+    responses: Vec<AssistantMessage>,
+) -> Agent {
+    let mut agent = build_agent_with_provider(
+        dir,
+        session_id,
+        vec![Arc::new(FakeEmitChartCard), Arc::new(KeepGoing)],
+        true,
+        Arc::new(RequestScripted {
             capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(VecDeque::from(responses)),
         }),
-        log,
-        cfg,
-    )
+    );
+    agent.config.presentation_rebuild = Some(fake_controls_rebuild());
+    agent.config.run_retry_attempts = 0;
+    agent.config.max_retries = 0;
+    agent
+}
+
+#[tokio::test]
+async fn replacing_an_unused_same_name_control_succeeds_and_later_binding_uses_new_id() {
+    let dir = tempdir().unwrap();
+    let mut agent = make_dynamic_agent(
+        &dir,
+        "replace-unused-control",
+        vec![
+            calls(vec![
+                ("c1", "emit_chart_card", card_controls(4)),
+                ("n1", "keep_going", serde_json::json!({})),
+            ]),
+            calls(vec![
+                ("c2", "emit_chart_card", {
+                    let mut input = card_controls(9);
+                    input["replaces"] = serde_json::json!("$c1");
+                    input
+                }),
+                ("n2", "keep_going", serde_json::json!({})),
+            ]),
+            calls(vec![
+                ("c3", "emit_chart_card", {
+                    let mut input = card_controls(11);
+                    input["replaces"] = serde_json::json!("$c1");
+                    input
+                }),
+                ("n3", "keep_going", serde_json::json!({})),
+            ]),
+            calls(vec![
+                (
+                    "s1",
+                    "emit_chart_card",
+                    serde_json::json!({"semantic_type":"stats", "title":"Totals", "readings":[{"label":"Base","value":"= base"}]}),
+                ),
+                ("n4", "keep_going", serde_json::json!({})),
+            ]),
+            text_msg("Done."),
+        ],
+    );
+    let outcome = agent
+        .run(
+            "replace the input and show its total",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let presentations = session.presentations();
+    assert_eq!(
+        presentations.len(),
+        3,
+        "{presentations:?}; messages={:?}",
+        session.derive_messages()
+    );
+    let controls = presentations
+        .iter()
+        .filter(|(_, record)| record.block.as_deref() == Some("controls"))
+        .collect::<Vec<_>>();
+    assert_eq!(controls.len(), 2);
+    let active = session.active_presentations();
+    assert_eq!(active.len(), 2, "{active:?}");
+    assert_eq!(active[0].1.payload["inputs"][0]["value"], 9);
+    assert!(active.iter().all(|(id, _)| id != &controls[0].0));
+    let new_id = controls[1].0.clone();
+    let stats = presentations
+        .iter()
+        .find(|(_, record)| record.semantic_type == "stats")
+        .unwrap();
+    assert_eq!(stats.1.payload["readings"][0]["value"], 9);
+    assert_eq!(stats.1.payload["bound"][0]["from"][0], new_id);
+    let stale_refusal = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error: true,
+            } if tool_use_id == "c3" => Some(content.clone()),
+            _ => None,
+        })
+        .expect("replacing the retired control ID should be refused");
+    assert!(
+        stale_refusal.contains("no card in this answer"),
+        "{stale_refusal}"
+    );
+}
+
+#[tokio::test]
+async fn replacing_a_control_used_by_an_active_card_returns_typed_refusal() {
+    let dir = tempdir().unwrap();
+    let mut agent = make_dynamic_agent(
+        &dir,
+        "replace-bound-control",
+        vec![
+            calls(vec![
+                ("c1", "emit_chart_card", card_controls(4)),
+                ("n1", "keep_going", serde_json::json!({})),
+            ]),
+            calls(vec![
+                (
+                    "s1",
+                    "emit_chart_card",
+                    serde_json::json!({"semantic_type":"stats", "title":"Totals", "readings":[{"label":"Base","value":"= base"}]}),
+                ),
+                ("n2", "keep_going", serde_json::json!({})),
+            ]),
+            calls(vec![
+                ("c2", "emit_chart_card", {
+                    let mut input = card_controls(9);
+                    input["replaces"] = serde_json::json!("$c1");
+                    input
+                }),
+                ("n3", "keep_going", serde_json::json!({})),
+            ]),
+            text_msg("Done."),
+        ],
+    );
+    let outcome = agent
+        .run(
+            "show an input and a stat, then replace it",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let c1 = session
+        .presentations()
+        .into_iter()
+        .find_map(|(id, record)| match &record.source {
+            PresentationSource::ToolCall { tool_use_id } if tool_use_id == "c1" => Some(id),
+            _ => None,
+        })
+        .expect("c1 presentation");
+    let refusal = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error: true,
+            } if tool_use_id == "c2" => Some(content.clone()),
+            _ => None,
+        })
+        .expect("replacement should be refused");
+    let error: serde_json::Value = serde_json::from_str(&refusal).expect("typed JSON refusal");
+    assert_eq!(error["type"], "card_source_in_use", "{error}");
+    assert_eq!(error["presentation_id"], c1);
+    assert_eq!(
+        error["dependent_presentation_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "{error}"
+    );
 }
 
 #[tokio::test]

@@ -3610,7 +3610,7 @@ impl Agent {
             return Vec::new();
         };
         let mut parent_by_digest = std::collections::BTreeMap::new();
-        for (parent_id, record) in session.presentations() {
+        for (parent_id, record) in session.active_presentations() {
             if record.turn_id == turn_id {
                 parent_by_digest
                     .entry(record.payload_digest.clone())
@@ -6909,17 +6909,17 @@ impl Agent {
         let Some(turn_id) = session.latest_directive_entry_id() else {
             return (ToolRunOutput::Ok(checked.content), CallVerdict::Accepted);
         };
-        if let Some(replaced) = input
+        let active = session.active_presentations();
+        let replaced = input
             .get("replaces")
             .and_then(Value::as_str)
             .map(str::trim)
-            .filter(|id| !id.is_empty())
-        {
-            let shown: Vec<String> = session
-                .presentations()
-                .into_iter()
+            .filter(|id| !id.is_empty());
+        if let Some(replaced) = replaced {
+            let shown: Vec<String> = active
+                .iter()
                 .filter(|(_, record)| record.turn_id == turn_id)
-                .map(|(entry_id, _)| entry_id)
+                .map(|(id, _)| id.clone())
                 .collect();
             if !shown.iter().any(|id| id == replaced) {
                 return (
@@ -6930,14 +6930,50 @@ impl Agent {
                     CallVerdict::Refused(Refusal::Tool),
                 );
             }
+            let dependents: Vec<&str> = active
+                .iter()
+                .filter(|(_, record)| record.turn_id == turn_id)
+                .filter(|(_, record)| {
+                    record
+                        .payload
+                        .get("bound")
+                        .and_then(Value::as_array)
+                        .is_some_and(|bindings| {
+                            bindings.iter().any(|binding| {
+                                binding.get("from").and_then(Value::as_array).is_some_and(
+                                    |sources| {
+                                        sources
+                                            .iter()
+                                            .any(|source| source.as_str() == Some(replaced))
+                                    },
+                                )
+                            })
+                        })
+                })
+                .map(|(id, _)| id.as_str())
+                .collect();
+            if !dependents.is_empty() {
+                return (
+                    ToolRunOutput::Err(Fault::Shape, serde_json::json!({
+                        "type": "card_source_in_use",
+                        "message": "This card supplies live values to other cards. Replace or remove those dependencies before replacing this source.",
+                        "presentation_id": replaced,
+                        "dependent_presentation_ids": dependents,
+                    }).to_string()),
+                    CallVerdict::Refused(Refusal::Tool),
+                );
+            }
         }
         // Values the answer's controls cards published before this card
         // (docs/design/98 §2): its `= expression` fields are computed from
         // them, and a controls card publishes no name already taken.
         let mut scope = std::collections::BTreeMap::new();
         let mut series_scope = std::collections::BTreeMap::new();
-        for (entry_id, record) in session.presentations() {
-            if record.turn_id != turn_id || record.block.as_deref() != Some("controls") {
+        for (entry_id, record) in &active {
+            if record.turn_id != turn_id
+                || record.block.as_deref() != Some("controls")
+                || replaced == Some(entry_id.as_str())
+            {
                 continue;
             }
             for (name, value) in
@@ -6991,7 +7027,11 @@ impl Agent {
             );
         }
         let digest = vak_session::types::payload_digest(&info.payload);
-        if session.has_presentation(&turn_id, &digest) {
+        if active.iter().any(|(id, record)| {
+            record.turn_id == turn_id
+                && replaced != Some(id.as_str())
+                && record.payload_digest == digest
+        }) {
             return (
                 ToolRunOutput::Ok(
                     "This card is already shown to the person; it is not shown twice.".into(),

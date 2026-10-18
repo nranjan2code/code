@@ -809,12 +809,9 @@ fn snapshot_inner(
     let mut successful_runs = std::collections::HashSet::new();
     let mut assistant_tool_context: HashMap<String, TurnTool> = HashMap::new();
     let mut pending_tool_context: Option<TurnTool> = None;
-    // A card the model sent with `replaces` takes the place of the card of
-    // that presentation id in the answer; the ledger keeps both. Keyed by
-    // the Presentation entry id the card's acknowledgement named.
-    let mut item_of_presentation: HashMap<String, String> = HashMap::new();
+    // Runtime validation and display use the same accepted replacement view.
+    let retired_presentations = session.replaced_presentation_ids();
     let mut seen_cards: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut ids_to_remove: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in &chain {
         match &entry.payload {
             EntryPayload::Message(record) => {
@@ -1460,6 +1457,12 @@ fn snapshot_inner(
                                 for (structured_index, (output, presentation_entry_id)) in
                                     outputs.into_iter().enumerate()
                                 {
+                                    if presentation_entry_id
+                                        .as_ref()
+                                        .is_some_and(|id| retired_presentations.contains(id))
+                                    {
+                                        continue;
+                                    }
                                     // The same card emitted twice in one answer is one
                                     // card, armed retry or not: identical content has
                                     // nothing to supersede and nothing to add.
@@ -1471,20 +1474,6 @@ fn snapshot_inner(
                                         continue;
                                     }
                                     let item_id = format!("{id}-structured-{structured_index}");
-                                    if let Some(replaced) = tool_inputs
-                                        .get(id)
-                                        .and_then(|(_, input)| input.get("replaces"))
-                                        .and_then(serde_json::Value::as_str)
-                                        .and_then(|replaced| {
-                                            item_of_presentation.get(replaced.trim())
-                                        })
-                                    {
-                                        ids_to_remove.insert(replaced.clone());
-                                    }
-                                    if let Some(presentation) = &presentation_entry_id {
-                                        item_of_presentation
-                                            .insert(presentation.clone(), item_id.clone());
-                                    }
                                     let fallback_text = structured_markdown(&output);
                                     let workspace_owner = session
                                         .header()
@@ -1649,9 +1638,6 @@ fn snapshot_inner(
                         .and_then(|p| p.entry_id.as_ref())
                         .is_some_and(|entry| runtime_replies.contains(entry)))
         });
-    }
-    if !ids_to_remove.is_empty() {
-        deduplicated.retain(|item| !ids_to_remove.contains(&item.id));
     }
     deduplicate_file_artifacts(&mut deduplicated);
     let first_card_index_by_turn: HashMap<String, usize> = deduplicated
@@ -5202,7 +5188,7 @@ mod tests {
             "emit_callout_card",
             serde_json::json!({"tone": "tip", "text": "Rest between runs.", "beside_previous": true}),
         );
-        call(
+        let third = call(
             &mut log,
             "c3",
             "emit_list_card",
@@ -5222,6 +5208,23 @@ mod tests {
         assert!(outline.sections.is_empty(), "no plan, no sections");
         assert_eq!(outline.beside.len(), 1);
         assert!(outline.beside[0].starts_with("c2-"), "{:?}", outline.beside);
+        // A replacement may restore an earlier payload. Deduplication uses
+        // active cards, so the retired first payload cannot hide this one.
+        call(
+            &mut log,
+            "c4",
+            "emit_list_card",
+            serde_json::json!({"items": ["Week 1: walk"], "replaces": third}),
+        );
+        let timeline = snapshot("replaces", &log);
+        let cards: Vec<_> = timeline
+            .items
+            .iter()
+            .filter(|item| item.kind == OutputKind::Card)
+            .filter_map(|item| item.provenance.as_ref()?.tool_call_id.as_deref())
+            .collect();
+        assert_eq!(cards, ["c2", "c4"]);
+        assert_eq!(log.presentations().len(), 4, "history remains intact");
     }
 
     fn channel_log(dir: &tempfile::TempDir, name: &str) -> SessionLog {

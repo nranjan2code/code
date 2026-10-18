@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Card replacements use one active-card view for runtime validation and
+  display. Unused controls can retain their published names when replaced;
+  retired controls no longer supply new bindings or worker transfers. A
+  source with active dependent cards is refused with their IDs, preserving
+  those links until the dependencies are changed.
+
 - Linked-card controls share current inputs across views of the same
   conversation turn. Saved pages keep separate state per immutable version.
   Closing the final view clears its temporary values; invalid inputs restore

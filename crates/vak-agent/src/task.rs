@@ -1273,7 +1273,7 @@ impl DriveChild {
             .session
             .lock()
             .await
-            .presentations()
+            .active_presentations()
             .into_iter()
             .map(|(presentation_id, record)| vak_tools::PresentationCard {
                 presentation_id: Some(presentation_id),

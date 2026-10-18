@@ -37,7 +37,10 @@ needs a card built for its scenario.
 
 - A `controls` card publishes its inputs and outputs by name into the
   answer's scope. Names are unique within an answer; a second card
-  publishing a name already taken is refused with the name.
+  publishing a name already taken by an active card is refused with the
+  name. An unused source can replace itself with the same names; replacing
+  a source that active consumers still bind is explicitly refused until
+  those dependencies are changed (doc 87, Placement and revision).
 - Any card field that holds a number (a stat's value, a chart point's y,
   a table cell, a callout's figure) may instead hold an expression over
   the answer's names, written `= expression` in that field, in the same

@@ -685,6 +685,30 @@ desktop bundle freshness check because it started before the final rebuild
 finished; both bundles were rebuilt before the successful full run.
 This does not settle replacement identity or the wider lifecycle matrix.
 
+### Continuation — active replacement scope
+
+- SessionLog derives active presentations from recorded accepted card calls
+  on the active branch. Only an earlier active card of the same turn can be
+  retired; raw presentation history stays append-only. An unrecorded tool
+  attempt cannot retire a card. A recorded replacement takes effect before
+  the tool-result batch is written, so later calls in that batch see it.
+- Runtime binding names, replacement targets, duplicate checks, completion
+  evidence and delegated transfer use the active view. An unused controls
+  replacement may keep its names. A source with active bound consumers is
+  refused with `card_source_in_use` and dependent IDs. This is an explicit
+  unsupported operation, not automatic binding migration.
+- Snapshot projection shares this resolver and drops retired cards before
+  content deduplication, allowing an accepted replacement to restore an
+  earlier payload. No ledger record is rewritten or deleted.
+- Validation passes: ten session presentation tests, two actual Agent
+  replacement regressions, all 48 server projection tests and the full
+  repository gate (749-second workspace tests, formatting, Clippy, version,
+  doc paths, records and advisories). Source was frozen during the completed
+  gate. The Agent fixture initially rejected controls under its chart-only
+  test schema; it was corrected before the successful runs. Live-event
+  supersession, dependent identity migration, interaction-action cleanup
+  and the wider lifecycle matrix remain open. No browser acceptance claimed.
+
 ### Reporting contract
 
 For each slice record finding IDs, exact baseline, reproduction, chosen

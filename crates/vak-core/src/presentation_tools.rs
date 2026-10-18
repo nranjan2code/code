@@ -2416,7 +2416,7 @@ impl Tool for EmitCardTool {
         properties.insert(
             "replaces".into(),
             string(
-                "Optional. The presentation id of a card of this answer that this card replaces.",
+                "Optional. The presentation id of an active card of this answer that this card replaces. A source still supplying live values to other cards cannot be replaced until those dependencies are replaced.",
             ),
         );
         properties.insert(

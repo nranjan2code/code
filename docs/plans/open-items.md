@@ -92,7 +92,12 @@ overlapping fixes should close their original entries as well.
   after their final owner leaves. Invalid inputs clear stale publications.
   Focused scope tests, fixture typechecking, both client bundles and the
   full repository gate pass. Browser acceptance remains pending.
-  Replacement semantics and the wider lifecycle matrix remain open.
+  Replacement now shares an active-card view across runtime and snapshot
+  projection; unused sources may keep names, and source replacement with
+  active dependents is explicitly refused. Automatic binding migration,
+  live-event replacement and the wider lifecycle matrix remain open.
+  Focused replacement validation and the full gate pass. No live browser
+  acceptance is claimed.
 - [ ] S5: subject persistence, protected drafts, encrypted fenced canvas
   Documents and authorized page resources (P05–P08, D04).
   P05 subject restoration now covers all nine current subject kinds,

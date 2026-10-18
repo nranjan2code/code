@@ -188,7 +188,14 @@ before it where the answer is wide enough (`AnswerOutline.beside`); a row
 holds two, and a narrow screen stacks them. `replaces` names a card of
 this answer by the presentation id its acknowledgement gave: the new card
 takes that card's place in the answer, and the ledger keeps both; an id
-that is no card of this answer is refused with the answer's ids. These
+that is no active card of this answer is refused with its active ids.
+An unused controls card may be replaced with the same published names. A
+source still named by an active card's binding is refused with a
+`card_source_in_use` reason and the dependent presentation ids; automatic
+dependency migration is not implemented. Retired cards do not supply new
+bindings, count as current completion evidence, or transfer from workers.
+Runtime validation and snapshot display use the same accepted replacement
+view, while history and explicit recall retain every ledger entry. These
 replace the client's fixed list of forms allowed to share a row and the
 projection's supersede-by-type after a repair nudge.
 

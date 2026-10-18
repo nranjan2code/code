@@ -1351,28 +1351,71 @@ impl SessionLog {
             .collect()
     }
 
-    /// The presentations recorded on the active, latest user turn only, so a
-    /// card from an earlier turn cannot stand for this turn's evidence.
-    pub fn presentations_for_latest_turn(&self) -> Vec<&PresentationRecord> {
-        let mut found = Vec::new();
-        for entry in self.chain_to_root() {
+    /// Presentations still shown after accepted card calls replace earlier
+    /// cards in the same turn. The original ledger entries remain append-only.
+    pub fn active_presentations(&self) -> Vec<(String, &PresentationRecord)> {
+        let entries = self.chain_to_root();
+        let mut replacements = HashMap::<String, String>::new();
+        let mut active = Vec::<(String, &PresentationRecord)>::new();
+        for entry in &entries {
             match &entry.payload {
-                EntryPayload::Message(record)
-                    if record.message.role == vak_llm::Role::User
-                        && record.control_kind().is_none()
-                        && record
-                            .message
-                            .content
-                            .iter()
-                            .any(|block| matches!(block, vak_llm::ContentBlock::Text { .. })) =>
-                {
-                    found.clear();
+                EntryPayload::Message(message) => {
+                    if message.message.role != vak_llm::Role::Assistant {
+                        continue;
+                    }
+                    for block in &message.message.content {
+                        if let vak_llm::ContentBlock::ToolUse { id, input, .. } = block
+                            && let Some(target) = input
+                                .get("replaces")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                        {
+                            replacements.insert(id.clone(), target.to_owned());
+                        }
+                    }
                 }
-                EntryPayload::Presentation(record) => found.push(record),
+                EntryPayload::Presentation(record) => {
+                    if let crate::types::PresentationSource::ToolCall { tool_use_id } =
+                        &record.source
+                        && let Some(target) = replacements.get(tool_use_id)
+                        && let Some(index) = active.iter().position(|(id, previous)| {
+                            id == target && previous.turn_id == record.turn_id
+                        })
+                    {
+                        active.remove(index);
+                    }
+                    active.push((entry.id.clone(), record));
+                }
                 _ => {}
             }
         }
-        found
+        active
+    }
+
+    /// Presentation entry ids retired by accepted replacements on the active path.
+    pub fn replaced_presentation_ids(&self) -> std::collections::HashSet<String> {
+        let active: std::collections::HashSet<_> = self
+            .active_presentations()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        self.presentations()
+            .into_iter()
+            .filter_map(|(id, _)| (!active.contains(&id)).then_some(id))
+            .collect()
+    }
+
+    /// The presentations recorded on the active, latest user turn only, so a
+    /// card from an earlier turn cannot stand for this turn's evidence.
+    pub fn presentations_for_latest_turn(&self) -> Vec<&PresentationRecord> {
+        let Some(turn_id) = self.latest_directive_entry_id() else {
+            return Vec::new();
+        };
+        self.active_presentations()
+            .into_iter()
+            .filter_map(|(_, record)| (record.turn_id == turn_id).then_some(record))
+            .collect()
     }
 
     /// Whether a presentation with this exact canonical payload already
