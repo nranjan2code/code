@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "6c9ec71a8",
+  "revision": "fe772ff92",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -12,14 +12,14 @@
    "rust_crates": 35,
    "ts_crates": 2,
    "rust_src": 327897,
-   "rust_tests": 85071,
-   "ts_src": 61487,
+   "rust_tests": 85075,
+   "ts_src": 61570,
    "routes": 411,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2354,
+   "total_commits": 2355,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
@@ -88,8 +88,8 @@
   ],
   "advisories": null,
   "stale_names": {
-   "names": 233,
-   "documents": 46
+   "names": 234,
+   "documents": 47
   },
   "open_items": [
    {
@@ -199,15 +199,15 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 502,
+  "commits": 503,
   "areas": [
    [
     "docs",
-    427
+    428
    ],
    [
     "(root)",
-    257
+    258
    ],
    [
     "vak-core",
@@ -215,11 +215,11 @@
    ],
    [
     "vak-server",
-    181
+    182
    ],
    [
     "vak-client-ui",
-    113
+    114
    ],
    [
     "vak-agent",
@@ -251,6 +251,17 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "fe772ff92",
+    "date": "2026-10-18",
+    "subject": "Preserve failed Canvas saves and expose recovery state",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-client-ui",
+     "vak-server"
+    ]
+   },
    {
     "hash": "6c9ec71a8",
     "date": "2026-10-18",
@@ -390,24 +401,10 @@
     "areas": [
      "docs"
     ]
-   },
-   {
-    "hash": "08e149400",
-    "date": "2026-10-18",
-    "subject": "Verify commitment state and preserve chart and credential integrity",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak",
-     "vak-client-ui",
-     "vak-commit",
-     "vak-config",
-     "vak-core",
-     "vak-server"
-    ]
    }
   ],
   "unreleased": [
+   "Canvas keeps unacknowledged changes after failed saves and shows a recovery message with Retry saving.",
    "Card replacements use one active-card view for runtime validation and display.",
    "Linked-card controls share current inputs across views of the same conversation turn.",
    "Delegated workers inherit configured model-step defaults, protected paths and completion policy.",
@@ -597,7 +594,7 @@
     "date": "2026-10-18",
     "text": "Commit and push directly to `main`;",
     "links": [
-     "docs/plans/handover-2026-10-18.md#current-replacement-batch"
+     "docs/plans/handover-2026-10-18.md#current-canvas-save-failure-batch"
     ]
    },
    {
@@ -870,7 +867,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 82725,
+   "lines": 82808,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1164,10 +1161,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 36751,
+   "src": 36834,
    "tests": 279,
-   "files": 182,
-   "commits": 633,
+   "files": 184,
+   "commits": 634,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -2076,9 +2073,9 @@
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
    "src": 72532,
-   "tests": 23676,
+   "tests": 23680,
    "files": 51,
-   "commits": 829,
+   "commits": 830,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -2585,7 +2582,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1332,
+  "docs_commits": 1333,
   "hot": 630
  },
  "findings": [
