@@ -52,6 +52,8 @@ fn restore_fences_old_writer() {
     let agent_home = vak_config::paths::agent_home_at(&data, "vak");
     let chain = RecordChain::at(data.join("fencing-test"));
     let document = data.join("agents/vak/notes/fencing.md");
+    let scoped_document = data.join("agents/vak/canvas/fenced.json");
+    let content_scope = vak_session::objects::conversation_scope("fenced-canvas");
 
     // Before the restore this process writes everywhere.
     let tenant = TenantObjects::for_tenant(&tenant_home).unwrap();
@@ -67,6 +69,8 @@ fn restore_fences_old_writer() {
         .unwrap();
     chain.append(&serde_json::json!({"row": 1})).unwrap();
     vak_session::documents::create(&document, "kept").unwrap();
+    vak_session::documents::create_sealed(&scoped_document, &content_scope, "private kept")
+        .unwrap();
     tenant.put(b"payload", "conversation:x").unwrap();
     let process = fence::process();
     fence::renew_liveness(
@@ -109,10 +113,31 @@ fn restore_fences_old_writer() {
         &tenant_home,
         chrono::Utc::now() + chrono::Duration::seconds(60),
     )));
+    assert!(
+        vak_session::documents::update_sealed(&scoped_document, &content_scope, |_| Ok(Some((
+            "forbidden".to_string(),
+            ()
+        ))))
+        .is_err()
+    );
+    assert!(
+        vak_session::documents::create_sealed(
+            &data.join("agents/vak/canvas/new.json"),
+            &content_scope,
+            "forbidden"
+        )
+        .is_err()
+    );
     // What was written before the restore still reads.
     assert_eq!(
         vak_session::documents::read(&document).unwrap().as_deref(),
         Some("kept")
+    );
+    assert_eq!(
+        vak_session::documents::read_sealed(&scoped_document, &content_scope)
+            .unwrap()
+            .as_deref(),
+        Some("private kept")
     );
     assert_eq!(chain.read::<serde_json::Value>().len(), 1);
 }

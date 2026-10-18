@@ -33,19 +33,25 @@ cat > app/index.html <<'EOF'
 EOF
 cat > app/server.py <<'EOF'
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-HTTPServer(('127.0.0.1', 8765), SimpleHTTPRequestHandler).serve_forever()
+server = HTTPServer(('127.0.0.1', 0), SimpleHTTPRequestHandler)
+print(server.server_port, flush=True)
+server.serve_forever()
 EOF
 python3 -m py_compile app/server.py
-python3 -m http.server 8765 --directory app >/tmp/vak-stack.log 2>&1 &
-server_pid=$!
-trap 'kill "$server_pid" 2>/dev/null || true' EXIT
-sleep 0.3
 python3 - <<'PY'
 from urllib.request import urlopen
 from pathlib import Path
+import subprocess
+import sys
 assert '<h1>vak app</h1>' in Path('app/index.html').read_text()
 assert Path('app/server.py').exists()
-assert b'<h1>vak app</h1>' in urlopen('http://127.0.0.1:8765', timeout=2).read()
+server = subprocess.Popen([sys.executable, '-u', 'server.py'], cwd='app', stdout=subprocess.PIPE, text=True)
+try:
+    port = int(server.stdout.readline())
+    assert b'<h1>vak app</h1>' in urlopen(f'http://127.0.0.1:{port}', timeout=2).read()
+finally:
+    server.terminate()
+    server.wait(timeout=2)
 print('full-stack build and smoke test passed')
 PY
 "#;

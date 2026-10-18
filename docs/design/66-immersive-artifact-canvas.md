@@ -31,7 +31,7 @@ an existing subject remains allowed. Only an explicit close can remove a
 tab that still has a note. This protects tab visibility changes, not remote
 sync failures or reload durability; those remain open under hardening P06. Leaving a conversation hides its Canvas and coming back finds it as it was. Documents open on the whole viewport and can be placed beside the conversation; a phone always uses the whole viewport.
 
-The Canvas is the same on every surface showing the conversation: the desktop app and the web app at once, or one after the other. The server keeps it with the conversation's Agent (`agents/<agent>/canvas/<session>.json`, `vak-server/src/canvas.rs`) at a revision; a change is an operation (`CanvasOp`) applied at once and written from the revision it was made on, and when another surface wrote first the operations are applied again on the newer Canvas (`canvasSync.ts`). A write is announced on the stream as a `canvas` hint; reading is level-triggered (opening a conversation, the hint, the window coming back). Only the layout (beside or whole window) is the device's own. Escape belongs to the app's one chain (menus, dialogs, Settings, inbox, side panel, Canvas, then stopping a run); it never closes the Canvas from a text field inside it and never stops a run while the Canvas is open.
+The Canvas is the same on every surface showing the conversation: the desktop app and the web app at once, or one after the other. The server keeps it as an Agent-owned Document named `agents/<agent>/canvas/<session>.json` (`vak-server/src/canvas.rs`), with the entire Canvas content encrypted under the conversation's scope key inside each Document version. This name is a Document identity, not a plaintext file. Document CAS and the held writer epoch enforce the revision; a change is an operation (`CanvasOp`) applied at once and written from the revision it was made on, and when another surface wrote first the operations are applied again on the newer Canvas (`canvasSync.ts`). A write is announced on the stream as a `canvas` hint; reading is level-triggered (opening a conversation, the hint, the window coming back). Only the layout (beside or whole window) is the device's own. Escape belongs to the app's one chain (menus, dialogs, Settings, inbox, side panel, Canvas, then stopping a run); it never closes the Canvas from a text field inside it and never stops a run while the Canvas is open.
 
 A preview opened in a window of its own is a sandboxed frame inside a wrapper with no script (`previewWindowDocument`), never the page itself: a `blob:` page takes the app's origin.
 
@@ -54,9 +54,22 @@ Copy unsent notes. The base revision advances only after a safe rebase;
 retry cannot bypass the conflict by writing directly at the remote head.
 Unrelated remote notes and ordinary reads continue to update normally.
 Conflicts currently require copying/reconciling notes or making room in the
-other window before retrying; an in-app choice between note versions and
-encrypted Document persistence remain open. The status never claims that
+other window before retrying; an in-app choice between note versions remains open. Saved state uses encrypted, fenced Documents; pending
+client operations are still in memory until acknowledged. The status never claims that
 a failed or conflicted write was saved.
+
+Existing plaintext Canvas files from the supported data baseline are
+converted once under their historical writer lock. The converter validates
+the source, creates an Agent-owned Document containing conversation-key ciphertext,
+reads that copy back, checks fencing, then removes the identical plaintext
+source. A conflict or failed conversion preserves the source and refuses
+rather than treating the Canvas as empty. Ordinary reads and writes use
+Documents only, without a separate Canvas lock or retry model. Conversation
+holds and erasure act through the existing conversation key; Document
+collection remains confined to its Agent scope, separate from conversation
+ledger objects. The ciphertext is owned by the Document version, so
+history pruning releases old snapshots through ordinary Document collection.
+Unknown fields stay inside the sealed content.
 
 ### 0b. Pointing, discussion and new versions
 
@@ -77,8 +90,8 @@ answers (session and turn identity) and saved pages (artifact identity).
 All nine current kinds round-trip through stack opening, serialization
 and restoration in source tests. Missing identity fields or a mismatched
 stored identity are refused. This covers subject restoration; draft
-retention, encrypted storage and saved-page resource authorization remain
-separate work in the architecture and presentation hardening plan.
+retention, pending-operation reload recovery and saved-page resource
+authorization remain separate work in the architecture and presentation hardening plan.
 
 ### 0. What the Canvas shows: a subject
 

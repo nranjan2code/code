@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Saved Canvas state now uses versioned, fenced Documents with its content
+  sealed under the conversation key inside each Document version. Conversation erasure makes saved
+  Canvas notes and markup unreadable. Existing plaintext Canvas files are
+  converted once and removed only after the encrypted copy is verified;
+  failed or divergent conversions preserve the source and refuse the write.
+
 - Canvas conflict replay restores a remotely closed tab when it holds a
   pending local note and there is safe room. Competing note edits or a full
   Canvas pause saving with the local state intact and a Copy unsent notes

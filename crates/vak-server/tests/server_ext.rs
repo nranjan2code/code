@@ -2529,6 +2529,41 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
     };
     assert_eq!(reqwest::get(url("erasure")).await.unwrap().status(), 401);
 
+    // Canvas uses the same conversation erasure boundary as its ledger.
+    let canvas_url = format!("{base}/sessions/{id}/canvas");
+    assert_eq!(reqwest::get(&canvas_url).await.unwrap().status(), 401);
+    let note = "CANVAS_PRIVATE_UNSENT_NOTE_743";
+    let (status, saved) = send(client.put(&canvas_url).json(&serde_json::json!({
+        "revision": 0,
+        "entries": [{"key":"file:orchard.txt", "subject":{"kind":"file","path":"orchard.txt","title":"Orchard"}, "draft":note}],
+        "active":"file:orchard.txt",
+    }))).await;
+    assert_eq!(status, 200, "{saved}");
+    assert_eq!(saved["revision"], 1);
+    let (status, restored) = send(client.get(&canvas_url)).await;
+    assert_eq!(status, 200);
+    assert_eq!(restored["entries"][0]["draft"], note);
+    let agent = vak_core::vak_agent_identity();
+    let canvas_path = core.shared_scope().agent(&agent.id).canvas(&id);
+    assert!(
+        !canvas_path.exists(),
+        "Canvas content is never a plaintext file"
+    );
+    let envelope = vak_session::documents::read(&canvas_path)
+        .unwrap()
+        .expect("Canvas Document");
+    assert!(!envelope.contains(note));
+    let envelope: serde_json::Value = serde_json::from_str(&envelope).unwrap();
+    let canvas_scope = vak_session::objects::conversation_scope(&id);
+    assert_eq!(envelope["scope"], canvas_scope);
+    assert!(envelope["ciphertext"].is_array());
+    assert!(
+        vak_session::documents::read_sealed(&canvas_path, &canvas_scope)
+            .unwrap()
+            .unwrap()
+            .contains(note)
+    );
+
     // In use: it can be previewed and cannot be erased.
     let (status, looked) = send(client.get(url("erasure"))).await;
     assert_eq!(status, 200, "{looked}");
@@ -2620,6 +2655,21 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
         "the receipt checks with its public key alone"
     );
     assert!(receipt.actor.is_some(), "it names who asked");
+    assert!(
+        vak_session::documents::read_sealed(&canvas_path, &canvas_scope).is_err(),
+        "erasure destroys Canvas content even while its encrypted Document is retained"
+    );
+    assert_eq!(send(client.get(&canvas_url)).await.0, 404);
+    assert_eq!(
+        send(
+            client
+                .put(&canvas_url)
+                .json(&serde_json::json!({"revision":1,"entries":[],"active":null}))
+        )
+        .await
+        .0,
+        404
+    );
 
     let (_, kept) = send(client.get(format!("{base}/data/erasure/receipts"))).await;
     assert_eq!(kept["receipts"].as_array().unwrap().len(), 1);

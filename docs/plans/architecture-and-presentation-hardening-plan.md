@@ -765,6 +765,36 @@ This does not settle replacement identity or the wider lifecycle matrix.
   not an in-app note-version chooser. That recovery UI, forced-reload and
   process-loss durability, and encrypted Document persistence remain open.
 
+### Continuation — encrypt and fence saved Canvas state
+
+- Replace ordinary Canvas file reads/writes and custom locks with the
+  existing Agent-owned Document update/CAS path. Each version contains the
+  complete Canvas ciphertext, including unknown fields, encrypted under the
+  conversation scope key. Existing conversation holds and crypto-erasure
+  therefore cover notes and markup without adding an identity or scope.
+  Document collection owns the ciphertext alongside its version in the
+  Agent scope, so pruning does not strand separately granted snapshots;
+  conversation ledger grants stay separate.
+- Preserve Canvas revisions and stale-response shapes while retries happen
+  through Document CAS. Failed validation and oversized updates write no
+  Canvas head. Existing plaintext files convert once under the historical
+  file lock; delete the source only after reading back the identical sealed
+  Document and checking the writer fence. Divergent or failed conversions
+  refuse and leave the source available; no permanent plaintext fallback.
+- Focused validation passes: five Canvas storage tests, three Document
+  tests, restore/fencing with scoped content, and real-router erasure.
+  The first full gate passed formatting and Clippy, then failed an unrelated
+  smoke test whose fixed port was occupied. That test now requests an
+  available port and reads readiness before connecting. The full gate rerun
+  passes: formatting, workspace Clippy, workspace tests (935 seconds), version,
+  document-path, record and advisory checks. Canvas browser recovery checks now pass (retention, visible
+  recovery, retry, acknowledged cleanup). The general gallery still fails
+  chart/map fitting at 260px. Real-router erasure coverage
+  saves a note, retains its encrypted Document, erases through preview/hold/
+  confirmation, and reads both the content and route back afterward. This
+  does not persist unacknowledged client operations or settle per-contributor
+  drafts, saved-page resource authorization, or live browser acceptance.
+
 ### Reporting contract
 
 For each slice record finding IDs, exact baseline, reproduction, chosen

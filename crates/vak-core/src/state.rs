@@ -381,8 +381,9 @@ pub const REGISTRY: &[StateEntry] = &[
     ),
     agent_entry("agents/{agent}/sandbox", "vak-server", Class::Record),
     agent_entry("agents/{agent}/coworking", "vak-server", Class::Record),
-    // One Canvas per conversation, rewritten as its tabs change; the newest
-    // revision is all there is (docs/design/66 §0a).
+    // One versioned Canvas Document per conversation. Its content is sealed
+    // under that conversation inside each version; no plaintext Canvas file
+    // is written (docs/design/66 §0a).
     agent_entry("agents/{agent}/canvas", "vak-server", Class::Document),
     // What a skill program's own tests found, one Document per program
     // digest (docs/design/93-self-evolving-capabilities.md, E2).

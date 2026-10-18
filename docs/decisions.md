@@ -11,7 +11,7 @@ listed here unless the maintainer reopens it.
 
 - Commit and push directly to `main`; do not create pull requests. This
   applies to future work unless the maintainer changes it. Recorded in
-  [the current handover](plans/handover-2026-10-18.md#current-canvas-conflict-batch).
+  [the current handover](plans/handover-2026-10-18.md#current-canvas-document-batch).
 
 - Every document carries a status word, and `scripts/check_records.py`
   fails on drift the tree can contradict: a stale version, baseline or

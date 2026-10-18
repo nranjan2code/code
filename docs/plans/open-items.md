@@ -116,7 +116,11 @@ overlapping fixes should close their original entries as well.
   changing the local Canvas or advancing the write revision. Copy unsent
   notes supports manual recovery. Focused tests, both client bundles and
   the full repository gate pass for this slice. In-app conflict choices,
-  forced-reload/process-loss durability and encrypted Documents remain open. UI acceptance pending.
+  forced-reload/process-loss durability remain open. Saved Canvas content
+  now uses Agent-owned Documents with conversation-sealed payloads and CAS,
+  including verified one-time plaintext conversion. Focused storage, fencing,
+  real-router erasure and the full repository gate pass. Browser save-recovery
+  checks pass; full Canvas/gallery acceptance remains open. Do not close S5.
 - [ ] S6: adaptive coverage/fallback, truthful charts, streaming, task-level
   quality and checked wire outcomes (P09–P12, A11, D04).
   P10 numerical ranges, compact precise labels and overflow-safe y

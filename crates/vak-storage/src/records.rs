@@ -22,6 +22,19 @@ const HASH: usize = 32;
 #[derive(Clone)]
 pub struct ScopeKey(pub [u8; KEY_LEN]);
 
+impl ScopeKey {
+    /// Seals scoped content with its immutable identity authenticated as AAD.
+    /// Uses the same AEAD envelope as sealed record frames.
+    pub fn seal_content(&self, identity: &[u8], plain: &[u8]) -> Result<Vec<u8>> {
+        seal::seal(&self.0, identity, plain)
+    }
+
+    /// Opens scoped content only under the key and identity that sealed it.
+    pub fn open_content(&self, identity: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
+        seal::open(&self.0, identity, ciphertext)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct ChainReport {
     pub entries: u64,

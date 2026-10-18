@@ -91,6 +91,85 @@ pub fn update<T>(
     Err(format!("save {name}: too many concurrent writers"))
 }
 
+/// A Document's content encrypted under its contributor/conversation key,
+/// while its version and object grants remain owned by the Document scope.
+/// Keeping ciphertext inline lets normal Document pruning collect old saves.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScopedContent {
+    version: u32,
+    scope: String,
+    ciphertext: Vec<u8>,
+}
+
+fn open_scoped(path: &Path, scope: &str, raw: &str) -> Result<String, String> {
+    let envelope: ScopedContent = serde_json::from_str(raw).map_err(|error| error.to_string())?;
+    if envelope.version != 1 || envelope.scope != scope {
+        return Err("Document content scope or format does not match".into());
+    }
+    let key = tenant()?
+        .scope_key(scope)
+        .map_err(|error| error.to_string())?;
+    let (name, _) = name_and_scope(path);
+    let plain = key
+        .open_content(
+            format!("vak-document:v1:{name}").as_bytes(),
+            &envelope.ciphertext,
+        )
+        .map_err(|error| error.to_string())?;
+    String::from_utf8(plain).map_err(|error| error.to_string())
+}
+
+fn seal_scoped(path: &Path, scope: &str, content: &str) -> Result<String, String> {
+    let key = tenant()?
+        .create_scope_key(scope)
+        .map_err(|error| error.to_string())?;
+    let (name, _) = name_and_scope(path);
+    let ciphertext = key
+        .seal_content(
+            format!("vak-document:v1:{name}").as_bytes(),
+            content.as_bytes(),
+        )
+        .map_err(|error| error.to_string())?;
+    serde_json::to_string(&ScopedContent {
+        version: 1,
+        scope: scope.into(),
+        ciphertext,
+    })
+    .map_err(|error| error.to_string())
+}
+
+/// Reads content under `scope`'s key. An erased or mismatched scope fails;
+/// it is never treated as an empty Document. The immutable Document name is
+/// authenticated as associated data, so copying its ciphertext cannot move it.
+pub fn read_sealed(path: &Path, scope: &str) -> Result<Option<String>, String> {
+    read(path)?
+        .map(|raw| open_scoped(path, scope, &raw))
+        .transpose()
+}
+
+/// Creates a scoped-content Document. The Document's existing CAS, fencing,
+/// history, retention and collection rules own every byte of the ciphertext.
+pub fn create_sealed(path: &Path, scope: &str, content: &str) -> Result<(), String> {
+    create(path, &seal_scoped(path, scope, content)?)
+}
+
+/// Updates scoped content through the normal Document CAS path. `change`
+/// sees cleartext only in memory and can refuse without moving the head.
+pub fn update_sealed<T>(
+    path: &Path,
+    scope: &str,
+    mut change: impl FnMut(Option<&str>) -> Result<Option<(String, T)>, String>,
+) -> Result<Option<T>, String> {
+    update(path, |raw| {
+        let plain = raw.map(|raw| open_scoped(path, scope, raw)).transpose()?;
+        let Some((next, value)) = change(plain.as_deref())? else {
+            return Ok(None);
+        };
+        Ok(Some((seal_scoped(path, scope, &next)?, value)))
+    })
+}
+
 /// The paths of the live Documents under the directory `dir`.
 pub fn under(dir: &Path) -> Vec<PathBuf> {
     let (prefix, scope) = name_and_scope(dir);
@@ -240,6 +319,34 @@ mod tests {
             "agent:docs-test",
             "granted to its Agent"
         );
+    }
+
+    #[test]
+    fn scoped_content_keeps_ciphertext_in_document_history_and_authenticates_identity() {
+        let home = vak_config::paths::isolate_home_for_tests();
+        let path = home.join("agents/sealed-docs/canvas/one.json");
+        let scope = crate::objects::conversation_scope("scoped-document-test");
+        create_sealed(&path, &scope, "private first note").unwrap();
+        update_sealed(&path, &scope, |old| {
+            assert_eq!(old, Some("private first note"));
+            Ok(Some(("private second note".into(), ())))
+        })
+        .unwrap();
+        assert_eq!(
+            read_sealed(&path, &scope).unwrap().as_deref(),
+            Some("private second note")
+        );
+        let raw = read(&path).unwrap().unwrap();
+        assert!(!raw.contains("private"));
+        assert_eq!(version_count(&path), 2);
+        assert!(read_sealed(&path, "other-scope").is_err());
+        let moved = home.join("agents/sealed-docs/canvas/two.json");
+        create(&moved, &raw).unwrap();
+        assert!(
+            read_sealed(&moved, &scope).is_err(),
+            "the Document name is authenticated"
+        );
+        assert!(!path.exists());
     }
 
     #[test]

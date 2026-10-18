@@ -1049,3 +1049,17 @@ Also in the plan's history:
 | project `.vak/env` (NATS secrets in plaintext, D15) | vak-server | **removed**; values move to the Secret class |
 | project `inbox/` | vak-server | Object; a Source of what is made from it, and version 1 of an Artifact once Vak versions it (doc 82 §3) |
 | temp `vak-provider-gates/`, browser profiles, `vak-prompt-*.md` | vak-llm / vak-tools / vak | Ephemeral (runtime) |
+
+
+### Scoped content inside a Document (2026-10-18)
+
+`vak_session::documents::{read_sealed,create_sealed,update_sealed}` keep
+ciphertext inside the existing versioned Document while encrypting it under
+its conversation/contributor key. Document scope owns the version and
+ciphertext for ordinary history retention and collection; the inner scope
+key controls content erasure and holds. The versioned envelope declares its
+scope, and the immutable Document name is authenticated with a format domain
+using the existing AEAD implementation. A missing, erased, mismatched or
+invalid key/envelope fails explicitly; it is never interpreted as empty
+content. Canvas uses this path so conversation erasure covers notes and
+markup without granting Document collection access to ledger objects.
