@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "3ebfb2add",
+  "revision": "6c9ec71a8",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 327811,
-   "rust_tests": 84602,
+   "rust_src": 327897,
+   "rust_tests": 85071,
    "ts_src": 61487,
    "routes": 411,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2353,
+   "total_commits": 2354,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
@@ -199,23 +199,23 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 501,
+  "commits": 502,
   "areas": [
    [
     "docs",
-    426
+    427
    ],
    [
     "(root)",
-    256
+    257
    ],
    [
     "vak-core",
-    221
+    222
    ],
    [
     "vak-server",
-    180
+    181
    ],
    [
     "vak-client-ui",
@@ -223,11 +223,11 @@
    ],
    [
     "vak-agent",
-    99
+    100
    ],
    [
     "vak-session",
-    86
+    87
    ],
    [
     "vak-tools",
@@ -251,6 +251,19 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "6c9ec71a8",
+    "date": "2026-10-18",
+    "subject": "Unify active card replacement and preserve bound sources",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-core",
+     "vak-server",
+     "vak-session"
+    ]
+   },
    {
     "hash": "3ebfb2add",
     "date": "2026-10-18",
@@ -392,17 +405,10 @@
      "vak-core",
      "vak-server"
     ]
-   },
-   {
-    "hash": "88d73ff03",
-    "date": "2026-10-18",
-    "subject": "Regenerate the system blueprint from the committed tree",
-    "areas": [
-     "docs"
-    ]
    }
   ],
   "unreleased": [
+   "Card replacements use one active-card view for runtime validation and display.",
    "Linked-card controls share current inputs across views of the same conversation turn.",
    "Delegated workers inherit configured model-step defaults, protected paths and completion policy.",
    "Worker cards keep their live bindings when copied into the parent conversation, including when duplicate cards reuse existing IDs.",
@@ -591,7 +597,7 @@
     "date": "2026-10-18",
     "text": "Commit and push directly to `main`;",
     "links": [
-     "docs/plans/handover-2026-10-18.md#current-interaction-scope-batch"
+     "docs/plans/handover-2026-10-18.md#current-replacement-batch"
     ]
    },
    {
@@ -876,7 +882,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 76698,
+   "lines": 76701,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -896,7 +902,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 53851,
+   "lines": 53891,
    "crates": [
     "vak-tools",
     "vak-agent",
@@ -937,7 +943,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 34119,
+   "lines": 34162,
    "crates": [
     "vak-session",
     "vak-config",
@@ -1037,10 +1043,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 15625,
-   "tests": 18799,
+   "src": 15665,
+   "tests": 19150,
    "files": 13,
-   "commits": 337,
+   "commits": 338,
    "deps": [
     "vak-config",
     "vak-context",
@@ -1078,7 +1084,7 @@
     "uuid"
    ],
    "largest": [
-    10820,
+    10860,
     "crates/vak-agent/src/lib.rs"
    ]
   },
@@ -1331,7 +1337,7 @@
    "src": 57827,
    "tests": 9964,
    "files": 70,
-   "commits": 629,
+   "commits": 630,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -2069,10 +2075,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 72529,
+   "src": 72532,
    "tests": 23676,
    "files": 51,
-   "commits": 828,
+   "commits": 829,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -2144,10 +2150,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 14792,
-   "tests": 4664,
+   "src": 14835,
+   "tests": 4782,
    "files": 24,
-   "commits": 198,
+   "commits": 199,
    "deps": [
     "vak-config",
     "vak-control",
@@ -2187,7 +2193,7 @@
     "uuid"
    ],
    "largest": [
-    3574,
+    3617,
     "crates/vak-session/src/log.rs"
    ]
   },
@@ -2390,7 +2396,7 @@
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
-    "lines": 10820
+    "lines": 10860
    },
    {
     "file": "crates/vak-mail-calendar/src/provider.rs",
@@ -2402,7 +2408,7 @@
    },
    {
     "file": "crates/vak-server/src/projection.rs",
-    "lines": 6067
+    "lines": 6070
    },
    {
     "file": "crates/vak-server/src/gateway.rs",
@@ -2418,7 +2424,7 @@
    },
    {
     "file": "crates/vak-session/src/log.rs",
-    "lines": 3574
+    "lines": 3617
    },
    {
     "file": "crates/vak-ooxml/src/read.rs",
@@ -2446,7 +2452,7 @@
     "name": "snapshot_inner",
     "file": "crates/vak-server/src/projection.rs",
     "line": 723,
-    "lines": 1002
+    "lines": 988
    },
    {
     "name": "run_data",
@@ -2579,8 +2585,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1331,
-  "hot": 629
+  "docs_commits": 1332,
+  "hot": 630
  },
  "findings": [
   {
