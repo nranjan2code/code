@@ -164,6 +164,9 @@ pre.tree .c { color: var(--ink-soft) }
 .tabs button[aria-selected="true"] { color: var(--sheet); background: var(--line) }
 .tabs button:focus-visible, .toc a:focus-visible { outline: 2px solid var(--hot); outline-offset: -2px }
 .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start }
+/* the simulator has one sheet: it takes the index's width */
+body[data-tab="simulator"] .layout { grid-template-columns: minmax(0, 1fr) }
+body[data-tab="simulator"] .toc { display: none }
 .sheets { display: grid; gap: 28px; min-width: 0 }
 .sheets > section.sheet { scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 60px) }
 .verdict { white-space: nowrap }
@@ -319,7 +322,10 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 }
 /* The speed simulator (Simulator tab): the plant's units and pipes, driven by a speed. */
 .sim-wrap { gap: 18px }
-.sim-top { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; align-items: stretch }
+.sim-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 18px; align-items: start }
+.sim-main { display: grid; gap: 14px; min-width: 0; grid-column: 1; grid-row: 1 }
+.sim-rail { grid-column: 2; grid-row: 1; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 64px); display: grid; gap: 12px; max-height: calc(100vh - 76px); overflow: auto; min-width: 0 }
+.sim-rail .plant-bar button { padding: 5px 8px }
 .sim-controls { display: grid; gap: 10px; align-content: start; min-width: 0 }
 .sim-speed { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; border: 1px solid var(--line); background: var(--box); padding: 10px 14px }
 .sim-speed label { font: 600 12px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--line) }
@@ -335,7 +341,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 .sim-answer h4 { margin: 0; font: 600 12px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--hot) }
 .sim-big { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; font: 600 26px/1 var(--font-display); color: var(--ink-soft) }
 .sim-big .arrow { color: var(--hot) }
-.sim-big b { font-size: 46px; color: var(--ink); font-weight: 700 }
+.sim-big b { font-size: 42px; color: var(--ink); font-weight: 700 }
 .sim-sub { font-size: 14px }
 .sim-stack { display: flex; height: 18px; border: 1px solid var(--line); background: var(--line-faint) }
 .sim-stack i { display: block; height: 100%; min-width: 0 }
@@ -353,6 +359,7 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
 .sim-knobs .chk { display: flex; gap: 8px; align-items: center }
 .sim-canvas { border: 1px solid var(--line-faint); min-width: 0; background: var(--sheet) }
 .sim-canvas svg { width: 100%; height: auto; display: block }
+.sim-canvas.diagram svg { width: auto; max-width: 100%; margin: 0 auto }
 .sim-pipe { fill: none; stroke: var(--line); stroke-width: 2; opacity: .55 }
 .sim-pipe.flow { stroke: var(--hot); opacity: .85; stroke-dasharray: 9 7; animation: plant-march linear infinite }
 .sim-pipe.idle { opacity: .2; stroke-dasharray: 3 5 }
@@ -411,7 +418,6 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
 .sp-check.warn { border-left-color: var(--hot) } .sp-check.bad { border-left-color: var(--warn) }
 .sim-read ol { margin: 0; padding-left: 20px; columns: 2 360px; column-gap: 32px; font-size: 14.5px }
 .sim-read li { break-inside: avoid; margin-bottom: 8px }
-.sim-pin { display: grid; gap: 10px }
 .sim-views { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line) }
 .sim-views button { font: 600 13px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink); background: var(--box); border: 0; border-right: 1px solid var(--line); padding: 8px 14px; cursor: pointer }
 .sim-views button[aria-selected="true"] { background: var(--line); color: var(--sheet) }
@@ -421,9 +427,12 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
 .sim-block[hidden] { display: none }
 .sim-block { border-top: 0; padding-top: 4px }
 @media (max-width: 900px) { .sim-views button { flex: 1 1 auto; padding: 8px 10px } }
+.basis { display: flex; gap: 6px; flex-wrap: wrap }
+.basis i, .sim-block p i[class^="b-"] { font: 600 12px var(--font-mono); font-style: normal; padding: 0 6px; border: 1px solid var(--line-faint) }
+i.b-measured { color: var(--ok); border-color: var(--ok) } i.b-code { color: var(--line); border-color: var(--line) } i.b-assumed { color: var(--hot); border-color: var(--hot) }
+.sp-res { display: grid; gap: 6px }
 .sim-wrap .plant-bar.flows { flex-wrap: wrap; overflow: visible }
-.sim-wrap.ops .sim-top { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) }
-@media (max-width: 900px) { .sim-top { grid-template-columns: 1fr } .sim-wrap.ops .sim-top { grid-template-columns: 1fr } }
+@media (max-width: 1100px) { .sim-layout { grid-template-columns: 1fr } .sim-rail { grid-column: 1; grid-row: 1; position: static; max-height: none } .sim-main { grid-row: 2 } }
 @media (prefers-reduced-motion: reduce) { .sim-pipe.flow, .unit.sim.bad .u-led, .sim-plant .unit[data-sp="fail"] .u-led { animation: none } }
 </style>
 </head>
@@ -566,14 +575,14 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
       <span class="sep"></span>
       <button type="button" data-sim="exit">Exit (Esc)</button>
     </div>
-    <div class="sim-pin">
-    <div class="sim-top">
+    <div class="sim-layout">
+      <aside class="sim-rail" aria-label="Simulator controls">
       <div class="sim-controls">
         <div class="sim-speed">
           <label for="sim-tps">Model speed</label>
           <output id="sim-tps-out" for="sim-tps"></output>
           <input type="range" id="sim-tps" min="0" max="1000" step="1">
-          <div class="sim-scale" aria-hidden="true"><span>0</span><span>35 today</span><span>1k</span><span>14k</span><span>20k</span></div>
+          <div class="sim-scale" aria-hidden="true"><span>0</span><span>35</span><span>1k</span><span>14k</span></div>
         </div>
         <div class="plant-bar" role="toolbar" aria-label="Speed presets">
           <button type="button" data-sim-tps="0">0</button>
@@ -601,8 +610,8 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
         <div class="sim-key" data-sim="key"></div>
         <button type="button" class="linkish" data-sim="ops">Open the operations screen ⛶</button>
       </div>
-    </div>
-
+    </aside>
+      <div class="sim-main">
     <nav class="sim-views" role="tablist" aria-label="Simulator views">
       <button type="button" role="tab" data-sim-show="turn" aria-selected="true">The turn</button>
       <button type="button" role="tab" data-sim-show="plant" aria-selected="false">Subsystems</button>
@@ -610,7 +619,6 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
       <button type="button" role="tab" data-sim-show="infra" aria-selected="false">Infrastructure and cost <span data-sim-count="infra"></span></button>
       <button type="button" role="tab" data-sim-show="read" aria-selected="false">Critical read</button>
     </nav>
-    </div>
     <div data-sim-view="turn" class="sim-block">
       <h3>How the turn shrinks as the model gets faster</h3>
       <div class="sim-canvas" data-sim="curve" role="img" aria-label="Turn time against model speed, stacked by stage"></div>
@@ -630,12 +638,20 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
         <span class="kicker">Show</span>
         <button type="button" data-sp="all" aria-pressed="true">All</button>
         <button type="button" data-sp="fail"><i class="sp-dot fail"></i>Fails</button>
-        <button type="button" data-sp="infra"><i class="sp-dot infra"></i>Needs more infrastructure</button>
-        <button type="button" data-sp="cost"><i class="sp-dot cost"></i>Costs more</button>
+        <button type="button" data-sp="infra"><i class="sp-dot infra"></i>Near capacity</button>
         <button type="button" data-sp="person"><i class="sp-dot person"></i>Waits on a person</button>
         <button type="button" data-sp="busy"><i class="sp-dot busy"></i>Busier</button>
-        <button type="button" data-sp="calm"><i class="sp-dot calm"></i>As today</button>
         <button type="button" data-sp="none"><i class="sp-dot none"></i>Unaffected</button>
+      </div>
+      <div class="plant-bar" role="group" aria-label="Uses more of">
+        <span class="kicker">Uses more of</span>
+        <button type="button" data-sp="r:tokens">Model tokens</button>
+        <button type="button" data-sp="r:cpu">Host CPU</button>
+        <button type="button" data-sp="r:viewer">Viewer's device</button>
+        <button type="button" data-sp="r:disk">Disk space</button>
+        <button type="button" data-sp="r:syncs">Disk syncs</button>
+        <button type="button" data-sp="r:network">Network</button>
+        <button type="button" data-sp="r:person">Person's time</button>
       </div>
       <div class="plant-main sim-plant-main">
         <div class="plant-canvas sim-plant">%%SIM_PLANT%%<div class="plant-tip" data-sim="tip" hidden></div></div>
@@ -655,13 +671,18 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
       <h3>Infrastructure, cost and failures</h3>
       <div class="sim-knobs" data-sim-group="infra">
         <label><span>Conversations at once <b data-sim-v="conv"></b></span><input type="range" data-sim-k="conv" min="1" max="500" step="1"></label>
+        <label><span>Busy share of the time <b data-sim-v="busy"></b></span><input type="range" data-sim-k="busy" min="5" max="100" step="5"></label>
+        <label><span>Running for <b data-sim-v="horizon"></b></span><input type="range" data-sim-k="horizon" min="1" max="720" step="1"></label>
+        <label><span>Host cores <b data-sim-v="cores"></b></span><input type="range" data-sim-k="cores" min="1" max="64" step="1"></label>
+        <label><span>Free disk <b data-sim-v="disk"></b></span><input type="range" data-sim-k="disk" min="10" max="2000" step="10"></label>
+        <label><span>Network, both ways <b data-sim-v="uplink"></b></span><input type="range" data-sim-k="uplink" min="1" max="1000" step="1"></label>
         <label><span>Input price, per million <b data-sim-v="pin"></b></span><input type="range" data-sim-k="pin" min="0" max="15" step="0.05"></label>
         <label><span>Output price, per million <b data-sim-v="pout"></b></span><input type="range" data-sim-k="pout" min="0" max="60" step="0.1"></label>
         <label><span>Prompt served from cache <b data-sim-v="cache"></b></span><input type="range" data-sim-k="cache" min="0" max="95" step="5"></label>
         <label><span>Day budget (<code>max_day_usd</code>) <b data-sim-v="budget"></b></span><input type="range" data-sim-k="budget" min="5" max="2000" step="5"></label>
         <label><span>Provider allowance, tokens a minute <b data-sim-v="allow"></b></span><input type="range" data-sim-k="allow" min="100000" max="50000000" step="100000"></label>
       </div>
-      <p class="muted">Prices, the allowance and the budget are placeholders: set your own. Cached input is priced at a tenth of input. The disk and server costs are estimates.</p>
+      <p class="muted">Every line says what it rests on: <i class="b-measured">measured</i> on this install, <i class="b-code">from code</i> read on every build, or <i class="b-assumed">assumed</i>. Prices, the allowance, the budget and the host are placeholders: set your own. Cached input is priced at a tenth of input. Not modelled: memory, the catalog index, checkpoints and backups.</p>
       <ol class="sim-checks" data-sim="infra"></ol>
     </div>
 
@@ -673,10 +694,11 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
         <label><span>First-token wait today <b data-sim-v="ft0"></b></span><input type="range" data-sim-k="ft0" min="100" max="4000" step="50"></label>
         <label><span>Network floor <b data-sim-v="net"></b></span><input type="range" data-sim-k="net" min="20" max="1500" step="10"></label>
         <label><span>Prompt per step <b data-sim-v="prompt"></b></span><input type="range" data-sim-k="prompt" min="1000" max="120000" step="1000"></label>
+        <label><span>Time per tool call <b data-sim-v="tool"></b></span><input type="range" data-sim-k="tool" min="20" max="5000" step="10"></label>
         <label><span>Reading speed <b data-sim-v="read"></b></span><input type="range" data-sim-k="read" min="150" max="600" step="10"></label>
         <label class="chk"><input type="checkbox" data-sim-k="shrink" checked> Prefill and queueing get faster with the model</label>
       </div>
-      <p class="muted">The defaults reproduce the measured median step (about <span data-sim-calc="step">—</span>) at 35 tokens a second. Measured on <span data-sim-calc="asof">—</span> from <span data-sim-calc="turns">—</span> turns: about 81% of a turn waited on the model, 12% on tools, 2% on Vak between steps.</p>
+      <p class="muted">The defaults reproduce the measured median step (about <span data-sim-calc="step">—</span>) at 35 tokens a second. Measured on <span data-sim-calc="asof">—</span> from <span data-sim-calc="turns">—</span> turns: about 81% of all turn time waited on the model, 12% on tools and 7% on Vak itself. At 35 tokens a second the typical turn here takes <span data-sim-calc="typ35">—</span>; measured turns of 3 to 5 steps took a median of <span data-sim-calc="m35">—</span>. Tool calls are skewed: the median call took <span data-sim-calc="toolp50">—</span>, the mean <span data-sim-calc="toolmean">—</span>, pulled up by slow web fetches; move the tool time to see what that does.</p>
     </details>
     <noscript><p class="muted">The simulator needs JavaScript; its inputs are in <code>blueprint.json</code> under <code>simulator</code>.</p></noscript>
 
@@ -685,11 +707,14 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
       <ol>
         <li><b>The turn gets faster, far less than the model.</b> At 14,000 tokens a second the writing vanishes; what is left is the wait for a first token, the tools (a web fetch is still half a second) and Vak's own work per step. A model 400 times faster makes the typical turn about <span data-sim-calc="x14k">—</span> times faster.</li>
         <li><b>Safety and the record do not depend on slowness.</b> Permission, the broker, the sandbox and sealed ledger frames cost tens of milliseconds a step. They become a visible share of a fast turn, never a wrong one.</li>
-        <li><b>The one-token-at-a-time paths bend first.</b> One wire frame per delta, a screen that copies its whole text on each one, and a reconnect window of <span data-sim-code="ring">—</span> events. The fix is a stream that follows what its reader can take, not a new number.</li>
+        <li><b>The one-token-at-a-time paths bend first.</b> One wire frame per delta, a screen that renders the whole answer again on each one, and a reconnect window of <span data-sim-code="ring">—</span> events. The fix is a stream that follows what its reader can take, not a new number.</li>
         <li><b>Fixed waits turn long.</b> A worker is looked at every <span data-sim-code="wait_tick">—</span> ms and the breaker cools for <span data-sim-code="breaker">—</span> s: at 14,000 tokens a second one cooldown is <span data-sim-calc="cool14k">—</span> typical turns. They belong under the operator's limits and on events (doc 88 §5a).</li>
-        <li><b>Cost and the provider's allowance become the governor.</b> The same hour asks for as many times the tokens as turns get faster, mostly prompt. The day budget and the provider's tokens-a-minute run out first; prompt caching decides the bill.</li>
+        <li><b>Cost and the provider's allowance become the governor.</b> The same hour asks for as many times the tokens as turns get faster, mostly prompt, because every step sends the prompt again. The day budget and the provider's tokens a minute run out first, and once the allowance is full a faster model buys nothing more: set 100 conversations and compare 35 with 14,000. Prompt caching decides the bill. Host CPU, disk and network stay small for one owner; they grow with the number of conversations, not with speed alone.</li>
+        <li><b>What this does not model, so read it as a lower bound on trouble.</b> Memory; contention when many conversations write at once (a chain's writer lock, the catalog's one database file), which would stretch Vak's measured 40 ms a step; the provider's latency under load; retries and the failures that cause them; and the likeliest change of all, that agents take more steps per turn once steps are cheap. The prompt does not grow without bound over a long conversation, because the planner carries only the card of the turn a request follows (invariant 36).</li>
         <li><b>The person becomes the slowest part.</b> People read about five tokens a second at any model speed, and approvals and Review wait on them. What matters is what Vak already leans on: cards, the plan check, receipts and Review, so a person checks outcomes rather than reads streams.</li>
       </ol>
+    </div>
+      </div>
     </div>
   </div>
   <script type="application/json" id="sim-data">%%SIM_DATA%%</script>
@@ -960,7 +985,7 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
   var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
   function show(group, focusId) {
     tabs.forEach(function (t) { t.setAttribute('aria-selected', t.dataset.group === group ? 'true' : 'false'); });
-    sections.forEach(function (s) { s.hidden = s.dataset.group !== group; });
+    sections.forEach(function (s) { s.hidden = s.dataset.group !== group; }); document.body.setAttribute('data-tab', group);
     links.forEach(function (a) { a.hidden = a.dataset.group !== group; });
     if (focusId) { var el = document.getElementById(focusId); if (el) el.scrollIntoView(); }
   }
@@ -1367,13 +1392,15 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
     research: { steps: M.steps_per_turn.p90, tools: M.tools_per_turn.p90, waits: 2, note: 'The measured 90th percentile: ' + M.steps_per_turn.p90 + ' steps, ' + M.tools_per_turn.p90 + ' tool calls, two waits on workers.' },
     build: { steps: M.steps_per_turn.max, tools: 40, waits: 4, note: 'The longest measured turn: ' + M.steps_per_turn.max + ' steps, 40 tool calls, four waits on workers.' }
   };
+  var CHARS_PER_TOKEN0 = 4;
   // Defaults reproduce the measured median step at today's speed: first token plus output per step at 35/s.
-  var K = { out: Math.round((M.dispatch_p50_ms - 800) / 1000 * TODAY), answer: 400, ft0: 800, net: 250, prompt: 12000, read: 250, shrink: true,
-            conv: 1, pin: 1, pout: 4, cache: 70, budget: 50, allow: 2000000 };
+  var K = { out: Math.round((M.dispatch_p50_ms - 800) / 1000 * TODAY), answer: 400, ft0: 800, net: 250, prompt: Math.round(M.request_bytes_p50 / CHARS_PER_TOKEN0), read: 250, shrink: true,
+            conv: 1, pin: 1, pout: 4, cache: 70, budget: 50, allow: 2000000, tool: M.tool_p50_ms,
+            busy: 50, horizon: 24, cores: 8, disk: 200, uplink: 50 };
   var work = 'typical';
   // Estimates, labelled on the page.
-  var SCREEN_PER_DELTA_MS = 0.03, SCREEN_PER_CHAR_NS = 15, COPY_BYTES_PER_S = 4e9, CHARS_PER_TOKEN = 4;
-  var ENTRIES_PER_STEP = 3, SYNCS_PER_S = 2000, FRAME_CPU_US = 20, LEDGER_EXTRA_BYTES = 1500, CACHED_PRICE = 0.1;
+  var SCREEN_PER_DELTA_MS = M.screen_ms_per_render, SCREEN_PER_CHAR_NS = M.screen_ns_per_char, COPY_BYTES_PER_S = 4e9, CHARS_PER_TOKEN = 4;
+  var ENTRIES_PER_STEP = 3, SYNCS_PER_S = 2000, FRAME_CPU_US = 20, LEDGER_EXTRA_BYTES = 1500, CACHED_PRICE = 0.1, SSE_BYTES_PER_DELTA = 150;
 
   function q(sel) { return wrap.querySelector(sel); }
   function qa(sel) { return Array.prototype.slice.call(wrap.querySelectorAll(sel)); }
@@ -1391,6 +1418,7 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
   function fmtX(x) { return !isFinite(x) || x <= 0 ? '—' : x >= 10 ? Math.round(x).toLocaleString() + '×' : x.toFixed(1) + '×'; }
   function fmtUsd(v) { return !isFinite(v) ? '—' : v >= 100 ? '$' + Math.round(v).toLocaleString() : v >= 1 ? '$' + v.toFixed(2) : '$' + v.toFixed(3); }
   function fmtBytes(b) { return b >= 1e12 ? (b / 1e12).toFixed(1) + ' TB' : b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? (b / 1e6).toFixed(0) + ' MB' : Math.round(b / 1e3) + ' kB'; }
+  function fmtHorizon(h) { return h < 24 ? h + ' h' : (h / 24 === Math.round(h / 24) ? h / 24 + ' day' + (h > 24 ? 's' : '') : (h / 24).toFixed(1) + ' days'); }
   function fmtTps(t) { return t >= 1000 ? (t >= 10000 ? Math.round(t / 1000) + 'k' : (t / 1000).toFixed(1) + 'k') : String(Math.round(t)); }
   // The slider is cubic so the low end, where today sits, has room.
   function toTps(p) { return Math.round(MAX * Math.pow(p / 1000, 3)); }
@@ -1400,17 +1428,19 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
     w = w || WORK[work];
     var r = { tps: tps };
     if (tps <= 0) {
-      r.first = Infinity; r.decode = Infinity; r.tools = w.tools * M.tool_p50_ms; r.runtime = Infinity; r.waits = 0; r.turn = Infinity;
+      r.first = Infinity; r.decode = Infinity; r.tools = w.tools * K.tool; r.runtime = Infinity; r.waits = 0; r.turn = Infinity;
       r.parts = [Infinity, Infinity, r.tools, 0, 0]; r.screen = 0; r.stream = 0; r.copy = 0; r.stepDecode = Infinity; r.stepFirst = Infinity;
-      r.answerRead = K.answer / (K.read * 4 / 3 / 60) * 1000; r.turnsPerHour = 0; r.stepsPerS = 0; r.tokensPerTurn = 0; r.streamShare = 0;
+      r.answerRead = K.answer / (K.read * 4 / 3 / 60) * 1000; r.turnsPerHour = 0; r.tokensPerTurn = 0; r.streamShare = 0; r.answerStream = Infinity;
       return infra(r, w);
     }
     var first = K.net + (K.ft0 - K.net) * (K.shrink ? Math.min(1, TODAY / tps) : 1);
     var decode = K.out / tps * 1000;
     // every delta carries the whole message so far: the copies grow with the square of the output
     var copy = (K.out * K.out / 2) * CHARS_PER_TOKEN / COPY_BYTES_PER_S * 1000;
-    r.screen = K.out * SCREEN_PER_DELTA_MS + SCREEN_PER_CHAR_NS * 1e-6 * CHARS_PER_TOKEN * K.out * K.out / 2;
-    r.first = w.steps * first; r.decode = w.steps * decode; r.tools = w.tools * M.tool_p50_ms;
+    // the answer is drawn again on every delta while it streams
+    r.screen = K.answer * SCREEN_PER_DELTA_MS + SCREEN_PER_CHAR_NS * 1e-6 * CHARS_PER_TOKEN * K.answer * K.answer / 2;
+    r.answerStream = K.answer / tps * 1000;
+    r.first = w.steps * first; r.decode = w.steps * decode; r.tools = w.tools * K.tool;
     r.runtime = w.steps * (M.runtime_per_step_ms + copy) + M.runtime_per_turn_ms;
     r.waits = w.waits * TICK / 2;
     r.turn = r.first + r.decode + r.tools + r.runtime + r.waits;
@@ -1423,23 +1453,33 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
     r.turnsPerHour = 3600000 / r.turn;
     return infra(r, w);
   }
-  // Infrastructure for K.conv conversations at once, with the provider's allowance applied.
+  // Resources across K.conv conversations, busy K.busy% of the time, with the provider's allowance applied.
   function infra(r, w) {
-    var n = K.conv, need = n * r.turnsPerHour * r.tokensPerTurn / 60; // tokens a minute
+    var n = K.conv, busy = K.busy / 100;
+    var need = n * busy * r.turnsPerHour * r.tokensPerTurn / 60; // tokens a minute
     r.allowNeed = need;
     r.capped = need > K.allow ? K.allow / need : 1;
-    var tph = n * r.turnsPerHour * r.capped;
+    var tph = n * busy * r.turnsPerHour * r.capped, stepsH = tph * w.steps, callsH = tph * w.tools;
     r.allTurnsPerHour = tph;
     var inCost = K.prompt * ((1 - K.cache / 100) + (K.cache / 100) * CACHED_PRICE) * K.pin, outCost = K.out * K.pout;
     r.costPerTurn = w.steps * (inCost + outCost) / 1e6;
     r.costPerHour = tph * r.costPerTurn;
+    r.tokensPerHour = stepsH * (K.prompt + K.out);
     r.budgetHours = r.costPerHour > 0 ? K.budget / r.costPerHour : Infinity;
-    r.stepsPerS = tph * w.steps / 3600;
+    var days = Math.floor(K.horizon / 24), rest = K.horizon - days * 24;
+    r.costHorizon = days * Math.min(r.costPerHour * 24, K.budget) + Math.min(r.costPerHour * rest, K.budget);
+    r.stepsPerS = stepsH / 3600;
     r.syncsPerS = r.stepsPerS * ENTRIES_PER_STEP;
-    r.framesPerS = n * r.stream * (r.streamShare || 0) * r.capped;
-    r.frameCores = r.framesPerS * FRAME_CPU_US / 1e6 * 2; // the server's projection plus the admin hub
-    r.logsPerDay = r.stepsPerS * 86400 * M.log_bytes_per_step;
-    r.ledgerPerDay = r.stepsPerS * 86400 * (K.out * CHARS_PER_TOKEN + LEDGER_EXTRA_BYTES);
+    r.framesPerS = n * busy * r.capped * r.stream * (r.streamShare || 0);
+    r.cpu = { runtime: r.stepsPerS * M.runtime_per_step_ms / 1000, workers: callsH / 3600 * M.worker_spawn_ms / 1000, frames: r.framesPerS * FRAME_CPU_US / 1e6 * 2 };
+    r.cores = r.cpu.runtime + r.cpu.workers + r.cpu.frames;
+    r.diskLedgerDay = r.stepsPerS * 86400 * (K.out * CHARS_PER_TOKEN + LEDGER_EXTRA_BYTES);
+    r.diskLogsDay = r.stepsPerS * 86400 * M.log_bytes_per_step;
+    r.diskDay = r.diskLedgerDay + r.diskLogsDay;
+    r.diskHorizon = r.diskDay * K.horizon / 24;
+    r.upMbps = r.stepsPerS * M.request_bytes_p50 * 8 / 1e6;
+    r.downMbps = r.framesPerS * SSE_BYTES_PER_DELTA * 8 / 1e6;
+    r.people = tph * (r.answerRead || 0) / 3600000; // people reading every answer full time
     return r;
   }
 
@@ -1454,44 +1494,46 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
   // Each check: a state at a speed, its words, and the code it rests on.
   function checksAt(r) {
     var list = [], today = model(TODAY);
-    function add(key, group, state, title, value) { list.push({ key: key, group: group, state: state, title: title, value: value }); }
+    function add(key, group, state, title, value, basis) { list.push({ key: key, group: group, state: state, title: title, value: value, basis: basis || [] }); }
     if (r.tps <= 0) { add('none', 'vak', 'bad', 'Nothing is written', 'At 0 tokens a second a turn never ends.'); return list; }
     var modelMs = r.first + r.decode, rest = r.tools + r.runtime + r.waits;
-    add('model', 'vak', modelMs > rest ? 'ok' : 'warn', 'The model is the slowest part', 'model ' + fmtMs(modelMs) + ' against tools and Vak ' + fmtMs(rest) + ' a turn');
-    add('floor', 'vak', r.stepDecode > r.stepFirst ? 'ok' : 'warn', 'Writing outlasts the wait for the first token', 'writing ' + fmtMs(r.stepDecode) + ', first token ' + fmtMs(r.stepFirst) + ' a step');
-    var load = r.screen / r.stepDecode;
-    add('append', 'vak', load < 0.5 ? 'ok' : load < 1 ? 'warn' : 'bad', 'The screen keeps up with the stream (estimate)',
-      r.stream.toLocaleString() + ' frames a second; drawing takes ' + fmtMs(r.screen) + ' for ' + fmtMs(r.stepDecode) + ' of output (' + Math.round(load * 100) + '% busy)');
+    add('model', 'vak', modelMs > rest ? 'ok' : 'warn', 'The model is the slowest part', 'model ' + fmtMs(modelMs) + ' against tools and Vak ' + fmtMs(rest) + ' a turn', ['measured']);
+    add('floor', 'vak', r.stepDecode > r.stepFirst ? 'ok' : 'warn', 'Writing outlasts the wait for the first token', 'writing ' + fmtMs(r.stepDecode) + ', first token ' + fmtMs(r.stepFirst) + ' a step', ['assumed']);
+    var load = r.screen / r.answerStream;
+    add('append', 'vak', load < 0.5 ? 'ok' : load < 1 ? 'warn' : 'bad', 'The screen keeps up with the stream',
+      'drawing a ' + K.answer + '-token answer again on each of its deltas takes ' + fmtMs(r.screen) + ' while it streams for ' + fmtMs(r.answerStream) + ' (' + Math.round(load * 100) + '% busy; measured DOM cost, markdown parsing not counted)', ['measured', 'code']);
     var ringS = RING / r.stream;
-    add('ring', 'vak', ringS >= 5 ? 'ok' : ringS >= 1 ? 'warn' : 'bad', 'A reconnect can catch up on what it missed', RING.toLocaleString() + ' events cover ' + fmtMs(ringS * 1000) + ' of stream');
+    add('ring', 'vak', ringS >= 5 ? 'ok' : ringS >= 1 ? 'warn' : 'bad', 'A reconnect can catch up on what it missed', RING.toLocaleString() + ' events cover ' + fmtMs(ringS * 1000) + ' of stream', ['code', 'assumed']);
     var copyShare = r.copy / r.stepDecode;
     add('snapshot', 'vak', copyShare < 0.05 ? 'ok' : copyShare < 0.5 ? 'warn' : 'bad', 'Copying the whole message into every delta stays cheap (estimate)',
-      fmtMs(r.copy) + ' of copies for ' + fmtMs(r.stepDecode) + ' of output a step, at ' + code('snapshot', 0) + ' adapter sites');
+      fmtMs(r.copy) + ' of copies for ' + fmtMs(r.stepDecode) + ' of output a step, at ' + code('snapshot', 0) + ' adapter sites', ['code', 'assumed']);
     var workerTurn = model(r.tps, WORK.typical).turn, tickShare = (TICK / 2) / workerTurn;
-    add('wait_tick', 'vak', tickShare < 0.05 ? 'ok' : tickShare < 0.25 ? 'warn' : 'bad', 'Waiting on a worker is not set by a timer',
-      'a ' + TICK + ' ms tick costs ' + Math.round(tickShare * 100) + '% of a worker\'s ' + fmtMs(workerTurn) + ' turn');
+    add('wait_tick', 'vak', tickShare < 0.05 ? 'ok' : 'warn', 'Waiting on a worker is not set by a timer',
+      'a ' + TICK + ' ms tick costs ' + Math.round(tickShare * 100) + '% of a worker\'s ' + fmtMs(workerTurn) + ' turn', ['code']);
     var lost = COOL * 1000 / r.turn;
-    add('breaker', 'vak', lost < 1 ? 'ok' : lost < 10 ? 'warn' : 'bad', 'A breaker cooldown is short next to the work',
-      'one ' + COOL + ' s cooldown is ' + (lost < 1 ? 'under one turn' : fmtN(lost) + ' turns') + ' at this speed');
+    add('breaker', 'vak', lost < 10 ? 'ok' : 'warn', 'A breaker cooldown is short next to the work',
+      'one ' + COOL + ' s cooldown is ' + (lost < 1 ? 'under one turn' : fmtN(lost) + ' turns') + ' at this speed', ['code']);
     var waitShare = r.turn / (r.turn + r.answerRead);
     add('person', 'vak', waitShare >= 0.15 ? 'ok' : waitShare >= 0.05 ? 'warn' : 'bad', 'The person waits on the agent, not the other way round',
-      'a turn takes ' + fmtMs(r.turn) + '; reading its ' + K.answer + '-token answer takes ' + fmtMs(r.answerRead));
-    // infrastructure, for K.conv conversations
-    add('cost', 'infra', r.costPerHour < today.costPerHour * 3 ? 'ok' : r.costPerHour < today.costPerHour * 30 ? 'warn' : 'bad', 'Spend stays near today\'s',
-      fmtUsd(r.costPerHour) + ' an hour (' + fmtUsd(r.costPerTurn) + ' a turn), ' + fmtX(r.costPerHour / today.costPerHour) + ' today\'s rate; mostly prompt, so caching decides the bill');
-    add('budget', 'infra', r.budgetHours >= 8 ? 'ok' : r.budgetHours >= 2 ? 'warn' : 'bad', 'The day budget lasts a working day',
-      'a ' + fmtUsd(K.budget) + ' day budget lasts ' + fmtMs(r.budgetHours * 3600000) + ' of steady work; then admission stops new turns');
+      'a turn takes ' + fmtMs(r.turn) + '; reading its ' + K.answer + '-token answer takes ' + fmtMs(r.answerRead), ['assumed']);
+    // infrastructure: what K.conv conversations ask of each resource
+    function rate(v, cap) { return v / cap < 0.25 ? 'ok' : v / cap < 1 ? 'warn' : 'bad'; }
+    add('cost', 'infra', r.costPerHour < today.costPerHour * 3 ? 'ok' : 'warn', 'Model tokens: the bill',
+      fmtUsd(r.costPerHour) + ' an hour, ' + fmtN(r.tokensPerHour) + ' tokens an hour (' + fmtX(r.costPerHour / today.costPerHour) + ' the bill at 35 tokens a second, same load); ' + fmtUsd(r.costHorizon) + ' over ' + fmtHorizon(K.horizon) + ' with the day budget. Mostly prompt: every step sends it again, so caching decides the bill', ['measured', 'assumed']);
+    add('budget', 'infra', r.costPerHour * 24 <= K.budget ? 'ok' : r.budgetHours >= 8 ? 'warn' : 'bad', 'The day budget lasts the day',
+      'a ' + fmtUsd(K.budget) + ' day budget covers ' + (r.costPerHour * 24 <= K.budget ? 'the whole day' : fmtMs(r.budgetHours * 3600000) + ' of it') + ' at this pace; then admission stops new turns until the next day', ['code', 'assumed']);
     add('allow', 'infra', r.allowNeed <= K.allow * 0.5 ? 'ok' : r.allowNeed <= K.allow ? 'warn' : 'bad', 'The provider\'s allowance covers the demand',
-      fmtN(r.allowNeed) + ' tokens a minute wanted, ' + fmtN(K.allow) + ' allowed' + (r.capped < 1 ? '; turns wait on Retry-After and run at ' + Math.round(r.capped * 100) + '% of the speed' : ''));
-    var syncShare = r.syncsPerS / SYNCS_PER_S;
-    add('fsync', 'infra', syncShare < 0.25 ? 'ok' : syncShare < 1 ? 'warn' : 'bad', 'The disk keeps up with durable writes (estimate)',
-      Math.round(r.syncsPerS).toLocaleString() + ' syncs a second against about ' + SYNCS_PER_S.toLocaleString() + ' a laptop disk takes');
-    add('frames', 'infra', r.frameCores < 0.5 ? 'ok' : r.frameCores < 2 ? 'warn' : 'bad', 'The server carries the stream on spare CPU (estimate)',
-      fmtN(r.framesPerS) + ' frames a second across ' + K.conv + ' conversation' + (K.conv > 1 ? 's' : '') + ', about ' + r.frameCores.toFixed(2) + ' cores');
-    add('disk', 'infra', r.ledgerPerDay < 5e9 ? 'ok' : r.ledgerPerDay < 50e9 ? 'warn' : 'bad', 'The record grows at a pace a disk holds (estimate)',
-      fmtBytes(r.ledgerPerDay) + ' of ledger a day of steady work; nothing is pruned but by the lifecycle rules');
-    add('logs', 'infra', r.logsPerDay < 1e9 ? 'ok' : r.logsPerDay < 20e9 ? 'warn' : 'bad', 'Telemetry stays small',
-      fmtBytes(r.logsPerDay) + ' of log lines a day at the measured ' + M.log_bytes_per_step.toLocaleString() + ' bytes a step (rotated by size)');
+      fmtN(r.allowNeed) + ' tokens a minute wanted, ' + fmtN(K.allow) + ' allowed' + (r.capped < 1 ? '; requests wait on Retry-After and work runs at ' + Math.round(r.capped * 100) + '% of the speed' : ''), ['code', 'assumed']);
+    add('cpu', 'infra', rate(r.cores, K.cores), 'Host CPU',
+      r.cores.toFixed(2) + ' of ' + K.cores + ' cores: Vak between model calls ' + r.cpu.runtime.toFixed(2) + ' (measured wall time, so an upper bound), worker processes ' + r.cpu.workers.toFixed(3) + ' (measured), stream frames ' + r.cpu.frames.toFixed(3) + ' (assumed 20 µs a frame)', ['measured', 'assumed']);
+    add('disk', 'infra', rate(r.diskHorizon, K.disk * 1e9), 'Disk space',
+      fmtBytes(r.diskDay) + ' a day, ' + fmtBytes(r.diskHorizon) + ' after ' + fmtHorizon(K.horizon) + ' against ' + K.disk + ' GB free: telemetry ' + fmtBytes(r.diskLogsDay) + ' a day (measured, rotated by size), ledger ' + fmtBytes(r.diskLedgerDay) + ' (assumed bytes a step). Not counted: the catalog index, checkpoints, backups', ['measured', 'assumed']);
+    add('fsync', 'infra', rate(r.syncsPerS, SYNCS_PER_S), 'Disk syncs',
+      (r.syncsPerS < 10 ? r.syncsPerS.toFixed(1) : Math.round(r.syncsPerS).toLocaleString()) + ' a second against about ' + SYNCS_PER_S.toLocaleString() + ' a laptop SSD takes (assumed ' + ENTRIES_PER_STEP + ' durable entries a step)', ['code', 'assumed']);
+    add('network', 'infra', rate(r.upMbps + r.downMbps, K.uplink), 'Network',
+      'up ' + r.upMbps.toFixed(2) + ' Mbit/s (every request carries its whole prompt: measured median ' + fmtBytes(M.request_bytes_p50) + '; less where the provider chains responses), down ' + r.downMbps.toFixed(2) + ' Mbit/s (assumed ' + SSE_BYTES_PER_DELTA + ' bytes a streamed delta), against ' + K.uplink + ' Mbit/s', ['measured', 'assumed']);
+    add('persontime', 'infra', r.people < 1 ? 'ok' : 'warn', 'The person\'s time, for work that runs on its own',
+      'reading every answer would take ' + (r.people < 0.1 ? r.people.toFixed(2) : r.people.toFixed(1)) + ' people full time (' + (today.people >= 1 ? 'already ' + today.people.toFixed(1) + ' today' : today.people.toFixed(2) + ' today') + '). In a conversation the person sets the pace instead, so this holds only for automations and workers; approvals and Review come on top', ['assumed']);
     return list;
   }
 
@@ -1532,40 +1574,51 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
   var UW = 250, UH = 76, pos = {}, unitEls = {}, pipeEls = [], narrow = null;
 
   function drawDiagram() {
-    var host = q('[data-sim="diagram"]');
-    var nowNarrow = host.clientWidth > 0 && host.clientWidth < 760;
-    if (nowNarrow === narrow) return;
-    narrow = nowNarrow; host.textContent = ''; pos = {}; unitEls = {}; pipeEls = [];
+    var host = q('[data-sim="diagram"]'), hw = host.clientWidth;
+    // four stages side by side, two by two, or one column: never drawn larger than its own size
+    var mode = !hw || hw >= 1150 ? 4 : hw >= 560 ? 2 : 1;
+    if (mode === narrow) return;
+    narrow = mode; host.textContent = ''; pos = {}; unitEls = {}; pipeEls = [];
     var W, H, svg;
-    if (!narrow) {
-      var COLW = 270, GAP = 36, L = 20, T = 56, RG = 18;
-      W = L * 2 + STAGES.length * COLW + (STAGES.length - 1) * GAP; H = T + 3 * (UH + RG) + 6;
-      svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H });
-      STAGES.forEach(function (s, i) {
-        var x = L + i * (COLW + GAP);
-        svg.appendChild(sv('rect', { x: x, y: 8, width: COLW, height: H - 14, class: 'sim-band' }));
-        svg.appendChild(sv('text', { x: x + 10, y: 26, class: 'sim-band-name' }, s.name));
-        s.units.forEach(function (id, j) { pos[id] = { x: x + (COLW - UW) / 2, y: T + j * (UH + RG) }; });
+    if (mode > 1) {
+      var COLW = 270, GAP = 36, L = 20, HEAD = 40, RG = 16, y0 = 8, rows = [];
+      for (var i = 0; i < STAGES.length; i += mode) rows.push(STAGES.slice(i, i + mode));
+      W = L * 2 + mode * COLW + (mode - 1) * GAP;
+      var bands = [];
+      rows.forEach(function (row) {
+        var most = Math.max.apply(null, row.map(function (s) { return s.units.length; })), rowH = HEAD + most * (UH + RG);
+        row.forEach(function (s, j) {
+          var x = L + j * (COLW + GAP);
+          bands.push({ x: x, y: y0, h: rowH, name: s.name });
+          s.units.forEach(function (id, k) { pos[id] = { x: x + (COLW - UW) / 2 + 6, y: y0 + HEAD + k * (UH + RG) }; });
+        });
+        y0 += rowH + 12;
+      });
+      H = y0;
+      svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H, width: W });
+      bands.forEach(function (bd) {
+        svg.appendChild(sv('rect', { x: bd.x, y: bd.y, width: COLW, height: bd.h, class: 'sim-band' }));
+        svg.appendChild(sv('text', { x: bd.x + 10, y: bd.y + 20, class: 'sim-band-name' }, bd.name));
       });
     } else {
-      var NW = 300, NL = 10, NT = 8, ROW = UH + 18, HEAD = 22;
+      var NW = 300, NL = 10, NT = 8, ROW = UH + 18, HEAD1 = 22;
       W = NW + NL * 2; var y = NT;
-      STAGES.forEach(function (s) { y += HEAD + s.units.length * ROW; });
+      STAGES.forEach(function (s) { y += HEAD1 + s.units.length * ROW; });
       H = y + 6;
-      svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H });
+      svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H, width: W });
       y = NT;
       STAGES.forEach(function (s) {
         svg.appendChild(sv('text', { x: NL + (NW - UW) / 2 + 20, y: y + 14, class: 'sim-band-name' }, s.name));
-        y += HEAD;
+        y += HEAD1;
         s.units.forEach(function (id) { pos[id] = { x: NL + (NW - UW) / 2 + 20, y: y }; y += ROW; });
       });
     }
     PIPES.forEach(function (p) {
       var a = pos[p[0]], b = pos[p[1]], d;
-      if (!narrow && Math.abs(a.x - b.x) < 1) { // same column: down the left side
+      if (narrow > 1 && Math.abs(a.x - b.x) < 1) { // same column: down the left side
         var ex = a.x - 10, ay = a.y + UH / 2, by = b.y + UH / 2;
         d = 'M' + a.x + ',' + ay + ' C' + ex + ',' + ay + ' ' + ex + ',' + by + ' ' + b.x + ',' + by;
-      } else if (!narrow) {
+      } else if (narrow > 1) {
         var fx = a.x < b.x ? a.x + UW : a.x, tx = a.x < b.x ? b.x : b.x + UW, fy = a.y + UH / 2, ty = b.y + UH / 2, mx = (fx + tx) / 2;
         d = 'M' + fx + ',' + fy + ' C' + mx + ',' + fy + ' ' + mx + ',' + ty + ' ' + tx + ',' + ty;
       } else { // narrow: down the left edge
@@ -1597,7 +1650,7 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
   function curve(r) {
     var host = q('[data-sim="curve"]');
     host.textContent = '';
-    var CW = 1180, CH = 280, L = 70, R = 20, T = 24, B = 40;
+    var CW = Math.max(320, host.clientWidth || 1180), CH = CW < 700 ? 240 : 280, L = 70, R = 20, T = 24, B = 40;
     var s = sv('svg', { viewBox: '0 0 ' + CW + ' ' + CH });
     var xs = [], n = 90;
     for (var i = 0; i <= n; i++) xs.push(Math.pow(10, Math.log10(5) + (Math.log10(MAX) - Math.log10(5)) * i / n));
@@ -1627,13 +1680,14 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
     s.appendChild(sv('line', { x1: L, x2: CW - R, y1: CH - B, y2: CH - B, class: 'sim-axis' }));
     var today = model(TODAY);
     s.appendChild(sv('line', { x1: L, x2: CW - R, y1: Y(today.turn), y2: Y(today.turn), class: 'sim-ref' }));
-    s.appendChild(sv('text', { x: CW - R, y: Y(today.turn) - 6, 'text-anchor': 'end', class: 'sim-tick' }, 'today: ' + fmtMs(today.turn)));
+    s.appendChild(sv('text', { x: CW - R - 4, y: Y(today.turn) + 16, 'text-anchor': 'end', class: 'sim-tick' }, 'today: ' + fmtMs(today.turn)));
     if (r.tps >= 5) {
       var lx = X(r.tps), anchor = lx > CW - 220 ? 'end' : 'start';
       s.appendChild(sv('line', { x1: lx, x2: lx, y1: T, y2: CH - B, class: 'sim-mark' }));
       s.appendChild(sv('text', { x: lx + (anchor === 'end' ? -8 : 8), y: T + 14, 'text-anchor': anchor, class: 'sim-mark-label' }, r.tps.toLocaleString() + '/s · ' + fmtMs(r.turn)));
     }
     s.appendChild(sv('text', { x: CW - R, y: CH - 4, 'text-anchor': 'end', class: 'sim-tick' }, 'tokens a second, log scale'));
+    s.appendChild(sv('text', { x: L + 6, y: T - 8, class: 'sim-tick' }, 'slower than today runs off the top'));
     host.appendChild(s);
   }
 
@@ -1649,6 +1703,7 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
       head.appendChild(el('b', null, c.title));
       li.appendChild(head);
       li.appendChild(el('span', 'v', c.value));
+      if (c.basis && c.basis.length) { var bs = el('span', 'basis'); c.basis.forEach(function (b) { bs.appendChild(el('i', 'b-' + b, b === 'code' ? 'from code' : b)); }); li.appendChild(bs); }
       var t = th[c.key];
       if (t && (t.bad || t.warn)) li.appendChild(el('span', 'when', (t.bad ? 'breaks from ' + fmtTps(t.bad) + ' tokens/s' : 'never breaks up to 20k') + (t.warn && t.warn !== t.bad ? ' · bends from ' + fmtTps(t.warn) : '')));
       else if (t) li.appendChild(el('span', 'when', 'holds up to 20,000 tokens/s'));
@@ -1660,51 +1715,60 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
   // The subsystem plant: every subsystem coloured by what this speed does to it.
   var plantSvg = q('.sim-plant svg'), plantUnits = {}, spFilter = 'all', selected = null;
   if (plantSvg) qa('.sim-plant .unit').forEach(function (u) { plantUnits[u.getAttribute('data-id')] = u; });
-  var KIND = { fail: 'Fails at this speed', infra: 'Needs more infrastructure', cost: 'Costs more', person: 'Waits on a person', busy: 'Busier', none: 'Unaffected by speed', calm: 'About as busy as today' };
+  var KIND = { fail: 'Fails at this speed', infra: 'Near or over capacity', person: 'Waits on a person', busy: 'Busier than today', none: 'Unaffected by speed', calm: 'About as busy as today' };
   var DRIVER = { token: 'per streamed token', step: 'per model step or call', turn: 'per turn', spend: 'per token bought', timer: 'a fixed wait in code', person: 'a person\'s pace' };
-  function loadFor(driver, r, today) {
-    if (r.tps <= 0) return 0;
-    if (driver === 'token') return K.conv * r.tps * r.capped / TODAY;
-    if (driver === 'step' || driver === 'turn' || driver === 'spend') return r.allTurnsPerHour / today.allTurnsPerHourOne;
-    return 1;
+  // each resource: its check, its name, and how much of it this speed asks against today
+  var RES = {
+    tokens: { check: 'cost', name: 'Model tokens' }, cpu: { check: 'cpu', name: 'Host CPU' }, viewer: { check: 'append', name: 'Viewer\'s device' },
+    disk: { check: 'disk', name: 'Disk space' }, syncs: { check: 'fsync', name: 'Disk syncs' }, network: { check: 'network', name: 'Network' },
+    person: { check: 'persontime', name: 'Person\'s time' }
+  };
+  function ratios(r, today) {
+    function q(a, b) { return b > 0 ? a / b : (a > 0 ? Infinity : 1); }
+    return { tokens: q(r.costPerHour, today.costPerHour), cpu: q(r.cores, today.cores), viewer: q(r.tps, TODAY), disk: q(r.diskDay, today.diskDay),
+             syncs: q(r.syncsPerS, today.syncsPerS), network: q(r.upMbps + r.downMbps, today.upMbps + today.downMbps), person: q(r.people, today.people) };
   }
-  function subState(id, r, today, byKey) {
+  function subState(id, r, ratio, byKey) {
     var s = SUB[id];
-    if (!s) return { kind: 'none', load: 0 };
+    if (!s) return { kind: 'none', uses: [] };
     var states = s.checks.map(function (k) { return byKey[k] ? byKey[k].state : 'ok'; });
-    var load = loadFor(s.driver, r, today);
+    var uses = s.uses.map(function (u) { var c = byKey[RES[u].check]; return { res: u, ratio: ratio[u], state: c ? c.state : 'ok' }; });
+    // a person's time and the size of the bill are facts about the work, not limits the subsystem hits;
+    // the limits on spend are the budget and the allowance, which are checks of their own
+    var all = states.concat(uses.filter(function (u) { return u.res !== 'person' && u.res !== 'tokens'; }).map(function (u) { return u.state; }));
+    var most = Math.max.apply(null, uses.map(function (u) { return isFinite(u.ratio) ? u.ratio : 0; }).concat([1]));
     var kind;
     if (r.tps <= 0) kind = s.driver === 'person' ? 'person' : 'calm';
     else if (s.driver === 'person') kind = 'person';
-    else if (s.driver === 'spend') kind = 'cost';
-    else if (states.indexOf('bad') >= 0) kind = 'fail';
-    else if (states.indexOf('warn') >= 0 || load >= 30) kind = 'infra';
-    else if (load >= 3) kind = 'busy';
+    else if (all.indexOf('bad') >= 0) kind = 'fail';
+    else if (all.indexOf('warn') >= 0) kind = 'infra';
+    else if (most >= 3) kind = 'busy';
     else kind = 'calm';
-    return { kind: kind, load: load, states: states };
+    return { kind: kind, uses: uses, states: states, most: most };
   }
   function paintPlant(r, th, byKey) {
     if (!plantSvg) return;
-    var today = model(TODAY); today.allTurnsPerHourOne = today.turnsPerHour;
-    var counts = {};
+    var today = model(TODAY), ratio = ratios(r, today), counts = {};
     Object.keys(plantUnits).forEach(function (id) {
-      var u = plantUnits[id], st = SUB[id] ? subState(id, r, today, byKey) : { kind: u.classList.contains('ext') ? 'ext' : 'none' };
+      var u = plantUnits[id], st = SUB[id] ? subState(id, r, ratio, byKey) : { kind: u.classList.contains('ext') ? 'ext' : 'none', uses: [] };
       u.setAttribute('data-sp', st.kind);
-      counts[st.kind] = (counts[st.kind] || 0) + 1;
-      u.classList.toggle('dim', spFilter !== 'all' && st.kind !== spFilter);
       u._sp = st;
+      counts[st.kind] = (counts[st.kind] || 0) + 1;
+      st.uses.forEach(function (x) { if (x.ratio >= 1.5) counts['r:' + x.res] = (counts['r:' + x.res] || 0) + 1; });
+      var show = spFilter === 'all' || st.kind === spFilter || (spFilter.indexOf('r:') === 0 && st.uses.some(function (x) { return 'r:' + x.res === spFilter && x.ratio >= 1.5; }));
+      u.classList.toggle('dim', !show);
     });
-    qa('[data-sp]').forEach(function (b) {
-      if (b.tagName !== 'BUTTON') return;
-      var k = b.getAttribute('data-sp'), n = k === 'all' ? null : (counts[k] || 0);
-      var label = b.querySelector('.n') || b.appendChild(el('span', 'n'));
-      label.textContent = n == null ? '' : ' ' + n;
+    qa('button[data-sp]').forEach(function (b) {
+      var k = b.getAttribute('data-sp'), label = b.querySelector('.n') || b.appendChild(el('span', 'n'));
+      label.textContent = k === 'all' ? '' : ' ' + (counts[k] || 0);
     });
     // what goes first: subsystems in order of the speed their first check breaks
     var first = [];
     Object.keys(SUB).forEach(function (id) {
       var b = null, why = null;
-      SUB[id].checks.forEach(function (k) { var t = th[k]; if (t && t.bad != null && (b == null || t.bad < b)) { b = t.bad; why = k; } });
+      SUB[id].checks.concat(SUB[id].uses.map(function (u) { return RES[u].check; })).forEach(function (k) {
+        var tt = th[k]; if (tt && tt.bad != null && (b == null || tt.bad < b)) { b = tt.bad; why = k; }
+      });
       if (b != null) first.push({ id: id, at: b, key: why });
     });
     first.sort(function (a, b) { return a.at - b.at || (NAMES[a.id] < NAMES[b.id] ? -1 : 1); });
@@ -1725,10 +1789,11 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
         names.appendChild(btn);
       });
       li.appendChild(names);
-      var c = byKey[f.key]; li.appendChild(el('span', 'muted', f.key === 'person' ? 'from here the agent waits on the person' : 'breaks: ' + (c ? c.title.replace(/ \(estimate\)$/, '').toLowerCase() : f.key)));
+      var c = byKey[f.key];
+      li.appendChild(el('span', 'muted', f.key === 'person' || f.key === 'persontime' ? 'from here the agent waits on the person' : 'breaks: ' + (c ? c.title.toLowerCase() : f.key)));
       ol.appendChild(li);
     });
-    if (!first.length) ol.appendChild(el('li', 'muted', 'Nothing breaks up to 20,000 tokens a second with these assumptions.'));
+    if (!groups.length) ol.appendChild(el('li', 'muted', 'Nothing breaks up to 20,000 tokens a second with these assumptions.'));
     showUnit(r, th, byKey);
   }
   function unitDetail(id, r, th, byKey, box) {
@@ -1736,16 +1801,23 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
     box.appendChild(el('div', 'big', NAMES[id] || id));
     if (!s) { box.appendChild(el('div', 'muted', u && u.classList.contains('ext') ? 'Outside the repository.' : 'Does its work per action, not per token, step or turn: speed alone does not load it.')); return; }
     box.appendChild(el('div', 'sp-kind ' + st.kind, KIND[st.kind]));
-    box.appendChild(el('div', null, s.why + '.'));
-    var load = el('div', 'muted', 'Work grows ' + DRIVER[s.driver] + (st.load && s.driver !== 'person' && s.driver !== 'timer' ? ': ' + fmtX(st.load) + ' today\'s load' + (K.conv > 1 ? ' across ' + K.conv + ' conversations' : '') : '') + '.');
-    box.appendChild(load);
+    box.appendChild(el('div', null, s.why + '. Its work grows ' + DRIVER[s.driver] + '.'));
+    var tbl = el('div', 'sp-res');
+    st.uses.forEach(function (x) {
+      var row = el('div', 'sp-check ' + x.state);
+      row.appendChild(el('b', null, RES[x.res].name + ' · ' + (isFinite(x.ratio) ? fmtX(x.ratio) : '—') + ' its load at 35 tokens a second'));
+      var c = byKey[RES[x.res].check];
+      if (c) row.appendChild(el('span', 'muted', WORD[c.state] + ': ' + c.value));
+      tbl.appendChild(row);
+    });
+    box.appendChild(tbl);
     s.checks.forEach(function (k) {
-      var c = byKey[k], t = th[k];
+      var c = byKey[k], tt = th[k];
       if (!c) return;
       var row = el('div', 'sp-check ' + c.state);
       row.appendChild(el('b', null, WORD[c.state] + ' · ' + c.title));
       row.appendChild(el('span', 'muted', c.value));
-      if (t) row.appendChild(el('span', 'when', t.bad ? 'breaks from ' + fmtTps(t.bad) + ' tokens/s' : 'holds up to 20,000 tokens/s'));
+      if (tt) row.appendChild(el('span', 'when', tt.bad ? 'breaks from ' + fmtTps(tt.bad) + ' tokens/s' : 'holds up to 20,000 tokens/s'));
       if (C[k]) row.appendChild(el('code', null, where(k)));
       box.appendChild(row);
     });
@@ -1811,7 +1883,8 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
     q('[data-sim="today"]').textContent = fmtMs(today.turn);
     q('[data-sim="now"]').textContent = r.tps <= 0 ? 'never' : fmtMs(r.turn);
     q('[data-sim="sub"]').textContent = r.tps <= 0 ? 'Nothing is written, so a turn never ends.'
-      : fmtX(today.turn / r.turn) + ' faster than today · slowest part: ' + neck + ' · ' + fmtUsd(r.costPerHour) + ' an hour · ' + bad + ' of ' + list.length + ' checks break';
+      : fmtX(today.turn / r.turn) + ' faster than today · slowest part: ' + neck + ' · ' + fmtUsd(r.costPerHour) + ' an hour · ' + bad + ' of ' + list.length + ' checks break'
+        + (r.capped < 1 ? ' · the provider\'s allowance holds the work to ' + Math.round(r.capped * 100) + '% of this pace, so a faster model buys nothing more' : '');
     var stack = q('[data-sim="stack"]'), key = q('[data-sim="key"]');
     stack.textContent = ''; key.textContent = '';
     PARTS.forEach(function (p, i) {
@@ -1827,11 +1900,11 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
     var value = {
       first: fmtMs(r.first) + ' a turn', decode: fmtMs(r.decode) + ' a turn', tools: fmtMs(r.tools) + ' a turn',
       loop: fmtMs(r.runtime) + ' a turn', workers: WORK[work].waits ? fmtMs(r.waits) + ' a turn' : 'none in this turn',
-      stream: r.tps > 0 ? fmtN(r.stream) + ' frames/s' : 'no frames', screen: r.tps > 0 ? Math.round(r.screen / r.stepDecode * 100) + '% busy' : 'idle',
+      stream: r.tps > 0 ? fmtN(r.stream) + ' frames/s' : 'no frames', screen: r.tps > 0 ? Math.round(r.screen / r.answerStream * 100) + '% busy' : 'idle',
       read: r.tps > 0 ? 'reads ' + fmtMs(r.answerRead) : '—', approve: 'at a person\'s pace'
     };
     var subText = {
-      stream: r.tps > 0 ? 'reconnect window ' + fmtMs(RING / r.stream * 1000) : 'vak-server', screen: 'vak-client-ui · estimate',
+      stream: r.tps > 0 ? 'reconnect window ' + fmtMs(RING / r.stream * 1000) : 'vak-server', screen: 'vak-client-ui · drawing the answer',
       read: r.tps > 0 ? 'after waiting ' + fmtMs(r.turn) : 'the person'
     };
     var share = { first: r.first, decode: r.decode, tools: r.tools, loop: r.runtime, workers: r.waits };
@@ -1877,13 +1950,15 @@ details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-ite
   function labels() {
     var f = { out: K.out.toLocaleString() + ' tokens', answer: K.answer.toLocaleString() + ' tokens', ft0: K.ft0 + ' ms', net: K.net + ' ms',
               prompt: K.prompt.toLocaleString() + ' tokens', read: K.read + ' words/min', conv: K.conv, pin: '$' + K.pin.toFixed(2), pout: '$' + K.pout.toFixed(2),
-              cache: K.cache + '%', budget: '$' + K.budget, allow: fmtN(K.allow) };
+              cache: K.cache + '%', budget: '$' + K.budget, allow: fmtN(K.allow), tool: K.tool + ' ms',
+              busy: K.busy + '%', horizon: fmtHorizon(K.horizon), cores: K.cores, disk: K.disk + ' GB', uplink: K.uplink + ' Mbit/s' };
     Object.keys(f).forEach(function (k) { var e = q('[data-sim-v="' + k + '"]'); if (e) e.textContent = f[k]; });
   }
   function fillProse() {
     qa('[data-sim-code]').forEach(function (e) { e.textContent = code(e.getAttribute('data-sim-code'), '?').toLocaleString(); });
     var slow = model(TODAY, WORK.typical), fast = model(14000, WORK.typical);
-    var calc = { x14k: Math.round(slow.turn / fast.turn), cool14k: Math.round(COOL * 1000 / fast.turn), step: fmtMs(M.step_p50_ms), asof: M.as_of, turns: M.turns };
+    var calc = { x14k: Math.round(slow.turn / fast.turn), cool14k: Math.round(COOL * 1000 / fast.turn), step: fmtMs(M.step_p50_ms), asof: M.as_of, turns: M.turns,
+      typ35: fmtMs(slow.turn), m35: fmtMs(M.turn_3to5_steps_p50_ms), toolp50: fmtMs(M.tool_p50_ms), toolmean: fmtMs(M.tool_mean_ms) };
     qa('[data-sim-calc]').forEach(function (e) { var v = calc[e.getAttribute('data-sim-calc')]; if (v != null) e.textContent = v; });
     q('[data-sim="worknote"]').textContent = WORK[work].note;
   }
