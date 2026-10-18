@@ -1,5 +1,7 @@
 # The Commitment Contract: How to Stop AI Agents from Wandering Off
 
+Status: historical. An article draft, kept as written on 2026-09-27.
+
 *Why long-horizon autonomy breaks without an external state machine, and how the satisfaction lattice replaces blind trust.*
 
 ![The Commitment Contract Architecture](commitment_banner.jpg)

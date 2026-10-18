@@ -1,5 +1,7 @@
 # Mail and calendar browser evidence
 
+Status: reference. Evidence assets kept for the record that cites them.
+
 These captures show the real Settings work area mounted by
 `/app/tests/mail-calendar-connected-review.html` against the fixture's
 synthetic Google account (`owner@example.test`). The event, date, location and

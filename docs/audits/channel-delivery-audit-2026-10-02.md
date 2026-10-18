@@ -1,6 +1,6 @@
 # Channel delivery and formatting audit — 2026-10-02
 
-Status: audit complete; implementation repairs are in progress on `main`.
+Status: historical. As written: Audit complete; implementation repairs are in progress on `main`.
 
 The pre-fix probe output below is a baseline, not a current result. This repair
 pass changes production behavior for C01-C03, C05-C12, C15-C17, and the

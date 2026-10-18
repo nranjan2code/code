@@ -1,5 +1,7 @@
 # Generation record: 2026-09-27 visual library
 
+Status: reference. Image-generation prompts kept beside the artwork they produced; they describe no product behaviour.
+
 Tool: built-in image generator, using local reference images. No seed or
 model-version pin was available. Outputs were visually reviewed and saved
 under `docs/brand/library/`; exports are made by

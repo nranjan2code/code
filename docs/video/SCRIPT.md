@@ -1,5 +1,7 @@
 # VAK architecture video storyboard
 
+Status: reference. Production material for the product video; it describes no product behaviour.
+
 Target: 90 seconds, 1920×1080, 30 FPS, narrated technical explainer.
 
 | Time | Scene | Visual beat | Narration focus |

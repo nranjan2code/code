@@ -1,5 +1,7 @@
 # VAK architecture video prompts
 
+Status: reference. Production material for the product video; it describes no product behaviour.
+
 ## Master creative prompt
 
 Create a 90-second, 16:9 technical explainer for VAK, a personal AI operating system. Use flat 2D motion graphics, clean editorial typography, restrained navy/teal/coral/amber/lavender/sage accents, and precise diagram animation. Explain one request from channel ingress through trust resolution, `vak-core`, the direct agent loop, permission and brokered tools, Managed Flow, the append-only ledger, semantic delivery, and Operations Center. Keep the tone calm, intelligent, and trustworthy. No 3D, sci-fi, neon, hacker clichés, or generic cloud imagery. Animate only meaningful transitions: cards assemble, arrows trace, policy gates close or open, ledger entries append, and output projections fan out.

@@ -9,6 +9,17 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-18
 
+- Every document carries a status word, and `scripts/check_records.py`
+  fails on drift the tree can contradict: a stale version, baseline or
+  crate count, a missing layout row, a `vak` command the CLI lacks, or a
+  roadmap that lists built work. The blueprint lists only findings with a
+  cost today; fixed or unsupported findings leave it. Recorded in
+  [docs/README.md](README.md) and [the blueprint's rules](architecture/AGENTS.md).
+
+- Known vulnerabilities fail the gate (`scripts/check-advisories.sh`). An
+  advisory is ignored only when Vak cannot reach the vulnerable code, with
+  the reason in `.cargo/audit.toml` and an open item to remove it.
+
 - Vak owns its storage layer: no third-party database beyond the embedded
   SQLite it already uses for refs and the catalog. Findings about the
   storage substrate describe its cost and the testing it needs, never its

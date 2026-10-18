@@ -1,5 +1,7 @@
 # Headless & Cloud scenes
 
+Status: reference. Brand material and its use; the platform exports are generated from the SVG masters.
+
 Two generated Songbird illustrations for the public homepage and Headless & Cloud page.
 Canonical character reference: `docs/brand/mascot/vak-songbird-pose-03.png`.
 Final 1200 × 800 transparent PNGs: `crates/vak-server/site/src/assets/cloud/`.

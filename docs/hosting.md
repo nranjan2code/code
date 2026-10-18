@@ -1,5 +1,7 @@
 # Hosting Vakyartha
 
+Status: reference. The provider-neutral hosting contract. Checked on 2026-10-18 for the commands, paths and versions it cites (scripts/check_records.py, scripts/check_doc_paths.py).
+
 The architectural bet of this project: **the core is headless and runs
 anywhere; the terminal, desktop and chat bridges are clients.** This guide
 covers local services and a headless host.

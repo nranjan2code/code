@@ -1,5 +1,7 @@
 # The Multi-Intent Problem: How AI Agents Actually Handle Compound Requests
 
+Status: historical. An article draft, kept as written on 2026-09-17.
+
 *Why single-label classification starves your agent of the tools it needs, and how Vak solves multi-intent execution across long N-turn horizons.*
 
 ![The Multi-Intent Architecture](multi_intent_architecture.svg)

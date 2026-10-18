@@ -1,0 +1,18 @@
+# cargo-audit configuration, read by `cargo audit` in scripts/gate.sh and
+# scripts/release.sh. An advisory is ignored here only when Vak cannot reach
+# the vulnerable code, the reason is written beside it, and the work that
+# would remove the exception is in docs/plans/open-items.md. Remove an entry
+# as soon as the dependency moves past it.
+
+[advisories]
+ignore = [
+    # zip 4.6.1, pinned exactly as the Office hostile-input boundary
+    # (Cargo.toml; docs/design/72-openxml-documents.md). All three concern
+    # ZipArchive::extract / ZipStreamReader::extract writing files to disk
+    # (SUID bits, symlinks, permissions). Vak never extracts: vak-ooxml reads
+    # entries into memory itself, and no other crate uses zip. The fix is
+    # zip 9, a major upgrade of that boundary, tracked in open-items.md.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+]

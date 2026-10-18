@@ -153,6 +153,7 @@ printf 'release staging: %s (removed on exit)\n' "$RELEASE_TARGET_DIR"
 printf '== gates ==\n'
 "$ROOT_DIR/scripts/check-version.sh"
 python3 "$ROOT_DIR/scripts/check_records.py"
+"$ROOT_DIR/scripts/check-advisories.sh"
 
 # Bound the test gate. A deadlocked test (crates/vak-server/tests/gateway.rs
 # once blocked every test on one mutex) makes an unbounded

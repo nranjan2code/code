@@ -10,7 +10,7 @@ descendants. The remaining findings are deliberately retained as acceptance
 criteria for the next implementation slices rather than erased from the audit
 record.
 
-Status: baseline audit retained as historical evidence; the greenfield runtime
+Status: historical. As written: Baseline audit retained as historical evidence; the greenfield runtime
 and Workbench follow-up are implemented and acceptance-tested. Findings that
 remain relevant are tracked as residual limitations below rather than being
 treated as unverified claims.

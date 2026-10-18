@@ -1,6 +1,6 @@
 # Provider, model and BYOK experience audit
 
-Status: **implemented and checked in the web UI, 2026-09-27.** Scope is the
+Status: historical. As written: **implemented and checked in the web UI, 2026-09-27.** Scope is the
 shared everyday client and provider/model controls in the admin portal. The
 per-turn route planner, provider dispatch, retry ladder, secret backend and
 server authorization are not changed.

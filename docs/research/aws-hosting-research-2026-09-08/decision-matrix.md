@@ -1,6 +1,6 @@
 # Architecture decision matrix — AWS hosting of vak as a SaaS
 
-Status: research observation, 2026-09-08. This matrix weighs the hosting
+Status: historical. As written: Research observation, 2026-09-08. This matrix weighs the hosting
 options against what vak's design actually *permits* (not what a SaaS
 product would ideally look like). Sources: `docs/design/48-web-client.md`
 (Phase E, multi‑user/non‑goals), `docs/design/34-channel-onboarding.md`

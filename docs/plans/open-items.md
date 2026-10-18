@@ -221,7 +221,36 @@ contract:
 - [x] The `skill` tool defers when every admitted skill is an ability
   (2026-10-16): the date question's `skill` calls 3/16 → 0/16.
 
+## The record and the blueprint (2026-10-18)
+
+Found by the drift checks and the blueprint review; nothing here is started
+unless it says so.
+
+- [ ] 233 code names cited by 46 living documents no longer occur in the
+  code (`python3 scripts/check_records.py --names`). Some are external API
+  names or test names a plan proposed; triage each document, correct what
+  drifted, and leave the rest worded so the report stays readable.
+- [ ] Rewrite `docs/design/83-prompt-system.md` against the current code; it
+  is historical until then.
+- [ ] `vak-intent` still derives an epistemic stance for every strand
+  (`derive_epistemic_stance`), but no prompt has carried it since
+  `d0875af47`. Remove it, or record what reads it.
+- [ ] Blueprint F2: a test that fails when a wrapping `Tool` leaves a
+  defaulted method unforwarded (or a delegation macro).
+- [ ] Blueprint F1 and F3: the turn's state as one type and the end-of-turn
+  checks as one ordered list; one completion type the others project from.
+- [ ] Blueprint F4: a ledger-owned message type, converted at the provider
+  boundary.
+- [ ] Blueprint F5: model-based tests of chain readers, multi-process fencing
+  interleavings, catalog audience tests, fuzz targets for `vak-pdf`.
+
 ## Before the next release
+
+- [ ] zip 4.6.1 to 9: RUSTSEC-2026-0367, 0368 and 0369 are ignored in
+  `.cargo/audit.toml` because Vak never calls `extract`. Upgrading the
+  pinned hostile-input boundary (docs/design/72-openxml-documents.md) is a
+  major version: review the reader against zip 9, run the Office suites
+  and fuzz corpus, then remove the three exceptions.
 
 8.3.0 (2026-10-15), additive within 8.x, no purge (the shipped skills):
 

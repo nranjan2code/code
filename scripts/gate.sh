@@ -65,3 +65,4 @@ step test cargo test --workspace
 step version scripts/check-version.sh
 step doc-paths python3 scripts/check_doc_paths.py
 step records python3 scripts/check_records.py
+step advisories scripts/check-advisories.sh

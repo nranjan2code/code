@@ -1,5 +1,7 @@
 # Story film direction
 
+Status: reference. Production material for the product video; it describes no product behaviour.
+
 ## Creative premise
 
 The first video is a reference explainer: it teaches the architecture layer by layer. This second

@@ -1,5 +1,7 @@
 # Vakyartha architecture tutor
 
+Status: reference. The visual architecture tutor; each diagram names the scope it was drawn for. Checked on 2026-10-18 for the commands, paths and versions it cites (scripts/check_records.py, scripts/check_doc_paths.py).
+
 This is a visual guide to the `vak` runtime: start with the system map, follow
 one request, then use the deep dives to understand trust, execution, state,
 delivery, and operations.

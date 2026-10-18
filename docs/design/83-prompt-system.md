@@ -1,8 +1,12 @@
 # 83 — The prompt system, end to end
-Status: reference. Describes shipped behaviour at workspace version 5.3.2
-(2026-10-01). It explains and cross-references; it does not replace the
-authorities. If this document and one of them disagree, the code and the
-authority win, and this document is stale:
+Status: historical. Described the prompt system as shipped at 5.3.2
+(2026-10-01). Rechecked on 2026-10-18: the reader no longer escalates to a
+model or spends on classification (C3b, 2026-10-11), the tail no longer
+carries a `<stance>` block (`d0875af47`), and tools load by their own
+declarations, so §9, the tail examples and the inputs table no longer hold.
+Five of the 94 code names it cites are gone. Until a rewrite (open items),
+read the authorities below, which the code keeps true. When they and this
+document disagree, the code and the authority win:
 
 | Question | Authority |
 |---|---|

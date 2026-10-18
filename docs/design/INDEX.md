@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 3 proposal, 20 in progress, 57 implemented, 3 reference, 8 superseded, 4 historical.
+Counts: 3 proposal, 20 in progress, 57 implemented, 2 reference, 8 superseded, 5 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -87,7 +87,7 @@ Counts: 3 proposal, 20 in progress, 57 implemented, 3 reference, 8 superseded, 4
 | [80-mail-and-calendar.md](80-mail-and-calendar.md) | 80 — Mail and calendar: governed account work | in progress | (on main |
 | [81-pieces-and-home.md](81-pieces-and-home.md) | 81 — Pieces and Home: kept, live and hosted work | proposal | 2026-10-01 |
 | [82-library.md](82-library.md) | 82 — Library: one place for everything Vak makes | implemented | (data-architecture M8, 2026-10-06 to 2026-10-08, acceptance in `docs/audits/acceptance-m8-library-2026-10-08.md`): artifacts and their versions as records (`Tool::artifact`, `ArtifactClaim`), the `/library` API, the Library page and artifact page, Continue working and Make another, edits and Put back as versions, sharing by link and through a conversation's grant, and Review, Canvas and Workbench on artifact versions |
-| [83-prompt-system.md](83-prompt-system.md) | 83 — The prompt system, end to end | reference | Describes shipped behaviour at workspace version 5.3.2 (2026-10-01) |
+| [83-prompt-system.md](83-prompt-system.md) | 83 — The prompt system, end to end | historical | Described the prompt system as shipped at 5.3.2 (2026-10-01) |
 | [84-worker-questions-and-control.md](84-worker-questions-and-control.md) | 84 — Worker questions, live worker control, and pause-now | in progress | Built: M3 (pause and stop now, §7), M1 (a worker's question: the board, `ask_parent`, the HTTP list and answer endpoints and the events, §4) and M2 (background tasks, read-only or leased writers, the `workers` tool and the stop-gate join, §5) |
 | [85-turn-graph.md](85-turn-graph.md) | 85 — The turn graph: linked context across turns, sessions and years | in progress | G0 is built, and G1 is built (2026-10-03): turn links, recall links, merged threads and the planner's two-step `link` signal (§10) |
 | [86-model-plans-runtime-checks.md](86-model-plans-runtime-checks.md) | 86 — The model plans, the runtime checks | in progress | direction approved by the maintainer on 2026-10-11 |

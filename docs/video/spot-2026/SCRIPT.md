@@ -1,5 +1,7 @@
 # vak spot — prompts and edit
 
+Status: reference. Production material for the product video; it describes no product behaviour.
+
 Everything needed to regenerate the spot on the ElevenLabs canvas. Reference order matters: the
 image models cite references in the order they are wired.
 

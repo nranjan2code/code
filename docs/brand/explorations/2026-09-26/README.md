@@ -1,6 +1,6 @@
 # Vakyartha — identity exploration
 
-Status: **concept proposals, 2026-09-26; not an approved replacement.**
+Status: historical. As written: **concept proposals, 2026-09-26; not an approved replacement.**
 
 Public name: **Vakyartha**. Official domain: **vakyartha.com**.
 The website redesign is a later task. Existing production assets are unchanged.

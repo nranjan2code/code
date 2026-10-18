@@ -1,5 +1,7 @@
 # Vakyartha — exact initial prompts
 
+Status: historical. A dated record, kept as written on 2026-09-26.
+
 ## Follow-up correction applied separately to every board
 
 Edit this logo presentation board. Preserve the exact logo design, wordmark spelling Vakyartha, all repeated logos, layout, and application mockups. CRITICAL: replace the ENTIRE transparent/black/cloudy surrounding board background with ONE COMPLETELY OPAQUE SOLID WHITE #FFFFFF background, uniformly from corner to corner. No alpha transparency anywhere. The final output must be a fully flattened opaque white printed presentation sheet. Eliminate ALL mist, glow, haze, gradients, coloured clouds, black patches and drop shadows outside the business-card photo. Keep the app icon's solid indigo square; keep the business-card photo. All large logos and wordmarks must be solid high-contrast indigo ink, with flat saffron accents. All titles and labels must be dark grey and easily readable against white. Remove incidental invented taglines, leave only direction title, Vakyartha, CONCEPT STUDY and the four application labels. This is a background readability correction, not a redesign.

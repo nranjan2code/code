@@ -1,5 +1,7 @@
 # Individual character generation record
 
+Status: reference. Image-generation prompts kept beside the artwork they produced; they describe no product behaviour.
+
 Tool: built-in image generator, 2026-09-27. Each image was generated from
 the corresponding `docs/brand/characters/<id>.png` reference with
 `transparent_background: true`. The five approved generated PNGs below are

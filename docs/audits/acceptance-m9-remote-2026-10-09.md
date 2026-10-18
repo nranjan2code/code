@@ -1,6 +1,6 @@
 # Acceptance: M9, the remote and two machines taking turns (2026-10-09)
 
-Status: record of the acceptance runs. Scope: data-architecture plan M9
+Status: historical. As written: Record of the acceptance runs. Scope: data-architecture plan M9
 as cut for one owner (plan §M9 "M9 design").
 
 ## How it was run

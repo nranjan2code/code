@@ -1,5 +1,7 @@
 # Architecture diagrams
 
+Status: reference. The index of architecture pages: the generated blueprint and dated snapshots. Checked on 2026-10-18 for the commands, paths and versions it cites (scripts/check_records.py, scripts/check_doc_paths.py).
+
 For the visual learning path, see the [architecture tutor](../tutor/README.md),
 which links to the detailed request, agent, ledger, security, delivery,
 configuration, flow, memory, desktop, Doctor, and Operations diagrams.

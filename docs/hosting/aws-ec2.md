@@ -1,5 +1,7 @@
 # Headless Vakyartha on one AWS EC2 host
 
+Status: reference. One worked deployment of the hosting contract on AWS EC2. Checked on 2026-10-18 for the commands, paths and versions it cites (scripts/check_records.py, scripts/check_doc_paths.py).
+
 This is an example deployment of the provider-neutral hosting contract in
 [Hosting Vakyartha](../hosting.md). The repository contains the reusable
 procedure and scripts. **The operator owns a private inventory file outside

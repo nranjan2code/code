@@ -1,5 +1,7 @@
 # Bash and sandbox security audit — 2026-10-02
 
+Status: historical. A dated record, kept as written on 2026-10-02.
+
 ## Verdict
 
 The broker architecture is in place, but restricted Bash is not a reliable

@@ -1,5 +1,7 @@
 # Your control page and Doctor routing repair — 2026-09-27
 
+Status: reference. Evidence assets kept for the record that cites them.
+
 The `/security` page now explains six everyday choices: access, review,
 information, chat connections, interruption and evidence, and enforcement.
 Three generated Songbird illustrations retain the public site's white/charcoal,

@@ -1,5 +1,7 @@
 # Vakyartha dynamic presentation — continuation prompt
 
+Status: historical. A dated record, kept as written on 2026-10-11.
+
 Continue the active goal in `/Users/nisheethranjan/Projects/Vak/code`. Read this handover, `AGENTS.md`, and `docs/audits/presentation-registry-and-live-coverage-2026-10-10.md` before working. Preserve the dirty worktree: it contains many changes from earlier work and the maintainer. Do not reset files or assume every diff belongs to this latest change.
 
 ## Problem and intended result

@@ -1,6 +1,6 @@
 # System prompt audit — September 13, 2026
 
-Status: audit complete; findings open; production prompts and runtime unchanged.
+Status: historical. As written: Audit complete; findings open; production prompts and runtime unchanged.
 
 Follow-up coverage of subagents, model calls, intent, commitments, stopping, planning, communication, and temporal handling is recorded in `docs/audits/delegation-control-temporal-prompts-2026-09-13.md`. Read both reports for the full requested scope.
 

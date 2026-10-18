@@ -1,6 +1,6 @@
 # M8 acceptance run: create, review, promote, share, comment, revise (2026-10-08)
 
-Status: passed on `gpt-6-luna` after one client fix and three contract
+Status: historical. As written: Passed on `gpt-6-luna` after one client fix and three contract
 fixes found by the run; create and review passed on local Ollama
 (`gemma4:e2b-mlx`) on 5 of 8 create attempts. Erase is not part of this
 run; it waits for M7a.

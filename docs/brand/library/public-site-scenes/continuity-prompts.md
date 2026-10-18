@@ -1,5 +1,7 @@
 # Continuing the work
 
+Status: reference. Image-generation prompts kept beside the artwork they produced; they describe no product behaviour.
+
 Generated 2026-09-27 using the built-in imagegen tool. Marketing illustration,
 not a product screenshot. Final original: `continuity.png`; alpha-preserving
 WebP export: `crates/vak-server/site/src/assets/continuity.webp`.

@@ -20,8 +20,8 @@ measurement and given a verdict.
 | Part | Where it comes from |
 |---|---|
 | Every number (lines, files, tests, commits, dependencies, routes, tools, worker tasks, card forms, durable paths, longest files and functions) | measured by `scripts/blueprint.py` from the tree, `cargo metadata` and `git log` |
-| The evidence behind each finding (fix density, rebuild fan-out, unforwarded declarations, blocking calls, test density, completion vocabularies, the intent word tables, ledger coupling) | the checks in `scripts/blueprint/evidence.py`, run on every generation |
-| Cognitive complexity and dependency advisories | `python3 scripts/blueprint.py --deep` (clippy and `cargo audit`), cached in `measures.json` |
+| The evidence behind each finding (fix density, rebuild fan-out, unforwarded declarations, test density, completion vocabularies, ledger coupling) | the checks in `scripts/blueprint/evidence.py`, run on every generation |
+| Cognitive complexity | `python3 scripts/blueprint.py --deep` (clippy), cached in `measures.json` |
 | The layer stack, the dependency matrix, the upward-dependency list, the bill of materials, the size and work tables | drawn by `scripts/blueprint.py` from those measurements |
 | Each crate's layer and one-line role | the `CRATES` table in `scripts/blueprint.py` |
 | The process topology, the turn sequence, the data tree, the findings, what to keep and the target shape | written by hand in `scripts/blueprint/template.html`, with live numbers through `{{…}}` placeholders |
@@ -33,8 +33,7 @@ measurement and given a verdict.
   committed page differs from the tree. Commit the regenerated page before
   releasing.
 - By hand: `python3 scripts/blueprint.py`, or with `--deep` to refresh
-  complexity and advisories (a few minutes; `cargo audit` needs the
-  network). Refresh `--deep` before a release; `scripts/release.sh` warns
+  complexity (about a minute). Refresh `--deep` before a release; `scripts/release.sh` warns
   when `measures.json` predates the last release tag.
 
 Commit the regenerated page in a commit of its own, right after the
@@ -81,7 +80,9 @@ the change. Rules for the prose:
   complexity, `{{hist:fn}}` for a function's commits), never as literals, so
   they cannot go stale. Dated history (a commit id, what one run did) may be
   quoted as written.
-- Give every finding a verdict chip and the parts review-method.md lists.
+- List only findings with a cost today, each with a verdict chip and the
+  parts review-method.md lists. A finding that is fixed, or that the
+  evidence does not support, leaves the page; git keeps it.
 - Remove a finding once it no longer holds. Git keeps the old text.
 
 ### Measuring
@@ -95,7 +96,7 @@ the change. Rules for the prose:
   `cargo metadata --no-deps --offline`.
 - The generator writes `blueprint.html` (and, with `--deep`,
   `measures.json`), plus a cache of per-commit file lists in the git
-  directory. It reads no data home. Only `--deep` reaches the network. The
+  directory. It reads no data home. Nothing reaches the network. The
   page measures the working tree, so uncommitted work in the checkout is
   counted until it is committed or discarded.
 

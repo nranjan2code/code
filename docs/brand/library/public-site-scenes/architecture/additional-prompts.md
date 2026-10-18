@@ -1,5 +1,7 @@
 # Additional illustrations
 
+Status: reference. Image-generation prompts kept beside the artwork they produced; they describe no product behaviour.
+
 Built-in image generation, 2026-09-27. Canonical reference: vak-512.webp. Transparent originals retained; WebP files are format conversions.
 
 ## doctor-diagnosis

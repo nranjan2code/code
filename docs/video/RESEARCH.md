@@ -1,5 +1,7 @@
 # Remotion production research
 
+Status: reference. Production material for the product video; it describes no product behaviour.
+
 Research date: 2026-09-01
 
 ## Recommendation

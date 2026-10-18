@@ -1,6 +1,6 @@
 # UI completion checklist
 
-Status: dated review ledger. A row's recorded proof is evidence for that
+Status: historical. As written: Dated review ledger. A row's recorded proof is evidence for that
 review, not a fresh verification of the current client.
 
 Review started: 2026-09-10

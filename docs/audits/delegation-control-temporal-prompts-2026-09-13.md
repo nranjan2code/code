@@ -1,6 +1,6 @@
 # Delegation, control, communication, and temporal prompt audit
 
-Status: audit findings open; no production changes. Examined revision `fb38b76a`, version 3.0.82.
+Status: historical. As written: Audit findings open; no production changes. Examined revision `fb38b76a`, version 3.0.82.
 
 This extends `docs/audits/system-prompts-2026-09-13.md` in response to the user's requirements to cover subagents, all model-call purposes, intent, commitments, stopping, planning, communication, and time. The standard remains a universal platform whose behavior adapts to the request and whose custom Agent instructions add to vak's foundation.
 

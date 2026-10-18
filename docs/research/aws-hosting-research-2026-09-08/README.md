@@ -1,6 +1,6 @@
 # Observation: hosting vak on AWS as a per‑tenant engine — individuals vs orgs/enterprises
 
-Status: research observation, 2026-09-08.
+Status: historical. As written: Research observation, 2026-09-08.
 Companions: `cost-model.md` (AWS Free Tier + per‑tenant economics),
 `decision-matrix.md` (architecture options vs vak invariants).
 

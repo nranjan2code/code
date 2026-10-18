@@ -1,6 +1,6 @@
 # Acceptance: M7a lifecycle, honest deletion (2026-10-08)
 
-Status: record of one acceptance run. Scope: data-architecture plan M7a,
+Status: historical. As written: Record of one acceptance run. Scope: data-architecture plan M7a,
 against `docs/design/74-lifecycle-and-data-administration.md` §9.
 
 ## How it was run

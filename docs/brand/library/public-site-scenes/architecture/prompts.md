@@ -1,5 +1,7 @@
 # Architecture illustrations
 
+Status: reference. Image-generation prompts kept beside the artwork they produced; they describe no product behaviour.
+
 Generated with the built-in image generation tool, 2026-09-27. Reference: canonical `crates/vak-client-ui/public/assets/brand/dimensional/characters/vak-512.webp`. Only Vakyartha appears. PNG originals retain alpha; WebP copies are format conversions for the public site. HTML labels carry the technical meaning.
 
 ## core

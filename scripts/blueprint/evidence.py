@@ -2,11 +2,12 @@
 
 Each function measures one claim from the tree or its history and returns
 plain data; scripts/blueprint.py renders it. Cheap checks run on every build.
-`deep()` runs the slow ones (clippy's cognitive complexity, cargo audit) and
-is cached in docs/architecture/measures.json by `blueprint.py --deep`.
+`deep()` runs the slow one (clippy's cognitive complexity) and is cached in
+docs/architecture/measures.json by `blueprint.py --deep`. Dependency
+advisories are the gate's (scripts/check-advisories.sh), not the page's.
 
 Heuristics are named where they are used. Nothing here reads a data home,
-and only `deep()` may reach the network (the RustSec advisory database).
+and nothing reaches the network.
 """
 
 import json
@@ -100,6 +101,7 @@ def hotspots(b):
         "top10_lines": 100 * sum(r[0] for r in top) / lines,
         "top10_fixes": 100 * sum(r[2] for r in top) / fixed,
         "median_density": med,
+        "density": {r[3]: r[2] / r[0] * 1000 for r in rows},
         "top": [{"file": r[3], "lines": r[0], "commits": r[1], "fixes": r[2], "density": r[2] / r[0] * 1000} for r in top],
     }
 
@@ -120,17 +122,6 @@ def fanout(crates):
                     stack.append(r)
         out[c["name"]] = len(seen)
     return out
-
-
-def closure(crates, name):
-    by = {c["name"]: c for c in crates}
-    seen, stack = set(), [name]
-    while stack:
-        for d in by.get(stack.pop(), {"deps": []})["deps"]:
-            if d not in seen:
-                seen.add(d)
-                stack.append(d)
-    return sorted(seen)
 
 
 def tool_wrappers(b):
@@ -168,36 +159,6 @@ def tool_wrappers(b):
     impls.sort()
     return {"methods": len(methods), "defaults": len(defaults), "impls": len(impls),
             "median_overrides": impls[len(impls) // 2] if impls else 0, "wrappers": wrappers}
-
-
-def blocking(b):
-    """Calls that block an executor thread, inside async fns."""
-    fs = re.compile(r"\bstd::fs::|\bfs::(?:read|read_to_string|write|create_dir_all|remove_file|remove_dir_all|rename|copy|metadata|read_dir)\b|\bFile::(?:open|create)\b")
-    sync_cmd_import = re.compile(r"use std::process::(?:Command\b|\{[^}]*\bCommand\b)")
-    off = re.compile(r"spawn_blocking|block_in_place")
-    out = {"async_fns": 0, "offloads": 0, "fs_calls": 0, "fs_fns": 0, "proc_fns": 0, "fs_by_crate": defaultdict(int)}
-    for crate in sorted(os.listdir(os.path.join(b.ROOT, "crates"))):
-        for p in b.files_under(f"crates/{crate}/src", (".rs",)):
-            lines = b.production_lines(p)
-            whole = "\n".join(lines)
-            out["offloads"] += len(off.findall(whole))
-            sync_cmd = bool(sync_cmd_import.search(whole))
-            for name, start, length in b.functions(p):
-                if "async fn" not in lines[start - 1]:
-                    continue
-                out["async_fns"] += 1
-                body = "\n".join(lines[start - 1:start - 1 + length])
-                body = re.sub(r"spawn_blocking\((?:.|\n)*?\)\s*\.await", "", body)
-                n = len(fs.findall(body))
-                if n:
-                    out["fs_calls"] += n
-                    out["fs_fns"] += 1
-                    out["fs_by_crate"][crate] += 1
-                # std's Command, spelled out or imported by name (tokio's is async)
-                if "std::process::Command::new(" in body or (sync_cmd and re.search(r"\bCommand::new\(", body)):
-                    out["proc_fns"] += 1
-    out["fs_by_crate"] = dict(sorted(out["fs_by_crate"].items(), key=lambda kv: -kv[1]))
-    return out
 
 
 def test_density(b, crates):
@@ -246,14 +207,6 @@ def completion_models(b):
     return {"models": rows, "translations": translations}
 
 
-def lexicon(b):
-    text = open(os.path.join(b.ROOT, "crates/vak-intent/src/signals.rs"), encoding="utf-8").read()
-    tables = re.findall(r"const [A-Z_]+: &\[&str\]", text)
-    entries = len(re.findall(r'^\s*"[^"]+",', text, re.M)) + sum(len(re.findall(r'"[^"]+"', m)) for m in re.findall(r"&\[&str\] = &\[([^\]\n]*)\];", text))
-    commits = int(git(b.ROOT, "rev-list", "--count", "HEAD", "--", "crates/vak-intent/src/signals.rs").strip() or 0)
-    return {"tables": len(tables), "entries": entries, "commits": commits}
-
-
 def ledger_types(b):
     """What the session ledger takes from the provider and intent crates."""
     uses = defaultdict(int)
@@ -269,7 +222,7 @@ def ledger_types(b):
 
 
 def deep(b, revision):
-    """The slow checks: clippy cognitive complexity and cargo audit."""
+    """The slow check: clippy cognitive complexity over every workspace library."""
     out = {"revision": revision}
     with tempfile.TemporaryDirectory() as conf:
         base = os.path.join(b.ROOT, "clippy.toml")
@@ -306,15 +259,4 @@ def deep(b, revision):
     fns.sort(key=lambda r: (-r["score"], r["file"], r["line"]))
     out["complexity"] = fns
 
-    audit = subprocess.run(["cargo", "audit", "--json"], cwd=b.ROOT, capture_output=True, text=True)
-    try:
-        report = json.loads(audit.stdout)
-        out["audit"] = {
-            "vulnerabilities": sorted(({"id": v["advisory"]["id"], "package": v["package"]["name"],
-                                        "version": v["package"]["version"], "title": v["advisory"]["title"]}
-                                       for v in report["vulnerabilities"]["list"]), key=lambda v: (v["package"], v["id"])),
-            "warnings": {k: sorted({f'{w["package"]["name"]} {w["package"]["version"]}' for w in ws}) for k, ws in report.get("warnings", {}).items()},
-        }
-    except (ValueError, KeyError):
-        out["audit"] = None
     return out

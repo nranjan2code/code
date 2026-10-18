@@ -1,6 +1,6 @@
 # AWS Free Tier & hosting economics — vak 2026-09
 
-Status: research observation, 2026-09-08. Sources cited inline (AWS Free Tier
+Status: historical. As written: Research observation, 2026-09-08. Sources cited inline (AWS Free Tier
 Terms last updated 2025-07-09; AWS VPC/EC2 pricing pages fetched 2026-09-08).
 This is a *fact sheet*, not a deployment guide. See `README.md` for synthesis
 and `decision-matrix.md` for the architecture choices.

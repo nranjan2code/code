@@ -1,5 +1,7 @@
 # VAK architecture video
 
+Status: reference. Production material for the product video; it describes no product behaviour.
+
 This folder contains the research, creative brief, narration, prompts, and agent workflow for the Remotion-based VAK architecture explainer.
 
 ## Source files

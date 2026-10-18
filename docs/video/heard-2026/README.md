@@ -1,5 +1,7 @@
 # "Heard" — the generated shots (2026-10-15)
 
+Status: reference. Production material for the product video; it describes no product behaviour.
+
 The 60-second brand film "Heard" is scripted in
 [`docs/brand/media/README.md`](../../brand/media/README.md) ("The film").
 Its rule: generated video only for the desk and window shots, never for

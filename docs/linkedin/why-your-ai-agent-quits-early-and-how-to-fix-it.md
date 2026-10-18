@@ -1,5 +1,7 @@
 # The Illusion of "Done": Why AI Agents Fail the Delegation Test
 
+Status: historical. An article draft, kept as written on 2026-09-27.
+
 *What happens when your autonomous agent claims it finished the work, but never touched the tools.*
 
 ![Deterministic Governance for Autonomous Agents](stop_system_banner.jpg)

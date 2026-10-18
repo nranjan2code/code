@@ -1,7 +1,7 @@
 # Turn capability assembly audit
 
 Date: 2026-09-05. Source baseline: `6a58f33` (workspace version 3.0.0).
-Status: implementation pass completed for the findings below, including the
+Status: historical. As written: Implementation pass completed for the findings below, including the
 standalone CLI/eval/heartbeat prepared-turn migration.
 
 ## Implementation status

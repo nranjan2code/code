@@ -1,5 +1,7 @@
 # Developing and testing Vak live
 
+Status: reference. How to build, run and check a development build. Checked on 2026-10-18 for the commands, paths and versions it cites (scripts/check_records.py, scripts/check_doc_paths.py).
+
 How to build, run and check Vakyartha during development, including a live run
 against a real model in the browser. The contract
 rules it serves are in `AGENTS.md` ("Verification before every commit",

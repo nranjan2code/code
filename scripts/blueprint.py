@@ -14,9 +14,9 @@ freshly generated page and generating again changes nothing.
 
 Usage: python3 scripts/blueprint.py [--deep] [--quiet]
 
---deep also runs the slow checks in scripts/blueprint/evidence.py (clippy's
-cognitive_complexity over every workspace library, and cargo audit) and
-rewrites docs/architecture/measures.json, which every other run reads.
+--deep also runs the slow check in scripts/blueprint/evidence.py (clippy's
+cognitive_complexity over every workspace library) and rewrites
+docs/architecture/measures.json, which every other run reads.
 """
 
 import html
@@ -461,54 +461,36 @@ def evidence_blocks(crates, m):
     hot = evidence.hotspots(me)
     fan = evidence.fanout(crates)
     wr = evidence.tool_wrappers(me)
-    blk = evidence.blocking(me)
     tests, tmed = evidence.test_density(me, crates)
     comp = evidence.completion_models(me)
-    lex = evidence.lexicon(me)
     led = evidence.ledger_types(me)
     by_fan = sorted(fan.items(), key=lambda kv: -kv[1])
+    density = hot["density"]
     e = {
+        "hot.core": f'{density.get("crates/vak-core/src/lib.rs", 0):.1f}',
+        "hot.agent": f'{density.get("crates/vak-agent/src/lib.rs", 0):.1f}',
         "hot.files": hot["files"], "hot.commits": hot["commits"], "hot.fix_commits": hot["fix_commits"],
         "hot.rho_density": f'{hot["rho_density"]:+.2f}', "hot.rho_count": f'{hot["rho_count"]:+.2f}',
         "hot.top10_lines": f'{hot["top10_lines"]:.0f}%', "hot.top10_fixes": f'{hot["top10_fixes"]:.0f}%',
         "hot.median": f'{hot["median_density"]:.1f}',
-        "fan.top": ", ".join(f"<code>{esc(n)}</code> {v}" for n, v in by_fan[:3]),
-        "fan.core": fan.get("vak-core", 0), "fan.session": fan.get("vak-session", 0), "fan.llm": fan.get("vak-llm", 0),
-        "fan.crates": len(fan),
-        "closure.session": len(evidence.closure(crates, "vak-session")),
-        "closure.session.list": ", ".join(f"<code>{esc(x)}</code>" for x in evidence.closure(crates, "vak-session")),
+        "fan.llm": fan.get("vak-llm", 0),
         "tool.methods": wr["methods"], "tool.defaults": wr["defaults"], "tool.impls": wr["impls"],
         "tool.median": wr["median_overrides"], "tool.wrappers": len(wr["wrappers"]),
-        "blk.async": blk["async_fns"], "blk.fs_fns": blk["fs_fns"], "blk.fs_calls": blk["fs_calls"],
-        "blk.proc_fns": blk["proc_fns"], "blk.offloads": blk["offloads"],
-        "blk.by_crate": ", ".join(f"<code>{esc(c)}</code> {n}" for c, n in list(blk["fs_by_crate"].items())[:4]),
         "test.median": f"{tmed:.1f}",
         "comp.count": sum(1 for r in comp["models"] if r["variants"]), "comp.translations": comp["translations"],
         "comp.variants": ", ".join(f'{r["variants"]}' for r in comp["models"] if r["variants"]),
-        "lex.tables": lex["tables"], "lex.entries": lex["entries"], "lex.commits": lex["commits"],
         "led.llm": led["uses"].get("vak_llm", 0), "led.intent": led["uses"].get("vak_intent", 0),
         "led.control": led["uses"].get("vak_control", 0),
         "led.types_commits": led["types_commits"], "led.co_changed": led["co_changed"],
     }
     for name, t in tests.items():
         e[f"test.{name}"] = f'{t["per_kloc"]:.1f}'
-    rows_hot = "\n".join(f'<tr><td><code>{esc(r["file"])}</code></td><td class="n">{r["lines"]:,}</td><td class="n">{r["commits"]}</td><td class="n">{r["fixes"]}</td><td class="n">{r["density"]:.1f}</td></tr>' for r in hot["top"])
     rows_wr = "\n".join(f'<li><code>{esc(w["type"])}</code> ({esc(w["file"])}:{w["line"]}): ' + (("does not forward " + ", ".join(f"<code>{esc(x)}</code>" for x in w["missing"])) if w["missing"] else "forwards every default") + "</li>" for w in wr["wrappers"]) or "<li>No wrapping tools found.</li>"
     rows_comp = "\n".join(f'<tr><td><code>{esc(r["enum"])}</code></td><td>{esc(r["role"])}</td><td class="n">{r["variants"] if r["variants"] is not None else "gone"}</td><td><code>{esc(r["file"])}</code></td></tr>' for r in comp["models"])
     thin = sorted(tests.items(), key=lambda kv: kv[1]["per_kloc"])
     rows_tests = "\n".join(f'<tr><td><code>{esc(n)}</code></td><td class="n">{t["tests"]}</td><td class="n">{t["per_kloc"]:.1f}</td><td>{"yes" if t["fuzz"] else "—"}</td></tr>' for n, t in thin)
     misses = [f"completion model {r['enum']} ({r['file']})" for r in comp["models"] if r["variants"] is None]
-    return e, {"HOTSPOTS": rows_hot, "WRAPPERS": rows_wr, "COMPLETION": rows_comp, "TESTS": rows_tests}, misses
-
-
-def audit_rows(cc):
-    if not cc or not cc.get("audit"):
-        return '<tr><td colspan="4">Not measured: run <code>python3 scripts/blueprint.py --deep</code> with network access.</td></tr>', 0, 0
-    a = cc["audit"]
-    rows = "\n".join(f'<tr><td><code>{esc(v["id"])}</code></td><td><code>{esc(v["package"])} {esc(v["version"])}</code></td><td>{esc(v["title"])}</td></tr>' for v in a["vulnerabilities"])
-    warn = sum(len(v) for v in a["warnings"].values())
-    return rows, len(a["vulnerabilities"]), warn
-
+    return e, {"WRAPPERS": rows_wr, "COMPLETION": rows_comp, "TESTS": rows_tests}, misses
 
 HOT = 0
 
@@ -531,7 +513,6 @@ def main():
         m["cc_over_default"] = sum(1 for x in scores if x > CLIPPY_DEFAULT)
         m["cc_revision"] = cc["revision"]
     ev, ev_blocks, ev_misses = evidence_blocks(crates, m)
-    audit_html, m["audit_vulns"], m["audit_warnings"] = audit_rows(cc)
     cc_by_name = {}
     for i, r in enumerate(cc["complexity"] if cc else []):
         cc_by_name.setdefault(r["name"], (r["score"], i + 1))
@@ -610,7 +591,7 @@ def main():
     blocks = {
         "LAYER_SVG": layer_svg(crates), "MATRIX": matrix(crates), "UPWARD": upward_list(crates),
         "BOM": bom(crates), "FILTERS": filters(crates), "WORK": work_bars(crates, m),
-        "TOP_FILES": top_files(file_sizes), "TOP_FNS": top_fns(fns), "TOP_CC": top_cc(cc), "AUDIT": audit_html, **ev_blocks,
+        "TOP_FILES": top_files(file_sizes), "TOP_FNS": top_fns(fns), "TOP_CC": top_cc(cc), **ev_blocks,
         "TOOLS": ", ".join(f"<code>{esc(t)}</code>" for t in m["tools"]),
         "HOT": str(HOT),
     }

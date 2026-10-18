@@ -1,6 +1,6 @@
 # Prompt audit: every model-facing text, against the universal-platform standard
 
-Status: audit complete; findings open; no production code changed.
+Status: historical. As written: Audit complete; findings open; no production code changed.
 
 Audited checkout: `3535c8e8`, workspace version **5.2.9**. This supersedes the
 inventory in `system-prompts-2026-09-13.md` and

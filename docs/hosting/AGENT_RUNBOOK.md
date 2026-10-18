@@ -1,5 +1,7 @@
 # AI agent runbook for a private headless deployment
 
+Status: reference. The runbook an agent follows for a private headless deployment. Checked on 2026-10-18 for the commands, paths and versions it cites (scripts/check_records.py, scripts/check_doc_paths.py).
+
 Use [the EC2 guide](aws-ec2.md) and [the hosting contract](../hosting.md).
 Treat this file as an operator procedure, not as authority to create or
 destroy cloud resources without the user's request.

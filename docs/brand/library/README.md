@@ -1,6 +1,6 @@
 # Vakyartha visual asset library
 
-Status: **curated artwork and reference assets, 2026-09-27**. Open
+Status: reference. **Curated artwork and reference assets, 2026-09-27**. Open
 [the gallery](index.html) to browse the cutouts, expression atlases, 3D
 Songbird, and wallpapers on light, dark, and checkerboard grounds.
 GitHub shows the gallery HTML as source; download it with this folder's assets

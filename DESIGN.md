@@ -134,7 +134,7 @@ components:
 
 # Design System: Vakyartha
 
-Status: **target system, adopted 2026-09-25** (docs/design/75-visual-refresh.md,
+Status: reference. **The target visual system, adopted 2026-09-25** (docs/design/75-visual-refresh.md,
 decisions D1 to D5). Stages V2.2 to V2.4 of `docs/plans/visual-refresh-plan.md`
 move the stylesheet onto these tokens; until they land, the client still
 carries the previous values. Build new work to this document, not to the

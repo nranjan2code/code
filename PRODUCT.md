@@ -1,5 +1,7 @@
 # Product
 
+Status: reference. The product schema the design tools read; the version is in Cargo.toml.
+
 <!-- impeccable:product-schema 1 -->
 
 ## Platform
@@ -48,7 +50,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 - README.md documents quick start, architecture ("one core, many surfaces"), and a features/documentation index.
 - `docs/design/` contains architecture design docs (e.g. `24-agent-security.md`, `00-roadmap.md`).
 - No testimonials, customer names, benchmarks, or pricing exist; future work must not fabricate them.
-- Current version: 3.0.24 (per README badge and CHANGELOG), actively developed.
+- Version: see the workspace `Cargo.toml` and CHANGELOG.md; actively developed.
 
 ## Product Principles
 

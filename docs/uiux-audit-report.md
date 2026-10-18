@@ -1,5 +1,7 @@
 # Vak Desktop UI/UX Audit Report
 
+Status: historical. A UI audit, kept as written on 2026-09-04; the current visual system is DESIGN.md and docs/design/75-visual-refresh.md.
+
 **Branch:** `uiux-audit-and-fix`
 **Date:** 2026-08-29
 **Scope:** 34 components, store.ts, api.ts, types.ts, styles.css, App.tsx, Tauri backend

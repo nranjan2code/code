@@ -14,7 +14,7 @@ authoritative version.
 | Run a server or expose it remotely | [Hosting](hosting.md) |
 | Understand the product and security boundaries | [Agent-owned platform](design/64-agent-owned-platform.md) and [agent security](design/24-agent-security.md) |
 | Work with artwork and public identity | [Brand guide](brand/README.md) |
-| Understand how prompts are built and used | [The prompt system, end to end](design/83-prompt-system.md) |
+| Understand how prompts are built and used | [Prompt layers](design/45-prompt-layers.md), [the seed](design/07-prompt.md) and [the context engine](design/68-context-engine.md); [the end-to-end walk-through](design/83-prompt-system.md) is historical until rewritten |
 | See the whole system, measured | [System blueprint](architecture/blueprint.html), regenerated on every build ([its rules](architecture/AGENTS.md)) |
 | Review the architecture with evidence | [Architecture review method](architecture/review-method.md) |
 | Explore diagrams | [Architecture diagrams](architecture/README.md) and [tutor](tutor/README.md) |
@@ -40,9 +40,16 @@ one home; nothing else restates it.
 | How was a plan built, step by step? | Its plan in [plans](plans/) (the data architecture, the visual refresh, mail and calendar) |
 | What did a check or review find on a date? | [audits](audits/), [reviews](reviews/), [research](research/): dated records |
 
-Every design doc's and every plan's `Status:` line (the handover and the
-tracker aside) starts with one of six words, then says what is built, what
-is not, and why:
+Every document under `docs/`, and `DESIGN.md` and `PRODUCT.md` at the
+root, has a `Status:` line that starts with one of six words, then says what
+is built, what is not, and why. The exceptions are the entry points and logs
+kept true by their own rules: the root `README.md`, `AGENTS.md`,
+`CHANGELOG.md` and `SECURITY.md`, this file, the decision log, the tracker,
+the handover, any `AGENTS.md`, and the generated index and records
+reference. A dated record (under `audits/`, `reviews/`, `research/` or
+`linkedin/`, or with a date in its name) is `historical`, or `reference`
+when it describes a method; its open findings belong in the tracker. Only
+those entry points and `DESIGN.md` and `PRODUCT.md` live at the root.
 
 | Word | Meaning |
 |---|---|
@@ -91,9 +98,18 @@ contain production assets and working material.
 
 Run `python3 scripts/check_records.py`, `python3 scripts/check_doc_paths.py`
 and `scripts/check-version.sh` from the repository root (`scripts/gate.sh`
-runs all three). The first checks the record above (status words, the
+runs all three). The first checks the record above: status words, the
 generated index, one handover, the tracker and decision log, a CHANGELOG
-entry once code changed since the last release); the second checks cited
-repository paths; the third checks version stamps. Compare behavior claims with current code and tests,
+entry once code changed since the last release, and drift from the tree
+(`scripts/check_records_drift.py`). A living document (one that is not
+historical, superseded or a dated record) may not name a current version,
+baseline or crate count the workspace contradicts, may not show a `vak`
+command the CLI lacks, and may not list as planned a document whose status
+says it is built; `AGENTS.md`'s layout map must name every crate. The second
+checks cited repository paths; the third checks version stamps.
+`python3 scripts/check_records.py --names` lists the code names living
+documents cite that no longer occur in the code. That one is a report for
+review, not a check, because an external API name or a name a sentence marks
+as removed shows up there too. Compare behavior claims with current code and tests,
 and check relative links and rendered layout when editing a page. Neither
 script establishes that a statement still describes shipped behavior.

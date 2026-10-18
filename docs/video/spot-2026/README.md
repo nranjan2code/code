@@ -1,5 +1,7 @@
 # vak spot — "Ask. Then go live your day." (25 s)
 
+Status: reference. Production material for the product video; it describes no product behaviour.
+
 A music-driven brand spot for the public site, YouTube pre-roll and social. Universal, peppy, no
 narration. Built on the ElevenLabs creative canvas from the approved experience screens in
 `docs/assets/vak-experience-2026/` and the songbird mascot.

@@ -1,6 +1,6 @@
 # Vakyartha dimensional character study
 
-Status: **concept exploration, not production brand artwork**. The approved flat
+Status: historical. As written: **concept exploration, not production brand artwork**. The approved flat
 Songbird and exported platform assets remain the identity source.
 
 Generated with the built-in image generation tool using the existing Songbird

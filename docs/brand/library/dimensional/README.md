@@ -1,6 +1,6 @@
 # Dimensional visual pack
 
-Status: **selectable optional visual pack**. In Vakyartha, open **Settings →
+Status: reference. **A selectable optional visual pack**. In Vakyartha, open **Settings →
 Appearance → Visual pack → Dimensional 3D**. The choice is saved locally in
 `vak.uiPreferences`, applies immediately in the client, and is read by the
 public site and admin UI on their next page load in the same browser origin.

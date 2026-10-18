@@ -1,5 +1,7 @@
 # Public-site character scenes
 
+Status: reference. Image-generation prompts kept beside the artwork they produced; they describe no product behaviour.
+
 Generated 2026-09-27 with the built-in imagegen tool. Transparent scene illustrations derived from the established Dimensional character portraits. These are marketing illustrations, not product screenshots. Original character identities and logo masters remain unchanged.
 
 Source references: `crates/vak-client-ui/public/assets/brand/dimensional/characters/*-512.webp`.

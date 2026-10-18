@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Two dependency updates clear seven known vulnerabilities: rustls 0.23.46
+  (RUSTSEC-2026-0346 to 0349, under every outbound TLS connection) and
+  quinn-proto 0.11.19 (RUSTSEC-2026-0338, 0340, 0343). The gate and the
+  release now run `cargo audit` (`scripts/check-advisories.sh`); the three
+  zip advisories, which concern extraction Vak never performs, are recorded
+  exceptions in `.cargo/audit.toml`.
+
 - Tools stop before execution if their assistant message cannot be saved.
   A failed compaction write releases the session lock before recording its
   diagnostic, avoiding a stalled turn.

@@ -1,6 +1,6 @@
 # Intent engine and commitment kernel: universal-platform audit
 
-Status: audit complete; findings below are open, not implementation claims.
+Status: historical. As written: Audit complete; findings below are open, not implementation claims.
 
 Date: 2026-10-02. Reviewed HEAD: `8cd42679dcb7e193f38af2c7b37f98efef96f1bf`
 (workspace version 5.3.2), plus the working tree. Other work was changing the

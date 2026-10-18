@@ -1,5 +1,7 @@
 # Mail and calendar scenes
 
+Status: reference. Brand material and its use; the platform exports are generated from the SVG masters.
+
 Three transparent, dimensional website illustrations of the Vakyartha
 Songbird. They extend the existing public-site story style for selected mail,
 calendar planning, and review. The site's 1200 × 800 PNGs are in

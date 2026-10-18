@@ -1,5 +1,7 @@
 # LinkedIn profile cover
 
+Status: reference. Brand material and its use; the platform exports are generated from the SVG masters.
+
 Created 2026-09-27 with the built-in image generator.
 
 `vakyartha-linkedin-cover-1584x396.jpg` is the upload-ready personal profile cover. The left side leaves room for the profile photo. All eight character faces and the generated logo rendition remain visible in the crop.

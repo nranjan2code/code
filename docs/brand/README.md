@@ -1,5 +1,7 @@
 # Vakyartha brand
 
+Status: reference. Brand material and its use; the platform exports are generated from the SVG masters.
+
 The public brand is **Vakyartha**, including on the official site at
 https://vakyartha.com. The **Vakyartha Songbird** is the identity mark across
 the app, desktop, web, admin, cards, print, and public communication. Keep

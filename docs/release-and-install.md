@@ -1,5 +1,7 @@
 # Release, distribution, and install
 
+Status: reference. The release and install runbook. Checked on 2026-10-18 for the commands, paths and versions it cites (scripts/check_records.py, scripts/check_doc_paths.py).
+
 The practical runbook. `docs/design/32-release-engineering.md` owns the
 installed lifecycle contract and
 `docs/design/46-stabilization-install-and-onboarding.md` records the

@@ -60,19 +60,22 @@ and keep the correction visible.
    Add "no incident yet" or "caused a defect" when the record shows which.
 7. **Say what would fix it**, sized to the evidence. A narrow finding gets a
    narrow fix (a test, a lint, a version bump), not a rewrite.
-8. **Record it** in the blueprint (below) and commit it.
+8. **Record it** in the blueprint (below) and commit it, if it has a cost
+   today. A finding the evidence does not support, or one that is fixed,
+   is not listed: say so in the commit, and git keeps it.
 
 ## Tools in the repository
 
 | Tool | What it answers |
 |---|---|
 | `python3 scripts/blueprint.py` | Regenerates the blueprint and every live number in it (about 4 s once the commit cache in the git directory is warm). |
-| `python3 scripts/blueprint.py --deep` | Also runs the slow checks: clippy's `cognitive_complexity` at threshold 1 over every workspace library, and `cargo audit`. The results go to `measures.json`. Takes a few minutes; `cargo audit` needs the network. |
-| `scripts/blueprint/evidence.py` | One function per check: `hotspots` (file size against fix density, Spearman), `fanout` and `closure` (rebuild cost and the dependency closure of a crate), `tool_wrappers` (unforwarded `Tool` declarations), `blocking` (blocking calls inside async functions), `test_density` (tests per thousand lines, fuzz targets), `completion_models` (separate "is it done" vocabularies and translations between them), `lexicon` (word tables in the intent reader), `ledger_types` (what the ledger takes from the provider and intent crates), `deep` (complexity and audit). |
+| `python3 scripts/blueprint.py --deep` | Also runs the slow check: clippy's `cognitive_complexity` at threshold 1 over every workspace library. The result goes to `measures.json`. Takes about a minute. |
+| `scripts/blueprint/evidence.py` | One function per check: `hotspots` (file size against fix density, Spearman), `fanout` (how many crates rebuild when one changes), `tool_wrappers` (unforwarded `Tool` declarations), `test_density` (tests per thousand lines, fuzz targets), `completion_models` (separate "is it done" vocabularies and translations between them), `ledger_types` (what the ledger takes from the provider and intent crates), `deep` (cognitive complexity). Checks are added when a finding needs them and removed with the finding. |
 | `git log -L <start>,<end>:<file>` | Every commit that changed a function's current lines, followed back through edits. |
 | `git log -S'<symbol>'` | When a symbol was added or removed: for example, whether a new trait method reached its wrappers in the same commit. |
 | `cargo metadata --no-deps --offline` | The crate graph. |
-| `cargo audit --json` | Known advisories in `Cargo.lock`. |
+| `scripts/check-advisories.sh` | Known advisories in `Cargo.lock` (`cargo audit`); part of the gate. |
+| `python3 scripts/check_records.py --names` | Code names the docs cite that no longer exist. |
 
 To add a check, write a function in `evidence.py` that returns plain data,
 render it in `evidence_blocks` in `scripts/blueprint.py`, and cite it from

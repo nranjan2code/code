@@ -15,8 +15,16 @@ machine can check, for people and agents alike:
    docs/plans/open-items.md and the decision log docs/decisions.md exist.
 4. CHANGELOG.md starts with `## Unreleased`, and once code under crates/ has
    changed since the newest release tag it has at least one entry there.
+5. The record does not drift from the tree (check_records_drift.py): every
+   document under docs/ and at the root has a status word, dated records
+   are historical, only the entry points live at the root, no living
+   document names a current version, baseline or crate count the workspace
+   contradicts, AGENTS.md's layout names every crate, and no roadmap
+   section links a document whose status says it is built.
 
-Exit status 1 names every failure.
+Exit status 1 names every failure. `--names` instead lists the code names
+living documents cite that no longer occur in the code (a report for review;
+see check_records_drift.missing_names).
 """
 
 import glob
@@ -175,6 +183,15 @@ def changelog_problems():
 
 def main():
     write = "--write" in sys.argv[1:]
+    if "--names" in sys.argv[1:]:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import check_records_drift
+
+        report = check_records_drift.missing_names(ROOT, status_word)
+        print(f"{sum(len(g) for _, g in report)} cited code names not found, in {len(report)} living documents:")
+        for path, gone in report:
+            print(f"  {path}: {', '.join(gone)}")
+        return
     problems = []
     for path in [*design_docs(), *plan_docs()]:
         text = open(path, encoding="utf-8").read()
@@ -199,6 +216,10 @@ def main():
         if not os.path.exists(os.path.join(ROOT, required)):
             problems.append(f"{required} is missing")
     problems += changelog_problems()
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import check_records_drift
+
+    problems += check_records_drift.all_problems(ROOT, status_word, STATUS_WORDS)
     if problems:
         print(f"FAIL: {len(problems)} record problem(s):")
         for problem in problems:

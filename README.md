@@ -16,7 +16,7 @@ It runs on your machine, uses the model you choose, and works inside the boundar
 [![Platforms](docs/assets/readme/badges/platforms.svg)](#get-started)
 [![Website](docs/assets/readme/badges/website.svg)](https://vakyartha.com)
 
-[**Get started**](#get-started) · [What it does](#put-it-to-work) · [Why Vakyartha](#why-vakyartha) · [What's new](#whats-new-in-5x) · [Docs](docs/README.md) · [Website](https://vakyartha.com)
+[**Get started**](#get-started) · [What it does](#put-it-to-work) · [Why Vakyartha](#why-vakyartha) · [What it includes](#what-it-includes) · [Docs](docs/README.md) · [Website](https://vakyartha.com)
 
 </div>
 
@@ -112,7 +112,7 @@ Each agent owns its conversations, memory, workspace and routines. Reach it from
 </tr>
 </table>
 
-## What's new in 5.x
+## What it includes
 
 <img src="docs/assets/readme/context.webp" align="right" width="360" alt="The Songbird choosing cards from a shelf of bound volumes and filing them in a tray">
 
@@ -123,7 +123,11 @@ Each agent owns its conversations, memory, workspace and routines. Reach it from
 - **Headless hosting with passkeys.** Run Vakyartha on a server and sign in from your phone or laptop with an owner passkey and one-time recovery codes. See the [hosting guide](docs/hosting.md).
 - **Rich cards in chat apps.** Plans, tables and results reach Telegram as formatted HTML, Slack as Block Kit and Discord as embeds, with plain text as the fallback.
 - **Per-agent settings.** Each agent has its own permissions, approvals, memory policy, voice and plugins, and the settings show which values it inherits from your shared defaults.
-- **Ink and Saffron.** A new visual system: readable type, plain words, and four themes (match system, light, dark and high contrast). Technical detail appears only when you ask for it.
+- **Answers as cards.** Twenty card forms (steps, tables, comparisons, charts, maps, sources, diffs, test reports and more) draw the same way in the app, the browser and chat apps, with plain text as the fallback.
+- **Your data, kept and erasable.** Conversations and files are stored encrypted, with retention rules, erasure that leaves a receipt, backups, and a folder remote another of your machines can take the work over from.
+- **The Library.** Every deliverable is a versioned artifact you can review, restore and share.
+- **Abilities the agent learns.** An agent can turn a repeated job into a tested ability of its own; anything that reaches further waits for your review.
+- **Ink and Saffron.** A visual system with readable type, plain words, and six themes (match system, light, dark, high contrast, frosted light and frosted dark). Technical detail appears only when you ask for it.
 
 See the [changelog](CHANGELOG.md) for every release.
 
@@ -224,7 +228,7 @@ Every surface (desktop, browser, terminal and chat) talks to the same Rust core:
 
 - **Nothing the model sees goes unrecorded.** Every model request can be rebuilt from the session log.
 - **Errors are values.** Provider failures retry within a planned route ladder, with a circuit breaker and cancel-aware backoff.
-- **Small parts.** About thirty crates with clear seams, so the Office engine, the PDF engine and the intent layer can each be tested on their own.
+- **Small parts.** Crates with clear seams, so the Office engine, the PDF engine and the intent layer can each be tested on their own. The [system blueprint](docs/architecture/blueprint.html) maps every crate, measured from the code on each build.
 
 Start with the [architecture tutor](docs/tutor/README.md), then the [agent loop](docs/design/03-agent-loop.md), [session record](docs/design/02-sessions.md) and [context engine](docs/design/68-context-engine.md). [AGENTS.md](AGENTS.md) is the engineering contract every change follows.
 
@@ -232,11 +236,11 @@ Start with the [architecture tutor](docs/tutor/README.md), then the [agent loop]
 
 ## On the roadmap
 
-These are approved designs, not shipped features. Each design document has a `Status:` line.
+Designs that are not finished. Each design document's `Status:` line says what of it is built.
 
-- **Data architecture**: typed IDs, encrypted content-addressed storage, retention and erasure, and one catalog for search and lineage. [Plan](docs/plans/data-architecture-plan.md)
-- **Mail and calendar**: governed account access, drafts you review, and nothing sent without your approval. [Design](docs/design/80-mail-and-calendar.md)
-- **Intake and knowledge**: one path for feeds and documents into a searchable catalog. [Design](docs/design/76-intake-and-knowledge.md)
+- **Mail and calendar**, in progress: Google, Microsoft and Apple accounts link and can be searched and browsed, and agents read selected folders with citations. Drafts you review and nothing sent without your approval. [Design](docs/design/80-mail-and-calendar.md)
+- **Pieces and Home**, a proposal: finished work kept as a piece that can be refreshed and run again without a model, shown on a Home screen that stays current. [Design](docs/design/81-pieces-and-home.md)
+- **A private headless fleet**, a proposal: hosted runtimes the operator cannot read, with attested key release. [Design](docs/design/79-private-headless-fleet.md)
 
 ## Go further
 

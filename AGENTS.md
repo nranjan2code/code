@@ -1557,6 +1557,16 @@ crates/vak-catalog   the data catalog (plan M6, docs/design/73 §9): one
                      turn records for the turn recall (history.rs). Every
                      search (`/search`, admin, recall)
                      and every "where is session X" goes through it
+crates/vak-mail-calendar
+                     provider-neutral mail and calendar contracts
+                     (docs/design/80-mail-and-calendar.md): account
+                     linking and OAuth (oauth.rs), the encrypted
+                     credential vault (vault.rs), the provider adapters
+                     for Google, Microsoft and Apple (provider.rs,
+                     endpoints.rs), the connection ledger and the
+                     reviewed send and change effects (effect.rs). Host
+                     code admits accounts and grants; an adapter receives
+                     one validated typed operation
 crates/vak-intake    intake connectors (plan M6.5, docs/design/76): the
                      closed set of source kinds (RSS/Atom, YouTube, Hacker
                      News, Reddit, Lobsters, HTTP), the one URL each
@@ -1643,7 +1653,8 @@ crates/vak-sandbox   the isolated-execution contract, deliberately ignorant
                      reviewable boundary between a task candidate and its
                      destination (docs/design/25-docker-sandbox.md,
                      54-task-environments-and-promotion.md)
-crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse/
+crates/vak-tools     read/write/edit/bash/glob/grep/webfetch (with a
+                     local-browser `render` mode, webbrowse.rs)/
                      recall behind Tool trait, the one reader
                      of every call's arguments (arguments.rs), a skill's
                      program run as a tool under its own declared sandbox
@@ -2153,7 +2164,14 @@ loop fills it; nothing fills a limit by a tool's name.
 ```
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 scripts/check-version.sh && python3 scripts/check_doc_paths.py && python3 scripts/check_records.py
+scripts/check-advisories.sh
 ```
+
+`check-advisories.sh` runs `cargo audit` (install it once with
+`cargo install cargo-audit --locked`). A known vulnerability in
+`Cargo.lock` fails it. An advisory may be ignored in `.cargo/audit.toml`
+only with the reason Vak cannot reach the vulnerable code written beside it,
+and an open item that removes the exception.
 
 `scripts/gate.sh` runs exactly that and times each step. While working,
 `scripts/gate.sh --changed` checks only the crates changed against

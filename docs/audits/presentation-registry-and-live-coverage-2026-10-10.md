@@ -1,6 +1,6 @@
 # Presentation registry and live coverage — 2026-10-10
 
-Status: audit in progress; automated registry coverage passes, live Ollama coverage is partial.
+Status: historical. As written: Audit in progress; automated registry coverage passes, live Ollama coverage is partial.
 
 ## What the counts mean
 

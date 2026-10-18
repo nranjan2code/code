@@ -1,6 +1,6 @@
 # Dashboard acceptance audit — 2026-09-08
 
-Status: verified in an isolated disposable workspace.
+Status: historical. As written: Verified in an isolated disposable workspace.
 
 ## Scope
 

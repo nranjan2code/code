@@ -1,5 +1,7 @@
 # Your control illustrations
 
+Status: reference. Image-generation prompts kept beside the artwork they produced; they describe no product behaviour.
+
 Built-in image generation, 2026-09-27. Canonical reference: `crates/vak-client-ui/public/assets/brand/dimensional/characters/vak-512.webp`. Vakyartha is the only character. Transparent PNG originals are retained; WebP files are format conversions for the site.
 
 ## boundaries

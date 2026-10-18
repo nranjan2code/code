@@ -1,6 +1,6 @@
 # Chat and sandbox continuity
 
-Status: implementation and deterministic verification; live provider acceptance pending.
+Status: historical. As written: Implementation and deterministic verification; live provider acceptance pending.
 
 The chat canvas was rendering transcript text while discarding the received
 semantic timeline. Completion hydration replaced the conversation with a

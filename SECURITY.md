@@ -4,7 +4,7 @@
 
 Security fixes target the current `main` branch and the latest release. Check
 the workspace version in [`Cargo.toml`](Cargo.toml) and the release record in
-[`CHANGELOG.md`](CHANGELOG.md). Versions below the supported 2.0.0 baseline
+[`CHANGELOG.md`](CHANGELOG.md). Versions below the supported 8.0.0 data baseline (`vak_core::baseline`)
 are not maintained. Backports to older releases are not guaranteed.
 
 ## Report a vulnerability

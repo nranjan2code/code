@@ -1,6 +1,6 @@
 # Main consolidation — 2026-10-02
 
-Status: complete; validated, pushed to `origin/main`, and checkout cleanup finished.
+Status: historical. As written: Complete; validated, pushed to `origin/main`, and checkout cleanup finished.
 
 The maintainer requested consolidation of all pending work into `main`, a push
 to `origin`, and removal of the other local branches and worktrees. The primary

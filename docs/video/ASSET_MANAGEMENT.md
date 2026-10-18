@@ -1,5 +1,7 @@
 # Video asset management
 
+Status: reference. Production material for the product video; it describes no product behaviour.
+
 The video work has two layers:
 
 1. `docs/tutor/` is the source library of architecture diagrams. These images remain reusable across

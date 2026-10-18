@@ -1,5 +1,7 @@
 # Beyond Semantic Routing: The 7 Axes of AI Agent Intent
 
+Status: historical. An article draft, kept as written on 2026-09-27.
+
 *Why your AI agent asks three permission questions before reading a file, but silently deploys broken changes without asking.*
 
 ![Moving Beyond 1D Topic Classification to Multi-Dimensional Agent Physics](the_seven_axes_banner.jpg)

@@ -1,6 +1,6 @@
 # Cards in answers: why answers went to prose (2026-10-11)
 
-Status: steps 1 to 4 done 2026-10-11; measured and decided 2026-10-12
+Status: historical. As written: Steps 1 to 4 done 2026-10-11; measured and decided 2026-10-12
 (see "Decision: each card is its own call"). A fifth
 finding, Markdown separator rows stored in a table, was a misreading:
 the table builder skips them, and the stored card held only data rows.
