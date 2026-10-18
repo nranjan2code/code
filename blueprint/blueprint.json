@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "73f8d36a3",
+  "revision": "3dab6e47b",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -19,11 +19,11 @@
    "worker_tasks": 14,
    "state_paths": 75,
    "lock_crates": 764,
-   "total_commits": 2367,
+   "total_commits": 2368,
    "days": 59,
    "peak_day": 174,
    "design_docs": 96,
-   "agents_words": 20147,
+   "agents_words": 20175,
    "subsystems": 64,
    "connections": 807,
    "flows": 11
@@ -239,7 +239,7 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 515,
+  "commits": 516,
   "areas": [
    [
     "docs",
@@ -247,7 +247,7 @@
    ],
    [
     "(root)",
-    268
+    269
    ],
    [
     "vak-core",
@@ -372,6 +372,11 @@
     31
    ],
    [
+    "engineering",
+    "Build, gate and release",
+    29
+   ],
+   [
     "workers",
     "Workers and delegation",
     28
@@ -379,11 +384,6 @@
    [
     "delivery",
     "Delivery",
-    28
-   ],
-   [
-    "engineering",
-    "Build, gate and release",
     28
    ],
    [
@@ -614,6 +614,15 @@
   ],
   "recent": [
    {
+    "hash": "3dab6e47b",
+    "date": "2026-10-18",
+    "subject": "Add a speed simulator to the blueprint",
+    "areas": [
+     "(root)",
+     "blueprint"
+    ]
+   },
+   {
     "hash": "73f8d36a3",
     "date": "2026-10-18",
     "subject": "Resolve Canvas note conflicts with explicit durable choices",
@@ -770,16 +779,6 @@
      "vak-core",
      "vak-server",
      "vak-session"
-    ]
-   },
-   {
-    "hash": "3ebfb2add",
-    "date": "2026-10-18",
-    "subject": "Scope linked-card inputs and values to their answer views",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-client-ui"
     ]
    }
   ],
@@ -21198,9 +21197,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 113,
+   "commits": 114,
    "fixes": 20,
-   "recent": 28,
+   "recent": 29,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -29785,6 +29784,14 @@
  ],
  "replay": [
   {
+   "hash": "3dab6e47b",
+   "date": "2026-10-18",
+   "subject": "Add a speed simulator to the blueprint",
+   "subsystems": [
+    "engineering"
+   ]
+  },
+  {
    "hash": "73f8d36a3",
    "date": "2026-10-18",
    "subject": "Resolve Canvas note conflicts with explicit durable choices",
@@ -36858,5 +36865,419 @@
   }
  ],
  "target": "",
- "review": []
+ "review": [],
+ "simulator": {
+  "measured": {
+   "as_of": "2026-10-18",
+   "turns": 48,
+   "steps": 375,
+   "tool_calls": 153,
+   "share_model": 0.81,
+   "share_tools": 0.12,
+   "share_runtime": 0.02,
+   "turn_p50_ms": 22387,
+   "turn_p90_ms": 102991,
+   "step_p50_ms": 3291,
+   "dispatch_p50_ms": 3192,
+   "dispatch_hosted_p10_ms": 2163,
+   "runtime_per_step_ms": 40,
+   "runtime_per_turn_ms": 250,
+   "tool_p50_ms": 199,
+   "tools": {
+    "bash": 60,
+    "webfetch": 455,
+    "glob": 59,
+    "doc_read": 38,
+    "write": 168
+   },
+   "steps_per_turn": {
+    "p50": 4,
+    "p90": 17,
+    "max": 51
+   },
+   "tools_per_turn": {
+    "p50": 2,
+    "p90": 13
+   },
+   "log_bytes_per_step": 1842,
+   "log_lines_per_step": 4.1
+  },
+  "code": {
+   "ring": {
+    "file": "crates/vak-server/src/events.rs",
+    "line": 386,
+    "what": "Events a reconnecting client can catch up on (EventBus ring)",
+    "value": 1024
+   },
+   "wait_tick": {
+    "file": "crates/vak-agent/src/workers_tool.rs",
+    "line": 25,
+    "what": "How often a parent looks at a worker it waits on",
+    "value": 250
+   },
+   "delta": {
+    "file": "crates/vak-server/src/client_events.rs",
+    "line": 154,
+    "what": "One wire frame per text delta",
+    "value": null
+   },
+   "append": {
+    "file": "crates/vak-client-ui/src/store.ts",
+    "line": 1244,
+    "what": "The screen copies the item list and the whole text on every delta",
+    "value": null
+   },
+   "snapshot": {
+    "file": "crates/vak-llm/src/stream.rs",
+    "line": 16,
+    "what": "Every in-process delta carries the whole message so far (invariant 4)",
+    "value": 15
+   },
+   "breaker": {
+    "file": "crates/vak-agent/src/circuit.rs",
+    "line": 22,
+    "what": "Circuit breaker cooldown after blind failures",
+    "value": 60
+   },
+   "day_cap": {
+    "file": "crates/vak-config/src/lib.rs",
+    "line": 565,
+    "what": "The operator's day budget; admission stops when it is spent",
+    "value": null
+   },
+   "rate_gate": {
+    "file": "crates/vak-llm/src/rate_limit.rs",
+    "line": 728,
+    "what": "Requests wait on the provider's allowance and honour Retry-After (invariant 7)",
+    "value": null
+   },
+   "fsync": {
+    "file": "crates/vak-storage/src/records.rs",
+    "line": 331,
+    "what": "Each durable append ends in a sync to disk",
+    "value": null
+   }
+  },
+  "subsystems": {
+   "llm": {
+    "driver": "token",
+    "why": "Parses every streamed token and copies the whole message into each delta; asks the provider's allowance",
+    "checks": [
+     "snapshot",
+     "allow"
+    ]
+   },
+   "server": {
+    "driver": "token",
+    "why": "Numbers every delta into the event ring and sends one frame per delta",
+    "checks": [
+     "ring",
+     "frames"
+    ]
+   },
+   "client": {
+    "driver": "token",
+    "why": "Applies every delta to its store and draws the text again",
+    "checks": [
+     "append"
+    ]
+   },
+   "desktop": {
+    "driver": "token",
+    "why": "Hosts the workspace client, so it draws every delta too",
+    "checks": [
+     "append"
+    ]
+   },
+   "terminal": {
+    "driver": "token",
+    "why": "Draws the same stream as a client of the server",
+    "checks": [
+     "frames"
+    ]
+   },
+   "cli": {
+    "driver": "token",
+    "why": "Prints the stream as it arrives",
+    "checks": []
+   },
+   "admin": {
+    "driver": "step",
+    "why": "Its event hub carries every session's events",
+    "checks": [
+     "frames"
+    ]
+   },
+   "loop": {
+    "driver": "step",
+    "why": "Runs every step: dispatch, repair, cards, stop gate; a blind failure opens the breaker",
+    "checks": [
+     "breaker"
+    ]
+   },
+   "context": {
+    "driver": "step",
+    "why": "Plans and assembles every request",
+    "checks": []
+   },
+   "control": {
+    "driver": "step",
+    "why": "Writes a decision at every decision point",
+    "checks": []
+   },
+   "permission": {
+    "driver": "step",
+    "why": "Decides every call; a provenance ask waits on a person",
+    "checks": [
+     "person"
+    ]
+   },
+   "sandbox": {
+    "driver": "step",
+    "why": "Starts a sandboxed worker for every tool call",
+    "checks": []
+   },
+   "tools": {
+    "driver": "step",
+    "why": "Runs every built-in tool call in the worker",
+    "checks": []
+   },
+   "cards": {
+    "driver": "step",
+    "why": "Checks and records every card call",
+    "checks": []
+   },
+   "hooks": {
+    "driver": "step",
+    "why": "Runs around every tool call",
+    "checks": []
+   },
+   "mcp": {
+    "driver": "step",
+    "why": "Brokers every integration call",
+    "checks": []
+   },
+   "recall": {
+    "driver": "step",
+    "why": "Answers recall calls from the catalog",
+    "checks": []
+   },
+   "flows": {
+    "driver": "step",
+    "why": "Walks a flow's nodes as steps",
+    "checks": []
+   },
+   "ledger": {
+    "driver": "step",
+    "why": "Seals and syncs a frame for every entry",
+    "checks": [
+     "fsync",
+     "disk"
+    ]
+   },
+   "storage": {
+    "driver": "step",
+    "why": "Stores every object and moves refs under the writer epoch",
+    "checks": [
+     "fsync"
+    ]
+   },
+   "catalog": {
+    "driver": "step",
+    "why": "Tails every ledger to index turns, calls and runs",
+    "checks": [
+     "disk"
+    ]
+   },
+   "telemetry": {
+    "driver": "step",
+    "why": "Writes about four content-free lines a step",
+    "checks": [
+     "logs"
+    ]
+   },
+   "turn": {
+    "driver": "turn",
+    "why": "Admits every turn: agent, trace key, route ladder",
+    "checks": []
+   },
+   "runs": {
+    "driver": "turn",
+    "why": "Opens and settles a run for every turn and records every effect",
+    "checks": []
+   },
+   "intent": {
+    "driver": "turn",
+    "why": "Reads every request into strands",
+    "checks": []
+   },
+   "prompt": {
+    "driver": "turn",
+    "why": "Resolves the prompt layers every turn",
+    "checks": []
+   },
+   "capabilities": {
+    "driver": "turn",
+    "why": "Binds a capability epoch every turn",
+    "checks": []
+   },
+   "commitments": {
+    "driver": "turn",
+    "why": "Brackets an episode per strand",
+    "checks": []
+   },
+   "goal": {
+    "driver": "turn",
+    "why": "Keeps goal state across turns",
+    "checks": []
+   },
+   "memory": {
+    "driver": "turn",
+    "why": "Recalls and writes notes as turns go",
+    "checks": []
+   },
+   "checkpoints": {
+    "driver": "turn",
+    "why": "Checkpoints the workspace around changes",
+    "checks": [
+     "disk"
+    ]
+   },
+   "security": {
+    "driver": "turn",
+    "why": "Records every denial and escalation",
+    "checks": []
+   },
+   "operations": {
+    "driver": "turn",
+    "why": "Projects receipts and incidents from the record",
+    "checks": []
+   },
+   "bus": {
+    "driver": "turn",
+    "why": "Carries events between agents",
+    "checks": []
+   },
+   "delivery": {
+    "driver": "turn",
+    "why": "Renders each answer for its surface",
+    "checks": []
+   },
+   "gateway": {
+    "driver": "turn",
+    "why": "Routes each channel message to a turn",
+    "checks": [
+     "allow"
+    ]
+   },
+   "workers": {
+    "driver": "timer",
+    "why": "A parent looks at a worker it waits on by a fixed tick",
+    "checks": [
+     "wait_tick"
+    ]
+   },
+   "finops": {
+    "driver": "spend",
+    "why": "Prices every receipt and stops admission when the day budget is spent",
+    "checks": [
+     "budget"
+    ]
+   },
+   "inbox": {
+    "driver": "person",
+    "why": "Holds what waits for the owner",
+    "checks": [
+     "person"
+    ]
+   },
+   "library": {
+    "driver": "person",
+    "why": "Review and promotion wait for the owner",
+    "checks": [
+     "person"
+    ]
+   },
+   "coworking": {
+    "driver": "person",
+    "why": "Shared conversations move at the people's pace",
+    "checks": [
+     "person"
+    ]
+   },
+   "voice": {
+    "driver": "person",
+    "why": "Speech plays at speaking speed, whatever the model's",
+    "checks": [
+     "person"
+    ]
+   }
+  },
+  "names": {
+   "client": "Workspace client",
+   "desktop": "Desktop shell",
+   "terminal": "Rich terminal",
+   "admin": "Admin console",
+   "site": "Public site and brand",
+   "cli": "Command line",
+   "turn": "Turn admission",
+   "loop": "Agent loop",
+   "workers": "Workers and delegation",
+   "goal": "Goals and managed work",
+   "context": "Context engine",
+   "prompt": "Prompt layers",
+   "intent": "Intent kernel",
+   "control": "Control plane and judges",
+   "commitments": "Commitments",
+   "llm": "Model providers and routing",
+   "tools": "Built-in tools and the worker",
+   "recall": "Recall and history",
+   "capabilities": "Capability registry",
+   "abilities": "Self-evolving abilities",
+   "mcp": "MCP integrations",
+   "plugins": "Plugins and packages",
+   "hooks": "Hooks",
+   "flows": "Flows and planner",
+   "permission": "Permissions and provenance",
+   "sandbox": "Sandbox and execution",
+   "security": "Security events",
+   "identity": "Owner identity and sign-in",
+   "grants": "Grants and sharing",
+   "ledger": "Ledgers and records",
+   "storage": "Storage substrate",
+   "runs": "Runs, effects and cursors",
+   "catalog": "Catalog and search",
+   "state": "State registry and baseline",
+   "lifecycle": "Lifecycle and erasure",
+   "backup": "Backup and restore",
+   "sync": "Sync",
+   "checkpoints": "Checkpoints and worktrees",
+   "config": "Configuration and secrets",
+   "telemetry": "Telemetry and logs",
+   "cards": "Cards and presentation",
+   "delivery": "Delivery",
+   "canvas": "Canvas and previews",
+   "library": "Library and file state",
+   "office": "Office and PDF documents",
+   "mail": "Mail and calendar",
+   "intake": "Intake and feeds",
+   "social": "Social connectors",
+   "voice": "Voice",
+   "memory": "Memory and learning",
+   "automations": "Automations and triggers",
+   "inbox": "Inbox and digest",
+   "agents": "Agents",
+   "coworking": "Shared conversations",
+   "server": "HTTP service",
+   "gateway": "Gateway and channels",
+   "bus": "Distributed bus",
+   "operations": "Operations",
+   "doctor": "Doctor and health",
+   "finops": "Cost and budgets",
+   "onboarding": "Setup and onboarding",
+   "install": "Install and update",
+   "eval": "Evaluation",
+   "engineering": "Build, gate and release"
+  }
+ }
 }
