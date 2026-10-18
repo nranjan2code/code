@@ -1,5 +1,7 @@
 # UI release resume guide
 
+Status: historical. A pause note written at the 3.0.43 checkpoint on 2026-09-10, kept as written; it describes nothing current.
+
 Checkpoint: 2026-09-10, workspace version `3.0.43`.
 
 This repository is intentionally paused at a reviewable checkpoint because the
