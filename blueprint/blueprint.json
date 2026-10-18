@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "3047f374d",
+  "revision": "142c83869",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2348,
+   "total_commits": 2349,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
@@ -95,7 +95,6 @@
    {
     "section": "Architecture and presentation review consolidation (2026-10-18)",
     "open": 8,
-    "closed": 0,
     "items": [
      "S0:",
      "S1:",
@@ -110,7 +109,6 @@
    {
     "section": "Turns that poison later turns (doc 99, 2026-10-17)",
     "open": 7,
-    "closed": 12,
     "items": [
      "A file no version holds names no turn:",
      "A retried goal, managed or automatic turn is sent again as the plain message it began with;",
@@ -124,7 +122,6 @@
    {
     "section": "Installed route failures (qwen3.5:0.8b-mlx, 2026-10-15)",
     "open": 8,
-    "closed": 14,
     "items": [
      "Still in the recall path:",
      "`remember` writes a workspace note;",
@@ -139,7 +136,6 @@
    {
     "section": "The record and the blueprint (2026-10-18)",
     "open": 7,
-    "closed": 1,
     "items": [
      "233 code names cited by 46 living documents no longer occur in the code (`python3 scripts/check_records.py --names`).",
      "Rewrite `docs/design/83-prompt-system.md` against the current code;",
@@ -153,7 +149,6 @@
    {
     "section": "Before the next release",
     "open": 5,
-    "closed": 26,
     "items": [
      "zip 4.6.1 to 9:",
      "The maintainer ran `vak setup` on this home (the installed route is recorded in `9ab30dd8a`);",
@@ -165,7 +160,6 @@
    {
     "section": "Capability coverage (docs/audits/capability-coverage-2026-10-16.md)",
     "open": 4,
-    "closed": 0,
     "items": [
      "Finish the Ollama run (`python3 scripts/capability_coverage.py run --label base --singles 1`, then `replay` and `report`);",
      "Run a hosted route once the maintainer sets a key;",
@@ -176,7 +170,6 @@
    {
     "section": "Card forms (docs/design/92)",
     "open": 11,
-    "closed": 21,
     "items": [
      "Living pages (docs/design/98 §12):",
      "A guest's shared view asks for `/app/fonts/InterVariable.woff2` and is refused (401), so it falls back to the system font;",
@@ -194,17 +187,10 @@
    {
     "section": "Self-evolving capabilities (docs/design/93)",
     "open": 2,
-    "closed": 21,
     "items": [
      "Dependencies for Node programs (a lockfile and `npm ci`):",
      "Seen live (E4):"
     ]
-   },
-   {
-    "section": "Scheduled work (docs/design/94)",
-    "open": 0,
-    "closed": 12,
-    "items": []
    }
   ],
   "open_total": 52,
@@ -213,7 +199,7 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 496,
+  "commits": 497,
   "areas": [
    [
     "docs",
@@ -265,6 +251,14 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "142c83869",
+    "date": "2026-10-18",
+    "subject": "Show only open work in the blueprint",
+    "areas": [
+     "blueprint"
+    ]
+   },
    {
     "hash": "3047f374d",
     "date": "2026-10-18",
@@ -394,14 +388,6 @@
      ".cargo",
      "docs",
      "scripts"
-    ]
-   },
-   {
-    "hash": "d44d17c31",
-    "date": "2026-10-18",
-    "subject": "Regenerate the system blueprint and its deep measures",
-    "areas": [
-     "docs"
     ]
    }
   ],
