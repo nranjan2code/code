@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, useContext } from "solid-js";
-import { publish } from "../../answerValues";
+import { AnswerValuesContext } from "../../answerValues";
 import { daysOf, evaluateExpression, parseExpression, seriesOf } from "../../controlsExpression";
 import { Card, CardIdContext, PresentationInteractionContext, num, records, text, type Payload } from "./shared";
 
@@ -32,16 +32,23 @@ function valueOf(input: Payload, written: string): number | undefined {
 export default function ControlsCard(props: { payload: Payload }) {
   const p = () => props.payload;
   const interaction = useContext(PresentationInteractionContext);
+  const valuesScope = useContext(AnswerValuesContext);
+  const sourceId = useContext(CardIdContext);
   const inputs = () => records(p().inputs);
   const outputs = () => records(p().outputs);
-  const [setting, setSetting] = createSignal<Setting>(
-    Object.fromEntries(records(p().inputs).map((input) => [text(input.name) ?? "", initial(input)])),
-  );
-  const set = (name: string, written: string) => setSetting({ ...setting(), [name]: written });
+  const defaults = () => Object.fromEntries(records(p().inputs).map((input) => [text(input.name) ?? "", initial(input)]));
+  const [setting, setSetting] = createSignal<Setting | undefined>(undefined);
+  const currentSettings = () => valuesScope?.getSettings(sourceId ?? "") ?? setting() ?? defaults();
+  if (valuesScope && sourceId && !valuesScope.getSettings(sourceId)) valuesScope.setSettings(sourceId, defaults());
+  const set = (name: string, written: string) => {
+    const next = { ...currentSettings(), [name]: written };
+    if (valuesScope && sourceId) valuesScope.setSettings(sourceId, next);
+    else setSetting(next);
+  };
   const results = createMemo(() => {
     const values: Record<string, number> = {};
     for (const input of inputs()) {
-      const value = valueOf(input, setting()[text(input.name) ?? ""] ?? "");
+      const value = valueOf(input, currentSettings()[text(input.name) ?? ""] ?? "");
       if (value === undefined) return { error: `${text(input.label) ?? text(input.name)} needs a value` };
       values[text(input.name) ?? ""] = value;
     }
@@ -74,13 +81,15 @@ export default function ControlsCard(props: { payload: Payload }) {
   const cardId = useContext(CardIdContext);
   createEffect(() => {
     const now = results();
-    if (cardId && now.values) publish(cardId, { ...now.values, ...now.series });
+    if (!cardId || !valuesScope) return;
+    if (now.values) valuesScope.publish(cardId, { ...now.values, ...now.series });
+    else valuesScope.clearPublication(cardId);
   });
-  const changed = () => inputs().some((input) => (setting()[text(input.name) ?? ""] ?? "") !== initial(input));
+  const changed = () => inputs().some((input) => (currentSettings()[text(input.name) ?? ""] ?? "") !== initial(input));
   const ask = () => {
     if (!interaction?.onValues) return;
     const values = Object.fromEntries(inputs()
-      .map((input) => [text(input.name) ?? "", setting()[text(input.name) ?? ""] ?? ""] as const)
+      .map((input) => [text(input.name) ?? "", currentSettings()[text(input.name) ?? ""] ?? ""] as const)
       .filter(([name, written]) => written !== initial(inputs().find((input) => text(input.name) === name) ?? {})));
     interaction.onValues(values);
   };
@@ -92,7 +101,7 @@ export default function ControlsCard(props: { payload: Payload }) {
             const name = text(input.name) ?? "";
             const id = `control-${(nextControl += 1)}`;
             const unit = () => text(input.unit);
-            const written = () => setting()[name] ?? "";
+            const written = () => currentSettings()[name] ?? "";
             const kind = text(input.kind);
             return (
               <div class="control" data-kind={kind}>

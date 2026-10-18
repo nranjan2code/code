@@ -1,4 +1,5 @@
 import { render } from "solid-js/web";
+import { AnswerValuesContext, acquireAnswerValuesScope } from "../src/answerValues";
 import { FormView, CardIdContext } from "../src/components/cards";
 import "../src/styles.css";
 
@@ -19,12 +20,15 @@ const linked = {
   rows: [["Each pays", 400]],
   bound: [{ path: ["rows", 0, 1], expression: "bill / people", from: ["fixture-controls"] }],
 };
-render(() => <main style="max-width:960px;margin:0 auto;padding:16px;display:grid;gap:24px">
+const values = acquireAnswerValuesScope("fixture:table-fidelity");
+values.reconcile(["fixture-controls"]);
+window.addEventListener("beforeunload", () => values.release());
+render(() => <AnswerValuesContext.Provider value={values.scope}><main style="max-width:960px;margin:0 auto;padding:16px;display:grid;gap:24px">
   <h1>Table fidelity</h1>
   <section id="exact"><FormView block="table" payload={exact} fallback="Exact values unavailable" /></section>
   <section id="controls"><CardIdContext.Provider value="fixture-controls"><FormView block="controls" payload={controls} fallback="Controls unavailable" /></CardIdContext.Provider></section>
   <section id="linked"><FormView block="table" payload={linked} fallback="Linked values unavailable" /></section>
-</main>, document.getElementById("root")!);
+</main></AnswerValuesContext.Provider>, document.getElementById("root")!);
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 30));
 (window as any).runTableChecks = async () => {

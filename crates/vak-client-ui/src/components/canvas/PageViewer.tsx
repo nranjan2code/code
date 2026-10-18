@@ -15,10 +15,10 @@ export default function PageViewer(props: ViewerProps) {
       if (!artifact.head) throw new Error("This page has no version yet; its first comes from its automation's first run.");
       const page = readPage(await api.libraryVersionBytes(id, artifact.head));
       if (!page) throw new Error("This Library item is not a page.");
-      return page;
+      return { page, version: artifact.head };
     },
     undefined,
     { reloadOn: () => props.reloadKey },
   );
-  return <LoadState loader={loader} label="Opening the page…">{(page) => <PageView page={page} />}</LoadState>;
+  return <LoadState loader={loader} label="Opening the page…">{(loaded) => <PageView page={loaded.page} versionId={loaded.version} />}</LoadState>;
 }

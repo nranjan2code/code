@@ -87,6 +87,12 @@ overlapping fixes should close their original entries as well.
   and the full gate pass. Durable child-card provenance remains open.
 - [ ] S4: interaction ownership/invalidation, replacement, graph scope and
   invocation/freshness provenance (P04, D01–D04).
+  P04 now scopes input text and published values to session/turn or immutable
+  page version, shares them across mounted views, and releases sources only
+  after their final owner leaves. Invalid inputs clear stale publications.
+  Focused scope tests, fixture typechecking, both client bundles and the
+  full repository gate pass. Browser acceptance remains pending.
+  Replacement semantics and the wider lifecycle matrix remain open.
 - [ ] S5: subject persistence, protected drafts, encrypted fenced canvas
   Documents and authorized page resources (P05–P08, D04).
   P05 subject restoration now covers all nine current subject kinds,

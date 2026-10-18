@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Linked-card controls share current inputs across views of the same
+  conversation turn. Saved pages keep separate state per immutable version.
+  Closing the final view clears its temporary values; invalid inputs restore
+  linked fields to their recorded fallback until the input is valid again.
+
 - Delegated workers inherit configured model-step defaults, protected paths
   and completion policy. Dispatches through the shared budget keep each
   child's own trace and actor without resetting aggregate spending limits.

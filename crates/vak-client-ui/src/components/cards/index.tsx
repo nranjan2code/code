@@ -1,5 +1,5 @@
-import { For, Show, createMemo, type JSX } from "solid-js";
-import { withBoundValues } from "../../answerValues";
+import { For, Show, createMemo, useContext, type JSX } from "solid-js";
+import { AnswerValuesContext } from "../../answerValues";
 import type { AdaptiveRenderNode } from "../../types";
 import ChartCard from "./Chart";
 import ControlsCard from "./Controls";
@@ -46,7 +46,8 @@ export const formNames = Object.freeze(Object.keys(FORMS));
 export function FormView(props: { block: string; payload: Payload; fallback: string }) {
   const form = () => FORMS[props.block];
   // Fields bound to another card's values follow them (docs/design/98 §2).
-  const payload = createMemo(() => withBoundValues(props.payload));
+  const scope = useContext(AnswerValuesContext);
+  const payload = createMemo(() => scope?.withBoundValues(props.payload) ?? props.payload);
   return (
     <Show when={form()} fallback={<pre class="card-text">{props.fallback}</pre>}>
       {(draw) => draw()({ get payload() { return payload(); } })}

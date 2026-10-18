@@ -409,7 +409,10 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
       const at = version();
       return found && at && found.kind === "page" ? [found.id, at] as const : null;
     },
-    async ([id, at]) => readPage(await api.libraryVersionBytes(id, at)),
+    async ([id, at]) => {
+      const page = readPage(await api.libraryVersionBytes(id, at));
+      return page ? { page, version: at } : null;
+    },
   );
   const siblings = createMemo(() => {
     // A version in the trash or deleted is not one of the current ones.
@@ -512,7 +515,7 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
                 <PageKeeper
                   artifactId={found().id}
                   title={found().name}
-                  request={page()?.items.find((item) => item.role === "user")?.fallback_text.trim() || null}
+                  request={page()?.page.items.find((item) => item.role === "user")?.fallback_text.trim() || null}
                 />
               </Show>
               <details class="workspace-more" data-menu>
@@ -623,7 +626,7 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
           >
             <div class="library-preview library-page-view">
               <Show when={page()} fallback={<p class="library-note">{version() ? "Loading…" : "No version yet: the first comes from its automation's first run."}</p>}>
-                {(shown) => <PageView page={shown()} />}
+                {(shown) => <PageView page={shown().page} versionId={shown().version} />}
               </Show>
             </div>
           </Show>

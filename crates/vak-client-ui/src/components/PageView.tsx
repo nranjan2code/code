@@ -1,3 +1,4 @@
+import { pageValuesKey } from "./AnswerValuesScope";
 import PresentationTimelineView, { InCanvasContext } from "./PresentationRenderer";
 import type { AnswerOutline, OutputItem } from "../types";
 
@@ -24,7 +25,7 @@ export function readPage(bytes: Uint8Array): Page | null {
  *  and shared values work as they did in the answer; a viewer's changes to
  *  its controls are their own and are never saved. Its parts flow into as
  *  many columns as there is room for. */
-export default function PageView(props: { page: Page }) {
+export default function PageView(props: { page: Page; versionId: string }) {
   const timeline = () => ({
     schema_version: 2,
     session_id: "",
@@ -35,7 +36,7 @@ export default function PageView(props: { page: Page }) {
   return (
     <div class="answer-in-canvas">
       <InCanvasContext.Provider value={true}>
-        <PresentationTimelineView timeline={timeline()} sessionId="" allowContinuation={false} hideUser />
+        <PresentationTimelineView timeline={timeline()} sessionId="" valueScope={pageValuesKey(props.versionId)} allowContinuation={false} hideUser />
       </InCanvasContext.Provider>
     </div>
   );

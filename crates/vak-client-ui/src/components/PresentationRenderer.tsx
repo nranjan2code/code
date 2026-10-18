@@ -1,3 +1,4 @@
+import AnswerValuesScope, { conversationValuesKey } from "./AnswerValuesScope";
 import { answerDocument, answerSegments, groupAnswerEntries } from "../answerComposition";
 import { createContext, createEffect, createMemo, createResource, createSignal, ErrorBoundary, For, onCleanup, Show, useContext } from "solid-js";
 import type { JSX } from "solid-js";
@@ -1290,13 +1291,17 @@ export function LiveAnswer(props: { sessionId: string }) {
   return <>
     <Show when={cards().length > 0}>
       <div class="primary-result-material live-answer" aria-label="Answer so far">
-        <For each={cards()}>{(item) => (
+        <For each={[...new Set(cards().map((item) => item.turn_id))]}>{(turn) =>
+          <AnswerValuesScope scopeKey={conversationValuesKey(props.sessionId, turn)} items={cards().filter((item) => item.turn_id === turn)}>
+          <For each={cards().filter((item) => item.turn_id === turn)}>{(item) => (
           <div class="answer-block card-arrive" style={{ "animation-delay": `${arrivalDelay()}ms` }} data-block={blockOf(item) || undefined}>
             <Show when={item.content.type === "structured" && item.content.output}>{(output) =>
               <StructuredView output={output()} fallback={item.fallback_text} sessionId={props.sessionId} presentationId={item.provenance?.presentation_id ?? undefined} />}
             </Show>
           </div>
-        )}</For>
+          )}</For>
+          </AnswerValuesScope>
+        }</For>
       </div>
     </Show>
   </>;
@@ -1493,7 +1498,7 @@ export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRende
 /** True when an answer is drawn in the Canvas, where it is already open. */
 export const InCanvasContext = createContext(false);
 
-export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean }) {
+export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean; valueScope?: string }) {
   // The automations a turn made or changed (docs/design/94 §5), read again
   // whenever the conversation grows, so a card follows its record.
   // A page has no conversation, so no automations of its own and nothing
@@ -1539,7 +1544,9 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
         item.turn_id === id && !(props.hideUser && item.role === "user")), undefined, { equals: sameItems });
       const outline = createMemo(() => props.timeline.answers?.find((answer) => answer.turn_id === id));
       return <>
-        <Turn id={id} items={items()} outline={outline()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />
+        <AnswerValuesScope scopeKey={props.valueScope ?? conversationValuesKey(props.sessionId, id)} items={items()}>
+          <Turn id={id} items={items()} outline={outline()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />
+        </AnswerValuesScope>
         <For each={automationsOf(id)}>{(trigger) => <AutomationCard trigger={trigger} zone={ownerZone()} onChanged={() => void refetchAutomations()} />}</For>
       </>;
     }}</For>

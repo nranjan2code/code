@@ -49,7 +49,14 @@ needs a card built for its scenario.
   card is complete without the client and its text form is right.
 - The client keeps one value scope per answer: when a published input
   changes, every expression that reads it is recomputed and redrawn.
-  Nothing runs but the closed language.
+  Nothing runs but the closed language. Views of the same session and turn
+  share current input text as well as computed values; mounting another view
+  does not reset its inputs. Each view owns its visible source IDs; removing
+  one view does not clear sources another view still owns. Missing sources
+  and invalid inputs use the host-recorded field values, and closing the
+  final view releases the temporary scope. Saved pages use a separate scope
+  per immutable Library version, shared only by views of that version in
+  this client. Page edits stay unsaved; another version starts fresh.
 - "Ask about this" on any card of the answer sends the scope's current
   settings, computed again by the host, as Q3's values action does today.
 - A chart over a range (a schedule by month) needs a list: a `controls`

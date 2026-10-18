@@ -657,26 +657,33 @@ These bounded inspections do not close P01/P02:
   is closed: child-scoped services, durable child-card provenance, replacement state,
   durable reservations and safe sync/conflict/reload handling remain open.
 
-### Prepared interaction ownership scope
+### Interaction ownership implementation
 
-Read-only follow-up for P04/D01: `answerValues.ts` has one module-global
+Code-led follow-up for P04/D01 found that `answerValues.ts` has one module-global
 publication map keyed only by presentation ID, and each Controls mount owns
 settings and republishes them independently. PageView's empty session disables
 durable interactions but still reuses source presentation IDs. This can mix
 page-local inputs with conversation values or reset values on another mount.
 
-The bounded next design is an in-memory answer-values scope/context holding
+The implementation now uses an in-memory answer-values scope/context holding
 both publications and current control settings. Conversation views share the
 same session/turn scope; page views share an immutable page-version scope
 within this viewer, separate from source conversations and other versions.
-Reference-count scopes, reconcile source IDs as content changes, and release
-only after the last view unmounts. Use the existing immutable version IDs
-available to Library/SharedArtifact/Canvas page loaders; do not key by title
-or path. Keep durable conversation actions and page-local unsaved edits as
-they are. Verify source-set reconciliation does not let one partial mount
-prune sources another live mount owns. Tests must cover multiple mounts,
-page isolation, version changes, removed sources, recorded fallback and final
-cleanup. This is prepared scope, not implemented or new cross-user sharing.
+Scopes count their mounted owners, reconcile their union of source IDs, and
+release temporary settings/publications after the last owner leaves. Library,
+SharedArtifact and Canvas page loaders carry the immutable version together
+with its decoded bytes, so retained resource data cannot acquire a newer
+version's scope while another request loads. Conversation actions and unsaved
+page-local edits keep their existing behavior. Invalid control inputs clear
+stale publications and dependent fields use their recorded fallback. Source
+snapshots replace removed names. Pure state tests pass; mounted UI fixtures
+are prepared and typechecked but not browser-run. Both client bundles and
+the full repository gate pass: formatting, workspace Clippy, all workspace
+tests (708 seconds), version, doc paths, records and advisories. Source was
+frozen throughout the completed gate. An initial attempt stopped at the
+desktop bundle freshness check because it started before the final rebuild
+finished; both bundles were rebuilt before the successful full run.
+This does not settle replacement identity or the wider lifecycle matrix.
 
 ### Reporting contract
 
