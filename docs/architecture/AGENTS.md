@@ -20,7 +20,7 @@ measurement and given a verdict.
 | Part | Where it comes from |
 |---|---|
 | Every number (lines, files, tests, commits, dependencies, routes, tools, worker tasks, card forms, durable paths, longest files and functions) | measured by `scripts/blueprint.py` from the tree, `cargo metadata` and `git log` |
-| The evidence behind each finding (fix density, rebuild fan-out, unforwarded declarations, test density, completion vocabularies, ledger coupling) | the checks in `scripts/blueprint/evidence.py`, run on every generation |
+| The evidence behind each finding (fix density, rebuild fan-out, unforwarded declarations, test density, ledger coupling) | the checks in `scripts/blueprint/evidence.py`, run on every generation |
 | Cognitive complexity | `python3 scripts/blueprint.py --deep` (clippy), cached in `measures.json` |
 | The layer stack, the dependency matrix, the upward-dependency list, the bill of materials, the size and work tables | drawn by `scripts/blueprint.py` from those measurements |
 | Each crate's layer and one-line role | the `CRATES` table in `scripts/blueprint.py` |

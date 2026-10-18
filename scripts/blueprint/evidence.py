@@ -176,37 +176,6 @@ def test_density(b, crates):
     return out, (vals[len(vals) // 2] if vals else 0)
 
 
-COMPLETION = [
-    ("crates/vak-session/src/types.rs", "GoalStatus", "goal mode"),
-    ("crates/vak-session/src/types.rs", "WorkContractStatus", "managed work"),
-    ("crates/vak-intent/src/outcome.rs", "OutcomeStatus", "outcome result"),
-    ("crates/vak-intent/src/outcome.rs", "CompletionVerdict", "outcome evaluation"),
-    ("crates/vak-commit/src/types.rs", "Verdict", "commitment"),
-]
-
-
-def completion_models(b):
-    """The separate vocabularies for 'is this work done', and translations between them."""
-    rows = []
-    for path, name, role in COMPLETION:
-        full = os.path.join(b.ROOT, path)
-        if not os.path.exists(full):
-            rows.append({"enum": name, "file": path, "role": role, "variants": None})
-            continue
-        text = open(full, encoding="utf-8").read()
-        m = re.search(rf"pub enum {name}\b[^{{]*\{{(.*?)\n\}}", text, re.S)
-        variants = re.findall(r"^\s{4}([A-Z]\w*)", m.group(1), re.M) if m else []
-        rows.append({"enum": name, "file": path, "role": role, "variants": len(variants) if m else None})
-    names = [n for _, n, _ in COMPLETION]
-    pat = re.compile(r"\b(" + "|".join(names) + r")::\w+\s*=>\s*(?:\w+::)*(" + "|".join(names) + r")::")
-    translations = 0
-    for crate in sorted(os.listdir(os.path.join(b.ROOT, "crates"))):
-        for p in b.files_under(f"crates/{crate}/src", (".rs",)):
-            text = "\n".join(b.production_lines(p))
-            translations += sum(1 for m in pat.finditer(text) if m.group(1) != m.group(2))
-    return {"models": rows, "translations": translations}
-
-
 def ledger_types(b):
     """What the session ledger takes from the provider and intent crates."""
     uses = defaultdict(int)

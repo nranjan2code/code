@@ -70,7 +70,7 @@ and keep the correction visible.
 |---|---|
 | `python3 scripts/blueprint.py` | Regenerates the blueprint and every live number in it (about 4 s once the commit cache in the git directory is warm). |
 | `python3 scripts/blueprint.py --deep` | Also runs the slow check: clippy's `cognitive_complexity` at threshold 1 over every workspace library. The result goes to `measures.json`. Takes about a minute. |
-| `scripts/blueprint/evidence.py` | One function per check: `hotspots` (file size against fix density, Spearman), `fanout` (how many crates rebuild when one changes), `tool_wrappers` (unforwarded `Tool` declarations), `test_density` (tests per thousand lines, fuzz targets), `completion_models` (separate "is it done" vocabularies and translations between them), `ledger_types` (what the ledger takes from the provider and intent crates), `deep` (cognitive complexity). Checks are added when a finding needs them and removed with the finding. |
+| `scripts/blueprint/evidence.py` | One function per check: `hotspots` (file size against fix density, Spearman), `fanout` (how many crates rebuild when one changes), `tool_wrappers` (unforwarded `Tool` declarations), `test_density` (tests per thousand lines, fuzz targets), `ledger_types` (what the ledger takes from the provider and intent crates), `deep` (cognitive complexity). Checks are added when a finding needs them and removed with the finding. |
 | `git log -L <start>,<end>:<file>` | Every commit that changed a function's current lines, followed back through edits. |
 | `git log -S'<symbol>'` | When a symbol was added or removed: for example, whether a new trait method reached its wrappers in the same commit. |
 | `cargo metadata --no-deps --offline` | The crate graph. |

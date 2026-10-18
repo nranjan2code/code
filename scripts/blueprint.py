@@ -462,7 +462,6 @@ def evidence_blocks(crates, m):
     fan = evidence.fanout(crates)
     wr = evidence.tool_wrappers(me)
     tests, tmed = evidence.test_density(me, crates)
-    comp = evidence.completion_models(me)
     led = evidence.ledger_types(me)
     by_fan = sorted(fan.items(), key=lambda kv: -kv[1])
     density = hot["density"]
@@ -477,8 +476,6 @@ def evidence_blocks(crates, m):
         "tool.methods": wr["methods"], "tool.defaults": wr["defaults"], "tool.impls": wr["impls"],
         "tool.median": wr["median_overrides"], "tool.wrappers": len(wr["wrappers"]),
         "test.median": f"{tmed:.1f}",
-        "comp.count": sum(1 for r in comp["models"] if r["variants"]), "comp.translations": comp["translations"],
-        "comp.variants": ", ".join(f'{r["variants"]}' for r in comp["models"] if r["variants"]),
         "led.llm": led["uses"].get("vak_llm", 0), "led.intent": led["uses"].get("vak_intent", 0),
         "led.control": led["uses"].get("vak_control", 0),
         "led.types_commits": led["types_commits"], "led.co_changed": led["co_changed"],
@@ -486,11 +483,10 @@ def evidence_blocks(crates, m):
     for name, t in tests.items():
         e[f"test.{name}"] = f'{t["per_kloc"]:.1f}'
     rows_wr = "\n".join(f'<li><code>{esc(w["type"])}</code> ({esc(w["file"])}:{w["line"]}): ' + (("does not forward " + ", ".join(f"<code>{esc(x)}</code>" for x in w["missing"])) if w["missing"] else "forwards every default") + "</li>" for w in wr["wrappers"]) or "<li>No wrapping tools found.</li>"
-    rows_comp = "\n".join(f'<tr><td><code>{esc(r["enum"])}</code></td><td>{esc(r["role"])}</td><td class="n">{r["variants"] if r["variants"] is not None else "gone"}</td><td><code>{esc(r["file"])}</code></td></tr>' for r in comp["models"])
     thin = sorted(tests.items(), key=lambda kv: kv[1]["per_kloc"])
     rows_tests = "\n".join(f'<tr><td><code>{esc(n)}</code></td><td class="n">{t["tests"]}</td><td class="n">{t["per_kloc"]:.1f}</td><td>{"yes" if t["fuzz"] else "—"}</td></tr>' for n, t in thin)
-    misses = [f"completion model {r['enum']} ({r['file']})" for r in comp["models"] if r["variants"] is None]
-    return e, {"WRAPPERS": rows_wr, "COMPLETION": rows_comp, "TESTS": rows_tests}, misses
+    misses = []
+    return e, {"WRAPPERS": rows_wr, "TESTS": rows_tests}, misses
 
 HOT = 0
 
