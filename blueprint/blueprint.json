@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "fbeda8f9b",
+  "revision": "1a09af69e",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -19,11 +19,11 @@
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2360,
+   "total_commits": 2364,
    "days": 59,
    "peak_day": 174,
-   "design_docs": 95,
-   "agents_words": 20115,
+   "design_docs": 96,
+   "agents_words": 20147,
    "subsystems": 64,
    "connections": 805,
    "flows": 11
@@ -219,23 +219,35 @@
      "Dependencies for Node programs (a lockfile and `npm ci`):",
      "Seen live (E4):"
     ]
+   },
+   {
+    "section": "Workers (docs/design/100, 2026-10-18)",
+    "open": 6,
+    "items": [
+     "W0:",
+     "W1:",
+     "W2:",
+     "W3:",
+     "W4:",
+     "W5:"
+    ]
    }
   ],
-  "open_total": 52,
+  "open_total": 58,
   "measures_revision": "825b18564"
  },
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 508,
+  "commits": 512,
   "areas": [
    [
     "docs",
-    432
+    436
    ],
    [
     "(root)",
-    262
+    265
    ],
    [
     "vak-core",
@@ -247,7 +259,7 @@
    ],
    [
     "vak-client-ui",
-    115
+    116
    ],
    [
     "vak-agent",
@@ -302,7 +314,7 @@
    [
     "cards",
     "Cards and presentation",
-    92
+    93
    ],
    [
     "ledger",
@@ -602,6 +614,42 @@
   ],
   "recent": [
    {
+    "hash": "1a09af69e",
+    "date": "2026-10-18",
+    "subject": "Fit chart and map plots to narrow cards and verify Canvas flows",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-client-ui"
+    ]
+   },
+   {
+    "hash": "dc5ac2b34",
+    "date": "2026-10-18",
+    "subject": "Defer the workers work (doc 100)",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
+    "hash": "95befefa2",
+    "date": "2026-10-18",
+    "subject": "Decide the four open worker choices (doc 100 §12)",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
+    "hash": "6e872fcfd",
+    "date": "2026-10-18",
+    "subject": "Record the workers direction: design, plan, decision, aligned docs",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "fbeda8f9b",
     "date": "2026-10-18",
     "subject": "Store Canvas state in conversation-sealed fenced Documents",
@@ -722,45 +770,10 @@
      "vak-core",
      "vak-delivery"
     ]
-   },
-   {
-    "hash": "142c83869",
-    "date": "2026-10-18",
-    "subject": "Show only open work in the blueprint",
-    "areas": [
-     "blueprint"
-    ]
-   },
-   {
-    "hash": "3047f374d",
-    "date": "2026-10-18",
-    "subject": "Count nested tracker items in the blueprint",
-    "areas": [
-     "blueprint"
-    ]
-   },
-   {
-    "hash": "530764e2e",
-    "date": "2026-10-18",
-    "subject": "Verify route and budget decisions and record live revisions before use",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-config",
-     "vak-core"
-    ]
-   },
-   {
-    "hash": "6062009b6",
-    "date": "2026-10-18",
-    "subject": "Check every open item against the code and history",
-    "areas": [
-     "docs"
-    ]
    }
   ],
   "unreleased": [
+   "Charts and maps size their plots to the space inside narrow cards, keeping the right edge visible on phones and in narrow panels.",
    "Saved Canvas state now uses versioned, fenced Documents with its content sealed under the conversation key inside each Document version.",
    "Canvas conflict replay restores a remotely closed tab when it holds a pending local note and there is safe room.",
    "Canvas keeps unacknowledged changes after failed saves and shows a recovery message with Retry saving.",
@@ -951,6 +964,35 @@
   "recent": [
    {
     "date": "2026-10-18",
+    "text": "The maintainer waived the full repository gate for the responsive chart/map and browser-fixture batch (\"we dont need gate right now\").",
+    "links": [
+     "docs/plans/handover-2026-10-18.md#current-responsive-presentation-batch"
+    ]
+   },
+   {
+    "date": "2026-10-18",
+    "text": "The workers work (doc 100 and its plan) is deferred as a whole:",
+    "links": [
+     "docs/design/100-workers.md"
+    ]
+   },
+   {
+    "date": "2026-10-18",
+    "text": "Workers, the four open choices (asked to choose by scenario and blast radius):",
+    "links": [
+     "docs/design/100-workers.md"
+    ]
+   },
+   {
+    "date": "2026-10-18",
+    "text": "A worker is a run of a well-defined pack that carries the engine, handed over from something Vakyartha made and kept running;",
+    "links": [
+     "docs/design/100-workers.md",
+     "docs/plans/workers-plan.md"
+    ]
+   },
+   {
+    "date": "2026-10-18",
     "text": "Commit and push directly to `main`;",
     "links": [
      "docs/plans/handover-2026-10-18.md#current-canvas-document-batch"
@@ -1000,40 +1042,26 @@
     "date": "2026-10-17",
     "text": "Where an automation's result goes is one argument of the automation tool, `result_to`:",
     "links": []
-   },
-   {
-    "date": "2026-10-17",
-    "text": "A card naming a `deliverable` with no plan declared is refused, as a name the plan lacks is (`docs/design/87-composed-answers.md`).",
-    "links": []
-   },
-   {
-    "date": "2026-10-17",
-    "text": "Steps cards stay flat:",
-    "links": []
-   },
-   {
-    "date": "2026-10-17",
-    "text": "Markup previews get libraries by the client inlining a pinned library into the opaque frame's srcdoc, not from a preview origin;",
-    "links": []
-   },
-   {
-    "date": "2026-10-17",
-    "text": "An MCP tool's UI resource is shown as text only;",
-    "links": []
    }
   ],
-  "total": 40
+  "total": 44
  },
  "specs": {
   "counts": {
    "historical": 10,
    "implemented": 59,
-   "superseded": 8,
+   "proposal": 6,
+   "superseded": 9,
    "in progress": 26,
-   "reference": 2,
-   "proposal": 5
+   "reference": 2
   },
   "open": [
+   {
+    "path": "docs/design/100-workers.md",
+    "title": "100 — Workers: work handed over, kept running",
+    "status": "proposal",
+    "summary": "deferred by the maintainer on 2026-10-18: no stage starts until the maintainer reopens it"
+   },
    {
     "path": "docs/design/49-live-voice.md",
     "title": "49 — Live voice: full-duplex spoken conversation",
@@ -1105,12 +1133,6 @@
     "title": "80 — Mail and calendar: governed account work",
     "status": "in progress",
     "summary": "(on main"
-   },
-   {
-    "path": "docs/design/81-pieces-and-home.md",
-    "title": "81 — Pieces and Home: kept, live and hosted work",
-    "status": "proposal",
-    "summary": "2026-10-01"
    },
    {
     "path": "docs/design/84-worker-questions-and-control.md",
@@ -1219,6 +1241,12 @@
     "title": "Plan — visual refresh (Ink and Saffron)",
     "status": "in progress",
     "summary": "plan and tracker, 2026-09-25"
+   },
+   {
+    "path": "docs/plans/workers-plan.md",
+    "title": "Plan — Workers (doc 100)",
+    "status": "proposal",
+    "summary": "deferred by the maintainer on 2026-10-18"
    }
   ]
  },
@@ -14347,9 +14375,9 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 292,
+   "commits": 293,
    "fixes": 52,
-   "recent": 92,
+   "recent": 93,
    "fix_density": 2.9,
    "out": [
     {
@@ -21125,6 +21153,7 @@
   "verbs_claimed": 35,
   "docs_uncited": [
    "00-roadmap.md",
+   "100-workers.md",
    "35-tavily.md",
    "56-personal-multi-machine-system.md",
    "59-reference-ui-acceptance.md",
@@ -29673,6 +29702,32 @@
  ],
  "replay": [
   {
+   "hash": "1a09af69e",
+   "date": "2026-10-18",
+   "subject": "Fit chart and map plots to narrow cards and verify Canvas flows",
+   "subsystems": [
+    "cards"
+   ]
+  },
+  {
+   "hash": "dc5ac2b34",
+   "date": "2026-10-18",
+   "subject": "Defer the workers work (doc 100)",
+   "subsystems": []
+  },
+  {
+   "hash": "95befefa2",
+   "date": "2026-10-18",
+   "subject": "Decide the four open worker choices (doc 100 §12)",
+   "subsystems": []
+  },
+  {
+   "hash": "6e872fcfd",
+   "date": "2026-10-18",
+   "subject": "Record the workers direction: design, plan, decision, aligned docs",
+   "subsystems": []
+  },
+  {
    "hash": "fbeda8f9b",
    "date": "2026-10-18",
    "subject": "Store Canvas state in conversation-sealed fenced Documents",
@@ -34982,7 +35037,7 @@
    "src": 36921,
    "tests": 279,
    "files": 185,
-   "commits": 635,
+   "commits": 636,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -36594,7 +36649,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1337,
+  "docs_commits": 1341,
   "hot": 631
  },
  "findings": [
