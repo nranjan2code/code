@@ -1,6 +1,7 @@
 # 100 — Workers: work handed over, kept running
 
-Status: proposal (2026-10-18). Nothing in this document is built. It
+Status: proposal, deferred by the maintainer on 2026-10-18: no stage
+starts until the maintainer reopens it. Nothing in this document is built. It
 records the maintainer's direction for workers and the narrow scope chosen
 to build first (§9); everything else is recorded as deferred with its
 reason (§10). The four choices left open were decided on 2026-10-18 (§12). The stages and their gates are

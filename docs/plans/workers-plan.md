@@ -1,6 +1,7 @@
 # Plan — Workers (doc 100)
 
-Status: proposal (2026-10-18). No stage has started. The design is
+Status: proposal, deferred by the maintainer on 2026-10-18. No stage has
+started, and none starts until the maintainer reopens the work. The design is
 `docs/design/100-workers.md`; the maintainer chose the narrow path on
 2026-10-18 (`docs/decisions.md`). Stages run in order, and each passes its
 gate on the installed route before the next starts. A failed gate stops
@@ -111,3 +112,5 @@ unasked.
 - 2026-10-18: the four open choices decided (doc 100 §12): what a worker
   does unasked, the owner Agent's conversation, the existing sandbox for
   code steps, budgets from a measured trial run.
+- 2026-10-18: the whole path deferred by the maintainer; nothing starts
+  until it is reopened.

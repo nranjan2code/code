@@ -19,7 +19,7 @@ Counts: 3 proposal, 20 in progress, 57 implemented, 2 reference, 9 superseded, 5
 | [08-permissions.md](08-permissions.md) | 08 — Permissions (vak-permission) | implemented | in 2.0.0 |
 | [09-extensibility.md](09-extensibility.md) | 09 — Extensibility (skills · workers · hooks · MCP · custom commands) | implemented | in 2.0.0 |
 | [10-flows.md](10-flows.md) | 10 — Flows (static DAGs) | implemented | in 2.0.0 |
-| [100-workers.md](100-workers.md) | 100 — Workers: work handed over, kept running | proposal | (2026-10-18) |
+| [100-workers.md](100-workers.md) | 100 — Workers: work handed over, kept running | proposal | deferred by the maintainer on 2026-10-18: no stage starts until the maintainer reopens it |
 | [11-planner.md](11-planner.md) | 11 — Dynamic planner | implemented | in 2.0.0 |
 | [12-evals.md](12-evals.md) | 12 — Eval harness | implemented | in 2.0.0 |
 | [13-server.md](13-server.md) | 13 — Server mode | implemented | in 2.0.0 |

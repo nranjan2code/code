@@ -823,7 +823,8 @@ live.
 
 ## Workers (docs/design/100, 2026-10-18)
 
-Proposal only; the stages, gates and "done when" are
+Deferred by the maintainer (2026-10-18): nothing below starts until
+the work is reopened. Proposal only; the stages, gates and "done when" are
 `docs/plans/workers-plan.md`. No stage has started.
 
 - [ ] W0: the pack contract, the worker record and its catalog source.

@@ -5,7 +5,7 @@ events, §4) and M2 (background tasks, read-only or leased writers, the `workers
 stop-gate join, §5). M4 is partly built: the web and desktop client's
 question card, the gateway forward to the approver chat, the `vak exec`
 terminal prompt and the admin console's read-only view. `100-workers.md`
-(proposal) replaces §5's lifetime rule (a background worker never outlives
+(proposal, deferred) would replace §5's lifetime rule (a background worker never outlives
 its parent turn), its depth of one and its cap of eight at its stage W2,
 when background work becomes runs of a pack; until then §5 holds as
 written. It extends `docs/design/64-agent-owned-platform.md` (Agent lifecycle),

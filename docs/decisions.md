@@ -9,6 +9,11 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-18
 
+- The workers work (doc 100 and its plan) is deferred as a whole: the
+  design and the decided choices stay recorded, and no stage starts until
+  the maintainer reopens it. Recorded in
+  [docs/design/100-workers.md](design/100-workers.md).
+
 - Workers, the four open choices (asked to choose by scenario and blast
   radius): unasked, a worker only runs its approved pack, makes its own
   output's new version current when its checks pass, delivers candidates

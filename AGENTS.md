@@ -91,7 +91,7 @@ Read before changing behaviour in these areas:
   matrix and stages in `docs/plans/mail-calendar-implementation-plan.md`.
 - **Workers** — `84-worker-questions-and-control.md` (questions, the
   `workers` tool, pause and stop now); the direction for workers that
-  outlive a turn is `100-workers.md` (proposal).
+  outlive a turn is `100-workers.md` (proposal, deferred).
 - **Turn graph** — `85-turn-graph.md` (turn ids, turn and recall links).
 - **Experience** — `64-agent-owned-platform.md` (the product model; see
   below), `61-adaptive-assistant-experience.md`,
@@ -102,7 +102,7 @@ Read before changing behaviour in these areas:
 - **Install and onboarding** — `46-stabilization-install-and-onboarding.md`,
   `36-first-run-onboarding.md`, `37-distribution.md`, `35-tavily.md`.
 - **Proposals** — `100-workers.md` (work handed to a worker and kept
-  running; its stages and gates are `docs/plans/workers-plan.md`, and it
+  running, deferred on 2026-10-18; its stages and gates are `docs/plans/workers-plan.md`, and it
   supersedes `81-pieces-and-home.md`), `79-private-headless-fleet.md`:
   designs not built; they use the data architecture's shared primitives (triggers,
   cursors, effects, fencing, connections, principals) rather than their own.
