@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "7e718780c",
+  "revision": "fbeda8f9b",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -11,21 +11,21 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 327897,
-   "rust_tests": 85075,
+   "rust_src": 328226,
+   "rust_tests": 85156,
    "ts_src": 61657,
    "routes": 391,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2359,
+   "total_commits": 2360,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
    "agents_words": 20115,
    "subsystems": 64,
-   "connections": 804,
+   "connections": 805,
    "flows": 11
   },
   "tools": [
@@ -227,23 +227,23 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 507,
+  "commits": 508,
   "areas": [
    [
     "docs",
-    431
+    432
    ],
    [
     "(root)",
-    261
+    262
    ],
    [
     "vak-core",
-    222
+    223
    ],
    [
     "vak-server",
-    182
+    183
    ],
    [
     "vak-client-ui",
@@ -255,11 +255,11 @@
    ],
    [
     "vak-session",
-    87
+    88
    ],
    [
     "vak-tools",
-    85
+    86
    ],
    [
     "vak",
@@ -307,7 +307,7 @@
    [
     "ledger",
     "Ledgers and records",
-    77
+    78
    ],
    [
     "admin",
@@ -325,13 +325,13 @@
     59
    ],
    [
-    "control",
-    "Control plane and judges",
-    47
-   ],
-   [
     "state",
     "State registry and baseline",
+    48
+   ],
+   [
+    "control",
+    "Control plane and judges",
     47
    ],
    [
@@ -425,18 +425,18 @@
     19
    ],
    [
-    "context",
-    "Context engine",
-    18
-   ],
-   [
     "storage",
     "Storage substrate",
-    18
+    19
    ],
    [
     "canvas",
     "Canvas and previews",
+    19
+   ],
+   [
+    "context",
+    "Context engine",
     18
    ],
    [
@@ -602,6 +602,20 @@
   ],
   "recent": [
    {
+    "hash": "fbeda8f9b",
+    "date": "2026-10-18",
+    "subject": "Store Canvas state in conversation-sealed fenced Documents",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-core",
+     "vak-server",
+     "vak-session",
+     "vak-storage",
+     "vak-tools"
+    ]
+   },
+   {
     "hash": "7e718780c",
     "date": "2026-10-18",
     "subject": "Put the plant on the layer stack, add the outside world, and a connection explorer",
@@ -744,20 +758,10 @@
     "areas": [
      "docs"
     ]
-   },
-   {
-    "hash": "e4a25bd62",
-    "date": "2026-10-18",
-    "subject": "Make blueprint/ the one place to see the system",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "scripts"
-    ]
    }
   ],
   "unreleased": [
+   "Saved Canvas state now uses versioned, fenced Documents with its content sealed under the conversation key inside each Document version.",
    "Canvas conflict replay restores a remotely closed tab when it holds a pending local note and there is safe room.",
    "Canvas keeps unacknowledged changes after failed saves and shows a recovery message with Retry saving.",
    "Card replacements use one active-card view for runtime validation and display.",
@@ -949,7 +953,7 @@
     "date": "2026-10-18",
     "text": "Commit and push directly to `main`;",
     "links": [
-     "docs/plans/handover-2026-10-18.md#current-canvas-conflict-batch"
+     "docs/plans/handover-2026-10-18.md#current-canvas-document-batch"
     ]
    },
    {
@@ -1234,7 +1238,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 76701,
+   "lines": 76909,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1244,7 +1248,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 62362,
+   "lines": 62363,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1295,7 +1299,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 34162,
+   "lines": 34282,
    "crates": [
     "vak-session",
     "vak-config",
@@ -10526,7 +10530,7 @@
    ],
    "modules": 17,
    "parts": [],
-   "lines": 11824,
+   "lines": 11931,
    "largest": [
     3617,
     "crates/vak-session/src/log.rs"
@@ -10563,16 +10567,16 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 186,
+   "commits": 187,
    "fixes": 17,
-   "recent": 77,
+   "recent": 78,
    "fix_density": 1.4,
    "out": [
     {
      "from": "ledger",
      "to": "storage",
      "kind": "code",
-     "weight": 19,
+     "weight": 20,
      "example": [
       "crates/vak-session/src/chain.rs",
       "crates/vak-storage/src/lib.rs"
@@ -10991,6 +10995,16 @@
      ]
     },
     {
+     "from": "canvas",
+     "to": "ledger",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-server/src/canvas.rs",
+      "crates/vak-session/src/documents.rs"
+     ]
+    },
+    {
      "from": "office",
      "to": "ledger",
      "kind": "code",
@@ -11218,7 +11232,7 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 5217,
+   "lines": 5230,
    "largest": [
     776,
     "crates/vak-storage/src/store.rs"
@@ -11244,9 +11258,9 @@
     "crates/vak-storage/src/segments.rs",
     "crates/vak-storage/src/store.rs"
    ],
-   "commits": 25,
+   "commits": 26,
    "fixes": 0,
-   "recent": 18,
+   "recent": 19,
    "fix_density": 0.0,
    "out": [
     {
@@ -11295,7 +11309,7 @@
      "from": "ledger",
      "to": "storage",
      "kind": "code",
-     "weight": 19,
+     "weight": 20,
      "example": [
       "crates/vak-session/src/chain.rs",
       "crates/vak-storage/src/lib.rs"
@@ -12052,9 +12066,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 3474,
+   "lines": 3475,
    "largest": [
-    1653,
+    1654,
     "crates/vak-core/src/state.rs"
    ],
    "routes": [
@@ -12073,9 +12087,9 @@
     "crates/vak-core/src/state.rs",
     "crates/vak/src/data.rs"
    ],
-   "commits": 70,
+   "commits": 71,
    "fixes": 5,
-   "recent": 47,
+   "recent": 48,
    "fix_density": 1.4,
    "out": [
     {
@@ -14969,7 +14983,7 @@
    ],
    "modules": 34,
    "parts": [],
-   "lines": 3992,
+   "lines": 4200,
    "largest": [
     775,
     "crates/vak-server/src/preview.rs"
@@ -15026,10 +15040,10 @@
     "crates/vak-server/src/canvas.rs",
     "crates/vak-server/src/preview.rs"
    ],
-   "commits": 64,
+   "commits": 65,
    "fixes": 5,
-   "recent": 18,
-   "fix_density": 1.3,
+   "recent": 19,
+   "fix_density": 1.2,
    "out": [
     {
      "from": "canvas",
@@ -15049,6 +15063,16 @@
      "example": [
       "crates/vak-client-ui/src/components/canvas/CanvasContext.tsx",
       "crates/vak-client-ui/src/draftVersions.ts"
+     ]
+    },
+    {
+     "from": "canvas",
+     "to": "ledger",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-server/src/canvas.rs",
+      "crates/vak-session/src/documents.rs"
      ]
     },
     {
@@ -21154,6 +21178,16 @@
    ]
   },
   {
+   "from": "ledger",
+   "to": "storage",
+   "kind": "code",
+   "weight": 20,
+   "example": [
+    "crates/vak-session/src/chain.rs",
+    "crates/vak-storage/src/lib.rs"
+   ]
+  },
+  {
    "from": "tools",
    "to": "permission",
    "kind": "code",
@@ -21161,16 +21195,6 @@
    "example": [
     "crates/vak-core/src/reach.rs",
     "crates/vak-permission/src/engine.rs"
-   ]
-  },
-  {
-   "from": "ledger",
-   "to": "storage",
-   "kind": "code",
-   "weight": 19,
-   "example": [
-    "crates/vak-session/src/chain.rs",
-    "crates/vak-storage/src/lib.rs"
    ]
   },
   {
@@ -23220,6 +23244,16 @@
    "weight": 3,
    "example": [
     "crates/vak-core/src/backup.rs",
+    "crates/vak-session/src/documents.rs"
+   ]
+  },
+  {
+   "from": "canvas",
+   "to": "ledger",
+   "kind": "code",
+   "weight": 3,
+   "example": [
+    "crates/vak-server/src/canvas.rs",
     "crates/vak-session/src/documents.rs"
    ]
   },
@@ -29639,6 +29673,17 @@
  ],
  "replay": [
   {
+   "hash": "fbeda8f9b",
+   "date": "2026-10-18",
+   "subject": "Store Canvas state in conversation-sealed fenced Documents",
+   "subsystems": [
+    "canvas",
+    "ledger",
+    "state",
+    "storage"
+   ]
+  },
+  {
    "hash": "7e718780c",
    "date": "2026-10-18",
    "subject": "Put the plant on the layer stack, add the outside world, and a connection explorer",
@@ -35145,10 +35190,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 57827,
+   "src": 57828,
    "tests": 9964,
    "files": 70,
-   "commits": 630,
+   "commits": 631,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35981,10 +36026,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 72532,
-   "tests": 23680,
+   "src": 72740,
+   "tests": 23730,
    "files": 51,
-   "commits": 830,
+   "commits": 831,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -36084,10 +36129,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 14835,
-   "tests": 4782,
+   "src": 14942,
+   "tests": 4807,
    "files": 24,
-   "commits": 199,
+   "commits": 200,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36144,10 +36189,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Keys, refs, encrypted objects, records, segments",
-   "src": 5016,
+   "src": 5029,
    "tests": 242,
    "files": 11,
-   "commits": 25,
+   "commits": 26,
    "deps": [],
    "used_by": [
     "vak-core",
@@ -36248,9 +36293,9 @@
    "kind": "rust",
    "role": "Built-in tools, argument reader, broker worker protocol, egress proxy",
    "src": 15877,
-   "tests": 1136,
+   "tests": 1142,
    "files": 28,
-   "commits": 202,
+   "commits": 203,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36549,8 +36594,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1336,
-  "hot": 630
+  "docs_commits": 1337,
+  "hot": 631
  },
  "findings": [
   {
