@@ -13,6 +13,15 @@ tool also declares whether a call may change the workspace
 workspace is checkpointed when the first such call of a turn is accepted.
 `ToolContext` carries cwd, cancellation child-token, output limits.
 
+## Concurrent execution claims
+
+Every call goes through resource-conflict placement. An absent footprint
+means unknown effects, so it conflicts with other unknown, path-writing
+and exclusive claims. It is not an implicit permission to join the first
+wave. Explicitly read-only claims retain their existing concurrency;
+disjoint declared write scopes can still share a wave. MCP calls without a
+trusted effect declaration remain unknown (hardening A07).
+
 ## Reading arguments
 
 Every tool call's arguments pass through one reader before validation

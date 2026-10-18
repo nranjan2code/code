@@ -178,14 +178,17 @@ const optionalText = (value: unknown) => value === undefined || typeof value ===
 export function isCanvasSubject(value: unknown): value is CanvasSubject {
   if (!value || typeof value !== "object") return false;
   const subject = value as Record<string, unknown>;
-  if (typeof subject.title !== "string" || !optionalText(subject.resultId) || !optionalText(subject.anchor)) return false;
+  if (!text(subject.title) || !optionalText(subject.resultId) || !optionalText(subject.anchor)) return false;
   switch (subject.kind) {
     case "file": return text(subject.path) && optionalText(subject.sessionId);
     case "execution_artifact": return text(subject.path) && text(subject.sessionId) && text(subject.executionId);
     case "draft_file": return text(subject.path) && text(subject.sessionId) && text(subject.candidateId) && optionalText(subject.executionId);
-    case "inline": return typeof subject.html === "string" && optionalText(subject.basePath) && optionalText(subject.sessionId);
+    case "inline": return typeof subject.html === "string" && optionalText(subject.basePath) && optionalText(subject.sessionId)
+      && (subject.libraries === undefined || (Array.isArray(subject.libraries) && subject.libraries.every(text)));
     case "automation": return text(subject.taskId);
     case "daily_mail_calendar": return text(subject.agentId);
+    case "answer": return text(subject.sessionId) && text(subject.turnId);
+    case "page": return text(subject.artifactId);
     case "live_server": return text(subject.serverName) && text(subject.sessionId) && optionalText(subject.candidateId) && optionalText(subject.path);
     default: return false;
   }

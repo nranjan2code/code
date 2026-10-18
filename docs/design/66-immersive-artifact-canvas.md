@@ -42,6 +42,16 @@ A subject need not be a file: a scheduled routine is `{ kind: "automation", task
 
 The read-only daily mail/calendar view is `{ kind: "daily_mail_calendar" }` (`DailyMailCalendarViewer`). A **Today** action stays available in each Agent conversation. The viewer reads only connected accounts with available credentials using the owner-authenticated mail/calendar preview APIs; it does not open an Agent read tool or send provider content to the model. It presents the local day's calendar events and free/busy intervals, recent inbox messages, per-source refresh failures, and links supported messages to the existing account conversation preview. It loads at most two accounts concurrently, bounding provider request bursts while still aggregating all linked accounts. Data loads on open and explicit refresh. Like other non-file views it has no comments or file path.
 
+### Restoring subjects
+
+Persisted Canvas subjects validate all supported kinds, including composed
+answers (session and turn identity) and saved pages (artifact identity).
+All nine current kinds round-trip through stack opening, serialization
+and restoration in source tests. Missing identity fields or a mismatched
+stored identity are refused. This covers subject restoration; draft
+retention, encrypted storage and saved-page resource authorization remain
+separate work in the architecture and presentation hardening plan.
+
 ### 0. What the Canvas shows: a subject
 
 The Canvas opens a `CanvasSubject` (`src/canvasSubject.ts`), which names what is shown by identity, not by path: a workspace `file`, an `execution_artifact` (a run's scratch file), a `draft_file` (one saved version, read through hash-checked candidate routes), `inline` markup from the conversation, or a `live_server`. Each kind is read through the one route its identity names, and there is no fallback between them: an unreadable file is an error, never replaced by text found elsewhere. `openArtifactFile(path, origin?)` is the entry point for files. A bare reference (a path in the Agent's text) is matched to a run only by an identical path made by exactly one run; if several runs made it, the reader is asked instead of a file being chosen.

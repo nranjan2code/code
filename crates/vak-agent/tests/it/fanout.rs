@@ -18,7 +18,7 @@ use vak_llm::{EventStream, LlmError, Provider};
 use vak_permission::PermissionEngine;
 use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
-use vak_tools::bash::BashTool;
+use vak_tools::{ResourceClaims, Tool, ToolContext, ToolOutput, bash::BashTool};
 
 /// Routes scripted responses by the trailing user-message tag so parallel
 /// children are deterministic regardless of request interleaving.
@@ -374,4 +374,181 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         vec!["a", "b", "c"],
         "source order preserved across waves"
     );
+}
+
+#[derive(Default)]
+struct WaveActivity {
+    active: std::sync::atomic::AtomicUsize,
+    maximum: std::sync::atomic::AtomicUsize,
+}
+
+struct WaveTool {
+    name: &'static str,
+    read_only: bool,
+    activity: Arc<WaveActivity>,
+}
+
+#[async_trait::async_trait]
+impl Tool for WaveTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn description(&self) -> &str {
+        "Records concurrent execution for a scheduler test."
+    }
+
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+
+    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        use std::sync::atomic::Ordering;
+        let active = self.activity.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.activity.maximum.fetch_max(active, Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        self.activity.active.fetch_sub(1, Ordering::SeqCst);
+        ToolOutput::default()
+    }
+
+    fn claims(&self, _args: &serde_json::Value) -> ResourceClaims {
+        ResourceClaims {
+            read_only: self.read_only,
+            ..Default::default()
+        }
+    }
+}
+
+struct WaveProvider {
+    responses: Mutex<VecDeque<AssistantMessage>>,
+}
+
+#[async_trait::async_trait]
+impl Provider for WaveProvider {
+    fn name(&self) -> &str {
+        "wave-scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        crate::support::capacity_key()
+    }
+
+    async fn stream(
+        &self,
+        _request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        let next = self.responses.lock().unwrap().pop_front();
+        let (mut sink, rx) = stream::channel(64);
+        match next {
+            Some(message) => {
+                sink.push(stream::StreamEvent::Start {
+                    partial: message.clone(),
+                });
+                sink.close_message(message).await;
+            }
+            None => {
+                sink.close_error(LlmError::Parse("wave script exhausted".into()))
+                    .await
+            }
+        }
+        Ok(rx)
+    }
+}
+
+fn wave_calls(names: [&str; 2]) -> AssistantMessage {
+    AssistantMessage {
+        content: names
+            .into_iter()
+            .enumerate()
+            .map(|(idx, name)| ContentBlock::ToolUse {
+                id: format!("wave-{idx}"),
+                name: name.into(),
+                input: serde_json::json!({}),
+            })
+            .collect(),
+        stop_reason: StopReason::ToolUse,
+        usage: Usage::default(),
+        model: "test-model".into(),
+        response_id: None,
+        applied: None,
+    }
+}
+
+async fn run_unknown_claim_wave(second_read_only: bool) -> usize {
+    let dir = tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let log = SessionLog::create(
+        SessionPath::new_session_file(&home, dir.path(), "claim-wave"),
+        SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
+            agent: None,
+            session_id: "claim-wave".into(),
+            created_at: chrono::Utc::now(),
+            cwd: dir.path().to_path_buf(),
+            parent_session_id: None,
+            contract_id: None,
+            work_item_id: None,
+            conversation: None,
+            contract: FrozenContract {
+                app_version: "test".into(),
+                provider: "wave-scripted".into(),
+                model: "test-model".into(),
+                route_ladder: Vec::new(),
+                route_objective: String::new(),
+                route_annotations: Vec::new(),
+                system_prompt: "sys".into(),
+                permission_mode: "full-access".into(),
+                capabilities: Vec::new(),
+                prompt_layers: Vec::new(),
+            },
+        },
+    )
+    .unwrap();
+    let activity = Arc::new(WaveActivity::default());
+    let tools: Vec<Arc<dyn Tool>> = vec![
+        Arc::new(WaveTool {
+            name: "unknown-a",
+            read_only: false,
+            activity: activity.clone(),
+        }),
+        Arc::new(WaveTool {
+            name: "unknown-b",
+            read_only: second_read_only,
+            activity: activity.clone(),
+        }),
+    ];
+    let provider = Arc::new(WaveProvider {
+        responses: Mutex::new(VecDeque::from(vec![
+            wave_calls(["unknown-a", "unknown-b"]),
+            text("done"),
+        ])),
+    });
+    let mut config = AgentConfig::new("sys");
+    config.model = "test-model".into();
+    config.mode = vak_permission::Mode::FullAccess;
+    config.tools = tools;
+    let mut agent = Agent::new(provider, log, config);
+    let outcome = agent
+        .run(
+            "run both tools",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    activity.maximum.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unknown_claims_serialize_while_proven_read_only_calls_can_fan_out() {
+    assert_eq!(run_unknown_claim_wave(false).await, 1);
+    assert_eq!(run_unknown_claim_wave(true).await, 2);
 }

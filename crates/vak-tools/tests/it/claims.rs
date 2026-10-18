@@ -11,11 +11,19 @@ fn claims(paths: &[&str]) -> ResourceClaims {
 }
 
 #[test]
-fn unclaimed_never_conflicts() {
+fn unknown_effects_conflict_with_mutable_and_exclusive_claims() {
     let a = ResourceClaims::default();
     let b = claims(&["src/**"]);
-    assert!(!a.conflicts(&b));
-    assert!(!b.conflicts(&a));
+    let exclusive = ResourceClaims {
+        exclusive: true,
+        read_only: false,
+        paths: Vec::new(),
+    };
+    assert!(a.conflicts(&b));
+    assert!(b.conflicts(&a));
+    assert!(a.conflicts(&exclusive));
+    assert!(exclusive.conflicts(&a));
+    assert!(a.conflicts(&ResourceClaims::default()));
 }
 
 #[test]
@@ -28,6 +36,8 @@ fn read_only_never_conflicts() {
     let b = claims(&["src/**"]);
     assert!(!a.conflicts(&b));
     assert!(!b.conflicts(&a));
+    assert!(!a.conflicts(&ResourceClaims::default()));
+    assert!(!ResourceClaims::default().conflicts(&a));
 }
 
 #[test]

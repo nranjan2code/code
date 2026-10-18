@@ -96,10 +96,25 @@ assert.ok(sameSubject(plain, { ...plain }));
 assert.ok(!sameSubject(plain, cited));
 
 // What another surface wrote is checked before it is drawn.
+const daily = { kind: "daily_mail_calendar", title: "Today", agentId: "agent-1" };
+const answer = { kind: "answer", title: "Answer", sessionId: "s1", turnId: "turn-1" };
+const page = { kind: "page", title: "Page", artifactId: "artifact-1" };
 assert.ok(isCanvasSubject(plain) && isCanvasSubject(run) && isCanvasSubject(draft) && isCanvasSubject(inline) && isCanvasSubject(routine));
+assert.ok(isCanvasSubject(daily) && isCanvasSubject(answer) && isCanvasSubject(page));
 for (const hostile of [null, "x", { kind: "file" }, { kind: "file", title: "a", path: 3 }, { kind: "unknown", title: "a" }, { kind: "draft_file", title: "a", path: "p", sessionId: "s" }]) {
   assert.ok(!isCanvasSubject(hostile), JSON.stringify(hostile));
 }
+for (const hostile of [
+  { kind: "answer", title: "Answer", turnId: "turn-1" },
+  { kind: "answer", title: "Answer", sessionId: "s1", turnId: "" },
+  { kind: "answer", title: "Answer", sessionId: 1, turnId: "turn-1" },
+  { kind: "page", title: "", artifactId: "artifact-1" },
+  { kind: "page", title: "Page" },
+  { kind: "page", title: "Page", artifactId: "" },
+  { kind: "page", title: "Page", artifactId: 3 },
+  { kind: "inline", title: "HTML", html: "<p>x</p>", libraries: "not-an-array" },
+  { kind: "inline", title: "HTML", html: "<p>x</p>", libraries: ["ok", 3] },
+]) assert.ok(!isCanvasSubject(hostile), JSON.stringify(hostile));
 
 // Markup is named for what it is, not "HTML Preview".
 assert.equal(inlineTitle("<!doctype html><title>Little &amp; counter</title><p>x</p>"), "Little & counter");

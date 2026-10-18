@@ -1,5 +1,13 @@
 ## Unreleased
 
+- Tools stop before execution if their assistant message cannot be saved.
+  A failed compaction write releases the session lock before recording its
+  diagnostic, avoiding a stalled turn.
+- Saved answer and page views reopen in the Canvas after a reload.
+- Calls whose effects are unknown wait for other potentially mutating calls
+  instead of bypassing resource conflict checks. Explicitly read-only calls
+  keep their existing concurrency.
+
 - Artifact changes stop before deciding or writing when their history is
   unreadable. Strict readers rebuild projection caches created by tolerant
   readers instead of trusting records those readers may have skipped.

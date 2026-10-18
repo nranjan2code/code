@@ -1,6 +1,18 @@
 # 15 — Reliability: QoS, crash, recovery, start/stop/resume
 Status: implemented in 2.0.0
 
+## Required assistant recording and compaction failures
+
+An assistant message must be appended successfully before any tool call
+from that message executes. A failed append settles the turn as failed;
+streamed output already delivered remains available to consumers. Recovery
+of partial output also reports a failed append rather than claiming a
+successful turn. Diagnostics remain separate best-effort records.
+
+Incremental compaction drops its session lock before recording a failed
+write diagnostic, since activity recording takes that same lock. A write
+failure cannot hold the turn waiting on its own lock (hardening A03/A06).
+
 ## Circuit probe ownership
 
 A provider leg owns its circuit admission permit until it settles or exits.

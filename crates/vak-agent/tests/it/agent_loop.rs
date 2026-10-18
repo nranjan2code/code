@@ -31,6 +31,7 @@ struct Scripted {
     capacity_key: String,
     responses: Mutex<VecDeque<ScriptedResponse>>,
     requests: Arc<Mutex<Vec<ChatRequest>>>,
+    readonly_on_stream: Mutex<Option<(std::path::PathBuf, Arc<tokio::sync::Mutex<SessionLog>>)>>,
 }
 
 #[async_trait::async_trait]
@@ -49,6 +50,10 @@ impl Provider for Scripted {
         _cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
         self.requests.lock().unwrap().push(request);
+        let readonly_on_stream = self.readonly_on_stream.lock().unwrap().take();
+        if let Some((path, session)) = readonly_on_stream {
+            *session.lock().await = SessionLog::open_read_only(path).unwrap();
+        }
         let next = self.responses.lock().unwrap().pop_front();
         let (mut sink, rx) = stream::channel(64);
         match next {
@@ -97,6 +102,7 @@ fn tool_call_msg(id: &str, name: &str, input: serde_json::Value) -> AssistantMes
 
 struct Harness {
     agent: Agent,
+    provider: Arc<Scripted>,
     requests: Arc<Mutex<Vec<ChatRequest>>>,
     events_tx: mpsc::Sender<vak_agent::AgentEvent>,
     _events_rx: mpsc::Receiver<vak_agent::AgentEvent>,
@@ -147,13 +153,41 @@ fn harness(responses: Vec<ScriptedResponse>, tools: Vec<Arc<dyn Tool>>) -> Harne
         capacity_key: crate::support::capacity_key(),
         responses: Mutex::new(responses.into_iter().collect()),
         requests: requests.clone(),
+        readonly_on_stream: Mutex::new(None),
     });
     std::mem::forget(dir);
     Harness {
-        agent: Agent::new(provider, log, cfg),
+        agent: Agent::new(provider.clone(), log, cfg),
+        provider,
         requests,
         events_tx: tx,
         _events_rx: rx,
+    }
+}
+
+struct DispatchProbe(std::sync::atomic::AtomicUsize);
+
+#[async_trait::async_trait]
+impl Tool for DispatchProbe {
+    fn name(&self) -> &str {
+        "probe"
+    }
+
+    fn description(&self) -> &str {
+        "A test tool that records whether dispatch occurred."
+    }
+
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+
+    async fn execute(
+        &self,
+        _args: &serde_json::Value,
+        _ctx: &vak_tools::ToolContext,
+    ) -> vak_tools::ToolOutput {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        vak_tools::ToolOutput::default()
     }
 }
 
@@ -184,6 +218,38 @@ async fn single_turn_no_tools_completes() {
     }
     let session = h.agent.session.lock().await;
     assert_eq!(session.derive_messages().len(), 2);
+}
+
+#[tokio::test]
+async fn assistant_journal_failure_stops_tool_dispatch() {
+    let probe = Arc::new(DispatchProbe(std::sync::atomic::AtomicUsize::new(0)));
+    let mut h = harness(
+        vec![ScriptedResponse::Message(tool_call_msg(
+            "probe-1",
+            "probe",
+            serde_json::json!({}),
+        ))],
+        vec![probe.clone()],
+    );
+    let session_path = h.agent.session.lock().await.path().to_path_buf();
+    *h.provider.readonly_on_stream.lock().unwrap() = Some((session_path, h.agent.session.clone()));
+
+    let outcome = h
+        .agent
+        .run(
+            "call probe",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+
+    assert!(
+        matches!(&outcome, TurnOutcome::Failed { error } if error.to_string().contains("assistant message write failed")),
+        "assistant journaling failure must fail the turn: {outcome:?}"
+    );
+    assert_eq!(probe.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(h.requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

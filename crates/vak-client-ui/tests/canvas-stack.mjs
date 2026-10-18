@@ -113,6 +113,32 @@ assert.equal(freshEntry({ kind: "automation", title: "r", taskId: "t1" }, false)
   const hostile = { entries: [{ key: "k", subject: { kind: "nope", title: "?" } }, ...stored.entries], active: null };
   assert.equal(fromStored(hostile, undefined, fresh).entries.length, 3);
   assert.equal(fromStored({ entries: [], active: null }, local, fresh), null);
+
+  // Every declared subject kind survives the production open/store/read path.
+  const subjects = [
+    file("workspace.txt"),
+    file("run.txt", { sessionId: "s1", executionId: "e1" }),
+    file("draft.txt", { sessionId: "s1", candidateId: "c1", executionId: "e1" }),
+    { kind: "inline", title: "Inline", html: "<p>x</p>", libraries: ["chart"] },
+    { kind: "automation", title: "Routine", taskId: "task-1" },
+    { kind: "daily_mail_calendar", title: "Today", agentId: "agent-1" },
+    { kind: "answer", title: "Answer", sessionId: "s1", turnId: "turn-1" },
+    { kind: "page", title: "Page", artifactId: "artifact-1" },
+    { kind: "live_server", title: "Preview", serverName: "web", sessionId: "s1", candidateId: "c1", path: "dist" },
+  ];
+  for (const subject of subjects) {
+    const freshForSubject = (value) => freshEntry(value, false);
+    const opened = openEntry({}, "roundtrip", subject, freshForSubject);
+    const serialized = toStored(opened.roundtrip);
+    const restored = fromStored(JSON.parse(JSON.stringify(serialized)), undefined, freshForSubject);
+    assert.equal(restored?.entries.length, 1, `${subject.kind} survives storage`);
+    assert.deepEqual(JSON.parse(JSON.stringify(restored.entries[0].subject)), JSON.parse(JSON.stringify(subject)), `${subject.kind} survives serialization`);
+    assert.equal(restored.entries[0].key, subjectKey(subject));
+  }
+  const answerEntry = { key: subjectKey(subjects[6]), subject: subjects[6], ...freshEntry(subjects[6], false) };
+  const pageEntry = { key: subjectKey(subjects[7]), subject: subjects[7], ...freshEntry(subjects[7], false) };
+  assert.equal(fromStored({ entries: [{ ...answerEntry, key: pageEntry.key }], active: pageEntry.key }, undefined, freshEntry), null,
+    "an answer cannot be restored under a page identity");
   assert.deepEqual(withCanvas({ a: local }, "a", null), {});
 }
 

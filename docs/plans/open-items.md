@@ -46,13 +46,21 @@ overlapping fixes should close their original entries as well.
 - [ ] S2: causal recording, consistent run services/policy, cancellation,
   compaction locks and conservative tool claims (A03–A07).
   A05 owned circuit permits and stale-reservation protection are implemented;
-  the full gate passes. A03/A04/A06/A07 remain open.
+  the full gate passes. The next slice requires assistant recording before
+  dependent tool dispatch (A03), releases the compaction lock before
+  diagnostics (A06), and routes unknown effects through conservative wave
+  placement (A07). The full repository gate passes. A04 and the audit of other
+  mandatory causal writes remain open.
 - [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
   actual outline attribution and typed cleanup (P01–P03, P13, P14).
 - [ ] S4: interaction ownership/invalidation, replacement, graph scope and
   invocation/freshness provenance (P04, D01–D04).
 - [ ] S5: subject persistence, protected drafts, encrypted fenced canvas
   Documents and authorized page resources (P05–P08, D04).
+  P05 subject restoration now covers all nine current subject kinds,
+  including answers and pages, with production-state round-trip tests.
+  Both client bundles and the full repository gate pass. Running-app reload
+  acceptance remains open; this does not close the wider Canvas stage.
 - [ ] S6: adaptive coverage/fallback, truthful charts, streaming, task-level
   quality and checked wire outcomes (P09–P12, A11, D04).
 - [ ] S7: narrow Core ownership and bounded history-dependent work

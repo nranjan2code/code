@@ -1597,7 +1597,7 @@ impl Agent {
             }),
         ))
         .await;
-        let outcome = self
+        let mut outcome = self
             .run_message_inner(prompt, steering, cancel.clone(), events.clone())
             .await;
         self.step_span = tracing::Span::none();
@@ -1618,8 +1618,10 @@ impl Agent {
                     .find(|(_, message)| message.role == Role::Assistant)
                     .is_some_and(|(_, last)| last.content == response.content)
             };
-            if !already_logged {
-                self.append_assistant(response).await;
+            if !already_logged && let Err(error) = self.append_assistant(response).await {
+                outcome = TurnOutcome::Failed {
+                    error: LlmError::Network(format!("assistant message write failed: {error}")),
+                };
             }
         }
         // Turn-close hook (docs/design/68-context-engine.md §10): builds and
@@ -2199,26 +2201,15 @@ impl Agent {
                             .await;
                             break 'compact;
                         }
-                        {
-                            let mut session = self.session.lock().await;
-                            if let Err(e) = session.append_incremental_compaction(
+                        compaction_failed = self
+                            .append_incremental_compaction(
                                 &first_turn_id,
                                 &last_turn_id,
                                 &model,
                                 summary,
                                 tokens_before,
-                            ) {
-                                compaction_failed = true;
-                                self.record_activity(
-                                    vak_session::ActivityKind::Diagnostic,
-                                    vak_session::ActivityStatus::Failed,
-                                    "compaction-failed".into(),
-                                    Some(format!("compaction write failed: {e}")),
-                                    Default::default(),
-                                )
-                                .await;
-                            }
-                        }
+                            )
+                            .await;
                         let after_plan = self
                             .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
                             .await;
@@ -2659,6 +2650,16 @@ impl Agent {
                 .await;
                 let response_entry_id = self.append_assistant(&response).await;
                 let _ = events.send(AgentEvent::TurnEnd { usage }).await;
+                let response_entry_id = match response_entry_id {
+                    Ok(entry_id) => entry_id,
+                    Err(error) => {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(format!(
+                                "assistant message write failed: {error}"
+                            )),
+                        };
+                    }
+                };
 
                 // Model drift (docs/design/68-context-engine.md §7): the step
                 // served a different directive than the current one. The
@@ -2708,7 +2709,7 @@ impl Agent {
                     }
                 }
 
-                (response, calls, response_entry_id)
+                (response, calls, Some(response_entry_id))
             };
             if calls.is_empty() {
                 // Empty-step enforcement: the response carried neither text
@@ -5014,8 +5015,12 @@ impl Agent {
     /// Appends the model's response and returns its ledger entry id, so
     /// callers that need to attribute something back to this exact message
     /// (a fence-path `Presentation`, docs/design/68-context-engine.md §10)
-    /// don't have to re-derive it. `None` only on a session write failure.
-    async fn append_assistant(&self, response: &AssistantMessage) -> Option<String> {
+    /// don't have to re-derive it. Callers must handle write failures before
+    /// any work that depends on this model response.
+    async fn append_assistant(
+        &self,
+        response: &AssistantMessage,
+    ) -> Result<String, vak_session::SessionError> {
         let mut session = self.session.lock().await;
         session
             .append_message(MessageRecord {
@@ -5028,8 +5033,44 @@ impl Agent {
                     ..Default::default()
                 }),
             })
-            .ok()
             .map(|entry| entry.id)
+    }
+
+    /// Writes a compaction packet and, on failure, records an optional
+    /// diagnostic after releasing the session lock. The helper owns both
+    /// phases so a future error path cannot reacquire the same mutex.
+    async fn append_incremental_compaction(
+        &self,
+        first_turn_id: &str,
+        last_turn_id: &str,
+        model: &str,
+        summary: String,
+        tokens_before: u64,
+    ) -> bool {
+        let write_error = {
+            let mut session = self.session.lock().await;
+            session
+                .append_incremental_compaction(
+                    first_turn_id,
+                    last_turn_id,
+                    model,
+                    summary,
+                    tokens_before,
+                )
+                .err()
+        };
+        let Some(error) = write_error else {
+            return false;
+        };
+        self.record_activity(
+            vak_session::ActivityKind::Diagnostic,
+            vak_session::ActivityStatus::Failed,
+            "compaction-failed".into(),
+            Some(format!("compaction write failed: {error}")),
+            Default::default(),
+        )
+        .await;
+        true
     }
 
     async fn record_activity(
@@ -7192,8 +7233,10 @@ impl Agent {
             return out;
         }
 
-        // Greedy wave scheduling: claimed calls that conflict are placed in
-        // separate waves; unclaimed and read-only calls share wave 0.
+        // Greedy wave scheduling: every call is placed using its declared
+        // claims. An unclaimed call has an unknown effect set and conflicts
+        // with calls that may change the workspace; proven read-only calls
+        // remain safe to run alongside them.
         let claims_for = |call: &PendingToolCall| -> vak_tools::ResourceClaims {
             self.config
                 .tools
@@ -7205,10 +7248,6 @@ impl Agent {
         let mut waves: Vec<Vec<usize>> = vec![Vec::new()];
         for (idx, call) in calls.iter().enumerate() {
             let claims = claims_for(call);
-            if claims.is_unclaimed() {
-                waves[0].push(idx);
-                continue;
-            }
             let mut placed = false;
             for wave in waves.iter_mut() {
                 let compatible = wave.iter().all(|j| {
@@ -9878,6 +9917,89 @@ mod tool_recovery_tests {
                 &serde_json::json!({"metric_card": {"metric_card": {"value": "1"}}})
             ),
             Some(serde_json::json!({"value": "1"}))
+        );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod compaction_error_tests {
+    use super::{Agent, AgentConfig};
+    use std::sync::Arc;
+
+    struct UnusedProvider;
+
+    #[async_trait::async_trait]
+    impl vak_llm::Provider for UnusedProvider {
+        fn name(&self) -> &str {
+            "unused"
+        }
+
+        async fn stream(
+            &self,
+            _request: vak_llm::types::ChatRequest,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<vak_llm::EventStream, vak_llm::LlmError> {
+            Err(vak_llm::LlmError::Parse("provider unused".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn compaction_write_error_diagnostic_reacquires_after_unlock() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = vak_session::SessionLog::create(
+            dir.path().join("session"),
+            vak_session::types::SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
+                agent: None,
+                session_id: "compaction-error".into(),
+                created_at: chrono::Utc::now(),
+                cwd: dir.path().to_path_buf(),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: vak_session::types::FrozenContract {
+                    app_version: "test".into(),
+                    provider: "unused".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "test".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .unwrap();
+        let agent = Agent::new(Arc::new(UnusedProvider), log, AgentConfig::new("sys"));
+
+        let failed = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            agent.append_incremental_compaction(
+                "missing-first-turn",
+                "missing-last-turn",
+                "test",
+                "summary".into(),
+                1,
+            ),
+        )
+        .await
+        .expect("error reporting must not wait on a lock it already owns");
+
+        assert!(failed);
+        assert!(
+            agent
+                .session
+                .lock()
+                .await
+                .activities()
+                .iter()
+                .any(|(_, _, activity)| activity.label == "compaction-failed")
         );
     }
 }

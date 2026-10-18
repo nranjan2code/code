@@ -389,6 +389,36 @@ presentation conformance checks through each refactor.
   records. The artifact transaction, strict-cache rebuild and erasure suites
   passed. No other architectural or presentation stage is closed by this work.
 
+### Continuation — required journals, compaction locks, claims and Canvas restore
+
+- A03: assistant appends return a required Result. A failed message write
+  settles before dependent tools dispatch; recovery appends also propagate
+  failure. A real Agent regression swaps its session handle to read-only
+  during provider dispatch and asserts no tool ran or second request was
+  sent. Other mandatory causal records still need audit.
+- A06: the compaction writer releases its session mutex before recording an
+  optional failure diagnostic. A bounded test forces an invalid packet and
+  verifies error reporting completes and the diagnostic is recorded.
+- A07: unknown footprints conflict with other unknown, path-writing and
+  exclusive claims. Every call uses conflict-based wave placement; the
+  previous unknown-to-wave-zero bypass is removed. Explicit read-only and
+  disjoint declared scopes retain their existing concurrency. MCP call
+  metadata has no trusted effect declarations and stays unknown.
+- P05: Canvas subject validation now includes answer session/turn identity
+  and page artifact identity. Tests cover all nine subject kinds through
+  openEntry/toStored/fromStored and refuse missing or mismatched identities.
+  Both shared-client bundles build; source subject/stack tests pass.
+- Verification: the full `bash scripts/gate.sh` passed (formatting,
+  workspace Clippy, workspace tests in 715 seconds, versions, document
+  paths and records). Four focused Agent regressions and seven resource
+  claim tests pass. The first gate attempt caught a collapsible-if Clippy
+  warning; it was fixed before the completed gate. Both client bundles and
+  subject/stack source tests pass. No source changed during the completed
+  gate. Running-app reload acceptance remains open. This slice changes no
+  layout and does not close S2 or S5; other mandatory writes, draft
+  preservation, encrypted Canvas storage and saved-page resource context
+  remain open.
+
 ### Reporting contract
 
 For each slice record finding IDs, exact baseline, reproduction, chosen

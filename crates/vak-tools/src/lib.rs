@@ -341,7 +341,7 @@ pub trait Tool: Send + Sync {
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput;
 
     /// What this call needs from the world while it runs. The default is
-    /// unclaimed: schedulers may run it alongside anything.
+    /// unknown: schedulers serialize it with other potentially mutating calls.
     fn claims(&self, _args: &Value) -> ResourceClaims {
         ResourceClaims::default()
     }
@@ -595,7 +595,7 @@ pub trait Tool: Send + Sync {
 /// Declared concurrent-execution constraints for one tool invocation.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResourceClaims {
-    /// Conflicts with every other claimed call (unknown or whole-world scope).
+    /// Conflicts with every potentially mutating call (whole-world scope).
     pub exclusive: bool,
     /// Never conflicts; safe to fan out freely.
     pub read_only: bool,
@@ -609,11 +609,20 @@ impl ResourceClaims {
     }
 
     /// Conservative prefix test after normalization: two write scopes
-    /// conflict when one contains the other. May over-serialize; never
-    /// under-serializes.
+    /// conflict when one contains the other. An unclaimed call has an
+    /// unknown effect set, so it conflicts with any call that is not proven
+    /// read-only. May over-serialize; never under-serializes.
     pub fn conflicts(&self, other: &ResourceClaims) -> bool {
-        if self.is_unclaimed() || other.is_unclaimed() || self.read_only || other.read_only {
+        // Preserve the explicit read-only escape hatch: these calls are
+        // proven not to change the workspace and may run alongside any call.
+        if self.read_only || other.read_only {
             return false;
+        }
+        // An absent footprint says nothing about effects. Treat it as
+        // potentially overlapping every call that may have effects,
+        // including an exclusive call.
+        if self.is_unclaimed() || other.is_unclaimed() {
+            return true;
         }
         if self.exclusive || other.exclusive {
             return true;
