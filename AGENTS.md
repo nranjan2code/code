@@ -121,14 +121,25 @@ missing, or code changed since the last release with no CHANGELOG entry.
 Docs are kept, never deleted: a finished or replaced doc changes its status
 word, and a past section is marked `> **Historical record**`.
 
-The system blueprint (`docs/architecture/blueprint.html`) is generated
-from the tree by `scripts/blueprint.py` on every build, and
-`scripts/release.sh` refuses a release while it is stale. Commit it in a
-commit of its own, right after the change that moved its numbers. When the generator prints
-`needs review`, or a change makes a finding wrong, follow
-`docs/architecture/AGENTS.md`. To review the architecture or test a finding, follow
-`docs/architecture/review-method.md`: each finding is a claim, measured,
-with a verdict.
+### The blueprint: what the system is, what is happening, what needs attention
+
+`blueprint/` is the one place to see the whole system:
+[blueprint/README.md](blueprint/README.md) (renders on GitHub),
+`blueprint.html` (diagrams) and `blueprint.json` (for agents), generated
+from one model by `python3 blueprint/harness/run.py` on every build. It
+measures the code and its history, reads the record where it is written
+(decisions, open work, specs, unreleased changes) and lists only the
+findings that cost something today. Its rules are
+[blueprint/AGENTS.md](blueprint/AGENTS.md) and its methods are in
+`blueprint/methods/`: reviewing the architecture with evidence
+(`architecture-review.md`), keeping the record true (`record-drift.md`),
+and adding a check (`adding-a-check.md`).
+
+Keep it current: commit the regenerated views in a commit of their own
+right after a change that moves them (`scripts/release.sh` refuses stale
+views), resolve every `needs review` line in the same change, and when a
+change fixes, invalidates or adds a finding, edit `blueprint/content.toml`.
+Start a session by reading its "Needs attention" section.
 
 ### What is authoritative
 

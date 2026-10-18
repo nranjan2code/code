@@ -241,6 +241,10 @@ unless it says so.
   drifted, and leave the rest worded so the report stays readable.
 - [ ] Rewrite `docs/design/83-prompt-system.md` against the current code; it
   is historical until then.
+- [ ] Check every open item in this tracker against the code and git
+  history: still open, done but not ticked, or overtaken. The blueprint's
+  "Needs attention" shows this file as written, so it is only as true as
+  this check (started 2026-10-18, not done).
 - [ ] `vak-intent` still derives an epistemic stance for every strand
   (`derive_epistemic_stance`), but no prompt has carried it since
   `d0875af47`. Remove it, or record what reads it.

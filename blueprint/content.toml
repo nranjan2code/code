@@ -1,0 +1,162 @@
+# The hand-written part of the blueprint: what the system is, the findings,
+# what to keep and the target shape. Everything else is measured.
+#
+# Text is Markdown: `code`, **bold**, [links](path) and "- " lists.
+# Numbers are placeholders resolved on every build, never literals
+# (blueprint/AGENTS.md, "Placeholders"). Dated history, such as a commit id
+# or what one run did, may be quoted as written.
+#
+# When a change makes a finding wrong, fixes it, or adds one, edit it here and
+# set `prose_reviewed` to the version and date, in the same commit.
+
+prose_reviewed = "8.9.0 · 2026-10-18"
+
+summary = """
+Vakyartha (`vak`) is a local-first agent harness for one owner: agents that \
+work on code, documents, research and everyday tasks, reached from a desktop \
+app, the browser, a terminal and chat apps, with every model input and tool \
+result kept in an append-only record. Its thesis is strong safety, \
+transparent operation, extensible integrations and a simple core.
+
+The lower layers (storage, permission, the pure deciders, the document \
+engines) are well shaped and change rarely. Above them, three large crates \
+(`vak-core`, `vak-agent`, `vak-server`) hold the turn and most features, and \
+that is where most of the work and most of the risk sit.
+"""
+
+[[finding]]
+id = "F1"
+tag = "Structure"
+verdict = "Caused defects"
+title = "A turn's decisions share mutable state inside two outlier functions"
+evidence = """
+Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at \
+{{cc:run_message_inner}} (rank {{ccrank:run_message_inner}} of \
+{{m:cc_count}} library functions) and `Core::run_turn_recorded` at \
+{{cc:run_turn_recorded}} (rank {{ccrank:run_turn_recorded}}); the median is \
+{{m:cc_median}} and the 99th percentile {{m:cc_p99}}. \
+{{hist:run_message_inner}} commits changed the first \
+({{histpct:run_message_inner}} of all) and {{hist:run_turn_recorded}} the \
+second ({{histpct:run_turn_recorded}}). Fix commits land in \
+`vak-core/src/lib.rs` at {{e:hot.core}} and `vak-agent/src/lib.rs` at \
+{{e:hot.agent}} per thousand lines, against a median of {{e:hot.median}} \
+over {{e:hot.files}} files; file size alone does not predict the rate \
+(ρ = {{e:hot.rho_density}}).
+"""
+matters = """
+The loop keeps the turn's decisions in mutable locals that every step and \
+every call result updates. `948ece43d` fixed two bugs of exactly that kind: \
+`receipts.unresolved_error` was cleared by a later success in the same batch \
+even when an earlier call had failed, and `verification_stale` came out stale \
+or not depending on which parallel result returned first. Both were fixed by \
+moving the decision into a pure function over the whole batch, tested on its \
+own.
+"""
+fix = """
+Do that for the rest: the turn's state as one type, each decision a pure \
+function of it, and the end-of-turn checks (among them goal mode's audit, the \
+managed-work gate and the commitment hold, which judge durable work at \
+different scopes on purpose) as one ordered list with tests of how they \
+combine. Context planning and the model call can stay as they are.
+"""
+sources = "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
+
+[[finding]]
+id = "F2"
+tag = "Structure"
+verdict = "Caused a defect"
+title = "The rule that wrappers forward every Tool declaration is enforced by nothing"
+evidence = """
+The trait's width is deliberate: a tool declares what it is \
+({{e:tool.methods}} methods, {{e:tool.defaults}} with a default) so that \
+nothing decides by a tool's name. AGENTS.md then requires that "a wrapper \
+forwards every declaration", and no test checks it. {{e:tool.wrappers}} \
+wrappers forward by hand, and one that forgets compiles cleanly and answers \
+with the default:
+
+{{list:wrappers}}
+"""
+matters = """
+`fill_defaults` joined the trait on 2026-10-07 (`fb981ed3d`), and both \
+wrappers began forwarding it only on 2026-10-12 (`53dbc16f8`): for five days \
+every brokered tool lost its argument aliases. The gaps listed above answer \
+correctly today only because no wrapped tool overrides those methods.
+"""
+fix = "A test that fails when a wrapper leaves a defaulted method unforwarded, or a delegation macro that forwards them all."
+sources = "`crates/vak-tools/src/lib.rs` (`pub trait Tool`); AGENTS.md; `git log -S` per method; `evidence.py` `tool_wrappers`."
+
+[[finding]]
+id = "F3"
+tag = "Structure"
+verdict = "Defects found by review"
+title = "Storage's guarantees are not tested in the shapes that broke them"
+evidence = """
+Owning the storage layer is a decision (docs/decisions.md, 2026-10-18), and \
+it is tested for torn writes, crashes, fsync paths and injected faults, with \
+a fuzz corpus. Nothing tests a chain's reader against a simple reference \
+model, and few tests run two writer processes. The two P1 faults of \
+2026-10-18 needed exactly those shapes: a cached grant that kept authorizing \
+because its revocation sat in an unreadable segment (A01), and a writer \
+paused between the epoch check and the ref update (A02). A review's probes \
+found them, not the suite.
+"""
+matters = """
+These are the guarantees authorization, erasure and sync rest on. A bug here \
+does not show as a failed turn; it shows as access that should have ended, \
+or a write that should have been fenced.
+"""
+fix = "A model-based test of each chain's reader against a reference, and multi-process interleavings of every fenced write path."
+sources = "[docs/audits/architecture-and-presentation-review-2026-10-18.md](../docs/audits/architecture-and-presentation-review-2026-10-18.md) (A01, A02); `crates/vak-storage`, `crates/vak-session`."
+
+[[keep]]
+name = "vak-permission"
+text = "{{src:vak-permission}} lines, declared reach, universal Allow, an adversarial escape corpus. Small and central."
+
+[[keep]]
+name = "vak-control, vak-judge, vak-lifecycle"
+text = "Pure deciders with no vak dependencies. The right shape for policy."
+
+[[keep]]
+name = "vak-context"
+text = "{{src:vak-context}} lines of pure planning and assembly over the ledger."
+
+[[keep]]
+name = "vak-ooxml, vak-pdf"
+text = "No vak dependencies, bounded, fuzzable, run only in the worker."
+
+[[keep]]
+name = "The worker boundary"
+text = "A versioned protocol with {{m:worker_tasks}} task kinds; parsers and tools never run in the server process."
+
+[[keep]]
+name = "Effects, runs, cursors"
+text = "At-most-once outbound actions and unknown outcomes that are never re-sent automatically."
+
+[[keep]]
+name = "The provenance gate"
+text = "Private data plus someone else's words means a human approves anything that leaves the machine."
+
+[[keep]]
+name = "The completion judges"
+text = "Whether a deliverable was produced, whether it met its requirements, a run's audited goal, a work contract and a commitment are judged separately on purpose, so produced output can never pass for proof."
+
+[[keep]]
+name = "vak-llm capability declarations"
+text = "Wire features declared by the adapter and learned from refusal, never inferred from a provider's name."
+
+target = """
+A small kernel behind a versioned API (ledger and objects, runs, effects, \
+triggers, cursors, grants, permission, provenance, sandbox and worker, \
+telemetry); runtime services over it (the model wire, context planner, tool \
+registry, MCP pool, catalog, config); the current agent loop as one \
+replaceable program, with cards, the plan check and the ladder as modules it \
+opts into; the apps (Office and PDF, mail and calendar, intake, voice, the \
+Library, the gateway) on the kernel; and every surface a client of the same \
+API.
+
+The test for it: someone outside the project writes an agent in Python \
+against the kernel API in an afternoon, gets sandboxing, effects, provenance \
+and audit without reading AGENTS.md, and it still works after the next \
+release. The parts are already written; they sit under `vak-core`, \
+`vak-agent` and `vak-server` rather than being exposed.
+"""

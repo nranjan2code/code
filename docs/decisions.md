@@ -14,7 +14,7 @@ listed here unless the maintainer reopens it.
   crate count, a missing layout row, a `vak` command the CLI lacks, or a
   roadmap that lists built work. The blueprint lists only findings with a
   cost today; fixed or unsupported findings leave it. Recorded in
-  [docs/README.md](README.md) and [the blueprint's rules](architecture/AGENTS.md).
+  [docs/README.md](README.md) and [the blueprint's rules](../blueprint/AGENTS.md).
 
 - Known vulnerabilities fail the gate (`scripts/check-advisories.sh`). An
   advisory is ignored only when Vak cannot reach the vulnerable code, with
@@ -23,12 +23,16 @@ listed here unless the maintainer reopens it.
 - Vak owns its storage layer: no third-party database beyond the embedded
   SQLite it already uses for refs and the catalog. Findings about the
   storage substrate describe its cost and the testing it needs, never its
-  replacement ([the blueprint's rules](architecture/AGENTS.md)).
+  replacement ([the blueprint's rules](../blueprint/AGENTS.md)).
 
-- Keep a system blueprint in `docs/architecture/blueprint.html`, generated
-  from the tree by `scripts/blueprint.py` on every build and checked by
-  `scripts/release.sh`, so git holds its versions and diffs. Its rules are
-  in [docs/architecture/AGENTS.md](architecture/AGENTS.md).
+- Keep the system blueprint in `blueprint/`: one place to see what the
+  system is, what is happening and what needs attention, generated as
+  README.md, HTML and JSON from one model by `blueprint/harness/run.py` on
+  every build and checked by `scripts/release.sh`, so git holds its
+  versions and diffs. It reads the record (decisions, open work, specs)
+  where it is written and never copies it. Its rules are
+  [blueprint/AGENTS.md](../blueprint/AGENTS.md); its methods are
+  `blueprint/methods/`, in tool-neutral form.
 
 - Begin implementing the hardening plan. Do not use Astra; use Luna for
   well-defined delegated work and keep token use lean. The main agent owns

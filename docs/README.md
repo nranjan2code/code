@@ -15,8 +15,7 @@ authoritative version.
 | Understand the product and security boundaries | [Agent-owned platform](design/64-agent-owned-platform.md) and [agent security](design/24-agent-security.md) |
 | Work with artwork and public identity | [Brand guide](brand/README.md) |
 | Understand how prompts are built and used | [Prompt layers](design/45-prompt-layers.md), [the seed](design/07-prompt.md) and [the context engine](design/68-context-engine.md); [the end-to-end walk-through](design/83-prompt-system.md) is historical until rewritten |
-| See the whole system, measured | [System blueprint](architecture/blueprint.html), regenerated on every build ([its rules](architecture/AGENTS.md)) |
-| Review the architecture with evidence | [Architecture review method](architecture/review-method.md) |
+| See the whole system: what it is, what is happening, what needs attention | [The blueprint](../blueprint/README.md), generated on every build ([its rules](../blueprint/AGENTS.md), [its methods](../blueprint/methods/)) |
 | Explore diagrams | [Architecture diagrams](architecture/README.md) and [tutor](tutor/README.md) |
 
 The architecture overview uses Mermaid and the tutor uses PNGs, so both render
@@ -40,13 +39,13 @@ one home; nothing else restates it.
 | How was a plan built, step by step? | Its plan in [plans](plans/) (the data architecture, the visual refresh, mail and calendar) |
 | What did a check or review find on a date? | [audits](audits/), [reviews](reviews/), [research](research/): dated records |
 
-Every document under `docs/`, and `DESIGN.md` and `PRODUCT.md` at the
-root, has a `Status:` line that starts with one of six words, then says what
+Every document under `docs/`, the methods in `blueprint/methods/`, and
+`DESIGN.md` and `PRODUCT.md` at the root, has a `Status:` line that starts with one of six words, then says what
 is built, what is not, and why. The exceptions are the entry points and logs
 kept true by their own rules: the root `README.md`, `AGENTS.md`,
 `CHANGELOG.md` and `SECURITY.md`, this file, the decision log, the tracker,
-the handover, any `AGENTS.md`, and the generated index and records
-reference. A dated record (under `audits/`, `reviews/`, `research/` or
+the handover, any `AGENTS.md`, and the generated index, records
+reference and `blueprint/README.md`. A dated record (under `audits/`, `reviews/`, `research/` or
 `linkedin/`, or with a date in its name) is `historical`, or `reference`
 when it describes a method; its open findings belong in the tracker. Only
 those entry points and `DESIGN.md` and `PRODUCT.md` live at the root.
@@ -76,7 +75,7 @@ Do these in the same commit as the change they describe:
 | find work left undone, or close it | [plans/open-items.md](plans/open-items.md) |
 | get a decision from the maintainer | a dated line in [decisions.md](decisions.md), and the doc that records it |
 | end a session | the one handover: replace its prompt and "Where things stand"; keep "Working notes" true |
-| build, or change the crate graph, a drawn path or a finding | commit the regenerated [blueprint](architecture/blueprint.html) on its own, right after, and resolve any `needs review` line ([its rules](architecture/AGENTS.md)) |
+| build, or change the crate graph, a drawn path or a finding | commit the regenerated [blueprint](../blueprint/README.md) views on their own, right after, and resolve any `needs review` line ([its rules](../blueprint/AGENTS.md)) |
 | cut a release | CHANGELOG.md's `## Unreleased` becomes the version's heading (`docs/release-and-install.md`) |
 
 Docs are kept, never deleted, so the record reads the same for people and

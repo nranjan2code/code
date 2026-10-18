@@ -18,7 +18,7 @@ import subprocess
 NO_STATUS = {
     "AGENTS.md", "CHANGELOG.md", "README.md", "SECURITY.md",
     "docs/README.md", "docs/decisions.md", "docs/plans/open-items.md",
-    "docs/design/INDEX.md", "docs/reference/records.md",
+    "docs/design/INDEX.md", "docs/reference/records.md", "blueprint/README.md",
 }
 # Markdown allowed at the repository root. Anything else belongs in docs/.
 ROOT_DOCS = {"AGENTS.md", "CHANGELOG.md", "README.md", "SECURITY.md", "DESIGN.md", "PRODUCT.md"}
@@ -36,8 +36,9 @@ def tracked_markdown(root):
 
 
 def record_docs(root):
-    """The documents the record covers: docs/**, and Markdown at the root."""
-    return [p for p in tracked_markdown(root) if p.startswith("docs/") or "/" not in p]
+    """The documents the record covers: docs/**, blueprint/**, and Markdown
+    at the root."""
+    return [p for p in tracked_markdown(root) if p.startswith(("docs/", "blueprint/")) or "/" not in p]
 
 
 def is_living(path, word):
@@ -204,7 +205,8 @@ def missing_names(root, status_word):
     marks as removed, and test names a plan proposed show up here too, so
     each needs a person's judgement; `check_records.py --names` lists them."""
     out = subprocess.run(["git", "grep", "-h", "-I", "-e", ".", "--", "crates/*.rs", "crates/*.ts",
-                          "crates/*.tsx", "crates/*.toml", "crates/*.json", "scripts/*"],
+                          "crates/*.tsx", "crates/*.toml", "crates/*.json", "scripts/*",
+                          "blueprint/harness/*", "blueprint/content.toml"],
                          cwd=root, capture_output=True, text=True).stdout
     words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", out))
     code = re.compile(r"(?<!`)`([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?:\(\))?`")
@@ -212,7 +214,8 @@ def missing_names(root, status_word):
     for p in record_docs(root):
         text = open(os.path.join(root, p), encoding="utf-8").read()
         word = status_word(text)
-        if not is_living(p, word) or word == "proposal" or p == "CHANGELOG.md":
+        # the CHANGELOG is history; the blueprint's README only repeats the record
+        if not is_living(p, word) or word == "proposal" or p in ("CHANGELOG.md", "blueprint/README.md"):
             continue
         gone = set()
         for m in code.finditer(text):

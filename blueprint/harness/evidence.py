@@ -1,13 +1,14 @@
-"""Evidence checks behind the blueprint's findings.
+"""Evidence behind the blueprint: the checks findings rest on, and the
+record's health.
 
-Each function measures one claim from the tree or its history and returns
-plain data; scripts/blueprint.py renders it. Cheap checks run on every build.
-`deep()` runs the slow one (clippy's cognitive complexity) and is cached in
-docs/architecture/measures.json by `blueprint.py --deep`. Dependency
-advisories are the gate's (scripts/check-advisories.sh), not the page's.
+Each function measures one thing from the tree or its history and returns
+plain data; model.py assembles it and render.py draws it. `health()` runs
+the gate's own record checks so the blueprint shows their results. `deep()`
+runs the slow measures (clippy's cognitive complexity and cargo audit),
+cached in blueprint/measures.json by `run.py deep`.
 
 Heuristics are named where they are used. Nothing here reads a data home,
-and nothing reaches the network.
+and only `deep()` reaches the network (the RustSec advisory database).
 """
 
 import json
@@ -143,8 +144,27 @@ def tool_wrappers(b):
             "median_overrides": impls[len(impls) // 2] if impls else 0, "wrappers": wrappers}
 
 
+def health(b):
+    """The gate's record checks, run here so the blueprint shows their state:
+    each as ok or failing with the lines it printed, plus the count of code
+    names living documents cite that no longer exist."""
+    checks = []
+    for name, cmd in (("records", ["python3", "scripts/check_records.py"]),
+                      ("doc paths", ["python3", "scripts/check_doc_paths.py"]),
+                      ("versions", ["scripts/check-version.sh"])):
+        out = subprocess.run(cmd, cwd=b.ROOT, capture_output=True, text=True)
+        lines = [l.strip() for l in (out.stdout + out.stderr).splitlines() if l.strip()]
+        problems = [l for l in lines if not l.startswith(("✓", "records ok", "doc citations"))] if out.returncode else []
+        checks.append({"check": name, "ok": out.returncode == 0, "problems": problems[:20]})
+    names = subprocess.run(["python3", "scripts/check_records.py", "--names"], cwd=b.ROOT, capture_output=True, text=True).stdout
+    head = re.match(r"(\d+) cited code names not found, in (\d+) living documents", names)
+    stale = {"names": int(head.group(1)), "documents": int(head.group(2))} if head else {"names": 0, "documents": 0}
+    return {"checks": checks, "stale_names": stale}
+
+
 def deep(b, revision):
-    """The slow check: clippy cognitive complexity over every workspace library."""
+    """The slow measures: clippy cognitive complexity over every workspace
+    library, and cargo audit's advisories against Cargo.lock."""
     out = {"revision": revision}
     with tempfile.TemporaryDirectory() as conf:
         base = os.path.join(b.ROOT, "clippy.toml")
@@ -180,5 +200,15 @@ def deep(b, revision):
         fns.append({"score": score, "name": name, "file": path, "line": line})
     fns.sort(key=lambda r: (-r["score"], r["file"], r["line"]))
     out["complexity"] = fns
+    audit = subprocess.run(["cargo", "audit", "--json"], cwd=b.ROOT, capture_output=True, text=True)
+    try:
+        report = json.loads(audit.stdout)
+        out["advisories"] = {
+            "vulnerabilities": sorted(f'{v["advisory"]["id"]} {v["package"]["name"]} {v["package"]["version"]}' for v in report["vulnerabilities"]["list"]),
+            "warnings": sum(len(ws) for ws in report.get("warnings", {}).values()),
+            "ignored": "see .cargo/audit.toml",
+        }
+    except (ValueError, KeyError):
+        out["advisories"] = None
 
     return out

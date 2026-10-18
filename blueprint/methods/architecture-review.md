@@ -8,9 +8,9 @@ description: Review Vak's architecture with evidence rather than opinion. Turn e
 Status: reference
 
 This is the method behind the findings in the
-[system blueprint](blueprint.html). Developers and agents of any kind can
+[system blueprint](../README.md). Developers and agents of any kind can
 follow it. It uses only the repository, git, cargo and Python.
-[AGENTS.md](AGENTS.md) in this folder holds the rules for editing the
+[blueprint/AGENTS.md](../AGENTS.md) holds the rules for editing the
 blueprint itself.
 
 ## The rule
@@ -68,45 +68,39 @@ and keep the correction visible.
 
 | Tool | What it answers |
 |---|---|
-| `python3 scripts/blueprint.py` | Regenerates the blueprint and every live number in it (about 4 s once the commit cache in the git directory is warm). |
-| `python3 scripts/blueprint.py --deep` | Also runs the slow check: clippy's `cognitive_complexity` at threshold 1 over every workspace library. The result goes to `measures.json`. Takes about a minute. |
-| `scripts/blueprint/evidence.py` | One function per check: `hotspots` (file size against fix density, Spearman), `tool_wrappers` (unforwarded `Tool` declarations), `deep` (cognitive complexity). Checks are added when a finding needs them and removed with the finding. |
+| `python3 blueprint/harness/run.py` | Regenerates the three views and every live number in them, in seconds. |
+| `python3 blueprint/harness/run.py deep` | Also takes clippy's `cognitive_complexity` at threshold 1 over every workspace library, and `cargo audit`, into `measures.json`. About a minute. |
+| `python3 blueprint/harness/run.py check` | The record's health: the record, doc-path and version checks, the stale-name count, the advisories. |
+| `blueprint/harness/evidence.py` | One function per check findings rest on: `hotspots` (file size against fix density, Spearman), `tool_wrappers` (unforwarded `Tool` declarations), `health`, `deep`. Checks are added when a finding needs them and removed with it ([adding-a-check.md](adding-a-check.md)). |
 | `git log -L <start>,<end>:<file>` | Every commit that changed a function's current lines, followed back through edits. |
 | `git log -S'<symbol>'` | When a symbol was added or removed: for example, whether a new trait method reached its wrappers in the same commit. |
 | `cargo metadata --no-deps --offline` | The crate graph. |
-| `scripts/check-advisories.sh` | Known advisories in `Cargo.lock` (`cargo audit`); part of the gate. |
-| `python3 scripts/check_records.py --names` | Code names the docs cite that no longer exist. |
-
-To add a check, write a function in `evidence.py` that returns plain data,
-render it in `evidence_blocks` in `scripts/blueprint.py`, and cite it from
-the template as `{{e:key}}` or a `%%BLOCK%%` table.
+| `python3 blueprint/harness/run.py names` | Code names the docs cite that no longer exist ([record-drift.md](record-drift.md)). |
 
 ## Recording a finding
 
-Findings live in `scripts/blueprint/template.html`, in the findings sheet.
-Each one has the same parts:
+Findings live in `blueprint/content.toml`, one `[[finding]]` table each:
 
-- a tag (`Structure`, `Layering` or `Drift`) and a verdict chip
-  (`verdict yes`, `verdict part`, `verdict no`);
-- a heading that states what is true, not what was suspected;
-- **Claim tested**: the question from step 1;
-- **Measured**: the evidence, with every number a placeholder (`{{e:…}}`,
-  `{{fn:…}}`, `{{cc:…}}`, `{{hist:…}}`, `{{m:…}}`), so it stays current;
-- **Verdict**, with what would fix it;
-- an evidence line naming the check, file or commit.
+- `id` and `tag` (`Structure`, `Layering` or `Drift`);
+- `verdict`: what the record shows, such as "Caused a defect" or "Defects
+  found by review";
+- `title`: a heading that states what is true, not what was suspected;
+- `evidence`: the measurements, with every number a placeholder
+  (blueprint/AGENTS.md, "Placeholders"), so it stays current;
+- `matters`: the defect it caused or the guarantee at risk;
+- `fix`: sized to the evidence;
+- `sources`: the checks, files, commits and audits it rests on.
 
 Dated history, such as a commit id or what one run did, may be quoted
 literally. Measurements may not.
 
 Then:
 
-1. Run `python3 scripts/blueprint.py` (with `--deep` if you used complexity
-   or audit numbers). Resolve every `needs review` line.
-2. Update the "Prose reviewed" version and date in the template's title
-   block.
-3. Commit the template and scripts, then commit the regenerated
-   `blueprint.html` and `measures.json` on their own (AGENTS.md explains
-   why).
+1. Run `python3 blueprint/harness/run.py` (or `deep` if you used
+   complexity or advisories). Resolve every `needs review` line.
+2. Set `prose_reviewed` in `content.toml` to the version and date.
+3. Commit `content.toml` and any harness change, then commit the
+   regenerated views on their own (blueprint/AGENTS.md, "Committing").
 
 ## Pitfalls already met
 
