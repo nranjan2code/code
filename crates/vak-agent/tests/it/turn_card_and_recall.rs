@@ -242,6 +242,7 @@ fn fake_rebuild() -> vak_agent::PresentationRebuild {
         Some(PresentationCard {
             presentation_id: None,
             block: None,
+            data_call_id: None,
             semantic_type,
             skill_id: "test".into(),
             skill_version: "1".into(),
@@ -262,6 +263,7 @@ fn fake_controls_rebuild() -> vak_agent::PresentationRebuild {
         Some(PresentationCard {
             presentation_id: None,
             block: (semantic_type == "controls").then(|| "controls".into()),
+            data_call_id: None,
             title: payload["title"].as_str().unwrap_or("card").to_string(),
             semantic_type,
             skill_id: "test".into(),

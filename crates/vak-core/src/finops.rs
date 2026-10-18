@@ -92,6 +92,7 @@ impl ActivityLedger {
 pub struct FinOpsLedger {
     path: PathBuf,
     rollup_path: PathBuf,
+    reservations_path: PathBuf,
 }
 
 impl FinOpsLedger {
@@ -100,6 +101,8 @@ impl FinOpsLedger {
         FinOpsLedger {
             path: scope.cost_log(),
             rollup_path: scope.cost_rollup(),
+            reservations_path: vak_config::scope::SharedScope::new(sessions_home)
+                .cost_reservations(),
         }
     }
 
@@ -278,22 +281,27 @@ pub fn rollup_by_run<'a>(rows: impl IntoIterator<Item = &'a CostRow>) -> Vec<Cos
     rollup_by(rows, |row| row.trace.as_ref().map(|t| t.run.to_string()))
 }
 
-/// Process-wide, cross-session admission state for the day cap, shared by
-/// every [`CoreSpendGate`] built for the same data home in this process.
-/// Closes two gaps a
-/// gate-local `Mutex<f64>` can't: (1) a per-turn gate used to start the
-/// run cap over from zero every turn (`Core::spend_gate_for` now hands
-/// back the SAME gate for the life of a session instead, so `run_spent_usd`
-/// finally means "this run", not "this turn"); (2) concurrent dispatches
-/// (parallel tool calls, or multiple sessions sharing one `Core`) used to
-/// all read the same stale on-disk day total and could jointly blow past
-/// the cap before any of their rows landed — `reserved_usd` below is
-/// credited at admission time, before the paid call happens, so a second
-/// concurrent `authorize()` sees the first one's reservation immediately.
-pub(crate) struct DayBudget {
-    /// Shared unresolved reservations. These survive UTC day rollover and
-    /// remain charged until a durable settlement or a definite release.
-    reservations: BTreeMap<SpendReservationId, Option<f64>>,
+/// Process-wide lock shared by gates for the same data home. Durable day
+/// reservations live in the shared Reservations Document; this lock only
+/// serializes this process while it updates its run-local counters.
+pub(crate) struct DayBudget;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableReservations {
+    schema: u32,
+    reservations: Vec<DurableReservation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableReservation {
+    id: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    day: chrono::NaiveDate,
+    estimate_usd: Option<f64>,
+    trace: Option<vak_session::trace::TraceKey>,
+    actor: Option<vak_session::ids::PrincipalId>,
 }
 
 struct SpendReservation {
@@ -316,15 +324,7 @@ struct CostSettlement<'a> {
 
 impl DayBudget {
     pub(crate) fn new() -> Self {
-        DayBudget {
-            reservations: BTreeMap::new(),
-        }
-    }
-
-    fn reserved_usd(&self) -> Option<f64> {
-        self.reservations
-            .values()
-            .try_fold(0.0, |total, amount| Some(total + (*amount)?))
+        DayBudget
     }
 }
 
@@ -398,6 +398,8 @@ impl CoreSpendGate {
         finops: &vak_config::FinopsResolved,
         day_budget: Arc<Mutex<DayBudget>>,
     ) -> Self {
+        #[cfg(test)]
+        let _isolated_home = vak_config::paths::isolate_home_for_tests();
         CoreSpendGate {
             ledger: FinOpsLedger::new(sessions_home),
             trace: Mutex::new(None),
@@ -499,7 +501,7 @@ impl CoreSpendGate {
             }
             None => None,
         };
-        let mut day = self
+        let _day = self
             .day_budget
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -530,32 +532,24 @@ impl CoreSpendGate {
                 ));
             }
         }
-        if let Some(cap) = max_day {
-            let total = self.ledger.strict_day_total_usd(now).map_err(|error| {
-                tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "the cost ledger could not be verified for budget admission");
-                "cannot enforce day budget: cost history could not be verified; dispatch denied".to_string()
-            })?;
-            let Some(reserved) = day.reserved_usd() else {
-                return Err(format!(
-                    "cannot enforce day budget ${cap:.2}: an active call has unknown pricing"
-                ));
-            };
-            let Some(estimate) = estimate else {
-                return Err(format!(
-                    "cannot enforce day budget ${cap:.2}: this call has unknown pricing"
-                ));
-            };
-            let projected = total + reserved + estimate;
-            if !valid_usd(projected) || projected > cap {
-                return Err(format!(
-                    "day budget ${cap:.2} would be exceeded by this dispatch (+${estimate:.2}, ${:.2} spent or reserved today)",
-                    total + reserved
-                ));
-            }
-        }
         let id = SpendReservationId::new();
         let trace = check.trace.cloned().or_else(|| self.current_trace().0);
         let actor = trace.as_ref().and_then(|trace| trace.actor);
+        if let Err(error) = self.reserve_durable(id, estimate, trace.clone(), actor, now, max_day) {
+            let history_unverified = error == "cost history could not be verified";
+            let budget_limit =
+                error.starts_with("day budget ") || error.starts_with("cannot enforce day budget ");
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error.clone())), "durable budget admission failed");
+            if budget_limit {
+                // These messages are assembled only from the configured cap
+                // and measured amounts inside this module.
+                return Err(error);
+            }
+            if max_day.is_some() && history_unverified {
+                return Err("cannot enforce day budget: cost history could not be verified; dispatch denied".into());
+            }
+            return Err("cannot enforce budget: durable reservation could not be verified or saved; dispatch denied".into());
+        }
         self.reservations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -576,7 +570,6 @@ impl CoreSpendGate {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
         }
-        day.reservations.insert(id, estimate);
         Ok(id)
     }
 
@@ -602,6 +595,145 @@ impl CoreSpendGate {
             .clone();
         let actor = trace.as_ref().and_then(|t| t.actor);
         (trace, actor)
+    }
+
+    fn reserve_durable(
+        &self,
+        id: SpendReservationId,
+        estimate_usd: Option<f64>,
+        trace: Option<vak_session::trace::TraceKey>,
+        actor: Option<vak_session::ids::PrincipalId>,
+        now: chrono::DateTime<chrono::Utc>,
+        day_cap: Option<f64>,
+    ) -> Result<(), String> {
+        if estimate_usd.is_some_and(|usd| !valid_usd(usd)) {
+            return Err("cannot enforce budget: estimated cost is invalid".into());
+        }
+        let id_text = id.as_str();
+        let record = DurableReservation {
+            id: id_text.clone(),
+            created_at: now,
+            day: now.date_naive(),
+            estimate_usd,
+            trace,
+            actor,
+        };
+        vak_session::documents::update(&self.ledger.reservations_path, |current| {
+            let mut state = match current {
+                Some(raw) => serde_json::from_str::<DurableReservations>(raw)
+                    .map_err(|_| "durable budget reservations are unreadable".to_string())?,
+                None => DurableReservations {
+                    schema: 1,
+                    reservations: Vec::new(),
+                },
+            };
+            if state.schema != 1 {
+                return Err("durable budget reservations have an unsupported schema".into());
+            }
+            if state.reservations.iter().any(|entry| entry.id == id_text) {
+                return Err("budget reservation id already exists".into());
+            }
+            // Every CAS retry reaches this closure again, so both the strict
+            // cost history and the full unresolved liability set are fresh.
+            let total = if day_cap.is_some() {
+                self.ledger
+                    .strict_day_total_usd(now)
+                    .map_err(|_| "cost history could not be verified".to_string())?
+            } else {
+                0.0
+            };
+            let mut reserved = 0.0;
+            for entry in &state.reservations {
+                let Some(amount) = entry.estimate_usd else {
+                    if day_cap.is_some() {
+                        return Err(
+                            "cannot enforce day budget: an unsettled call has unknown pricing"
+                                .into(),
+                        );
+                    }
+                    continue;
+                };
+                if !valid_usd(amount) {
+                    return Err("durable budget reservations contain an invalid estimate".into());
+                }
+                reserved += amount;
+            }
+            if !reserved.is_finite() {
+                return Err("durable budget reservation total is invalid".into());
+            }
+            if let Some(cap) = day_cap {
+                let Some(estimate) = estimate_usd else {
+                    return Err(format!(
+                        "cannot enforce day budget ${cap:.2}: this call has unknown pricing"
+                    ));
+                };
+                let projected = total + reserved + estimate;
+                if !valid_usd(projected) || projected > cap {
+                    return Err(format!(
+                        "day budget ${cap:.2} would be exceeded by this dispatch (+${estimate:.2}, ${:.2} spent or reserved)",
+                        total + reserved
+                    ));
+                }
+            }
+            state.reservations.push(record.clone());
+            let next = serde_json::to_string(&state)
+                .map_err(|_| "durable budget reservations could not be encoded".to_string())?;
+            Ok(Some((next, ())))
+        })?;
+        Ok(())
+    }
+
+    fn remove_durable(&self, id: SpendReservationId) -> Result<(), String> {
+        let id_text = id.as_str();
+        vak_session::documents::update(&self.ledger.reservations_path, |current| {
+            let Some(current) = current else {
+                return Ok(None);
+            };
+            let mut state: DurableReservations = serde_json::from_str(current)
+                .map_err(|_| "durable budget reservations are unreadable".to_string())?;
+            if state.schema != 1 {
+                return Err("durable budget reservations have an unsupported schema".into());
+            }
+            let before = state.reservations.len();
+            state.reservations.retain(|entry| entry.id != id_text);
+            if state.reservations.len() == before {
+                return Ok(None);
+            }
+            let next = serde_json::to_string(&state)
+                .map_err(|_| "durable budget reservations could not be encoded".to_string())?;
+            Ok(Some((next, ())))
+        })?;
+        Ok(())
+    }
+
+    fn update_durable_estimate(
+        &self,
+        id: SpendReservationId,
+        estimate_usd: Option<f64>,
+    ) -> Result<(), String> {
+        let id_text = id.as_str();
+        vak_session::documents::update(&self.ledger.reservations_path, |current| {
+            let Some(current) = current else {
+                return Err("durable budget reservation is missing".into());
+            };
+            let mut state: DurableReservations = serde_json::from_str(current)
+                .map_err(|_| "durable budget reservations are unreadable".to_string())?;
+            if state.schema != 1 {
+                return Err("durable budget reservations have an unsupported schema".into());
+            }
+            let Some(record) = state
+                .reservations
+                .iter_mut()
+                .find(|entry| entry.id == id_text)
+            else {
+                return Err("durable budget reservation is missing".into());
+            };
+            record.estimate_usd = estimate_usd;
+            let next = serde_json::to_string(&state)
+                .map_err(|_| "durable budget reservations could not be encoded".to_string())?;
+            Ok(Some((next, ())))
+        })?;
+        Ok(())
     }
 
     fn append_settled_row(&self, settlement: &CostSettlement<'_>) -> Result<(), std::io::Error> {
@@ -669,7 +801,7 @@ impl SpendGate for CoreSpendGate {
         usage: &Usage,
         latency_ms: u64,
     ) {
-        let mut day = self
+        let _day = self
             .day_budget
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -731,16 +863,22 @@ impl SpendGate for CoreSpendGate {
                 }
                 _ => {}
             }
+            if appended.is_ok()
+                && let Err(error) = self.remove_durable(id)
+            {
+                tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "durable budget reservation release failed");
+            }
             if actual.is_none() && appended.is_ok() {
                 // The durable unpriced row protects today's day cap through
                 // the strict rollup. Keep only the aggregate run unknown
-                // liability; retaining this per-call marker past today would
-                // block every future day and grow memory without bound.
-                day.reservations.remove(&id);
+                // liability in memory.
                 reservations.remove(&id);
             } else {
-                day.reservations
-                    .insert(id, if actual.is_none() { None } else { retained });
+                if appended.is_err()
+                    && let Err(error) = self.update_durable_estimate(id, retained)
+                {
+                    tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "durable budget reservation update failed");
+                }
             }
             if let Err(error) = appended {
                 tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the cost ledger append failed");
@@ -765,12 +903,14 @@ impl SpendGate for CoreSpendGate {
             .run_spent_usd
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) += actual;
-        day.reservations.remove(&id);
+        if let Err(error) = self.remove_durable(id) {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "durable budget reservation release failed");
+        }
         reservations.remove(&id);
     }
 
     fn release_dispatch(&self, id: SpendReservationId) {
-        let mut day = self
+        let _day = self
             .day_budget
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -778,13 +918,19 @@ impl SpendGate for CoreSpendGate {
             .reservations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some(reservation) = reservations.remove(&id) else {
+        let Some(reservation) = reservations.get(&id) else {
             return;
         };
         if reservation.terminal {
-            reservations.insert(id, reservation);
             return;
         }
+        if let Err(error) = self.remove_durable(id) {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "durable budget reservation release failed");
+            return;
+        }
+        let Some(reservation) = reservations.remove(&id) else {
+            return;
+        };
         if let Some(estimated) = reservation.estimated_usd {
             let mut reserved = self
                 .run_reserved_usd
@@ -797,7 +943,6 @@ impl SpendGate for CoreSpendGate {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) -= 1;
         }
-        day.reservations.remove(&id);
     }
 
     fn record_settled(&self, provider: &str, model: &str, session_id: &str, usage: &Usage) {
@@ -844,7 +989,7 @@ impl SpendGate for CoreSpendGate {
         }
         let (trace, actor) = self.current_trace();
         let usd = self.estimate(model, usage).filter(|usd| valid_usd(*usd));
-        let mut day = self
+        let _day = self
             .day_budget
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -855,10 +1000,16 @@ impl SpendGate for CoreSpendGate {
             usage,
             latency_ms,
             usd,
-            trace,
+            trace: trace.clone(),
             actor,
         }) {
             tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the cost ledger append failed");
+            let id = SpendReservationId::new();
+            if let Err(error) =
+                self.reserve_durable(id, usd, trace, actor, chrono::Utc::now(), None)
+            {
+                tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "durable settled-cost liability could not be saved");
+            }
             if let Some(usd) = usd {
                 *self
                     .run_reserved_usd
@@ -870,7 +1021,6 @@ impl SpendGate for CoreSpendGate {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
             }
-            day.reservations.insert(SpendReservationId::new(), usd);
         } else if let Some(usd) = usd {
             *self
                 .run_spent_usd
@@ -1002,6 +1152,12 @@ mod tests {
         (CoreSpendGate::new(dir.path(), &finops), dir)
     }
 
+    fn durable_reservations(home: &Path) -> DurableReservations {
+        let path = vak_config::scope::SharedScope::new(home).cost_reservations();
+        let raw = vak_session::documents::read(&path).unwrap().unwrap();
+        serde_json::from_str(&raw).unwrap()
+    }
+
     #[tokio::test]
     async fn day_budget_is_shared_by_cores_for_the_same_data_home_only() {
         let first_home = tempdir().unwrap();
@@ -1022,6 +1178,93 @@ mod tests {
         let check = check("claude-sonnet");
         assert!(gate_a.authorize(&check).await.is_ok());
         assert!(gate_b.authorize(&check).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn durable_day_reservation_is_shared_by_independent_gate_maps() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_day_usd: Some(5.0),
+            ..Default::default()
+        };
+        let first = CoreSpendGate::new(dir.path(), &finops);
+        let second = CoreSpendGate::new(dir.path(), &finops);
+        let check = check("claude-sonnet");
+
+        assert!(first.reserve_dispatch(&check).await.unwrap().is_some());
+        assert!(second.reserve_dispatch(&check).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn durable_day_reservation_survives_gate_drop_and_reopen() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_day_usd: Some(5.0),
+            ..Default::default()
+        };
+        let check = check("claude-sonnet");
+        let first = CoreSpendGate::new(dir.path(), &finops);
+        assert!(first.reserve_dispatch(&check).await.unwrap().is_some());
+        drop(first);
+
+        let reopened = CoreSpendGate::new(dir.path(), &finops);
+        assert!(reopened.reserve_dispatch(&check).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn definite_release_frees_durable_day_reservation() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_day_usd: Some(5.0),
+            ..Default::default()
+        };
+        let gate = CoreSpendGate::new(dir.path(), &finops);
+        let check = check("claude-sonnet");
+        let id = gate.reserve_dispatch(&check).await.unwrap().unwrap();
+        assert!(gate.reserve_dispatch(&check).await.is_err());
+
+        gate.release_dispatch(id);
+        assert!(gate.reserve_dispatch(&check).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn settlement_row_replaces_durable_reservation_without_double_counting() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_day_usd: Some(5.0),
+            ..Default::default()
+        };
+        let gate = CoreSpendGate::new(dir.path(), &finops);
+        let check = check("claude-sonnet");
+        let id = gate.reserve_dispatch(&check).await.unwrap().unwrap();
+        gate.settle_dispatch(id, "anthropic", "claude-sonnet", "s1", &usage(1, 1), 1);
+
+        assert!(gate.reserve_dispatch(&check).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn malformed_durable_reservations_fail_closed() {
+        let _isolated_home = vak_config::paths::isolate_home_for_tests();
+        let dir = tempdir().unwrap();
+        let path = vak_config::scope::SharedScope::new(dir.path()).cost_reservations();
+        vak_session::documents::update(&path, |_| {
+            Ok(Some((
+                r#"{"schema":1,"reservations":[{"broken":true}]}"#.into(),
+                (),
+            )))
+        })
+        .unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_day_usd: Some(5.0),
+            ..Default::default()
+        };
+        let gate = CoreSpendGate::new(dir.path(), &finops);
+
+        assert!(
+            gate.reserve_dispatch(&check("claude-sonnet"))
+                .await
+                .is_err()
+        );
     }
 
     fn usage(in_tok: u64, out_tok: u64) -> Usage {
@@ -1747,12 +1990,10 @@ mod tests {
         );
         assert!(!gate.reservations.lock().unwrap().contains_key(&id));
         assert!(
-            !gate
-                .day_budget
-                .lock()
-                .unwrap()
+            durable_reservations(dir.path())
                 .reservations
-                .contains_key(&id)
+                .iter()
+                .all(|entry| entry.id != id.as_str())
         );
 
         gate.refresh_caps(&vak_config::FinopsResolved {
@@ -1797,11 +2038,10 @@ mod tests {
         assert!(gate.reservations.lock().unwrap()[&id].terminal);
         assert!(gate.reservations.lock().unwrap()[&id].estimated_usd >= Some(7.5));
         assert!(
-            gate.day_budget
-                .lock()
-                .unwrap()
+            durable_reservations(dir.path())
                 .reservations
-                .contains_key(&id)
+                .iter()
+                .any(|entry| entry.id == id.as_str() && entry.estimate_usd >= Some(7.5))
         );
         assert!(
             gate.reserve_dispatch(&check("claude-sonnet"))

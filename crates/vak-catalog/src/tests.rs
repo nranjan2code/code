@@ -255,6 +255,134 @@ fn catalog_rebuild_equals_incremental() {
     }
 }
 
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
+#[test]
+fn encrypted_catalog_reopens_and_keeps_database_and_wal_ciphertext() {
+    let data = tempfile::tempdir().unwrap();
+    let path = data.path().join("tenants/local/catalog/catalog.db");
+    let marker = b"catalog-private-search-marker";
+    {
+        let catalog = Catalog::open(&path, data.path()).unwrap();
+        catalog
+            .seed(|tx| {
+                tx.execute(
+                    "INSERT INTO nodes (id, kind, agent, session, audience, created_at) VALUES
+                     ('call:private', 'call', 'agt_vak', 'ses_private', 'local', '2026-01-01')",
+                    [],
+                )?;
+                tx.execute(
+                    "INSERT INTO texts (node, body) VALUES ('call:private', ?1)",
+                    [String::from_utf8_lossy(marker).as_ref()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_ne!(&bytes[..16], b"SQLite format 3\0");
+        assert!(!contains_bytes(&bytes, marker));
+        let mut wal_name = path.as_os_str().to_os_string();
+        wal_name.push("-wal");
+        let wal = std::fs::read(PathBuf::from(wal_name)).unwrap_or_default();
+        assert!(!contains_bytes(&wal, marker));
+    }
+    let reopened = Catalog::open(&path, data.path()).unwrap();
+    let hits = reopened
+        .search(
+            "catalog-private-search-marker",
+            &Audience::default(),
+            &Scope::default(),
+            5,
+        )
+        .unwrap();
+    assert!(hits.iter().any(|hit| hit.node.id == "call:private"));
+}
+
+#[test]
+fn encrypted_catalog_refuses_missing_or_wrong_tenant_key_without_reset() {
+    let right_data = tempfile::tempdir().unwrap();
+    let wrong_data = tempfile::tempdir().unwrap();
+    let path = right_data.path().join("catalog/catalog.db");
+    let catalog = Catalog::open(&path, right_data.path()).unwrap();
+    catalog
+        .seed(|tx| {
+            tx.execute(
+                "INSERT INTO nodes (id, kind, created_at) VALUES ('keep-me', 'run', 'now')",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    drop(catalog);
+    let before = std::fs::read(&path).unwrap();
+
+    let error = match Catalog::open(&path, wrong_data.path()) {
+        Ok(_) => panic!("a catalog with the wrong tenant key opened"),
+        Err(error) => error,
+    };
+    assert!(matches!(&error, CatalogError::Protection));
+    assert!(!error.to_string().contains("PRAGMA"));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+
+    let reopened = Catalog::open(&path, right_data.path()).unwrap();
+    assert_eq!(reopened.counts().unwrap().get("run"), Some(&1));
+}
+
+#[test]
+fn open_catalog_handle_stops_work_after_its_scope_key_is_destroyed() {
+    let data = tempfile::tempdir().unwrap();
+    let path = data.path().join("catalog/catalog.db");
+    let catalog = Catalog::open(&path, data.path()).unwrap();
+    catalog
+        .seed(|tx| {
+            tx.execute(
+                "INSERT INTO nodes (id, kind, created_at) VALUES ('keep-me', 'run', 'now')",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let tenant_home =
+        vak_config::paths::tenant_home_at(data.path(), vak_config::paths::LOCAL_TENANT);
+    let tenant = vak_session::objects::TenantObjects::for_tenant(&tenant_home).unwrap();
+    tenant.destroy_scope_key("catalog").unwrap();
+
+    assert!(matches!(catalog.counts(), Err(CatalogError::Protection)));
+    assert!(matches!(
+        Catalog::open(&path, data.path()),
+        Err(CatalogError::Protection)
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn plaintext_legacy_catalog_is_rebuilt_as_encrypted_derived_state() {
+    let data = tempfile::tempdir().unwrap();
+    let path = data.path().join("catalog/catalog.db");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    {
+        let legacy = Connection::open(&path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE legacy (body TEXT); INSERT INTO legacy VALUES ('legacy-secret-marker');",
+            )
+            .unwrap();
+    }
+    let legacy_bytes = std::fs::read(&path).unwrap();
+    assert_eq!(&legacy_bytes[..16], b"SQLite format 3\0");
+    let catalog = Catalog::open(&path, data.path()).unwrap();
+    assert!(catalog.counts().unwrap().is_empty());
+    let rebuilt = std::fs::read(&path).unwrap();
+    assert_ne!(&rebuilt[..16], b"SQLite format 3\0");
+    assert!(!contains_bytes(&rebuilt, b"legacy-secret-marker"));
+}
+
 #[test]
 fn a_new_row_makes_the_catalog_stale_until_caught_up() {
     let (_lock, cwd, data, folder) = home();

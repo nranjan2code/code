@@ -30,8 +30,10 @@
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
+use std::fs::{File, OpenOptions};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use vak_session::tail::{self, Position};
 
 mod history;
@@ -60,6 +62,8 @@ pub enum CatalogError {
     Io(#[from] std::io::Error),
     #[error("catalog records could not be read")]
     Records(#[from] vak_session::types::SessionError),
+    #[error("catalog encryption could not be established")]
+    Protection,
     #[error("the lookup was cancelled or ran out of time")]
     Interrupted,
 }
@@ -172,6 +176,7 @@ pub struct Catalog {
     path: PathBuf,
     /// The data home whose records it reads.
     data: PathBuf,
+    tenant: Arc<vak_session::objects::TenantObjects>,
     conn: Mutex<Connection>,
 }
 
@@ -182,23 +187,38 @@ impl Catalog {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let conn = connect(path)?;
-        let stamped: Option<String> = conn
-            .query_row("SELECT value FROM meta WHERE key = 'schema'", [], |row| {
-                row.get(0)
-            })
-            .optional()
-            .unwrap_or(None);
-        let conn = if stamped.as_deref() == Some(&SCHEMA_VERSION.to_string()) {
-            conn
-        } else {
-            drop(conn);
-            remove_db(path);
-            connect(path)?
+        let lock_path = open_lock_path(path);
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(lock_path)?;
+        lock.lock()?;
+        let tenant_home = vak_config::paths::tenant_home_at(data, vak_config::paths::LOCAL_TENANT);
+        let tenant = vak_session::objects::TenantObjects::for_tenant(&tenant_home)
+            .map_err(|_| CatalogError::Protection)?;
+        let key = match tenant.scope_key("catalog") {
+            Ok(key) => key,
+            Err(_) => tenant
+                .create_scope_key("catalog")
+                .map_err(|_| CatalogError::Protection)?,
         };
+        if is_plaintext_sqlite(path)? {
+            remove_db(path)?;
+        }
+        let mut conn = connect(path, &key.0)?;
+        let stamped = schema_stamp(&conn)?;
+        if stamped.as_deref() != Some(&SCHEMA_VERSION.to_string()) {
+            drop(conn);
+            remove_db(path)?;
+            conn = connect(path, &key.0)?;
+        }
+        initialize_schema(&conn)?;
         Ok(Self {
             path: path.to_path_buf(),
             data: data.to_path_buf(),
+            tenant,
             conn: Mutex::new(conn),
         })
     }
@@ -207,10 +227,14 @@ impl Catalog {
         &self.path
     }
 
-    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn
+    fn conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, CatalogError> {
+        self.tenant
+            .scope_key("catalog")
+            .map_err(|_| CatalogError::Protection)?;
+        Ok(self
+            .conn
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Takes what every source appended since its cursor.
@@ -226,7 +250,7 @@ impl Catalog {
     /// Takes what one source appended since its cursor: the hint a writer
     /// sends after an append. Returns how many rows it took.
     pub fn catch_up_source(&self, source: &Source) -> Result<usize, CatalogError> {
-        let mut conn = self.conn();
+        let mut conn = self.conn()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let rows = catch_up_source_tx(&tx, source)?;
         tx.commit()?;
@@ -244,7 +268,7 @@ impl Catalog {
 
     /// Whether any source has rows the catalog has not taken.
     pub fn stale(&self) -> Result<bool, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         for source in sources::discover(&self.data) {
             let from = cursor(&conn, &source.key())?;
             if source.has_more(from)? {
@@ -257,7 +281,7 @@ impl Catalog {
     /// Drops every row and replays every source from its start.
     pub fn rebuild(&self) -> Result<CatchUp, CatalogError> {
         {
-            let mut conn = self.conn();
+            let mut conn = self.conn()?;
             let tx = conn.transaction()?;
             for table in [
                 "nodes",
@@ -281,7 +305,7 @@ impl Catalog {
     /// run names its conversation on its own node when it was known at
     /// admission, and otherwise by the edge its `Session` step leaves.
     pub fn sessions_of_actor(&self, actor: &str) -> Result<Vec<String>, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut statement = conn.prepare(
             "SELECT session FROM nodes
                WHERE kind = 'run' AND actor = ?1 AND session IS NOT NULL
@@ -302,7 +326,7 @@ impl Catalog {
 
     /// Everyone who caused a run in `session`.
     pub fn run_actors(&self, session: &str) -> Result<Vec<String>, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut statement = conn.prepare(
             "SELECT actor FROM nodes
                WHERE kind = 'run' AND (session = ?1 OR session = ?2) AND actor IS NOT NULL
@@ -323,9 +347,9 @@ impl Catalog {
     /// removed; then the database is rewritten and its write-ahead log
     /// emptied. Returns how many rows it replayed.
     pub fn rebuild_after_erasure(&self) -> Result<u64, CatalogError> {
-        self.conn().execute_batch("PRAGMA secure_delete = ON;")?;
+        self.conn()?.execute_batch("PRAGMA secure_delete = ON;")?;
         let replayed = self.rebuild()?;
-        self.conn().execute_batch(
+        self.conn()?.execute_batch(
             "INSERT INTO texts_fts (texts_fts) VALUES ('optimize');
              INSERT INTO turn_records_fts (turn_records_fts) VALUES ('optimize');
              VACUUM;
@@ -337,7 +361,7 @@ impl Catalog {
     /// The node `id`, if the catalog knows it. A session's plain id finds
     /// its node too.
     pub fn open_node(&self, id: &str) -> Result<Option<Node>, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         if let Some(node) = node(&conn, id)? {
             return Ok(Some(node));
         }
@@ -361,7 +385,7 @@ impl Catalog {
         audience: &Audience,
         limit: usize,
     ) -> Result<Vec<Node>, CatalogError> {
-        let mut conn = self.conn();
+        let mut conn = self.conn()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         catch_up_source_tx(&tx, &self.grant_source())?;
         let (filter, args) = audience_filter(audience, 2);
@@ -388,7 +412,7 @@ impl Catalog {
         since: Option<&str>,
         audience: &Audience,
     ) -> Result<Vec<Node>, CatalogError> {
-        let mut conn = self.conn();
+        let mut conn = self.conn()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         catch_up_source_tx(&tx, &self.grant_source())?;
         let (filter, args) = audience_filter(audience, 3);
@@ -415,7 +439,7 @@ impl Catalog {
     /// A call's arguments as written and what its result said (the
     /// evidence text the catalog keeps for it), by the call's node id.
     pub fn call_evidence(&self, node: &str) -> Result<Option<(String, String)>, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let found = conn
             .query_row(
                 "SELECT c.input, IFNULL(t.body, '') FROM calls c
@@ -430,7 +454,7 @@ impl Catalog {
     /// What a session holds (its turns, calls, files, effects, notes),
     /// oldest first, without the session itself.
     pub fn in_session(&self, session: &str, limit: usize) -> Result<Vec<Node>, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let sql = format!(
             "SELECT {NODE_COLUMNS} FROM nodes n
              WHERE (n.session = ?1 OR n.id IN (
@@ -461,7 +485,7 @@ impl Catalog {
         let Some(matched) = fts_query(query) else {
             return Ok(Vec::new());
         };
-        let mut conn = self.conn();
+        let mut conn = self.conn()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         catch_up_source_tx(&tx, &self.grant_source())?;
         let (mut filter, mut args) = audience_filter(audience, 2);
@@ -509,7 +533,7 @@ impl Catalog {
     /// What caused `id`: the path from it up to its root, and its run,
     /// session, turn, Agent, space, actor and cause.
     pub fn lineage(&self, id: &str) -> Result<Option<Lineage>, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let start = match node(&conn, id)? {
             Some(start) => start,
             None => match node(&conn, &format!("ses_{id}"))? {
@@ -561,7 +585,7 @@ impl Catalog {
 
     /// How many nodes of each kind the catalog holds.
     pub fn counts(&self) -> Result<BTreeMap<String, u64>, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut statement = conn.prepare("SELECT kind, COUNT(*) FROM nodes GROUP BY kind")?;
         let rows = statement.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
@@ -571,7 +595,7 @@ impl Catalog {
 
     /// The sessions `session` caused: the workers it delegated to.
     pub fn session_children(&self, session: &str) -> Result<Vec<String>, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut statement = conn.prepare(
             "SELECT e.src FROM edges e JOIN nodes n ON n.id = e.src
              WHERE e.kind = 'caused_by' AND e.dst = ?1 AND n.kind = 'session'",
@@ -589,7 +613,7 @@ impl Catalog {
     /// outlives its erasure (docs/design/74 §4). Returns how many nodes
     /// were removed.
     pub fn erase(&self, sessions: &[String], nodes: &[String]) -> Result<u64, CatalogError> {
-        let mut conn = self.conn();
+        let mut conn = self.conn()?;
         conn.execute_batch("PRAGMA secure_delete = ON;")?;
         let mut removed = 0u64;
         {
@@ -635,7 +659,7 @@ impl Catalog {
     /// Every row, sorted, as text: for tests that compare two catalogs.
     #[doc(hidden)]
     pub fn dump(&self) -> Result<Vec<String>, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut out = Vec::new();
         for sql in [
             "SELECT id || '|' || kind || '|' || IFNULL(space,'') || '|' || IFNULL(agent,'') || '|' ||
@@ -672,7 +696,7 @@ impl Catalog {
         &self,
         seed: impl FnOnce(&Transaction<'_>) -> rusqlite::Result<()>,
     ) -> Result<(), CatalogError> {
-        let mut conn = self.conn();
+        let mut conn = self.conn()?;
         let tx = conn.transaction()?;
         seed(&tx)?;
         tx.commit()?;
@@ -680,11 +704,50 @@ impl Catalog {
     }
 }
 
-fn connect(path: &Path) -> Result<Connection, CatalogError> {
+fn connect(path: &Path, key: &[u8; 32]) -> Result<Connection, CatalogError> {
     let conn = Connection::open(path)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let key_hex = key
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    conn.execute_batch(&format!("PRAGMA key = \"x'{key_hex}'\";"))
+        .map_err(|_| CatalogError::Protection)?;
+    let cipher_version: Result<String, _> =
+        conn.pragma_query_value(None, "cipher_version", |row| row.get(0));
+    if !cipher_version.is_ok_and(|version| !version.trim().is_empty()) {
+        return Err(CatalogError::Protection);
+    }
+    conn.pragma_update(None, "temp_store", "MEMORY")
+        .map_err(|_| CatalogError::Protection)?;
+    conn.pragma_update(None, "cipher_memory_security", "ON")
+        .map_err(|_| CatalogError::Protection)?;
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+        row.get::<_, i64>(0)
+    })
+    .map_err(|_| CatalogError::Protection)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
+    Ok(conn)
+}
+
+fn schema_stamp(conn: &Connection) -> Result<Option<String>, CatalogError> {
+    let present: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !present {
+        return Ok(None);
+    }
+    Ok(conn
+        .query_row("SELECT value FROM meta WHERE key = 'schema'", [], |row| {
+            row.get(0)
+        })
+        .optional()?)
+}
+
+fn initialize_schema(conn: &Connection) -> Result<(), CatalogError> {
     conn.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
          INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', '{SCHEMA_VERSION}');
@@ -742,15 +805,46 @@ fn connect(path: &Path) -> Result<Connection, CatalogError> {
              INSERT INTO turn_records_fts (turn_records_fts, rowid, record)
              VALUES ('delete', old.rowid, old.record); END;"
     ))?;
-    Ok(conn)
+    Ok(())
 }
 
-fn remove_db(path: &Path) {
+fn open_lock_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".open.lock");
+    PathBuf::from(name)
+}
+
+fn is_plaintext_sqlite(path: &Path) -> Result<bool, CatalogError> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let mut header = [0u8; 16];
+    let mut filled = 0;
+    while filled < header.len() {
+        match file.read(&mut header[filled..])? {
+            0 => break,
+            read => filled += read,
+        }
+    }
+    Ok(filled == header.len() && &header == b"SQLite format 3\0")
+}
+
+fn remove_db(path: &Path) -> Result<(), CatalogError> {
     for suffix in ["", "-wal", "-shm"] {
         let mut name = path.as_os_str().to_os_string();
         name.push(suffix);
-        let _ = std::fs::remove_file(PathBuf::from(name));
+        match std::fs::remove_file(PathBuf::from(name)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
     }
+    if let Some(parent) = path.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    Ok(())
 }
 
 fn catch_up_source_tx(tx: &Transaction<'_>, source: &Source) -> Result<usize, CatalogError> {

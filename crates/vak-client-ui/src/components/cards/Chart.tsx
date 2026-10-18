@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { formatChartNumber, niceTicks, scalePosition } from "./chartScale";
+import { chartAxis, chartSegments, formatChartNumber, niceTicks, scalePosition } from "./chartScale";
 import { Card, downloadCsv, exportName, num, records, text, type Payload } from "./shared";
 
 interface Point { x: string | number; y: number | null }
@@ -34,7 +34,11 @@ export default function ChartCard(props: { payload: Payload }) {
       })),
     })),
   );
-  const keys = createMemo(() => [...new Set(series().flatMap((s) => s.points.map((point) => point.x)))]);
+  const axis = createMemo(() => chartAxis([...new Set(series().flatMap((s) => s.points.map((point) => point.x)))],
+    p().x_scale === "number" ? "number" : p().x_scale === "time" ? "time" : "category"));
+  const keys = () => axis().keys;
+  const uniquePoints = () => series().every((s) => new Set(s.points.map((point) => point.x)).size === s.points.length);
+  const hasValues = () => series().some((s) => s.points.some((point) => point.y !== null));
   const valueAt = (s: Series, key: string | number) => s.points.find((point) => point.x === key)?.y ?? null;
   const format = formatChartNumber;
 
@@ -56,14 +60,17 @@ export default function ChartCard(props: { payload: Payload }) {
     const yMax = ticks[ticks.length - 1];
     const axisWidth = Math.max(...ticks.map((tick) => format(tick).length)) * 7 + 12;
     const plotLeft = PAD.left + axisWidth;
-    const plotRight = width() - PAD.right;
-    const band = (plotRight - plotLeft) / Math.max(1, keys().length);
+    const plotRight = Math.max(plotLeft + 1, width() - PAD.right);
+    const span = plotRight - plotLeft;
+    const distances = axis().positions.slice(1).map((position, index) => (position - axis().positions[index]) * span);
+    const band = axis().positions.length < 2 ? span : Math.min(span / Math.max(1, keys().length), ...distances);
     const chars = Math.max(6, Math.floor(band / 7));
     const labels = keys().map((key) => wrap(String(key), chars));
     const labelLines = Math.max(1, ...labels.map((lines) => lines.length));
     const height = PAD.top + PLOT_HEIGHT + 10 + labelLines * LINE + PAD.bottom;
     const y = (value: number) => PAD.top + PLOT_HEIGHT - scalePosition(value, yMin, yMax) * PLOT_HEIGHT;
-    const x = (index: number) => plotLeft + band * (index + 0.5);
+    const inset = type() === "bar" && p().x_scale !== undefined && p().x_scale !== "category" ? band / 2 : 0;
+    const x = (index: number) => plotLeft + inset + Math.max(0, span - inset * 2) * (axis().positions[index] ?? 0.5);
     return { ticks, plotLeft, plotRight, band, labels, height, x, y };
   });
 
@@ -81,7 +88,10 @@ export default function ChartCard(props: { payload: Payload }) {
           <For each={series()}>{(s, index) => <li><span class="chart-swatch" style={{ background: color(index()) }} />{s.name}</li>}</For>
         </ul>
       </Show>
+      <Show when={!axis().valid || !uniquePoints()}><p class="card-lede">The horizontal values are ambiguous or do not match this chart’s scale. See the numbers below.</p></Show>
+      <Show when={!hasValues()}><p class="card-lede">No measured values to plot.</p></Show>
       <div class="chart-frame" ref={host}>
+        <Show when={axis().valid && uniquePoints() && hasValues()}>
         <svg width={width()} height={layout().height} role="img" aria-label={text(p().accessible_summary) ?? text(p().title) ?? "Chart"}>
           <For each={layout().ticks}>{(tick) => (
             <g class="chart-tick">
@@ -91,15 +101,18 @@ export default function ChartCard(props: { payload: Payload }) {
           )}</For>
           <Show when={type() === "bar"} fallback={
             <For each={series()}>{(s, index) => {
-              const points = () => keys().map((key, i) => ({ i, y: valueAt(s, key) })).filter((point): point is { i: number; y: number } => point.y !== null);
-              const path = () => points().map((point, n) => `${n ? "L" : "M"}${layout().x(point.i)},${layout().y(point.y)}`).join(" ");
+              const segments = () => chartSegments(keys().map((key) => valueAt(s, key)));
+              const points = () => segments().flat();
+              const path = (segment: { i: number; y: number }[]) => segment.map((point, n) => `${n ? "L" : "M"}${layout().x(point.i)},${layout().y(point.y)}`).join(" ");
               return (
                 <g>
-                  <Show when={type() === "area" && points().length > 1}>
-                    <path class="chart-area" fill={color(index())}
-                      d={`${path()} L${layout().x(points()[points().length - 1].i)},${layout().y(Math.max(0, layout().ticks[0]))} L${layout().x(points()[0].i)},${layout().y(Math.max(0, layout().ticks[0]))} Z`} />
-                  </Show>
-                  <path d={path()} fill="none" stroke={color(index())} stroke-width="2" />
+                  <For each={segments()}>{(segment) => <>
+                    <Show when={type() === "area" && segment.length > 1}>
+                      <path class="chart-area" fill={color(index())}
+                        d={`${path(segment)} L${layout().x(segment[segment.length - 1].i)},${layout().y(Math.max(0, layout().ticks[0]))} L${layout().x(segment[0].i)},${layout().y(Math.max(0, layout().ticks[0]))} Z`} />
+                    </Show>
+                    <path d={path(segment)} fill="none" stroke={color(index())} stroke-width="2" />
+                  </>}</For>
                   <For each={points()}>{(point) => (
                     <circle cx={layout().x(point.i)} cy={layout().y(point.y)} r="3.5" fill={color(index())}>
                       <title>{`${s.name ? `${s.name}: ` : ""}${keys()[point.i]}, ${format(point.y)}`}</title>
@@ -122,7 +135,7 @@ export default function ChartCard(props: { payload: Payload }) {
                         <rect
                           x={layout().x(i()) - group() / 2 + index() * barWidth() + 1}
                           y={Math.min(zero(), layout().y(value()!))}
-                          width={Math.max(2, barWidth() - 2)}
+                          width={Math.max(0.25, barWidth() * 0.9)}
                           height={Math.abs(layout().y(value()!) - zero())}
                           rx="3"
                           fill={color(index())}
@@ -143,6 +156,7 @@ export default function ChartCard(props: { payload: Payload }) {
             </text>
           )}</For>
         </svg>
+        </Show>
       </div>
       <Show when={text(p().x_label) || text(p().y_label)}>
         <p class="card-meta">{[text(p().x_label), text(p().y_label)].filter(Boolean).join(" · ")}</p>

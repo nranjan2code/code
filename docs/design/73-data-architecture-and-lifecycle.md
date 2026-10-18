@@ -12,6 +12,12 @@ the plan assigned it (checked 2026-10-14 against the milestones' exit
 tests, not defect by defect). "The data baseline" means the version plan
 §1 (L3) names; this document never writes the number.
 
+**Current substrate qualification (2026-10-18):** the unused streaming
+blob API is compiled only for its unit tests. Shared chunk release needs an
+atomic root-publication/release ownership model before a production caller
+may use it. A sequential shared-chunk regression is retained; it is not a
+concurrency guarantee. Ordinary tenant object storage remains in production.
+
 `79-private-headless-fleet.md` is the proposal for one dedicated 24/7 VM per
 customer, operator-blind management and disaster recovery. It adds a hosted
 deployment trust boundary without changing the locked local-first decisions
@@ -599,15 +605,27 @@ dedupe (review R1). The design is:
   objects left with no grant, and writes a content-free audit tombstone plus
   a signed receipt. The steps, scopes, approvals and receipt contents are in
   doc 74 §3.4 and §4.
-- **Derived plaintext is the limit.** The catalog's FTS and embedding
-  stores are plaintext derived copies. Erasure deletes their rows with
-  `secure_delete` and checkpoints the WAL. Locally, their at-rest
-  protection relies on OS disk encryption; the cloud baseline uses managed
-  encryption. For an operator-blind hosted customer, this is insufficient:
-  the catalog and every derived copy must remain inside the customer VM's
-  protected boundary, or receive equivalent customer-controlled encryption
-  and attested key release (doc 79 §5). A fleet operator cannot receive its
-  plaintext through a search or troubleshooting endpoint.
+- **Derived searchable content is inside the encryption boundary.** On
+  2026-10-18 the maintainer approved encrypted catalog storage rather than
+  relying on OS disk encryption alone. SQLCipher integration is implemented
+  under hardening A10: tenant-managed key custody, encrypted database/WAL,
+  memory-only temporary stores, and fail-closed opens. Erasure still removes
+  source-derived rows and checkpoints/vacuums; tenant-wide encryption does
+  not replace conversation-level erasure. Backups must not export plaintext.
+
+> **Historical record — previous derived-data boundary, superseded by the
+> 2026-10-18 encryption decision.**
+>
+> - **Derived plaintext is the limit.** The catalog's FTS and embedding
+>   stores are plaintext derived copies. Erasure deletes their rows with
+>   `secure_delete` and checkpoints the WAL. Locally, their at-rest
+>   protection relies on OS disk encryption; the cloud baseline uses managed
+>   encryption. For an operator-blind hosted customer, this is insufficient:
+>   the catalog and every derived copy must remain inside the customer VM's
+>   protected boundary, or receive equivalent customer-controlled encryption
+>   and attested key release (doc 79 §5). A fleet operator cannot receive its
+>   plaintext through a search or troubleshooting endpoint.
+
 - **Backups** carry ciphertext and *wrapped* keys, never the KEK unless
   escrow is requested. Restoring re-applies every erasure tombstone before
   anything becomes readable. Fleet DR also needs a coherent record/ref/object
@@ -719,8 +737,9 @@ Document store, not a projection (review R9).
 
 Several processes (desktop, server, CLI, gateway) may ingest. Ingest is an
 idempotent upsert keyed by `(chain, seq)`, using WAL with a busy timeout, so
-no single process has to own it. The text and vector stores are plaintext
-derived copies, and erasure removes their rows explicitly (§7.3).
+no single process has to own it. The catalog encryption decision in §7.3
+also covers its FTS projection and WAL. Erasure removes source-derived rows
+explicitly; optional future vector stores must meet the same boundary.
 
 - **`nodes`**: one row per addressable thing (space, agent, conversation,
   session, turn, run, execution, artifact, version, candidate, delivery,

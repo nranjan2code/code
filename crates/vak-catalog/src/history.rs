@@ -289,7 +289,7 @@ impl Catalog {
     /// The newest indexed entry of `session` (the deepest, then the last
     /// written): where a read of another conversation's history starts.
     pub fn newest_entry(&self, session: &str) -> Result<Option<String>, CatalogError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         Ok(conn
             .query_row(
                 "SELECT entry_id FROM entries WHERE session = ?1
@@ -306,7 +306,7 @@ impl Catalog {
         entry_id: &str,
     ) -> Result<Option<EntryLocation>, CatalogError> {
         let node = ingest::session_node(session);
-        let conn = self.conn();
+        let conn = self.conn()?;
         let found: Option<(i64, i64, Option<String>, Option<String>)> = conn
             .query_row(
                 "SELECT e.segment, e.frame, e.parent, n.locator FROM entries e
@@ -336,8 +336,9 @@ impl Catalog {
         ancestor: &str,
         leaf: &str,
     ) -> Result<bool, CatalogError> {
+        let conn = self.conn()?;
         Ok(is_ancestor(
-            &self.conn(),
+            &conn,
             &ingest::session_node(session),
             ancestor,
             leaf,
@@ -352,7 +353,7 @@ impl Catalog {
         leaf: &str,
     ) -> Result<Option<String>, CatalogError> {
         let session = ingest::session_node(session);
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut statement = conn.prepare(
             "SELECT entry_id FROM turn_records WHERE session = ?1 AND turn_id = ?2 LIMIT 8",
         )?;
@@ -393,7 +394,7 @@ impl Catalog {
             });
         }
         let session = ingest::session_node(session);
-        let conn = self.conn();
+        let conn = self.conn()?;
         let started = std::time::Instant::now();
         let over = || stop() || started.elapsed() >= std::time::Duration::from_millis(250);
         let mut statement = conn.prepare(
@@ -570,7 +571,7 @@ mod tests {
         assert!(!catalog.is_ancestor("s", &sibling, &ids[2047]).unwrap());
         // Every pair on the chain agrees with a plain walk up the parents,
         // in a logarithmic number of reads, and each entry is one row.
-        let conn = catalog.conn();
+        let conn = catalog.conn().unwrap();
         let mut longest = 0;
         for leaf in [5usize, 100, 1023, 1024, 2047] {
             for target in [0usize, 1, 2, 3, 511, 512, 1000, leaf] {

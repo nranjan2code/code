@@ -66,6 +66,7 @@ fn record_for(turn_id: &str, tool_use_id: &str, summary: &str) -> PresentationRe
     let payload = canonicalize_json(&chart_payload(summary));
     PresentationRecord {
         block: None,
+        data_call_id: None,
         turn_id: turn_id.into(),
         source: PresentationSource::ToolCall {
             tool_use_id: tool_use_id.into(),

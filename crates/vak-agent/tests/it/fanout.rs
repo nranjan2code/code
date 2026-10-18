@@ -281,6 +281,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         hooks: None,
         revocation_check: None,
         presentation_rebuild: None,
+        child_services: None,
         mcp_tool_index: None,
         input_normalizer: None,
         read_only_tools: vec![],

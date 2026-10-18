@@ -48,8 +48,16 @@ has a fixed iteration bound and never rounds all tiny values to zero.
 Labels use shortest round-trip number text, including compact exponential
 notation for extremes. Positioning normalizes opposite-sign extremes to
 avoid overflowing their span. Source tests cover tiny, adjacent, subnormal,
-equal and extreme values. Numeric/temporal x geometry, missing-data gaps
-and running-app visual acceptance remain open under hardening P10.
+equal and extreme values. `x_scale` explicitly selects `category` (the
+default), `number`, or `time`. Categories keep exact lexical labels and
+source order. Numeric coordinates require finite numbers or JSON numeric
+text; time coordinates require RFC3339 timestamps with offsets. Continuous
+axes sort by coordinate and preserve unequal intervals. Invalid/ambiguous
+coordinates show a visible explanation and keep the numbers available;
+there is no fallback to misleading equal spacing. Each series has at most
+one observation at a coordinate. Missing y observations split line and area
+segments; an empty chart says it has no measured values. Browser acceptance
+of these geometry/gap cases remains open under hardening P10.
 
 ## 1. The model
 

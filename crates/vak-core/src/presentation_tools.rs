@@ -981,6 +981,7 @@ fn chart_fields() -> Value {
         serde_json::json!({
             "title": string(TITLE),
             "chart_type": one_of(&["line", "bar", "area"], "How to draw it: line or area for a value over an ordered x, bar for values across categories."),
+            "x_scale": one_of(&["category", "number", "time"], "Optional. category (default) keeps equal spacing and exact labels; number spaces finite numeric x values by magnitude; time spaces RFC3339 timestamps by elapsed time."),
             "x_label": string("Optional. What the x axis measures."),
             "y_label": string("Optional. What the y axis measures, with its unit."),
             "accessible_summary": string("Optional. One sentence saying what the chart shows."),
@@ -990,9 +991,9 @@ fn chart_fields() -> Value {
                 serde_json::json!({
                     "series": string("The name of the series this point belongs to."),
                     "x": string("The x value: a category or a number, as text."),
-                    "y": {"type": "number", "description": "The value at this point."}
+                    "y": {"type": "number", "description": "Optional. The measured value. Omit for a missing observation (leaves a gap)."}
                 }),
-                &["series", "x", "y"],
+                &["series", "x"],
             )
         }),
         &["chart_type"],
@@ -1000,21 +1001,53 @@ fn chart_fields() -> Value {
 }
 
 fn build_chart(args: &Map<String, Value>) -> Result<Value, String> {
+    let axis = args
+        .get("x_scale")
+        .and_then(Value::as_str)
+        .unwrap_or("category");
+    if !["category", "number", "time"].contains(&axis) {
+        return Err("`x_scale` must be category, number or time".into());
+    }
     let mut series: Vec<(String, Vec<Value>)> = Vec::new();
     for point in records(args, "data") {
+        let x = scalar(&point["x"]);
+        let valid = match axis {
+            "number" => {
+                x.as_f64().filter(|value| value.is_finite()).is_some()
+                    || x.as_str().is_some_and(|value| {
+                        serde_json::from_str::<Value>(value)
+                            .ok()
+                            .and_then(|value| value.as_f64())
+                            .is_some_and(f64::is_finite)
+                    })
+            }
+            "time" => x
+                .as_str()
+                .is_some_and(|value| chrono::DateTime::parse_from_rfc3339(value).is_ok()),
+            _ => true,
+        };
+        if !valid {
+            return Err(format!("each `x` must match the explicit `{axis}` scale"));
+        }
+
         let name = text(point, "series").to_string();
-        let y = match scalar(&point["y"]) {
-            number @ Value::Number(_) => number,
+        let y = match point.get("y").cloned().unwrap_or(Value::Null) {
+            number @ (Value::Number(_) | Value::Null) => number,
             _ => {
                 return Err(format!(
-                    "each point's `y` must be a number; series `{name}` at x `{}` has none",
+                    "each point's `y` must be a number or null; series `{name}` at x `{}` has none",
                     scalar(&point["x"])
                 ));
             }
         };
         let entry = serde_json::json!({"x": scalar(&point["x"]), "y": y});
         match series.iter_mut().find(|(existing, _)| *existing == name) {
-            Some((_, points)) => points.push(entry),
+            Some((_, points)) => {
+                if points.iter().any(|existing| existing["x"] == entry["x"]) {
+                    return Err("each series must have at most one observation per x value".into());
+                }
+                points.push(entry);
+            }
             None => series.push((name, vec![entry])),
         }
     }
@@ -1034,6 +1067,7 @@ fn build_chart(args: &Map<String, Value>) -> Result<Value, String> {
         &[
             "title",
             "chart_type",
+            "x_scale",
             "x_label",
             "y_label",
             "accessible_summary",
@@ -1710,7 +1744,8 @@ const fn shape(
     }
 }
 
-const FROM: &str = "Your ability whose latest answer in this conversation holds the records, by its name. Vak fills the card from that answer, so you never copy its values.";
+const FROM: &str = "The ability that produced the selected call, by its name. Vak checks this against the recorded call.";
+const CALL_ID: &str = "The exact recorded call ID whose result supplies this card. This card is an immutable snapshot; to refresh it, run the ability again and make a new card with that call's ID.";
 const LIST: &str = "Optional. Where the records are in its answer: a key, or keys joined by dots (rows, result.items). Leave it out when the answer is the list itself.";
 
 /// A record's value as a table cell: text as written, numbers and truth
@@ -1745,11 +1780,12 @@ fn ability_table_fields() -> Value {
         serde_json::json!({
             "title": string(TITLE),
             "from": string(FROM),
+            "call_id": string(CALL_ID),
             "list": string(LIST),
             "columns": texts("Optional. The keys of a record to show as columns, in order. Every key of the first record when left out."),
             "numeric_columns": texts("Optional. Column labels whose non-empty cells are numeric decimals. The labels must match one column exactly; numeric text is kept exactly as written. Commas and non-finite values are not accepted. A cell beginning with = remains a live expression.")
         }),
-        &["from"],
+        &["from", "call_id"],
     )
 }
 
@@ -1862,15 +1898,17 @@ fn ability_chart_fields() -> Value {
             "title": string(TITLE),
             "chart_type": one_of(&["line", "bar", "area"], "How to draw it: line or area for a value over an ordered x, bar for values across categories."),
             "from": string(FROM),
+            "call_id": string(CALL_ID),
             "list": string(LIST),
             "x": string("The key of a record that holds its x value: a category or a number."),
             "y": string("The key of a record that holds the value to plot, a number. One chart shows one measure."),
             "series": string("Optional. The key of a record that holds the name of its series; one series named after `y` when left out."),
+            "x_scale": one_of(&["category", "number", "time"], "Optional. category (default) keeps equal spacing and exact labels; number spaces finite numeric x values by magnitude; time spaces RFC3339 timestamps by elapsed time."),
             "x_label": string("Optional. What the x axis measures."),
             "y_label": string("Optional. What the y axis measures, with its unit."),
             "accessible_summary": string("Optional. One sentence saying what the chart shows.")
         }),
-        &["chart_type", "from", "x", "y"],
+        &["chart_type", "from", "call_id", "x", "y"],
     )
 }
 
@@ -2124,6 +2162,7 @@ const SHAPES: &[CardShape] = &[
         data_of_call: Some((
             vak_tools::CallData {
                 from: "from",
+                call_id: "call_id",
                 list: "list",
                 filled: &["rows"],
             },
@@ -2132,7 +2171,7 @@ const SHAPES: &[CardShape] = &[
         ..shape(
             "table",
             "emit_ability_table_card",
-            "A table of the records one of your abilities answered: name the ability and where its list is, and Vak fills every row from its answer. Use it for an ability's results rather than copying them into emit_table_card.",
+            "A table snapshot from one exact recorded ability call: provide its call ID and ability name, then where its list is. Vak fills every row from that result. To refresh, run the ability again and make a new card with the new call ID.",
             ability_table_fields,
             build_ability_table,
             fill_nothing,
@@ -2143,6 +2182,7 @@ const SHAPES: &[CardShape] = &[
         data_of_call: Some((
             vak_tools::CallData {
                 from: "from",
+                call_id: "call_id",
                 list: "list",
                 filled: &["data"],
             },
@@ -2151,7 +2191,7 @@ const SHAPES: &[CardShape] = &[
         ..shape(
             "chart",
             "emit_ability_chart_card",
-            "A chart of the records one of your abilities answered: name the ability, where its list is and the keys for x and y, and Vak fills every point from its answer.",
+            "A chart snapshot from one exact recorded ability call: provide its call ID and ability name, then where its list is and the keys for x and y. Vak fills every point from that result. To refresh, run the ability again and make a new card with the new call ID.",
             ability_chart_fields,
             build_ability_chart,
             fill_nothing,
@@ -2646,6 +2686,7 @@ pub struct PresentationInfo {
     pub identity_digest: String,
     /// The form that built it.
     pub block: Option<String>,
+    pub data_call_id: Option<String>,
 }
 
 /// Validates a card call and returns its `Presentation` ledger entry. `name`
@@ -2685,6 +2726,12 @@ pub fn presentation_info_with(
         schema_version: u32::from(output.schema_version),
         payload,
         block: Some(output.block),
+        data_call_id: shape.data_of_call.and_then(|(spec, _)| {
+            input
+                .get(spec.call_id)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        }),
     })
 }
 
@@ -2904,7 +2951,7 @@ mod tests {
         let records: Vec<Value> = (0..300)
             .map(|at| serde_json::json!({"city": format!("City {at}"), "people": at * 1000, "note": "a | b\nc"}))
             .collect();
-        let mut table = serde_json::json!({"from": "census", "list": "rows", "columns": ["city", "people", "note"]});
+        let mut table = serde_json::json!({"from": "census", "call_id": "c1", "list": "rows", "columns": ["city", "people", "note"]});
         let table_tool = tool("emit_ability_table_card");
         table_tool.fill_from_data(&mut table, &records).unwrap();
         let card = built("emit_ability_table_card", table).unwrap();
@@ -2921,7 +2968,7 @@ mod tests {
             json!({"id": "00123", "amount": 9007199254740993_u64}),
             json!({"id": "1,5", "amount": 2_u64}),
         ];
-        let mut table = json!({"from": "records", "columns": ["id", "amount"]});
+        let mut table = json!({"from": "records", "call_id": "c2", "columns": ["id", "amount"]});
         table_tool.fill_from_data(&mut table, &typed).unwrap();
         let card = built("emit_ability_table_card", table).unwrap();
         assert_eq!(
@@ -2937,8 +2984,7 @@ mod tests {
             json!({"id": "00123", "kind": "a"}),
             json!({"id": "00002", "kind": "b"}),
         ];
-        let mut declared =
-            json!({"from": "records", "columns": ["id", "kind"], "numeric_columns": ["id"]});
+        let mut declared = json!({"from": "records", "call_id": "c3", "columns": ["id", "kind"], "numeric_columns": ["id"]});
         table_tool
             .fill_from_data(&mut declared, &explicit_values)
             .unwrap();
@@ -2947,7 +2993,7 @@ mod tests {
         assert_eq!(card["rows"][0][0], "00123");
         for declaration in [json!(1), json!([1]), json!([""])] {
             let mut malformed = json!({
-                "from": "records", "columns": ["id", "kind"], "numeric_columns": declaration
+                "from": "records", "call_id": "c4", "columns": ["id", "kind"], "numeric_columns": declaration
             });
             assert!(
                 table_tool
@@ -2956,8 +3002,7 @@ mod tests {
             );
         }
 
-        let mut chart =
-            serde_json::json!({"from": "census", "chart_type": "bar", "x": "city", "y": "people"});
+        let mut chart = serde_json::json!({"from": "census", "call_id": "c5", "chart_type": "bar", "x": "city", "y": "people"});
         tool("emit_ability_chart_card")
             .fill_from_data(&mut chart, &records[..3])
             .unwrap();
@@ -3569,6 +3614,51 @@ mod tests {
     }
 
     #[test]
+    fn charts_require_explicit_geometry_and_preserve_missing_observations() {
+        let chart = built(
+            "emit_chart_card",
+            json!({"chart_type": "line", "x_scale": "number", "data": [
+                {"series": "A", "x": "1", "y": 2}, {"series": "A", "x": "10", "y": null}
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(chart["x_scale"], "number");
+        assert!(chart["series"][0]["points"][1]["y"].is_null());
+        for (scale, x) in [
+            ("number", "001"),
+            ("number", "1,5"),
+            ("time", "2026-01-01"),
+            ("other", "x"),
+        ] {
+            assert!(
+                built(
+                    "emit_chart_card",
+                    json!({"chart_type": "line", "x_scale": scale,
+                "data": [{"series": "A", "x": x, "y": 1}]})
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            built(
+                "emit_chart_card",
+                json!({"chart_type": "line", "x_scale": "time",
+            "data": [{"series": "A", "x": "2026-01-01T00:00:00Z", "y": 1}]})
+            )
+            .is_ok()
+        );
+        assert!(
+            built(
+                "emit_chart_card",
+                json!({"chart_type": "line", "data": [
+                    {"series": "A", "x": "x", "y": 1}, {"series": "A", "x": "x", "y": 2}
+                ]})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn a_chart_groups_points_into_series_and_summarises_itself() {
         let payload = built("emit_chart_card", json!({"chart_type": "line", "data": [
             {"series": "A", "x": "2024", "y": 1000}, {"series": "B", "x": "2024", "y": 2}, {"series": "A", "x": "2025", "y": 3}
@@ -3617,7 +3707,7 @@ mod tests {
             assert!(error.contains("must be a number"), "{error}");
         }
 
-        let mut ability = json!({"from": "source", "chart_type": "bar", "x": "id", "y": "amount"});
+        let mut ability = json!({"from": "source", "call_id": "c6", "chart_type": "bar", "x": "id", "y": "amount"});
         tool("emit_ability_chart_card")
             .fill_from_data(&mut ability, &[json!({"id": "00123", "amount": 2})])
             .unwrap();

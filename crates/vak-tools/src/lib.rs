@@ -68,6 +68,8 @@ pub struct PresentationCard {
     /// The card block that built it, when its kind is a pack's
     /// (docs/design/91-presentation-capabilities.md §2).
     pub block: Option<String>,
+    /// Exact ability invocation whose result supplied this card's data.
+    pub data_call_id: Option<String>,
 }
 
 /// What a tool returns. `content` is the whole result: a tool never shortens
@@ -321,6 +323,7 @@ pub fn grounds_held(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallData {
     pub from: &'static str,
+    pub call_id: &'static str,
     pub list: &'static str,
     pub filled: &'static [&'static str],
 }

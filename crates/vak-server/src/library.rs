@@ -1254,14 +1254,33 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
 async fn version_bytes(
     State(state): State<AppState>,
     Path((id, version)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
 ) -> Response {
     let Ok(version) = vak_session::ids::VersionId::parse(&version) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let artifacts = state.core.artifacts();
+    let artifact = match artifacts.try_get(&id) {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let Some(found) = artifact.versions.iter().find(|found| found.id == version) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if discusser(
+        &state,
+        &principal,
+        &artifact,
+        found,
+        vak_core::grants::Role::Viewer,
+    )
+    .is_err()
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let actor = crate::request_actor(&state);
     let read = tokio::task::spawn_blocking(move || {
-        let artifact = artifacts.get(&id)?;
         let bytes = artifacts.bytes(&artifact, &version).ok()?;
         // What a later Put back was made from (doc 82 §7).
         if let Err(error) = artifacts.record(artifact.id, ArtifactStep::Downloaded { version }, None, Some(actor)) {
@@ -1297,6 +1316,120 @@ async fn version_bytes(
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+#[derive(serde::Deserialize)]
+struct PageResourceQuery {
+    path: String,
+}
+
+fn resource_ref(bytes: &[u8], path: &str) -> Option<(String, vak_session::ids::VersionId)> {
+    let page: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let reference = page.get("resource_context")?.get("resources")?.get(path)?;
+    Some((
+        reference.get("artifact")?.as_str()?.to_string(),
+        vak_session::ids::VersionId::parse(reference.get("version")?.as_str()?).ok()?,
+    ))
+}
+
+fn resource_response(
+    state: &AppState,
+    page: &vak_core::artifacts::Artifact,
+    version: &vak_session::ids::VersionId,
+    path: &str,
+) -> Response {
+    let Ok(page_bytes) = state.core.artifacts().bytes(page, version) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some((artifact_id, resource_version)) = resource_ref(&page_bytes, path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let artifacts = state.core.artifacts();
+    let artifact = match artifacts.try_get(&artifact_id) {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if !artifact
+        .versions
+        .iter()
+        .any(|found| found.id == resource_version)
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let content_type = crate::raw_mime_for(std::path::Path::new(&artifact.path)).to_string();
+    match artifacts.bytes(&artifact, &resource_version) {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, content_type),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// Reads only a recorded resource named by the saved page version. The page's
+/// own audience check is the authority for the captured reference.
+async fn page_resource(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<PageResourceQuery>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
+) -> Response {
+    let Ok(version) = vak_session::ids::VersionId::parse(&version) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let page = match state.core.artifacts().try_get(&id) {
+        Ok(Some(page)) => page,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if page.kind != vak_core::artifacts::ArtifactKind::Page {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(found) = page.versions.iter().find(|found| found.id == version) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if discusser(
+        &state,
+        &principal,
+        &page,
+        found,
+        vak_core::grants::Role::Viewer,
+    )
+    .is_err()
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    resource_response(&state, &page, &version, &query.path)
+}
+
+/// Shared readers may fetch only references sealed into a version their
+/// bearer grant currently shows. A request cannot name a resource artifact.
+async fn shared_page_resource(
+    State(state): State<AppState>,
+    Path(version): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<PageResourceQuery>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
+) -> Response {
+    let Ok(version) = vak_session::ids::VersionId::parse(&version) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (grant, page) = match guest(&state, &principal) {
+        Ok(found) => found,
+        Err(status) => return status.into_response(),
+    };
+    if page.kind != vak_core::artifacts::ArtifactKind::Page
+        || !shown(&grant, &page)
+            .iter()
+            .any(|(_, found)| found.id == version)
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    resource_response(&state, &page, &version, &query.path)
 }
 
 #[derive(serde::Deserialize)]
@@ -1460,7 +1593,7 @@ async fn person_version(
     let Some(artifact) = state.core.artifacts().get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let bytes = match (body.text, body.data) {
+    let mut bytes = match (body.text, body.data) {
         (Some(text), None) => text.into_bytes(),
         (None, Some(data)) => match base64::engine::general_purpose::STANDARD.decode(data.trim()) {
             Ok(bytes) => bytes,
@@ -1478,6 +1611,18 @@ async fn person_version(
             );
         }
     };
+    // Only `record_page` may mint the resource context. A person-uploaded
+    // page version cannot name arbitrary artifacts and then share those
+    // references through the page's audience.
+    if artifact.kind == vak_core::artifacts::ArtifactKind::Page
+        && let Ok(mut page) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        && let Some(object) = page.as_object_mut()
+    {
+        object.remove("resource_context");
+        if let Ok(clean) = serde_json::to_vec(&page) {
+            bytes = clean;
+        }
+    }
     let parent = match body.parent {
         Some(parent) => match artifact
             .versions
@@ -1558,7 +1703,11 @@ struct AnswerSave {
 /// conversation drew them (docs/design/98 §12); a single card is never saved
 /// alone. An answer that delivered a file has that file in the Library
 /// already.
-async fn save_answer(State(state): State<AppState>, Json(body): Json<AnswerSave>) -> Response {
+async fn save_answer(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
+    Json(body): Json<AnswerSave>,
+) -> Response {
     let Some(log) = crate::open_historical_session(&state, &body.session) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -1567,7 +1716,15 @@ async fn save_answer(State(state): State<AppState>, Json(body): Json<AnswerSave>
         return StatusCode::NOT_FOUND.into_response();
     };
     let actor = Some(crate::request_actor(&state));
-    match record_page(&state, None, &page, &body.session, &body.turn, actor) {
+    match record_page_authorized(
+        &state,
+        None,
+        &page,
+        &body.session,
+        &body.turn,
+        actor,
+        Some(&principal),
+    ) {
         Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response(),
         Err(error) => share_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
     }
@@ -1584,7 +1741,18 @@ pub(crate) fn record_page(
     turn: &str,
     actor: Option<vak_session::ids::PrincipalId>,
 ) -> Result<vak_session::ids::ArtifactId, Box<dyn std::error::Error + Send + Sync>> {
-    let bytes = page.to_bytes()?;
+    record_page_authorized(state, onto, page, session, turn, actor, None)
+}
+
+fn record_page_authorized(
+    state: &AppState,
+    onto: Option<&vak_core::artifacts::Artifact>,
+    page: &vak_delivery::page::Page,
+    session: &str,
+    turn: &str,
+    actor: Option<vak_session::ids::PrincipalId>,
+    principal: Option<&crate::AuthenticatedPrincipal>,
+) -> Result<vak_session::ids::ArtifactId, Box<dyn std::error::Error + Send + Sync>> {
     let artifacts = state.core.artifacts();
     let (id, parent) = match onto {
         Some(artifact) => (artifact.id, artifact.head().map(|head| head.id)),
@@ -1608,6 +1776,23 @@ pub(crate) fn record_page(
             (id, None)
         }
     };
+    // A saved page carries only references to versions Vak already recorded.
+    // The reference map is sealed into this page version, so later reads do
+    // not consult a live workspace or whichever conversation happens to be
+    // open in the client.
+    let mut page_bytes: serde_json::Value = serde_json::from_slice(&page.to_bytes()?)?;
+    let source_space = crate::read_historical_header(state, session).map(|header| {
+        header
+            .space
+            .map(|space| space.to_string())
+            .unwrap_or_else(|| vak_session::trace::local::space(&header.contract_cwd()).to_string())
+    });
+    let refs = page_resource_refs(state, page, source_space.as_deref(), principal)?;
+    page_bytes["resource_context"] = serde_json::json!({
+        "artifact": id.to_string(),
+        "resources": refs,
+    });
+    let bytes = serde_json::to_vec(&page_bytes)?;
     let version = artifacts.version(
         id,
         NewVersion {
@@ -1624,6 +1809,127 @@ pub(crate) fn record_page(
     )?;
     artifacts.record(id, ArtifactStep::Saved { version }, None, actor)?;
     Ok(id)
+}
+
+/// Find stable references for paths named by a page's cards. Only the
+/// artifacts rollup is consulted; unresolved paths remain unavailable.
+fn page_resource_refs(
+    state: &AppState,
+    page: &vak_delivery::page::Page,
+    source_space: Option<&str>,
+    principal: Option<&crate::AuthenticatedPrincipal>,
+) -> Result<serde_json::Map<String, serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
+    let Some(space) = source_space else {
+        return Ok(serde_json::Map::new());
+    };
+    let artifacts = state.core.artifacts();
+    let mut paths = std::collections::BTreeMap::<String, Option<String>>::new();
+    let value = serde_json::to_value(page)?;
+    fn collect(
+        value: &serde_json::Value,
+        paths: &mut std::collections::BTreeMap<String, Option<String>>,
+    ) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                let media_source = fields
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|kind| matches!(kind, "image" | "video" | "audio"))
+                    || fields.get("primitive").and_then(serde_json::Value::as_str) == Some("media")
+                    || fields.get("type").and_then(serde_json::Value::as_str) == Some("media");
+                let saved_version = fields
+                    .get("status")
+                    .and_then(|status| status.get("saved_as"))
+                    .and_then(|saved| saved.get("version_id"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                for (key, value) in fields {
+                    if (matches!(key.as_str(), "path" | "artifact_path" | "url")
+                        || (key == "source" && media_source))
+                        && let Some(text) = value.as_str()
+                    {
+                        let text = text.trim();
+                        let has_scheme = text.split_once(':').is_some_and(|(scheme, _)| {
+                            !scheme.is_empty()
+                                && scheme.chars().enumerate().all(|(index, ch)| {
+                                    ch.is_ascii_alphabetic()
+                                        || (index > 0
+                                            && (ch.is_ascii_digit()
+                                                || matches!(ch, '+' | '-' | '.')))
+                                })
+                        });
+                        if !text.is_empty()
+                            && !has_scheme
+                            && !text.starts_with('/')
+                            && !text.starts_with("//")
+                            && !text
+                                .split(['/', '\\'])
+                                .any(|part| part == ".." || part == ".")
+                        {
+                            let version = (key == "path").then(|| saved_version.clone()).flatten();
+                            paths
+                                .entry(text.to_string())
+                                .and_modify(|existing| {
+                                    if existing.is_none() {
+                                        *existing = version.clone();
+                                    }
+                                })
+                                .or_insert(version);
+                        }
+                    }
+                    collect(value, paths);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                values.iter().for_each(|value| collect(value, paths))
+            }
+            _ => {}
+        }
+    }
+    collect(&value, &mut paths);
+    const MAX_SAVED_PAGE_RESOURCE_REFS: usize = 128;
+    const MAX_SAVED_PAGE_RESOURCE_BYTES: u64 = 16 * 1024 * 1024;
+    if paths.len() > MAX_SAVED_PAGE_RESOURCE_REFS {
+        return Err("the page names too many file resources to save".into());
+    }
+    let mut refs = serde_json::Map::new();
+    for (path, exact_version) in paths {
+        let id = vak_core::artifacts::artifact_id(space, &path);
+        let Some(artifact) = artifacts.try_get(&id.to_string())? else {
+            continue;
+        };
+        let version = match exact_version.as_deref() {
+            Some(id) => artifact
+                .versions
+                .iter()
+                .find(|version| version.id.to_string() == id),
+            None => artifact.head(),
+        }
+        .filter(|version| version.is_present());
+        let Some(version) = version else {
+            continue;
+        };
+        if version.size > MAX_SAVED_PAGE_RESOURCE_BYTES {
+            continue;
+        }
+        if principal.is_some_and(|principal| {
+            discusser(
+                state,
+                principal,
+                &artifact,
+                version,
+                vak_core::grants::Role::Viewer,
+            )
+            .is_err()
+        }) {
+            continue;
+        }
+        refs.insert(
+            path,
+            serde_json::json!({ "artifact": id, "version": version.id }),
+        );
+    }
+    Ok(refs)
 }
 
 // ---- Sharing (plan M8.4a, docs/design/82-library.md §8) --------------------
@@ -2178,7 +2484,10 @@ async fn shared_bytes(
     match state.core.artifacts().bytes(&artifact, &found.id) {
         Ok(bytes) => (
             [
-                (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+                (
+                    header::CONTENT_TYPE,
+                    crate::raw_mime_for(std::path::Path::new(&artifact.path)).to_string(),
+                ),
                 (header::CONTENT_DISPOSITION, "attachment".to_string()),
                 (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
             ],
@@ -2230,6 +2539,10 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/library/{id}", get(get_one))
         .route("/library/{id}/versions/{version}", get(version_bytes))
         .route(
+            "/library/{id}/versions/{version}/resources",
+            get(page_resource),
+        )
+        .route(
             "/library/{id}/versions/{version}/origin",
             get(version_origin),
         )
@@ -2280,6 +2593,10 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/library/{id}/{action}", post(change))
         .route("/shared/artifact", get(shared_view))
         .route("/shared/artifact/versions/{version}", get(shared_bytes))
+        .route(
+            "/shared/artifact/versions/{version}/resources",
+            get(shared_page_resource),
+        )
         .route("/shared/artifact/comments", post(shared_comment))
 }
 
@@ -2313,6 +2630,77 @@ mod tests {
         );
     }
     use vak_core::artifacts::ArtifactKind;
+
+    #[test]
+    fn a_saved_page_does_not_replace_a_missing_exact_resource_version_with_head() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::spaces::bind(dir.path()).unwrap();
+        let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+        let state = AppState::new(core.clone());
+        let source_space = vak_session::trace::local::space(core.cwd()).to_string();
+        let source = core
+            .artifacts()
+            .declare(
+                &source_space,
+                "vak",
+                "asset.png",
+                ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        core.artifacts()
+            .version(
+                source,
+                NewVersion {
+                    parent: None,
+                    bytes: b"latest bytes",
+                    source: VersionSource::Person,
+                },
+                None,
+                None,
+            )
+            .unwrap();
+        let page = vak_delivery::page::Page::new(
+            "Page".into(),
+            vec![vak_delivery::OutputItem {
+                id: "item-1".into(),
+                timestamp: "now".into(),
+                turn_id: "turn".into(),
+                role: vak_delivery::OutputRole::Assistant,
+                kind: vak_delivery::OutputKind::Artifact,
+                status: vak_delivery::OutputStatus::Succeeded,
+                outcome: None,
+                content: vak_delivery::OutputContent::Artifact {
+                    artifact: vak_delivery::ArtifactRef {
+                        name: "asset.png".into(),
+                        path: Some("asset.png".into()),
+                        media_type: Some("image/png".into()),
+                        description: None,
+                        size_bytes: None,
+                        status: Some(vak_delivery::presentation::ArtifactStatus::Draft {
+                            version: 1,
+                            saved_as: Some(vak_delivery::presentation::VersionFile {
+                                version_id: "ver_01920000-0000-7000-8000-00000000aaaa".into(),
+                                path: "asset.png".into(),
+                            }),
+                        }),
+                    },
+                },
+                provenance: None,
+                actions: Vec::new(),
+                card_state: None,
+                fallback_text: String::new(),
+            }],
+            None,
+            "Page".into(),
+        );
+        let refs = page_resource_refs(&state, &page, Some(&source_space), None).unwrap();
+        assert!(!refs.contains_key("asset.png"));
+    }
 
     #[test]
     fn an_attached_artifact_is_told_from_its_records_and_only_in_its_place() {

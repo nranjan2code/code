@@ -589,7 +589,8 @@ pub fn promote(
                 format!("proposal '{id}' is a skill with a program; promote it where the Library is open")
             })?;
             let found = library
-                .get(&artifact)
+                .try_get(&artifact)
+                .map_err(|_| format!("proposal '{id}' Library history could not be read"))?
                 .ok_or_else(|| format!("proposal '{id}' names a Library skill that is gone"))?;
             let version = found
                 .versions

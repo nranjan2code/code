@@ -9,6 +9,13 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-18
 
+- The maintainer chose encryption for the derived search catalog too,
+  accepting the implementation/performance work. Searchable projections,
+  journal/WAL and temporary-file behavior are included in the at-rest
+  confidentiality boundary; a plaintext SQLite catalog is not the accepted
+  final policy. Implementation and acceptance are recorded in the
+  [hardening plan](plans/architecture-and-presentation-hardening-plan.md).
+
 - During the Canvas continuation the maintainer requested no full gate
   ("we dont need gate right now"). This continuation uses focused tests,
   browser checks where available, bundle builds and focused Clippy; no

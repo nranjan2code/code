@@ -9,7 +9,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
-use vak_session::effects::{EffectRecord, EffectStatus, Reconciled};
+use vak_session::effects::{EffectStatus, Reconciled};
 use vak_session::ids::{EffectId, RunId};
 
 use crate::AppState;
@@ -20,6 +20,7 @@ pub(crate) struct EffectsQuery {
     run: Option<String>,
     state: Option<EffectStatus>,
     limit: Option<usize>,
+    cursor: Option<String>,
 }
 
 fn error(status: StatusCode, message: impl std::fmt::Display) -> Response {
@@ -42,17 +43,31 @@ pub(crate) async fn list(
         Ok(run) => run,
         Err(_) => return error(StatusCode::BAD_REQUEST, "not a run id"),
     };
-    match state.core.effects().list() {
-        Ok(effects) => {
-            let effects: Vec<EffectRecord> = effects
-                .into_iter()
-                .filter(|effect| run.is_none_or(|run| effect.run == Some(run)))
-                .filter(|effect| query.state.is_none_or(|status| effect.status == status))
-                .take(query.limit.unwrap_or(200).min(1000))
-                .collect();
-            Json(serde_json::json!({ "effects": effects })).into_response()
-        }
-        Err(failure) => error(StatusCode::INTERNAL_SERVER_ERROR, failure),
+    let effects = state.core.effects();
+    let status = query.state;
+    let limit = query.limit.unwrap_or(200).clamp(1, 1000);
+    let cursor = query.cursor;
+    if cursor
+        .as_deref()
+        .is_some_and(|cursor| vak_session::effects::Effects::validate_page_cursor(cursor).is_err())
+    {
+        return error(StatusCode::BAD_REQUEST, "invalid effects cursor");
+    }
+    match tokio::task::spawn_blocking(move || {
+        effects.list_page(run, status, limit, cursor.as_deref())
+    })
+    .await
+    {
+        Ok(Ok(page)) => Json(serde_json::json!({
+            "effects": page.effects,
+            "next_cursor": page.next_cursor,
+        }))
+        .into_response(),
+        Ok(Err(failure)) => error(StatusCode::INTERNAL_SERVER_ERROR, failure),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "effects lookup could not finish",
+        ),
     }
 }
 
@@ -61,10 +76,15 @@ pub(crate) async fn detail(State(state): State<AppState>, Path(id): Path<String>
         Ok(id) => id,
         Err(response) => return *response,
     };
-    match state.core.effects().get(id) {
-        Ok(Some(effect)) => Json(effect).into_response(),
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(failure) => error(StatusCode::INTERNAL_SERVER_ERROR, failure),
+    let effects = state.core.effects();
+    match tokio::task::spawn_blocking(move || effects.get(id)).await {
+        Ok(Ok(Some(effect))) => Json(effect).into_response(),
+        Ok(Ok(None)) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Err(failure)) => error(StatusCode::INTERNAL_SERVER_ERROR, failure),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "effect lookup could not finish",
+        ),
     }
 }
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { formatChartNumber, niceTicks, scalePosition } from "../src/components/cards/chartScale.ts";
+import { chartAxis, chartSegments, formatChartNumber, niceTicks, scalePosition } from "../src/components/cards/chartScale.ts";
 
 // The live chart that showed 0, 44, 88 for three percentages: its axis is
 // round numbers that reach past the top value.
@@ -54,3 +54,19 @@ for (const value of [Number.MIN_VALUE, -Number.MIN_VALUE, Number.MAX_VALUE, -Num
 }
 assert.equal(formatChartNumber(-0), "0");
 console.log("chart scale ok");
+
+assert.deepEqual(chartAxis(["001", "10", "2"], "category").keys, ["001", "10", "2"]);
+assert.deepEqual(chartAxis(["10", "0", "1"], "number"), { keys: ["0", "1", "10"], positions: [0, 0.1, 1], valid: true });
+assert.equal(chartAxis(["001", "1"], "number").valid, false);
+assert.equal(chartAxis([1, "1"], "number").valid, false);
+assert.equal(chartAxis(["1,5"], "number").valid, false);
+assert.equal(chartAxis(["2026-01-01"], "time").valid, false);
+assert.deepEqual(chartAxis(["2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z", "2026-01-01T10:00:00Z"], "time").positions, [0, 0.1, 1]);
+assert.deepEqual(chartAxis([Number.MAX_VALUE, -Number.MAX_VALUE], "number").positions, [0, 1]);
+assert.deepEqual(chartAxis([5], "number").positions, [0.5]);
+assert.deepEqual(chartAxis([], "number").positions, []);
+assert.deepEqual(chartSegments([null, 1, 2, null, 4, null, NaN, 7]), [[{ i: 1, y: 1 }, { i: 2, y: 2 }], [{ i: 4, y: 4 }], [{ i: 7, y: 7 }]]);
+
+assert.equal(chartAxis(["2026-02-31T00:00:00Z"], "time").valid, false);
+assert.equal(chartAxis(["2026-01-01T24:00:00Z"], "time").valid, false);
+assert.equal(chartAxis(["2024-02-29T23:59:59+05:30"], "time").valid, true);

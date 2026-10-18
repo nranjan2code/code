@@ -15,6 +15,10 @@ impl SpendReservationId {
     pub fn new() -> Self {
         Self(uuid::Uuid::now_v7())
     }
+
+    pub fn as_str(self) -> String {
+        self.0.hyphenated().to_string()
+    }
 }
 
 impl Default for SpendReservationId {

@@ -1467,9 +1467,16 @@ fn snapshot_inner(
                                     // card, armed retry or not: identical content has
                                     // nothing to supersede and nothing to add.
                                     if has_card_entry
-                                        && !seen_cards.insert(
+                                        && !seen_cards.insert(format!(
+                                            "{}:{}",
                                             serde_json::to_string(&output).unwrap_or_default(),
-                                        )
+                                            presentation_by_tool_use_id
+                                                .get(id)
+                                                .and_then(|(_, record)| record
+                                                    .data_call_id
+                                                    .as_deref())
+                                                .unwrap_or_default()
+                                        ))
                                     {
                                         continue;
                                     }
@@ -1836,9 +1843,14 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
             let Some(named) = named_of(item) else {
                 continue;
             };
-            if let Some(section) = sections.iter_mut().find(|section| {
-                section.form == "card" && section.name.trim().eq_ignore_ascii_case(&named)
-            }) {
+            if let Some(section) = sections
+                .iter_mut()
+                .find(|section| section.name.trim().eq_ignore_ascii_case(&named))
+            {
+                // The model can satisfy a planned text deliverable with a
+                // card. The outline follows the recorded delivery, not the
+                // plan's initial format preference.
+                section.form = "card".into();
                 section.items.push(item.id.clone());
             }
         }
@@ -2628,12 +2640,13 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 fallback_text: reason,
             },
         }),
-        AgentEvent::RunFinished { is_error, .. } => Some(OutputStreamEvent::ItemCompleted {
+        AgentEvent::RunFinished { outcome, .. } => Some(OutputStreamEvent::ItemCompleted {
             item_id: "live-assistant".into(),
-            status: if is_error {
-                OutputStatus::Failed
-            } else {
-                OutputStatus::Succeeded
+            status: match outcome {
+                vak_agent::AgentRunOutcome::Completed => OutputStatus::Succeeded,
+                vak_agent::AgentRunOutcome::Stopped => OutputStatus::Cancelled,
+                vak_agent::AgentRunOutcome::MaxTurns => OutputStatus::Partial,
+                vak_agent::AgentRunOutcome::Failed => OutputStatus::Failed,
             },
         }),
         _ => None,
@@ -2673,6 +2686,11 @@ pub(crate) fn project_frame(
     }
     apply_stream_event(timeline, event.clone());
     timeline.cursor = Some(format!("live:{sequence}"));
+    // The runtime consumed the accumulated snapshot above. Transport only
+    // the delta; resync/settlement supplies an authoritative full snapshot.
+    if let OutputStreamEvent::TextDelta { text, .. } = &mut event {
+        text.clear();
+    }
     // No `timeline.clone()` here: a live frame carries only its own small
     // delta. The per-handle projector in `register_handle` applies every
     // event through this function whether or not a client is subscribed, so
@@ -2727,15 +2745,30 @@ pub(crate) fn apply_stream_event(timeline: &mut OutputTimeline, event: OutputStr
                 timeline.items.push(item);
             }
         }
-        OutputStreamEvent::TextDelta { item_id, text, .. } => {
+        OutputStreamEvent::TextDelta {
+            item_id,
+            delta,
+            text,
+        } => {
             if let Some(item) = timeline
                 .items
                 .iter_mut()
                 .find(|candidate| candidate.id == item_id)
             {
+                let text = if text.is_empty() {
+                    format!("{}{delta}", item.fallback_text)
+                } else {
+                    text
+                };
                 item.fallback_text = text.clone();
+                // The renderer already supports source-only live documents.
+                // Compile once on completion/durable settlement, rather than
+                // parsing every growing prefix on the stream's hot path.
                 item.content = OutputContent::Document {
-                    document: compile_markdown(text),
+                    document: PresentationDocument {
+                        source_markdown: text,
+                        ..Default::default()
+                    },
                 };
             }
         }
@@ -2836,6 +2869,115 @@ mod tests {
         assert!(frame.snapshot.is_none());
     }
 
+    #[test]
+    fn streamed_text_frames_send_deltas_and_preserve_partial_snapshots() {
+        let mut timeline = OutputTimeline::empty("stream-contract");
+        super::project_frame(
+            &mut timeline,
+            crate::events::SeqEvent {
+                seq: 1,
+                event: vak_agent::AgentEvent::TurnStart { turn: 0 },
+            },
+        );
+        for (index, (delta, text)) in [("Hello ", "Hello "), ("world", "Hello world")]
+            .into_iter()
+            .enumerate()
+        {
+            let frame = super::project_frame(
+                &mut timeline,
+                crate::events::SeqEvent {
+                    seq: index as u64 + 2,
+                    event: vak_agent::AgentEvent::Stream(vak_llm::StreamEvent::TextDelta {
+                        delta: delta.into(),
+                        partial: vak_llm::types::AssistantMessage {
+                            content: vec![ContentBlock::text(text)],
+                            ..vak_llm::types::AssistantMessage::empty("projection-fixture")
+                        },
+                    }),
+                },
+            )
+            .expect("text frame");
+            let wire = serde_json::to_value(&frame).expect("wire");
+            assert!(
+                wire["delta"].get("text").is_none(),
+                "no growing prefix on wire"
+            );
+            assert_eq!(wire["delta"]["delta"], delta);
+            let item = &timeline.items[0];
+            assert_eq!(item.fallback_text, text);
+            let OutputContent::Document { document } = &item.content else {
+                panic!("document")
+            };
+            assert_eq!(document.source_markdown, text);
+            assert!(document.blocks.is_empty(), "no prefix markdown compilation");
+        }
+        let resync = super::settled_frame(4, &timeline);
+        assert_eq!(
+            resync.snapshot.expect("resync").items[0].fallback_text,
+            "Hello world"
+        );
+    }
+
+    /// Local deterministic workload; prints measurements only when explicitly
+    /// requested. The baseline reconstructs the previous prefix compile/wire
+    /// behavior, while the changed path uses the real frame projector.
+    #[test]
+    #[ignore = "local performance measurement"]
+    fn measure_streaming_projection_prefix_work() {
+        const FRAMES: usize = 1000;
+        let chunk = "A measured **answer** with detail. ";
+        let mut text = String::new();
+        let mut baseline_bytes = 0;
+        let started = std::time::Instant::now();
+        for _ in 0..FRAMES {
+            text.push_str(chunk);
+            std::hint::black_box(vak_delivery::compile_markdown(text.clone()));
+            baseline_bytes += serde_json::to_vec(&serde_json::json!({"sequence": 1, "delta": {
+                "type": "text_delta", "item_id": "live-assistant-1", "delta": chunk, "text": text
+            }, "snapshot": null}))
+            .expect("baseline wire")
+            .len();
+        }
+        let baseline_time = started.elapsed();
+        let mut timeline = OutputTimeline::empty("stream-measurement");
+        super::project_frame(
+            &mut timeline,
+            crate::events::SeqEvent {
+                seq: 1,
+                event: vak_agent::AgentEvent::TurnStart { turn: 0 },
+            },
+        );
+        text.clear();
+        let mut wire_bytes = 0;
+        let started = std::time::Instant::now();
+        for index in 0..FRAMES {
+            text.push_str(chunk);
+            let frame = super::project_frame(
+                &mut timeline,
+                crate::events::SeqEvent {
+                    seq: index as u64 + 2,
+                    event: vak_agent::AgentEvent::Stream(vak_llm::StreamEvent::TextDelta {
+                        delta: chunk.into(),
+                        partial: vak_llm::types::AssistantMessage {
+                            content: vec![ContentBlock::text(text.clone())],
+                            ..vak_llm::types::AssistantMessage::empty("projection-fixture")
+                        },
+                    }),
+                },
+            )
+            .expect("frame");
+            wire_bytes += serde_json::to_vec(&frame).expect("wire").len();
+        }
+        eprintln!(
+            "frames={FRAMES} source_bytes={} reconstructed_prefix_baseline_bytes={baseline_bytes} delta_wire_bytes={wire_bytes} baseline_us={} changed_us={}",
+            text.len(),
+            baseline_time.as_micros(),
+            started.elapsed().as_micros()
+        );
+        assert_eq!(timeline.items[0].fallback_text, text);
+        assert!(wire_bytes < baseline_bytes / 10);
+    }
+
     /// The handle's live timeline is what `/presentation` serves while a run
     /// holds the ledger, so a page reloaded mid-turn draws the cards already
     /// recorded (docs/design/96, live turn).
@@ -2868,6 +3010,7 @@ mod tests {
             title: "Boil an egg".into(),
             identity_digest: String::new(),
             block: Some("steps".into()),
+            data_call_id: None,
         };
         super::project_frame(
             &mut timeline,
@@ -2925,6 +3068,7 @@ mod tests {
         let payload_digest = vak_session::types::payload_digest(&info.payload);
         log.append_presentation(vak_session::types::PresentationRecord {
             block: None,
+            data_call_id: None,
             turn_id,
             source,
             semantic_type: info.semantic_type,
@@ -3096,6 +3240,7 @@ mod tests {
             let entry = log
                 .append_presentation(vak_session::types::PresentationRecord {
                     block: None,
+                    data_call_id: None,
                     turn_id: turn_id.clone(),
                     source: vak_session::types::PresentationSource::Delegated {
                         tool_use_id: "task-1".into(),
@@ -5026,7 +5171,7 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_with_a_plan_has_an_outline_and_nothing_is_placed_by_position() {
+    fn actual_cards_fulfill_text_deliverables_without_positional_attribution() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut log = channel_log(&dir, "outline");
         log.append_message(MessageRecord {
@@ -5065,8 +5210,8 @@ mod tests {
             "p1",
             "plan",
             serde_json::json!({"deliverables": [
-                {"name": "comparison", "form": "card"},
-                {"name": "packing list", "form": "card"},
+                {"name": "comparison", "form": "text"},
+                {"name": "packing list", "form": "text"},
                 {"name": "advice", "form": "text"}
             ]}),
         );
@@ -5119,6 +5264,9 @@ mod tests {
             ["comparison", "packing list", "advice"],
             "plan order"
         );
+        assert_eq!(outline.sections[0].form, "card");
+        assert_eq!(outline.sections[1].form, "card");
+        assert_eq!(outline.sections[2].form, "text");
         assert_eq!(outline.sections[0].items, [item_of("c3")]);
         assert_eq!(outline.sections[1].items, [item_of("c1")]);
         assert_eq!(

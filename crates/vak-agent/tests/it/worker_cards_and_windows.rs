@@ -154,6 +154,7 @@ fn fake_rebuild() -> vak_agent::PresentationRebuild {
         Some(PresentationCard {
             presentation_id: None,
             block: Some(semantic_type.clone()),
+            data_call_id: None,
             semantic_type,
             skill_id: "test".into(),
             skill_version: "1".into(),
@@ -274,6 +275,7 @@ fn task_tool(dir: &tempfile::TempDir, provider: Arc<Scripted>, parent: &str) -> 
         hooks: None,
         revocation_check: None,
         presentation_rebuild: Some(fake_rebuild()),
+        child_services: None,
         mcp_tool_index: None,
         input_normalizer: None,
         read_only_tools: Vec::new(),

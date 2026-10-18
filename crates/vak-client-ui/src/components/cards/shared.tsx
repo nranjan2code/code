@@ -1,5 +1,6 @@
 import { Show, createContext, type JSX } from "solid-js";
 import { renderMarkdown } from "../../md";
+import type { FileResponse } from "../../api";
 
 /** A stored card payload: the form's fields, as the host built them. */
 export type Payload = Record<string, unknown>;
@@ -20,6 +21,14 @@ export const CardIdContext = createContext<string | undefined>();
 /** The conversation a card belongs to: a preview reads its files from that
  *  conversation's folder, which is its Agent's own. */
 export const PresentationSessionContext = createContext<string | undefined>();
+
+/** A saved page reads only versions sealed into that page, never the active
+ * conversation's workspace. */
+export const PresentationPageResourceContext = createContext<{
+  readFile(path: string): Promise<FileResponse>;
+  readFileRaw(path: string): Promise<string>;
+  readFileBytes(path: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }>;
+}>();
 
 export const record = (value: unknown): Payload =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Payload) : {};

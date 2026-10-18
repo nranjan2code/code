@@ -855,6 +855,91 @@ async fn abort_mid_stream_returns_partial_and_persists_it() {
 }
 
 #[tokio::test]
+async fn abort_partial_survives_an_unwritable_history_with_a_visible_marker() {
+    let mut h = harness(
+        vec![ScriptedResponse::Error(LlmError::Aborted {
+            partial: Some(Box::new(assistant_text("partial work"))),
+        })],
+        vec![],
+    );
+    let session_path = h.agent.session.lock().await.path().to_path_buf();
+    *h.provider.readonly_on_stream.lock().unwrap() = Some((session_path, h.agent.session.clone()));
+
+    let outcome = h
+        .agent
+        .run(
+            "start",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    let TurnOutcome::Aborted {
+        partial: Some(partial),
+    } = outcome
+    else {
+        panic!("abort should retain partial output: {outcome:?}");
+    };
+    let text = partial.text_content();
+    assert!(text.contains("partial work"), "{text}");
+    assert!(
+        text.contains("could not be saved to conversation history"),
+        "{text}"
+    );
+    let session = h.agent.session.lock().await;
+    assert!(
+        !session
+            .derive_messages()
+            .iter()
+            .any(|message| message.text_content().contains("partial work")),
+        "failed history append must not claim the partial was persisted"
+    );
+}
+
+#[tokio::test]
+async fn fence_card_write_failure_does_not_deliver_a_successful_turn() {
+    let fence =
+        "Here's the chart.\n\n```vak\n{\"semantic_type\":\"chart\",\"title\":\"Evidence\"}\n```";
+    let mut h = harness(
+        vec![ScriptedResponse::Message(assistant_text(fence))],
+        vec![],
+    );
+    let path = h.agent.session.lock().await.path().to_path_buf();
+    let session = h.agent.session.clone();
+    h.agent.config.presentation_rebuild = Some(Arc::new(move |_name, input| {
+        if let Ok(mut log) = session.try_lock() {
+            *log = SessionLog::open_read_only(path.clone()).ok()?;
+        }
+        Some(vak_tools::PresentationCard {
+            presentation_id: None,
+            semantic_type: "chart".into(),
+            skill_id: "test".into(),
+            skill_version: "1".into(),
+            schema_version: 1,
+            payload: input.clone(),
+            title: "Evidence".into(),
+            identity_digest: "evidence".into(),
+            block: Some("chart".into()),
+            data_call_id: None,
+        })
+    }));
+
+    let outcome = h
+        .agent
+        .run(
+            "show evidence",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Failed { error } if error.to_string().contains("session write failed")),
+        "a failed presentation append must fail the turn: {outcome:?}"
+    );
+}
+
+#[tokio::test]
 async fn max_turns_guard_stops_runaway_loops() {
     let responses: Vec<_> = (0..6)
         .map(|_| {

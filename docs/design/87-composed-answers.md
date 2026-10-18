@@ -12,6 +12,16 @@ doc 30-render-architecture §30.1 (twelve `emit_*_card` tools over 109
 domain-labelled `semantic_type`s); the rendering contract of
 `vak-presentation` and doc 67 stays.
 
+## Delivery attribution and literal prose
+
+Outline sections use the recorded card’s explicit deliverable name even
+when the plan requested text. Their displayed form reflects actual card
+delivery; unrelated prose is not guessed into several text deliverables.
+User/assistant words and literal marker examples survive client cleanup.
+Runtime control/authorship filtering belongs to the typed server projection,
+not regular expressions over words such as `completed`, `Outcome`, or XML
+examples. Typed `vak` fences retain their explicit card parsing contract.
+
 ## Projected prose and card boundaries
 
 The client composes adjacent projected answer parts with one author header

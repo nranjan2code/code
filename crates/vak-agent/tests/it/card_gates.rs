@@ -177,7 +177,10 @@ impl Tool for FakeAbility {
     fn answers_data(&self) -> bool {
         true
     }
-    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+    async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        if args.get("fail").and_then(serde_json::Value::as_bool) == Some(true) {
+            return ToolOutput::error(Fault::Tool, "test ability failure");
+        }
         let rows: Vec<serde_json::Value> = (0..300)
             .map(|at| serde_json::json!({"city": format!("City {at}"), "people": at * 7}))
             .collect();
@@ -206,6 +209,7 @@ impl Tool for FakeAbilityTable {
     fn data_of_call(&self) -> Option<vak_tools::CallData> {
         Some(vak_tools::CallData {
             from: "from",
+            call_id: "call_id",
             list: "list",
             filled: &["rows"],
         })
@@ -618,34 +622,40 @@ async fn a_retired_name_is_told_what_replaced_it() {
     assert!(told.contains(r#""available_tools""#), "{told}");
 }
 
-/// A card filled from an ability's answer shows every record the call
-/// answered, whatever the model wrote; one naming an ability no call
-/// answered is refused with the abilities that did (docs/design/93 R5).
+/// A card pins an exact ability invocation. A later failure does not fall
+/// back to earlier success; an explicitly selected earlier success is stable.
 #[tokio::test]
-async fn an_ability_card_shows_every_record_its_call_answered() {
+async fn ability_card_uses_only_its_selected_call_snapshot() {
     let dir = tempdir().unwrap();
     let (mut agent, _) = build_agent(
         &dir,
         "pc-ability-card",
         vec![
-            tool_call_msg("u0", "emit_ability_table_card", serde_json::json!({"from": "census", "list": "rows"})),
             tool_call_msg("a1", "census", serde_json::json!({})),
+            tool_call_msg("a3", "census", serde_json::json!({})),
+            tool_call_msg("a2", "census", serde_json::json!({"fail": true})),
+            tool_call_msg("u0", "emit_ability_table_card", serde_json::json!({"from": "census", "call_id": "a2", "list": "rows"})),
             // One step with a refused card beside the accepted one: a step
             // of accepted cards alone is the answer and ends the turn.
             {
                 let mut step = tool_call_msg(
                     "u1",
                     "emit_ability_table_card",
-                    serde_json::json!({"from": "census", "list": "rows", "rows": [{"city": "Made up", "people": 1}]}),
+                    serde_json::json!({"from": "census", "call_id": "a1", "list": "rows", "rows": [{"city": "Made up", "people": 1}]}),
                 );
                 step.content.push(ContentBlock::ToolUse {
                     id: "u2".into(),
                     name: "emit_ability_table_card".into(),
-                    input: serde_json::json!({"from": "weather", "list": "rows"}),
+                    input: serde_json::json!({"from": "weather", "call_id": "a1", "list": "rows"}),
+                });
+                step.content.push(ContentBlock::ToolUse {
+                    id: "u4".into(),
+                    name: "emit_ability_table_card".into(),
+                    input: serde_json::json!({"from": "census", "call_id": "a3", "list": "rows"}),
                 });
                 step
             },
-            tool_call_msg("u3", "emit_ability_table_card", serde_json::json!({"from": "census", "list": "towns"})),
+            tool_call_msg("u3", "emit_ability_table_card", serde_json::json!({"from": "census", "call_id": "pending", "list": "rows"})),
             text_msg("Here are the cities."),
         ],
     )
@@ -673,7 +683,7 @@ async fn an_ability_card_shows_every_record_its_call_answered() {
     };
     let (refused, failed) = result("u0");
     assert!(
-        failed && refused.contains("No ability has answered"),
+        failed && refused.contains("selected call `a2`") && refused.contains("failed"),
         "{refused}"
     );
     let (shown, failed) = result("u1");
@@ -690,7 +700,7 @@ async fn an_ability_card_shows_every_record_its_call_answered() {
     );
     let (refused, failed) = result("u3");
     assert!(
-        failed && refused.contains("`towns`") && refused.contains("`rows`"),
+        failed && refused.contains("call ID `pending`") && refused.contains("no completed result"),
         "{refused}"
     );
 }

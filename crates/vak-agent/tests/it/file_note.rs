@@ -248,8 +248,10 @@ async fn result_of_call(
 
 fn fixed_note() -> vak_agent::FileNote {
     Arc::new(|query: vak_agent::FileQuery<'_>| {
-        matches!(query, vak_agent::FileQuery::Path("porto-notes.docx"))
-            .then(|| "[file] `porto-notes.docx` is not in the workspace.".to_string())
+        Ok(
+            matches!(query, vak_agent::FileQuery::Path("porto-notes.docx"))
+                .then(|| "[file] `porto-notes.docx` is not in the workspace.".to_string()),
+        )
     })
 }
 
@@ -309,6 +311,22 @@ async fn a_path_the_record_says_nothing_about_gets_no_note() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unreadable_file_record_is_returned_as_a_tool_error() {
+    let note: vak_agent::FileNote = Arc::new(|_| Err("artifact_history_unavailable".into()));
+    let result = result_of_call(
+        vec![Arc::new(StoreFile { fail: false })],
+        "store_file",
+        json!({"path": "porto-notes.docx"}),
+        Some(note),
+    )
+    .await;
+    assert!(
+        result.starts_with("The file history could not be read; its current state is unknown."),
+        "{result}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn no_hook_adds_nothing() {
     let result = result_of_call(
         vec![Arc::new(StoreFile { fail: false })],
@@ -325,8 +343,10 @@ async fn no_hook_adds_nothing() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_listing_is_told_of_matching_files_the_folder_lacks() {
     let note: vak_agent::FileNote = Arc::new(|query: vak_agent::FileQuery<'_>| {
-        matches!(query, vak_agent::FileQuery::Pattern("**/*lisbon*"))
-            .then(|| "[file] Matching `**/*lisbon*` and not in the workspace yet:".to_string())
+        Ok(
+            matches!(query, vak_agent::FileQuery::Pattern("**/*lisbon*"))
+                .then(|| "[file] Matching `**/*lisbon*` and not in the workspace yet:".to_string()),
+        )
     });
     let result = result_of_call(
         vec![Arc::new(ListFiles)],

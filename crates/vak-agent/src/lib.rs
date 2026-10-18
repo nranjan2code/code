@@ -336,14 +336,23 @@ pub enum AgentEvent {
         projection: vak_session::work::WorkProjection,
     },
     RunFinished {
+        outcome: AgentRunOutcome,
+        /// Internal summary used by run/content records only. The client
+        /// projection never forwards it; it may contain provider details.
         summary: String,
-        /// Whether the run ended badly. Consumers must not have to sniff
-        /// `summary` for a "failed:" prefix to know something broke —
-        /// errors are values (see WorkerFinished above).
-        is_error: bool,
     },
     /// Live execution events from sandbox or bash commands.
     Sandbox(vak_tools::SandboxEvent),
+}
+
+/// A run's settled state for event consumers. Keep this independent of the
+/// internal summary, which may include provider error detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum AgentRunOutcome {
+    Completed,
+    Stopped,
+    MaxTurns,
+    Failed,
 }
 
 #[derive(Debug)]
@@ -355,6 +364,15 @@ pub enum TurnOutcome {
 }
 
 impl TurnOutcome {
+    pub fn agent_run_outcome(&self) -> AgentRunOutcome {
+        match self {
+            Self::Completed { .. } => AgentRunOutcome::Completed,
+            Self::Aborted { .. } => AgentRunOutcome::Stopped,
+            Self::MaxTurnsReached => AgentRunOutcome::MaxTurns,
+            Self::Failed { .. } => AgentRunOutcome::Failed,
+        }
+    }
+
     /// How this outcome settles the run that ran the turn (plan M4.2).
     pub fn run_outcome(&self) -> vak_session::runs::RunOutcome {
         use vak_session::runs::RunOutcome;
@@ -383,7 +401,33 @@ pub enum FileQuery<'a> {
 
 /// The lookup `AgentConfig::file_note` holds: what a call asked in, the
 /// note about the record's files out.
-pub type FileNote = Arc<dyn Fn(FileQuery<'_>) -> Option<String> + Send + Sync>;
+pub type FileNote = Arc<dyn Fn(FileQuery<'_>) -> Result<Option<String>, String> + Send + Sync>;
+
+/// Context supplied only after a child has its own durable session identity.
+#[derive(Clone)]
+pub struct ChildServiceContext {
+    pub session_id: String,
+    pub cwd: std::path::PathBuf,
+    pub agent_id: String,
+    pub agent_identity: Option<vak_session::types::AgentIdentity>,
+    pub trace: Option<vak_session::trace::TraceKey>,
+}
+
+/// Per-child callbacks bound by the host to that child's session and workspace.
+#[derive(Clone, Default)]
+pub struct ChildBoundServices {
+    pub artifacts: Option<Arc<dyn vak_tools::ArtifactSink>>,
+    pub file_note: Option<FileNote>,
+    pub before_effect: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub presentation_rebuild: Option<PresentationRebuild>,
+    pub history_recall: Option<HistoryRecall>,
+    pub history_refresh: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub workspace_delta: Option<Arc<dyn WorkspaceDelta>>,
+}
+
+/// Factory for child-bound services; ready-made parent callbacks must not be reused.
+pub type ChildServicesFactory =
+    Arc<dyn Fn(ChildServiceContext) -> Result<ChildBoundServices, String> + Send + Sync>;
 
 pub struct AgentConfig {
     /// The admitted result contract for this run. It is execution context,
@@ -445,6 +489,8 @@ pub struct AgentConfig {
     /// Where a successful call's declared deliverable is recorded (plan
     /// M8); `None` records nothing.
     pub artifacts: Option<Arc<dyn vak_tools::ArtifactSink>>,
+    /// Host factory for callbacks whose authority is scoped to a child run.
+    pub child_services: Option<ChildServicesFactory>,
     /// Workspace paths this run must not change: the source of a "Make
     /// another" request (plan M8.3b). A write, edit or `office_apply` that
     /// targets one is refused with a message the model can act on.
@@ -645,6 +691,7 @@ impl AgentConfig {
             hooks: None,
             revocation_check: None,
             artifacts: None,
+            child_services: None,
             protected_paths: Vec::new(),
             steps: vak_control::StepDefaults::shipped(),
             envelope_check: None,
@@ -1715,13 +1762,17 @@ impl Agent {
         if self.active_goal.is_some() {
             // Goal lifecycle opens the run (audit-only entry).
             let mut session = self.session.lock().await;
-            if let Some(g) = &self.active_goal {
-                let _ = session.append_goal(vak_session::types::GoalEntry {
+            if let Some(g) = &self.active_goal
+                && let Err(error) = session.append_goal(vak_session::types::GoalEntry {
                     goal_id: format!("goal-{}", chrono::Utc::now().timestamp_millis()),
                     objective: g.objective.clone(),
                     criteria: g.criteria.clone(),
                     status: vak_session::types::GoalStatus::Active,
-                });
+                })
+            {
+                return TurnOutcome::Failed {
+                    error: LlmError::Network(format!("goal record write failed: {error}")),
+                };
             }
         }
         let prompt_entry = self.session.lock().await.append_message(MessageRecord {
@@ -2281,14 +2332,20 @@ impl Agent {
                     let fingerprint = format!("{data:?}");
                     if logged_plan.as_deref() != Some(fingerprint.as_str()) {
                         logged_plan = Some(fingerprint);
-                        let _ = session.append_activity(vak_session::ActivityRecord {
+                        if let Err(error) = session.append_activity(vak_session::ActivityRecord {
                             activity_id: format!("context-plan-{}", uuid::Uuid::now_v7()),
                             kind: vak_session::ActivityKind::Diagnostic,
                             status: vak_session::ActivityStatus::Succeeded,
                             label: vak_session::CONTEXT_PLAN_LABEL.into(),
                             detail: None,
                             data,
-                        });
+                        }) {
+                            return TurnOutcome::Failed {
+                                error: LlmError::Network(format!(
+                                    "context plan write failed: {error}"
+                                )),
+                            };
+                        }
                     }
                 }
                 let must_call = self.must_call.take();
@@ -2401,10 +2458,12 @@ impl Agent {
                                     .lock()
                                     .await
                                     .append_receipt(ledger.take_receipt());
-                                let partial = partial.map(|boxed| *boxed);
-                                if let Some(p) = &partial {
-                                    let _ = self.append_assistant(p).await;
-                                }
+                                let partial = match partial.map(|boxed| *boxed) {
+                                    Some(partial) => {
+                                        Some(self.record_aborted_partial(partial).await)
+                                    }
+                                    None => None,
+                                };
                                 return TurnOutcome::Aborted { partial };
                             }
                             Err(e) if ledger.budget.remaining() == 0 => {
@@ -3056,9 +3115,12 @@ impl Agent {
                 // §10): only for the answer actually being accepted — every
                 // gate above has already passed, so this text will not be
                 // redone. A repair-nudged draft never reaches here.
-                if let Some(entry_id) = &response_entry_id {
-                    self.write_fence_presentations(&response.text_content(), entry_id)
-                        .await;
+                if let Some(entry_id) = &response_entry_id
+                    && let Err(error) = self
+                        .write_fence_presentations(&response.text_content(), entry_id)
+                        .await
+                {
+                    return nudge_write_failed(error);
                 }
                 return TurnOutcome::Completed { response };
             }
@@ -3613,7 +3675,20 @@ impl Agent {
         for (parent_id, record) in session.active_presentations() {
             if record.turn_id == turn_id {
                 parent_by_digest
-                    .entry(record.payload_digest.clone())
+                    .entry((
+                        record.payload_digest.clone(),
+                        record.data_call_id.clone(),
+                        record
+                            .data_call_id
+                            .as_ref()
+                            .and_then(|_| match &record.source {
+                                vak_session::types::PresentationSource::Delegated {
+                                    worker_session_id,
+                                    ..
+                                } => Some(worker_session_id.clone()),
+                                _ => None,
+                            }),
+                    ))
                     .or_insert(parent_id);
             }
         }
@@ -3641,7 +3716,14 @@ impl Agent {
                     let digest = vak_session::types::payload_digest(&payload);
                     let card_title = card.title.clone();
                     let label = format!("{} \"{}\"", card.semantic_type, card_title);
-                    if let Some(parent_id) = parent_by_digest.get(&digest).cloned() {
+                    let identity = (
+                        digest.clone(),
+                        card.data_call_id.clone(),
+                        card.data_call_id
+                            .as_ref()
+                            .map(|_| delegated.session_id.clone()),
+                    );
+                    if let Some(parent_id) = parent_by_digest.get(&identity).cloned() {
                         if let Some(child_id) = card.presentation_id {
                             child_to_parent.insert(child_id, parent_id.clone());
                         }
@@ -3665,13 +3747,14 @@ impl Agent {
                         title: card.title,
                         identity_digest: card.identity_digest,
                         block: card.block,
+                        data_call_id: card.data_call_id,
                     };
                     match session.append_presentation(record) {
                         Ok(entry) => {
                             if let Some(child_id) = card.presentation_id {
                                 child_to_parent.insert(child_id, entry.id.clone());
                             }
-                            parent_by_digest.insert(digest, entry.id.clone());
+                            parent_by_digest.insert(identity, entry.id.clone());
                             imported_parent_ids.insert(entry.id.clone());
                             listed.push(format!("- pres:{} {label}", entry.id));
                         }
@@ -3720,9 +3803,13 @@ impl Agent {
     /// mapped to a known card, or that fails validation, is silently
     /// skipped — the malformed-fence repair nudge (above, in the caller)
     /// already handles the "unparseable JSON" case separately.
-    async fn write_fence_presentations(&self, text: &str, message_entry_id: &str) {
+    async fn write_fence_presentations(
+        &self,
+        text: &str,
+        message_entry_id: &str,
+    ) -> Result<(), vak_session::SessionError> {
         let Some(rebuild) = self.config.presentation_rebuild.clone() else {
-            return;
+            return Ok(());
         };
         for body in vak_fence_bodies(text) {
             let Ok(fence_json) = serde_json::from_str::<Value>(body.trim()) else {
@@ -3773,9 +3860,11 @@ impl Agent {
                 title: info.title,
                 identity_digest: info.identity_digest,
                 block: info.block,
+                data_call_id: info.data_call_id,
             };
-            let _ = session.append_presentation(record);
+            session.append_presentation(record)?;
         }
+        Ok(())
     }
 
     /// Builds and appends this turn's `TurnCard` (docs/design/68-context-
@@ -5112,6 +5201,22 @@ impl Agent {
                 }),
             })
             .map(|entry| entry.id)
+    }
+
+    /// Preserve a provider's partial answer in memory even when the session
+    /// ledger became unwritable during an abort. The returned marker makes
+    /// that loss visible to the caller; it never claims the partial was saved.
+    async fn record_aborted_partial(&self, mut partial: AssistantMessage) -> AssistantMessage {
+        if let Err(error) = self.append_assistant(&partial).await {
+            tracing::warn!(
+                error_kind = %vak_telemetry::error_kind(&error),
+                "partial assistant output could not be recorded after abort"
+            );
+            partial.content.push(ContentBlock::text(
+                "[Partial output could not be saved to conversation history.]",
+            ));
+        }
+        partial
     }
 
     /// Writes a compaction packet and, on failure, records an optional
@@ -6628,7 +6733,7 @@ impl Agent {
 
     /// A card that shows what an ability answered (`Tool::data_of_call`,
     /// docs/design/93 R5) with its rows or points filled from that
-    /// ability's latest answer in this conversation, never from values the
+    /// exact recorded ability call, never from values the
     /// model copied; refused with what to fix when no call to it answered
     /// or its answer holds no list where the card said. Any other card as
     /// it came.
@@ -6645,19 +6750,40 @@ impl Agent {
                 .to_string()
         };
         let ability = argument(spec.from);
+        let call_id = argument(spec.call_id);
         let list = argument(spec.list);
+        if call_id.is_empty() {
+            return Err(format!(
+                "name the recorded call ID in `{}`; this card uses one exact ability result",
+                spec.call_id
+            ));
+        }
         let answers_data = |name: &str| {
             self.tool_named(name)
                 .is_some_and(|tool| tool.answers_data())
         };
         let session = self.session.lock().await;
-        let answer = answers_data(&ability)
-            .then(|| session.answer_of(&ability))
-            .flatten();
-        let Some(answer) = answer else {
-            let answered = session.tools_answered(answers_data);
-            return Err(vak_control::card_ability_not_answered(&ability, &answered));
+        let Some(evidence) = session.evidence(&call_id) else {
+            return Err(format!(
+                "call ID `{call_id}` has no completed result in this conversation; run the ability and make a new card with its recorded call ID"
+            ));
         };
+        if evidence.tool != ability {
+            return Err(format!(
+                "call ID `{call_id}` belongs to `{}`, but this card names `{ability}`; use the matching ability name or its call ID",
+                evidence.tool
+            ));
+        }
+        if !answers_data(&evidence.tool) {
+            return Err(format!(
+                "call ID `{call_id}` is not an ability that provides card data"
+            ));
+        }
+        if evidence.is_error {
+            return Err(format!(
+                "the selected call `{call_id}` to `{ability}` failed; run the ability again and make a new card with the new call ID"
+            ));
+        }
         drop(session);
         let keys_of = |value: &Value| -> Vec<String> {
             value
@@ -6666,7 +6792,7 @@ impl Agent {
                 .unwrap_or_default()
         };
         let answer: Value =
-            serde_json::from_str(vak_intent::control::clean_scaffolding(&answer).trim())
+            serde_json::from_str(vak_intent::control::clean_scaffolding(&evidence.content).trim())
                 .map_err(|_| vak_control::card_data_not_found(&ability, &list, &[]))?;
         let mut at = &answer;
         for key in list.split('.').filter(|key| !key.is_empty()) {
@@ -7031,6 +7157,7 @@ impl Agent {
             record.turn_id == turn_id
                 && replaced != Some(id.as_str())
                 && record.payload_digest == digest
+                && record.data_call_id == info.data_call_id
         }) {
             return (
                 ToolRunOutput::Ok(
@@ -7056,6 +7183,7 @@ impl Agent {
             title: info.title,
             identity_digest: info.identity_digest,
             block: info.block,
+            data_call_id: info.data_call_id,
         };
         match session.append_presentation(record) {
             Ok(entry) => {
@@ -8576,26 +8704,45 @@ async fn execute_one(
 
     // What the record says about the file this call touched is part of its
     // result, whether the call worked or not (doc 90 §3.2).
-    if let Some(note) = file_note.and_then(|note| {
+    let note = file_note.and_then(|note| {
         let tool = vak_tools::tool_for_call(tools, &call.name)?;
         if let Some((_, path)) = tool.file_access(&activity_input) {
-            return note(FileQuery::Path(&path));
+            return Some(note(FileQuery::Path(&path)));
         }
         let pattern = tool.lists_paths(&activity_input)?;
-        note(FileQuery::Pattern(&pattern))
-    }) {
-        // After a failure the record's fact comes first: a folder's "no
-        // such file" read alone, live, made the model say a draft it had
-        // made did not exist (doc 90).
-        match &mut output {
-            ToolRunOutput::Ok(content) => {
-                content.push('\n');
-                content.push_str(&note);
-            }
-            ToolRunOutput::Err(_, content) => {
-                *content = format!("{note}\n{content}");
+        Some(note(FileQuery::Pattern(&pattern)))
+    });
+    match note {
+        Some(Ok(Some(note))) => {
+            // After a failure the record's fact comes first: a folder's "no
+            // such file" read alone, live, made the model say a draft it had
+            // made did not exist (doc 90).
+            match &mut output {
+                ToolRunOutput::Ok(content) => {
+                    content.push('\n');
+                    content.push_str(&note);
+                }
+                ToolRunOutput::Err(_, content) => {
+                    *content = format!("{note}\n{content}");
+                }
             }
         }
+        Some(Err(_)) => {
+            // The record is authoritative for file state. If it cannot be
+            // read, return a failed tool result so the model cannot proceed
+            // as though the file were absent or had no history.
+            let detail = match std::mem::replace(&mut output, ToolRunOutput::Ok(String::new())) {
+                ToolRunOutput::Ok(content) => format!("Tool result: {content}"),
+                ToolRunOutput::Err(_, content) => content,
+            };
+            output = ToolRunOutput::Err(
+                Fault::Tool,
+                format!(
+                    "The file history could not be read; its current state is unknown.\n{detail}"
+                ),
+            );
+        }
+        Some(Ok(None)) | None => {}
     }
 
     let result_content = match &output {

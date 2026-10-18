@@ -19,7 +19,7 @@ use crate::types::SessionError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// How many times an effect proven not sent is tried before it is left
@@ -429,19 +429,95 @@ fn digest(bytes: &[u8]) -> String {
 #[derive(Debug, Clone)]
 pub struct Effects {
     chain: RecordChain,
+    rollup: PathBuf,
     tenant_home: PathBuf,
     holder: ProcessId,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct EffectIndex {
+    by_id: BTreeMap<EffectId, EffectRecord>,
+    newest_first: BTreeSet<(DateTime<Utc>, EffectId)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EffectCursor {
+    prepared_at: DateTime<Utc>,
+    id: EffectId,
+}
+
+/// One bounded page of effects, newest first. `next_cursor` resumes strictly
+/// after the last returned record in that order.
+#[derive(Debug, Clone, Serialize)]
+pub struct EffectPage {
+    pub effects: Vec<EffectRecord>,
+    pub next_cursor: Option<String>,
+}
+
+fn encode_cursor(cursor: &EffectCursor) -> Result<String, SessionError> {
+    let bytes =
+        serde_json::to_vec(cursor).map_err(|error| SessionError::Objects(error.to_string()))?;
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    Ok(encoded)
+}
+
+fn decode_cursor(encoded: &str) -> Result<EffectCursor, SessionError> {
+    if encoded.is_empty()
+        || !encoded.len().is_multiple_of(2)
+        || !encoded.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(SessionError::Objects("invalid effect page cursor".into()));
+    }
+    let mut bytes = Vec::with_capacity(encoded.len() / 2);
+    for pair in encoded.as_bytes().as_chunks::<2>().0 {
+        let pair = std::str::from_utf8(pair)
+            .map_err(|_| SessionError::Objects("invalid effect page cursor".into()))?;
+        bytes.push(
+            u8::from_str_radix(pair, 16)
+                .map_err(|_| SessionError::Objects("invalid effect page cursor".into()))?,
+        );
+    }
+    let cursor: EffectCursor = serde_json::from_slice(&bytes)
+        .map_err(|_| SessionError::Objects("invalid effect page cursor".into()))?;
+    if encode_cursor(&cursor)? != encoded {
+        return Err(SessionError::Objects(
+            "non-canonical effect page cursor".into(),
+        ));
+    }
+    Ok(cursor)
+}
+
 impl Effects {
+    /// Validates the canonical opaque cursor accepted by [`Self::list_page`].
+    pub fn validate_page_cursor(cursor: &str) -> Result<(), SessionError> {
+        decode_cursor(cursor).map(|_| ())
+    }
+
     /// The records in `dir` (`SharedScope::effects`), with payloads and
     /// dispatch refs in the tenant at `tenant_home`.
     pub fn at(dir: impl Into<PathBuf>, tenant_home: impl Into<PathBuf>) -> Self {
+        let chain = RecordChain::at(dir);
+        let rollup = vak_config::scope::SharedScope::new(
+            chain.path().parent().unwrap_or_else(|| Path::new(".")),
+        )
+        .effects_rollup();
         Self {
-            chain: RecordChain::at(dir),
+            chain,
+            rollup,
             tenant_home: tenant_home.into(),
             holder: crate::fence::process(),
         }
+    }
+
+    /// Uses the canonical effects Rollup Document from `SharedScope`.
+    pub fn with_rollup(mut self, path: impl Into<PathBuf>) -> Self {
+        self.rollup = path.into();
+        self
     }
 
     /// These records, acting as the process `holder` rather than this one,
@@ -852,11 +928,15 @@ impl Effects {
             .collect()
     }
 
-    /// Every effect, newest first.
-    pub fn list(&self) -> Result<Vec<EffectRecord>, SessionError> {
-        let mut effects: HashMap<EffectId, EffectRecord> = HashMap::new();
-        for event in self.events()? {
-            match effects.get_mut(&event.effect) {
+    fn index(&self) -> Result<EffectIndex, SessionError> {
+        let rollup = crate::rollup::Rollup::new(self.chain.path(), &self.rollup);
+        let index = rollup.try_read(|index: &mut EffectIndex, bytes| {
+            let event: EffectEvent =
+                serde_json::from_slice(bytes).map_err(|error| SessionError::Corrupt {
+                    line: 0,
+                    message: format!("effect record: {error}"),
+                })?;
+            match index.by_id.get_mut(&event.effect) {
                 Some(record) => record.apply(event.at, event.step),
                 None => {
                     let record =
@@ -868,17 +948,96 @@ impl Effects {
                                     event.effect
                                 ),
                             })?;
-                    effects.insert(event.effect, record);
+                    index.newest_first.insert((record.prepared_at, record.id));
+                    index.by_id.insert(record.id, record);
                 }
             }
+            Ok(())
+        })?;
+        if index.by_id.len() != index.newest_first.len()
+            || index.by_id.values().any(|record| {
+                !index
+                    .newest_first
+                    .contains(&(record.prepared_at, record.id))
+            })
+        {
+            return Err(SessionError::Objects(
+                "effects rollup index is inconsistent".into(),
+            ));
         }
-        let mut list: Vec<EffectRecord> = effects.into_values().collect();
-        list.sort_by_key(|record| std::cmp::Reverse((record.prepared_at, record.id.to_string())));
-        Ok(list)
+        Ok(index)
+    }
+
+    /// Every effect, newest first. The order index avoids rebuilding and
+    /// sorting a separate vector, though loading the Document remains O(n).
+    pub fn list(&self) -> Result<Vec<EffectRecord>, SessionError> {
+        let index = self.index()?;
+        Ok(index
+            .newest_first
+            .iter()
+            .rev()
+            .filter_map(|(_, id)| index.by_id.get(id).cloned())
+            .collect())
+    }
+
+    /// Reads a bounded page from the verified projection. Filters are applied
+    /// while walking the ordered index; the cursor resumes strictly before
+    /// its prior record in newest-first order.
+    pub fn list_page(
+        &self,
+        run: Option<RunId>,
+        state: Option<EffectStatus>,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Result<EffectPage, SessionError> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        let index = self.index()?;
+        let after = cursor.map(decode_cursor).transpose()?;
+        let upper = after.as_ref().map_or(Unbounded, |cursor| {
+            Excluded((cursor.prepared_at, cursor.id))
+        });
+        let mut selected = Vec::new();
+        let cap = limit.clamp(1, 1000);
+        let mut more = false;
+        for key in index.newest_first.range((Unbounded, upper)).rev() {
+            let (_, id) = key;
+            let Some(record) = index.by_id.get(id) else {
+                return Err(SessionError::Objects(
+                    "effects rollup index is inconsistent".into(),
+                ));
+            };
+            if run.is_some_and(|run| record.run != Some(run))
+                || state.is_some_and(|state| record.status != state)
+            {
+                continue;
+            }
+            if selected.len() == cap {
+                more = true;
+                break;
+            }
+            selected.push((*key, record.clone()));
+        }
+        let next_cursor = if more {
+            selected
+                .last()
+                .map(|((prepared_at, id), _)| {
+                    encode_cursor(&EffectCursor {
+                        prepared_at: *prepared_at,
+                        id: *id,
+                    })
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        Ok(EffectPage {
+            effects: selected.into_iter().map(|(_, effect)| effect).collect(),
+            next_cursor,
+        })
     }
 
     pub fn get(&self, effect: EffectId) -> Result<Option<EffectRecord>, SessionError> {
-        Ok(self.list()?.into_iter().find(|record| record.id == effect))
+        Ok(self.index()?.by_id.get(&effect).cloned())
     }
 
     /// Every effect the run `run` caused, newest first.
@@ -945,6 +1104,47 @@ mod tests {
         std::fs::write(segments.log_path(1), b"broken").unwrap();
         assert!(effects.events().is_err());
         assert!(effects.dispatchable().is_err());
+    }
+
+    #[test]
+    fn rollup_reads_cold_and_warm_and_pages_without_losing_records() {
+        let (_dir, effects) = home();
+        let trace = trace();
+        let records: Vec<_> = (0..5)
+            .map(|n| delivery(&effects, &trace, &format!("page-{n}")))
+            .collect();
+
+        let cold = effects.list_page(None, None, 2, None).expect("cold page");
+        assert_eq!(cold.effects.len(), 2);
+        assert!(cold.next_cursor.is_some());
+        let saved = crate::documents::version_count(&effects.rollup);
+        assert!(saved > 0, "cold read writes the verified projection");
+        let warm = effects.list_page(None, None, 2, None).expect("warm page");
+        assert_eq!(cold.effects, warm.effects);
+        assert_eq!(crate::documents::version_count(&effects.rollup), saved);
+
+        let mut seen = cold
+            .effects
+            .iter()
+            .map(|record| record.id)
+            .collect::<Vec<_>>();
+        let next = effects
+            .list_page(None, None, 2, cold.next_cursor.as_deref())
+            .expect("second page");
+        assert_eq!(next.effects.len(), 2);
+        let final_page = effects
+            .list_page(None, None, 2, next.next_cursor.as_deref())
+            .expect("final page");
+        assert_eq!(final_page.effects.len(), 1);
+        assert!(final_page.next_cursor.is_none());
+        seen.extend(next.effects.iter().map(|record| record.id));
+        seen.extend(final_page.effects.iter().map(|record| record.id));
+        seen.sort();
+        seen.dedup();
+        let mut expected = records.iter().map(|record| record.id).collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(seen, expected);
+        assert!(effects.list_page(None, None, 2, Some("zz")).is_err());
     }
 
     #[test]

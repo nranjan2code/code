@@ -23,13 +23,9 @@
 use vak_agent::AgentEvent;
 
 /// A run's outcome, reduced to the handful of states a person may see.
-/// `AgentEvent::RunFinished` carries only `summary: String` + `is_error:
-/// bool`; `summary` is internal bookkeeping that can legitimately be a raw
-/// provider error (`format!("failed: {error}")`) or an internal ceiling
-/// message. Classification below trusts only `is_error` plus the small set
-/// of literal sentinels the runtime is documented to emit for a clean stop
-/// (`"aborted"`) or a step-limit stop (`"max_turns"`) — never the rest of
-/// the string, which is discarded.
+/// `AgentEvent::RunFinished` carries a typed runtime outcome. Its summary is
+/// internal bookkeeping that can contain provider error details, so it is
+/// discarded here rather than parsed or sent to the client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum RunOutcome {
     Completed,
@@ -38,19 +34,14 @@ pub enum RunOutcome {
     Failed,
 }
 
-/// Classify a raw `(summary, is_error)` pair into a `RunOutcome` without
-/// ever exposing `summary` itself to a caller.
-///
-/// `"cancelled by client"` is `cancel_run`'s own synthetic `RunFinished`
-/// (`vak-server/src/lib.rs`), which predates the run's real terminal event
-/// using the documented `"aborted"` sentinel; both are recognized here as
-/// `Stopped` until that synthetic send is retired.
-pub(crate) fn classify_run_outcome(summary: &str, is_error: bool) -> RunOutcome {
-    match summary {
-        "aborted" | "cancelled by client" => RunOutcome::Stopped,
-        "max_turns" => RunOutcome::MaxTurns,
-        _ if is_error => RunOutcome::Failed,
-        _ => RunOutcome::Completed,
+/// Project the runtime's typed outcome without examining internal summary
+/// text.
+pub(crate) fn classify_run_outcome(outcome: vak_agent::AgentRunOutcome) -> RunOutcome {
+    match outcome {
+        vak_agent::AgentRunOutcome::Completed => RunOutcome::Completed,
+        vak_agent::AgentRunOutcome::Stopped => RunOutcome::Stopped,
+        vak_agent::AgentRunOutcome::MaxTurns => RunOutcome::MaxTurns,
+        vak_agent::AgentRunOutcome::Failed => RunOutcome::Failed,
     }
 }
 
@@ -258,8 +249,8 @@ pub(crate) fn project(event: AgentEvent) -> Option<ClientEvent> {
         // Managed-work state is not rendered from the live event stream
         // today (the work panel reads `GET /sessions/:id/work` instead).
         AgentEvent::WorkState { .. } => None,
-        AgentEvent::RunFinished { summary, is_error } => {
-            let outcome = classify_run_outcome(&summary, is_error);
+        AgentEvent::RunFinished { outcome, .. } => {
+            let outcome = classify_run_outcome(outcome);
             Some(ClientEvent::RunFinished {
                 outcome,
                 message: run_outcome_message(outcome).into(),
@@ -344,6 +335,7 @@ mod tests {
                 title: String::new(),
                 identity_digest: String::new(),
                 block: None,
+                data_call_id: None,
             }),
         });
         kept(AgentEvent::ToolCallEnd {
@@ -418,8 +410,8 @@ mod tests {
             },
         });
         kept(AgentEvent::RunFinished {
+            outcome: vak_agent::AgentRunOutcome::Completed,
             summary: "completed".into(),
-            is_error: false,
         });
         kept(AgentEvent::Sandbox(vak_tools::SandboxEvent::Stdout {
             execution_id: "e1".into(),
@@ -459,19 +451,25 @@ mod tests {
 
     #[test]
     fn run_finished_never_carries_raw_summary_text() {
-        for (summary, is_error) in [
+        for (outcome, summary) in [
             (
-                "failed: connection reset by peer at 10.0.0.1:443".to_string(),
-                true,
+                vak_agent::AgentRunOutcome::Failed,
+                "failed: connection reset by peer at 10.0.0.1:443",
             ),
-            ("failed: dispatch ceiling of 28 exhausted".to_string(), true),
-            ("aborted".to_string(), false),
-            ("max_turns".to_string(), true),
-            ("completed".to_string(), false),
+            (
+                vak_agent::AgentRunOutcome::Failed,
+                "failed: dispatch ceiling of 28 exhausted",
+            ),
+            (vak_agent::AgentRunOutcome::Stopped, "arbitrary stop detail"),
+            (
+                vak_agent::AgentRunOutcome::MaxTurns,
+                "internal ceiling detail",
+            ),
+            (vak_agent::AgentRunOutcome::Completed, "completed"),
         ] {
             let event = AgentEvent::RunFinished {
-                summary: summary.clone(),
-                is_error,
+                outcome,
+                summary: summary.to_string(),
             };
             let ClientEvent::RunFinished { message, .. } = project(event).unwrap() else {
                 panic!("expected RunFinished");
@@ -486,26 +484,140 @@ mod tests {
     }
 
     #[test]
-    fn classify_run_outcome_uses_only_documented_sentinels() {
-        assert_eq!(classify_run_outcome("aborted", false), RunOutcome::Stopped);
-        assert_eq!(
-            classify_run_outcome("max_turns", true),
-            RunOutcome::MaxTurns
-        );
-        assert_eq!(
-            classify_run_outcome("failed: anything at all", true),
-            RunOutcome::Failed
-        );
-        assert_eq!(
-            classify_run_outcome("completed", false),
-            RunOutcome::Completed
-        );
-        // An unrecognised string with is_error unset degrades to Completed
-        // rather than fabricating a false-negative failure state.
-        assert_eq!(
-            classify_run_outcome("some future sentinel", false),
-            RunOutcome::Completed
-        );
+    fn typed_run_outcomes_project_to_the_closed_client_vocabulary() {
+        for (agent, client, encoded) in [
+            (
+                vak_agent::AgentRunOutcome::Completed,
+                RunOutcome::Completed,
+                "\"Completed\"",
+            ),
+            (
+                vak_agent::AgentRunOutcome::Stopped,
+                RunOutcome::Stopped,
+                "\"Stopped\"",
+            ),
+            (
+                vak_agent::AgentRunOutcome::MaxTurns,
+                RunOutcome::MaxTurns,
+                "\"MaxTurns\"",
+            ),
+            (
+                vak_agent::AgentRunOutcome::Failed,
+                RunOutcome::Failed,
+                "\"Failed\"",
+            ),
+        ] {
+            assert_eq!(classify_run_outcome(agent), client);
+            assert_eq!(serde_json::to_string(&client).unwrap(), encoded);
+        }
+    }
+
+    #[test]
+    fn serialized_client_events_match_the_typescript_contract_fixture() {
+        use vak_tools::SandboxEvent;
+
+        fn assert_variant_is_covered(event: &ClientEvent) {
+            match event {
+                ClientEvent::StreamOpened
+                | ClientEvent::TurnStart { .. }
+                | ClientEvent::TextDelta { .. }
+                | ClientEvent::ThinkingDelta { .. }
+                | ClientEvent::ToolCallStart { .. }
+                | ClientEvent::CardDrafting { .. }
+                | ClientEvent::ToolCallEnd { .. }
+                | ClientEvent::ApprovalRequested { .. }
+                | ClientEvent::WorkerStarted { .. }
+                | ClientEvent::WorkerToolCall { .. }
+                | ClientEvent::WorkerFinished { .. }
+                | ClientEvent::WorkerQuestion { .. }
+                | ClientEvent::WorkerQuestionAnswered { .. }
+                | ClientEvent::WorkerQuestionClosed { .. }
+                | ClientEvent::Retrying
+                | ClientEvent::Sandbox(_)
+                | ClientEvent::DraftDiscarded { .. }
+                | ClientEvent::RunFinished { .. } => {}
+            }
+        }
+
+        let events = vec![
+            ClientEvent::StreamOpened,
+            ClientEvent::TurnStart { turn: 1 },
+            ClientEvent::TextDelta {
+                delta: "text".into(),
+            },
+            ClientEvent::ThinkingDelta {
+                delta: "thinking".into(),
+            },
+            ClientEvent::ToolCallStart {
+                id: "call".into(),
+                name: "read".into(),
+                args_json: "{}".into(),
+            },
+            ClientEvent::CardDrafting {
+                id: "call".into(),
+                block: "table".into(),
+            },
+            ClientEvent::ToolCallEnd {
+                id: "call".into(),
+                name: "read".into(),
+                is_error: false,
+                result_preview: None,
+            },
+            ClientEvent::ApprovalRequested {
+                id: "approval".into(),
+                tool: "bash".into(),
+                args_json: "{}".into(),
+                reason: "review".into(),
+            },
+            ClientEvent::WorkerStarted {
+                label: "worker".into(),
+            },
+            ClientEvent::WorkerToolCall {
+                label: "worker".into(),
+                name: "read".into(),
+                is_error: false,
+            },
+            ClientEvent::WorkerFinished {
+                label: "worker".into(),
+                is_error: false,
+                elapsed_ms: 1,
+            },
+            ClientEvent::WorkerQuestion {
+                id: "question".into(),
+                label: "worker".into(),
+                question: "Choose".into(),
+                options: vec!["yes".into()],
+            },
+            ClientEvent::WorkerQuestionAnswered {
+                id: "question".into(),
+            },
+            ClientEvent::WorkerQuestionClosed {
+                id: "question".into(),
+            },
+            ClientEvent::Retrying,
+            ClientEvent::Sandbox(SandboxEvent::Stdout {
+                execution_id: "exec".into(),
+                chunk: "output".into(),
+            }),
+            ClientEvent::DraftDiscarded { turn: 1 },
+            ClientEvent::RunFinished {
+                outcome: RunOutcome::MaxTurns,
+                message: "Stopped at the step limit.".into(),
+            },
+        ];
+        for event in &events {
+            assert_variant_is_covered(event);
+        }
+
+        let serialized: Vec<serde_json::Value> = events
+            .iter()
+            .map(|event| serde_json::to_value(event).unwrap())
+            .collect();
+        let fixture: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../vak-client-ui/tests/fixtures/client-events.json"
+        ))
+        .unwrap();
+        assert_eq!(serialized, fixture);
     }
 
     #[test]

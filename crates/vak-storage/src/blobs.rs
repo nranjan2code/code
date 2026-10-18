@@ -123,12 +123,29 @@ pub fn get(store: &dyn Store, id: &ObjectId, scope: &str, writer: &mut dyn Write
     Ok(len)
 }
 
-/// Removes `scope`'s grant to the blob and each of its chunks; what no
-/// scope holds is collected by the next `gc`.
+/// Removes `scope`'s grant to the blob and to chunks no other live blob in
+/// this scope names; what no scope holds is collected by the next `gc`.
 pub fn release(store: &dyn Store, id: &ObjectId, scope: &str) -> Result<()> {
     let (_, chunks) = manifest(&store.get_object(id, scope)?)?;
-    for chunk in &chunks {
-        store.remove_grant(chunk, scope)?;
+    // Blob manifests are the ownership roots. Chunks are ordinary objects,
+    // and the scope grant is shared by every blob that deduplicates them.
+    // Recompute owners from those existing roots instead of maintaining a
+    // second durable ownership index.
+    let mut live_chunks = std::collections::HashSet::new();
+    for (candidate, _) in store.granted_to(scope)? {
+        if candidate == *id {
+            continue;
+        }
+        let bytes = store.get_object(&candidate, scope)?;
+        if bytes.starts_with(MAGIC) {
+            let (_, referenced) = manifest(&bytes)?;
+            live_chunks.extend(referenced);
+        }
+    }
+    for chunk in chunks {
+        if !live_chunks.contains(&chunk) {
+            store.remove_grant(&chunk, scope)?;
+        }
     }
     store.remove_grant(id, scope)
 }
@@ -170,6 +187,24 @@ mod tests {
                 .is_err(),
             "the chunks lost their grant too"
         );
+    }
+
+    #[test]
+    fn releasing_one_blob_preserves_a_shared_chunk_until_the_last_blob() {
+        let store = MemoryStore::new(IdKey::new(&[5; 32]));
+        let first = put_chunked(&store, &mut &b"AAAABBBB"[..], "conv", 4).unwrap();
+        let second = put_chunked(&store, &mut &b"AAAACCCC"[..], "conv", 4).unwrap();
+        let shared = store.object_id(b"AAAA");
+
+        release(&store, &first, "conv").unwrap();
+        let mut out = Vec::new();
+        assert_eq!(get(&store, &second, "conv", &mut out).unwrap(), 8);
+        assert_eq!(out, b"AAAACCCC");
+        assert_eq!(store.get_object(&shared, "conv").unwrap(), b"AAAA");
+
+        release(&store, &second, "conv").unwrap();
+        assert!(store.get_object(&shared, "conv").is_err());
+        assert_eq!(store.gc(&|_| false).unwrap(), 5);
     }
 
     #[test]

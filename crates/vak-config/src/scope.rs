@@ -189,6 +189,11 @@ impl AgentScope {
         self.root.join("cost-log-rollup")
     }
 
+    /// Durable pending spend admissions, updated through fenced Document CAS.
+    pub fn cost_reservations(&self) -> PathBuf {
+        self.root.join("cost-reservations")
+    }
+
     pub fn activity_log(&self) -> PathBuf {
         self.root.join("activity-log")
     }
@@ -452,6 +457,11 @@ impl SharedScope {
         self.root.join("effects")
     }
 
+    /// The verified Rollup Document for [`SharedScope::effects`].
+    pub fn effects_rollup(&self) -> PathBuf {
+        self.root.join("effects-rollup")
+    }
+
     /// The cursor gap rows (plan M4.7): each range of an external stream a
     /// cursor skipped when it resynced.
     pub fn cursors(&self) -> PathBuf {
@@ -465,6 +475,11 @@ impl SharedScope {
     /// Verified projection of the shared cost ledger, used for strict budget admission.
     pub fn cost_rollup(&self) -> PathBuf {
         self.root.join("cost-log-rollup")
+    }
+
+    /// Durable pending spend admissions, updated through fenced Document CAS.
+    pub fn cost_reservations(&self) -> PathBuf {
+        self.root.join("cost-reservations")
     }
 
     pub fn env_file(&self) -> PathBuf {
@@ -701,6 +716,7 @@ mod tests {
         assert_eq!(s.gateway_bots(), data.join("gateway/bots.json"));
         assert_eq!(s.gateway_deliveries(), data.join("gateway/deliveries"));
         assert_eq!(s.effects(), data.join("effects"));
+        assert_eq!(s.effects_rollup(), data.join("effects-rollup"));
         assert_eq!(s.cursors(), data.join("cursors"));
         assert_eq!(s.operations_incidents(), data.join("operations/incidents"));
         assert_eq!(s.operations_actions(), data.join("operations/actions"));

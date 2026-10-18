@@ -37,7 +37,7 @@ pub struct Elsewhere {
 }
 
 /// An artifact id in, its file and state out (`Elsewhere::file`).
-pub type FileLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+pub type FileLookup = Arc<dyn Fn(&str) -> Result<Option<String>, String> + Send + Sync>;
 
 /// A conversation and a turn id in, that turn's card out (`Elsewhere::turn`).
 pub type TurnLookup = Arc<dyn Fn(&str, &str) -> Option<vak_session::TurnCard> + Send + Sync>;
@@ -96,10 +96,10 @@ impl Elsewhere {
         let hits = catalog
             .search(query, &audience, &scope, limit)
             .map_err(|e| e.to_string())?;
-        Ok(hits.iter().map(|hit| self.hit(hit)).collect())
+        hits.iter().map(|hit| self.hit(hit)).collect()
     }
 
-    fn hit(&self, hit: &vak_catalog::Hit) -> Value {
+    fn hit(&self, hit: &vak_catalog::Hit) -> Result<Value, String> {
         let (id, from) = hit_label(&hit.node);
         let mut out = json!({
             "from": from,
@@ -136,11 +136,12 @@ impl Elsewhere {
         // A deliverable names its file and what the record says of it now,
         // so a later turn can reach it by name.
         if hit.node.kind == "artifact"
-            && let Some(file) = self.file.as_ref().and_then(|file| file(&hit.node.id))
+            && let Some(lookup) = self.file.as_ref()
+            && let Some(file) = lookup(&hit.node.id)?
         {
             out["file"] = json!(file);
         }
-        out
+        Ok(out)
     }
 }
 

@@ -84,7 +84,17 @@ export default function SharedArtifact() {
     },
     async (version) => {
       const page = readPage(new Uint8Array(await (await call(`/shared/artifact/versions/${encodeURIComponent(version)}`)).arrayBuffer()));
-      return page ? { page, version } : null;
+      if (!page) return null;
+      const read = async (path: string) => call(`/shared/artifact/versions/${encodeURIComponent(version)}/resources?path=${encodeURIComponent(path)}`);
+      const resourceReader = {
+        readFile: async (path: string) => ({ content: await (await read(path)).text(), path, kind: "text" as const, bytes: 0, editable: false }),
+        readFileRaw: async (path: string) => URL.createObjectURL(await (await read(path)).blob()),
+        readFileBytes: async (path: string) => {
+          const response = await read(path);
+          return { bytes: new Uint8Array(await response.arrayBuffer()), mime: response.headers.get("Content-Type") ?? "application/octet-stream" };
+        },
+      };
+      return { page, version, resourceReader };
     },
   );
 
@@ -127,7 +137,7 @@ export default function SharedArtifact() {
               <div class="library-head"><h2>{shared().name}</h2></div>
               <p class="library-meta">Shared with {shared().you}</p>
               <Show when={error()}><div class="worker-error" role="alert">{error()}</div></Show>
-              <Show when={page()}>{(shown) => <div class="library-preview library-page-view"><PageView page={shown().page} versionId={shown().version} /></div>}</Show>
+              <Show when={page()}>{(shown) => <div class="library-preview library-page-view"><PageView page={shown().page} versionId={shown().version} resourceReader={shown().resourceReader} /></div>}</Show>
               <h3>Versions</h3>
               <ol class="library-versions">
                 <For each={[...shared().versions].reverse()}>

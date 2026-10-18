@@ -65,6 +65,82 @@ fn spec_node(prim: Primitive) -> SpecNode {
     }
 }
 
+fn valid_spec_node(prim: Primitive) -> SpecNode {
+    let props = match prim {
+        Primitive::Stack | Primitive::Row | Primitive::Group => json!({}),
+        Primitive::Section => json!({"title":"Section"}),
+        Primitive::Text => json!({"text":"Visible text"}),
+        Primitive::Metric => json!({"label":"Count","value":1}),
+        Primitive::Summary => json!({"headline":"Summary"}),
+        Primitive::Steps => json!({"steps":[{"label":"Step"}]}),
+        Primitive::List => json!({"items":[{"label":"Item"}]}),
+        Primitive::Details => json!({"fields":[{"label":"Fact","detail":"Value"}]}),
+        Primitive::Table => json!({"columns":[{"label":"Name"}],"rows":[["A"]]}),
+        Primitive::Comparison => json!({"options":[{"name":"A"},{"name":"B"}]}),
+        Primitive::Stats => json!({"readings":[{"label":"Count","value":1}]}),
+        Primitive::Chart => {
+            json!({"chart_type":"bar","series":[{"name":"Count","points":[{"x":"A","y":1}]}]})
+        }
+        Primitive::Callout => json!({"tone":"note","text":"Note"}),
+        Primitive::Sources => {
+            json!({"sources":[{"title":"Source","url":"https://example.test","finding":"Finding"}]})
+        }
+        Primitive::Calendar => json!({"events":[{"title":"Event","date":"2026-10-18"}]}),
+        Primitive::Map => {
+            json!({"connect":"none","places":[{"label":"Place","latitude":12.5,"longitude":45.25}]})
+        }
+        Primitive::Controls => {
+            json!({"inputs":[{"name":"amount","kind":"number","value":"2","label":"Amount"}],"outputs":[{"name":"total","expression":"amount * 2","label":"Total"}]})
+        }
+        Primitive::Link => json!({"url":"https://example.test"}),
+        Primitive::Media => json!({"format":"image","url":"image.png"}),
+        Primitive::FilePreview => json!({"artifact_path":"index.html"}),
+        Primitive::MarkupPreview => json!({"html":"<p>Preview</p>","libraries":[]}),
+        Primitive::Diff => {
+            json!({"files":[{"filename":"main.rs","hunks":"@@ -1 +1 @@","additions":1,"deletions":0}]})
+        }
+        Primitive::TestReport => {
+            json!({"command":"cargo test","tests":[{"name":"unit","status":"passed"}]})
+        }
+        Primitive::Terminal => json!({"command":"pwd","output":"/tmp"}),
+    };
+    let children = if matches!(prim, Primitive::Stack | Primitive::Row | Primitive::Group) {
+        vec![SpecNode {
+            primitive: Primitive::Text,
+            props: BTreeMap::from([(
+                "text".into(),
+                SpecValue::Text {
+                    value: "Child".into(),
+                },
+            )]),
+            children: vec![],
+            each: None,
+            item: None,
+        }]
+    } else {
+        vec![]
+    };
+    SpecNode {
+        primitive: prim,
+        props: props
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    SpecValue::Literal {
+                        value: value.clone(),
+                    },
+                )
+            })
+            .collect(),
+        children,
+        each: None,
+        item: None,
+    }
+}
+
 fn text_binding_node() -> SpecNode {
     SpecNode {
         primitive: Primitive::Text,
@@ -592,10 +668,10 @@ fn audit_binding_paths() {
         assert!(matches!(result, CompiledPresentation::Fallback { .. }));
     }));
 
-    // Optional binding absent with Omit → resolved as None, node still Rich
+    // An optional missing field can be omitted while the node remains useful.
     scenarios.push(tc("optional_binding_missing_omit", || {
         let root = SpecNode {
-            primitive: Primitive::Text,
+            primitive: Primitive::Section,
             props: BTreeMap::from([(
                 "text".into(),
                 SpecValue::Binding(Binding {
@@ -604,14 +680,31 @@ fn audit_binding_paths() {
                     empty: EmptyValue::Omit,
                 }),
             )]),
-            children: vec![],
+            children: vec![text_binding_node()],
             each: None,
             item: None,
         };
         let s = make_spec("opt_omit", 1, &["detail"], root);
         assert!(validate_spec(&s).is_ok());
         let result = compile(&s, &ci("detail", json!({}), "fb"));
-        assert!(matches!(result, CompiledPresentation::Rich(_)));
+        match result {
+            CompiledPresentation::Rich(tree) => {
+                assert!(
+                    tree.coverage
+                        .omitted_paths
+                        .iter()
+                        .any(|path| path == "$.text")
+                );
+                assert!(
+                    !tree
+                        .coverage
+                        .rendered_paths
+                        .iter()
+                        .any(|path| path == "$.text")
+                );
+            }
+            other => panic!("expected useful section with omitted optional field: {other:?}"),
+        }
     }));
 
     // Optional binding absent with EmptyText → resolved as empty string
@@ -729,7 +822,7 @@ fn audit_compilation() {
     for (i, prim) in PRIMITIVES.iter().enumerate() {
         let p = *prim;
         scenarios.push(tc(&format!("compile_{i}_{p:?}"), move || {
-            let s = make_spec(&format!("c{i}"), 1, &["detail"], spec_node(p));
+            let s = make_spec(&format!("c{i}"), 1, &["detail"], valid_spec_node(p));
             let result = compile(&s, &ci("detail", json!({"title":"T","items":[1]}), "fb"));
             assert!(
                 matches!(result, CompiledPresentation::Rich(_)),
@@ -767,13 +860,13 @@ fn audit_compilation() {
                 item: Some(Box::new(text_binding_node())),
             };
             let s = make_spec("each", 1, &["detail"], root);
-            let payload =
-                json!({"items": (0..sz).map(|j| json!(format!("i{j}"))).collect::<Vec<_>>()});
+            let payload = json!({"items": (0..sz).map(|j| json!({"text": format!("i{j}")})).collect::<Vec<_>>()});
             let result = compile(&s, &ci("detail", payload, "fb"));
-            assert!(
-                matches!(result, CompiledPresentation::Rich(_)),
-                "each size {sz}: {result:?}"
-            );
+            if sz == 0 {
+                assert!(matches!(result, CompiledPresentation::Fallback { .. }), "empty each rendered Rich: {result:?}");
+            } else {
+                assert!(matches!(result, CompiledPresentation::Rich(_)), "each size {sz}: {result:?}");
+            }
         }));
     }
 
@@ -865,9 +958,9 @@ fn audit_compilation() {
     // 3i. Edge payloads
     scenarios.push(tc("empty_payload_omits_optional_bindings", || {
         let root = SpecNode {
-            primitive: Primitive::Text,
-            props: BTreeMap::from([("text".into(), binding_val("$.missing", false))]),
-            children: vec![],
+            primitive: Primitive::Section,
+            props: BTreeMap::from([("title".into(), binding_val("$.missing", false))]),
+            children: vec![text_binding_node()],
             each: None,
             item: None,
         };
@@ -999,7 +1092,7 @@ fn audit_compilation() {
             item: None,
         };
         let s = make_spec("ctl", 1, &["detail"], root);
-        let result = compile(&s, &ci("detail", json!({"title": "\t\n\r"}), "fb"));
+        let result = compile(&s, &ci("detail", json!({"title": "\t Hello\n"}), "fb"));
         assert!(matches!(result, CompiledPresentation::Rich(_)));
     }));
 
@@ -1033,7 +1126,7 @@ fn audit_compilation() {
         };
         let s = make_spec("ea", 1, &["detail"], root);
         let result = compile(&s, &ci("detail", json!({"items": []}), "fb"));
-        assert!(matches!(result, CompiledPresentation::Rich(_)));
+        assert!(matches!(result, CompiledPresentation::Fallback { .. }));
     }));
 
     run("compilation", scenarios);

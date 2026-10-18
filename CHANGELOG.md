@@ -1,5 +1,18 @@
 ## Unreleased
 
+- Ability-backed tables and charts use the exact recorded call selected by
+  the answer. Failed or unavailable calls no longer substitute an older
+  successful result. Saved pages read captured file versions through their
+  authorized page share instead of the currently open conversation.
+- Credential writes preserve an unreadable encrypted store, publish presence
+  metadata atomically, and report incomplete install cleanup for retry.
+  Pending day-budget reservations survive restart and concurrent admissions.
+- Charts support explicit numeric and time spacing and leave gaps for missing
+  observations. Literal prose markers survive cleanup, and answer outlines
+  reflect cards that fulfill planned text sections. Invalid adaptive displays
+  retain the original answer. Live text frames send deltas and defer repeated
+  Markdown parsing until completion.
+
 - Unacknowledged Canvas edits can recover after a reload in the same browser
   tab. The browser stores encrypted checkpoints only; unlocking after reload
   requires connecting and signing in. Failed unlocks preserve the checkpoint

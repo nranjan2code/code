@@ -1,6 +1,11 @@
 //! Storage substrate: no vak dependencies, primitives from `ring` only.
 //! Design: docs/design/73-data-architecture-and-lifecycle.md §5-§7.3.
 
+// Blob manifests are not wired into the production ownership/lifecycle
+// protocol yet. Keep the implementation and its regression tests available
+// inside this crate, but do not expose it to production callers until root
+// publication and release can be made atomic.
+#[cfg(test)]
 pub mod blobs;
 pub mod documents;
 pub mod keys;

@@ -78,3 +78,48 @@ export function scalePosition(value: number, min: number, max: number): number {
 export function formatChartNumber(value: number): string {
   return value.toString();
 }
+
+export type ChartKey = string | number;
+export type ChartAxis = "category" | "number" | "time";
+
+/** Numeric/date interpretation is opt-in; category identifiers remain lexical. */
+export function chartAxis(keys: ChartKey[], axis: ChartAxis): { keys: ChartKey[]; positions: number[]; valid: boolean } {
+  if (axis === "category") return { keys, positions: keys.map((_, index) => (index + 0.5) / Math.max(1, keys.length)), valid: true };
+  const numeric = (key: ChartKey): number => {
+    if (axis === "time") {
+      if (typeof key !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/i.test(key)) return NaN;
+      const parts = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)/i.exec(key);
+      if (!parts) return NaN;
+      const [year, month, day, hour, minute, second] = parts.slice(1).map(Number);
+      const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+      const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      if (month < 1 || month > 12 || day < 1 || day > days[month - 1] || hour > 23 || minute > 59 || second > 59) return NaN;
+      return Date.parse(key);
+    }
+    if (typeof key === "number") return key;
+    if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(key)) return NaN;
+    return Number(key);
+  };
+  const points = keys.map((key) => ({ key, value: numeric(key) }));
+  if (points.some(({ value }) => !Number.isFinite(value))) return { keys, positions: [], valid: false };
+  points.sort((a, b) => a.value < b.value ? -1 : a.value > b.value ? 1 : 0);
+  // Two distinct lexical values at the same position cannot identify two observations.
+  if (points.some((point, index) => index > 0 && point.value === points[index - 1].value)) return { keys, positions: [], valid: false };
+  const min = points[0]?.value ?? 0;
+  const max = points.at(-1)?.value ?? 0;
+  return { keys: points.map(({ key }) => key), positions: points.map(({ value }) => scalePosition(value, min, max)), valid: true };
+}
+
+/** Missing observations split a line/area; never imply a measured connection. */
+export function chartSegments(values: (number | null)[]): { i: number; y: number }[][] {
+  const segments: { i: number; y: number }[][] = [];
+  let segment: { i: number; y: number }[] = [];
+  values.forEach((y, i) => {
+    if (y === null || !Number.isFinite(y)) {
+      if (segment.length) segments.push(segment);
+      segment = [];
+    } else segment.push({ i, y });
+  });
+  if (segment.length) segments.push(segment);
+  return segments;
+}

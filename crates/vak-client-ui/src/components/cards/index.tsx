@@ -11,7 +11,7 @@ import {
 } from "./forms";
 import { record, text, type Payload } from "./shared";
 
-export { CardIdContext, PresentationInteractionContext, PresentationSessionContext, downloadCsv } from "./shared";
+export { CardIdContext, PresentationInteractionContext, PresentationPageResourceContext, PresentationSessionContext, downloadCsv } from "./shared";
 
 /** One renderer per form (docs/design/92-card-forms.md), keyed by the card's
  *  block. A kind is never read here: what draws a card is its form. */

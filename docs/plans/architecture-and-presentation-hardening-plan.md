@@ -47,7 +47,7 @@ dependent implementation; they need not block independent correctness fixes:
 
 | Choice | Proposed starting point | Required decision/evidence |
 |---|---|---|
-| Catalog confidentiality (A10) | Treat derived searchable content as part of the data threat model | State the product promise and choose protection/key lifecycle or an explicit narrower boundary |
+| Catalog confidentiality (A10) | Maintainer chose encryption on 2026-10-18 | Encrypt searchable catalog, WAL and temporary behavior; use existing key lifecycle and verify rebuild/erasure/backups |
 | Interaction ownership (P04) | Explicit viewer/answer interaction scope with deliberate multi-view synchronization | Specify whether chat and canvas are two views of one interaction; pages remain viewer-local and unsaved |
 | Replacement semantics (D01) | Resolve a live graph and preserve logical identity through replacement | Define whether existing consumers follow a replacement or stay pinned; no silent orphaning |
 | Graph scope (D02) | Harden the implemented controls-to-consumers model first | Generic derived-card DAG only if requested and justified; define typing, ordering and cycles before expanding |
@@ -77,6 +77,45 @@ Exit: every ID is classified reproduced/source-confirmed/resolved/decision
 or unreachable in the product, with no evidence inflation. Test limitations
 and pending product choices remain visible. This stage does not require a
 complete browser audit before the first storage fix.
+
+## Current finding dispositions (2026-10-18 continuation)
+
+This table distinguishes implemented repairs from acceptance still owed. It
+is a current source disposition, not a claim that all 30 findings are closed.
+The audit remains the historical evidence; the implementation log names checks.
+
+| ID | Current disposition | Remaining acceptance or scope |
+|---|---|---|
+| A01 | Partly repaired | Strict artifact consumers and credential tests pass; remaining decision-reader audit |
+| A02 | Repaired, full gate previously passed | Preserve atomic fencing regressions |
+| A03 | Dispatch, abort partials, fence cards and child terminal writes repaired | Preserve fault-injection regressions; remaining causal-write audit |
+| A04 | Child-bound services repaired | Explicit aggregate run-tree dispatch configuration remains open |
+| A05 | Repaired, full gate previously passed | Preserve cancellation/stale probe tests |
+| A06 | Repaired, full gate previously passed | Preserve failed-compaction regression |
+| A07 | Conservative scheduling repaired | Preserve unknown/exclusive tool behavior |
+| A08 | Source-confirmed architectural work | Narrow ownership after child-service contracts |
+| A09 | Effects incremental Rollup, indexed lookup and cursor pages implemented | Whole-snapshot decoding and growth measurements remain |
+| A10 | Encrypted catalog implemented; focused suite passes | Multi-platform packaging and wider acceptance remain |
+| A11 | Typed outcomes and mechanically checked ClientEvent fixture implemented | Wider presentation wire fixture coverage/replay acceptance |
+| A12 | Unreachable production API quarantined | Module now test-only; concurrent chunk ownership must precede any production reintroduction |
+| P01 | Scalar repairs implemented | Numeric expression arithmetic remains numeric; surface acceptance limits recorded |
+| P02 | Composition repaired | Browser acceptance of complete prose/card flows |
+| P03 | Binding transfer repaired | Durable child-card provenance |
+| P04 | Explicit interaction scopes implemented | Browser replacement/remount/reconnect lifecycle matrix |
+| P05 | All current subjects round-trip | Running-app acceptance |
+| P06 | Protected eviction and encrypted same-tab reload implemented | Conflict chooser and broader crash/new-tab recovery |
+| P07 | Encrypted fenced Documents implemented | Preserve erasure/fence/router tests |
+| P08 | Stable authorized resource refs and real-router tests pass | Saved/shared page end-to-end browser acceptance |
+| P09 | Payload checks, consumed-property coverage and isolated fallback implemented | Browser acceptance; coverage is top-level property granularity |
+| P10 | Scales, gaps and explicit x geometry tests pass | Running-app numeric/time/gap cases |
+| P11 | Delta-only wire and deferred prefix compilation measured | Browser streaming/reconnect acceptance |
+| P12 | Task-level corpus/rubric added | Live semantic quality evaluation remains unrun |
+| P13 | Actual card delivery attribution regression passes | Broader browser composition acceptance |
+| P14 | Literal marker/code preservation tests pass | Broader browser speech/export acceptance |
+| D01 | Active-card replacement repaired with explicit refusal | Existing dependents stay pinned; no implicit identity migration |
+| D02 | Existing controls-to-consumers scope retained | Validate supported topology; generic DAG remains optional |
+| D03 | Exact recorded invocation and durable provenance implemented | Full cross-surface freshness/refresh acceptance |
+| D04 | Partial fixture/source coverage | Combined lifecycle and browser acceptance matrix |
 
 ## S1 — fail closed and fence authoritative state
 
@@ -908,3 +947,125 @@ handover. Close a stage only when every listed exit holds or an explicit
 maintainer decision removes a scoped item. The original planning-only
 commit changed no runtime behavior. Implementation slices do not change
 the data baseline, release, install or deploy unless separately recorded.
+
+### Continuation: verified resource and invocation identity, durable admission
+
+Implementation in the current working batch (focused integration checks in
+progress; no full gate requested):
+
+- Strict artifact `try_get`/`try_list` and file-state readers now carry unknown
+  state through file notes, recall and promotion instead of falling back to
+  stale/absent data. A file-note read failure becomes a failed call result.
+- Day-budget pending admissions use a shared fenced schema-1 Document CAS.
+  Independent gates and restarts see unresolved estimated/unknown liabilities;
+  settlement appends the cost row before releasing its reservation. There is
+  no automatic expiry of an unresolved paid call at midnight. Run-local
+  aggregate counters remain a separate qualification until audited.
+- Credential mutation refuses corrupt ciphertext, malformed rows, unavailable
+  locks and missing/corrupt keys. Presence publication uses a stable separate
+  lock and atomic, synced replacement. Install erasure reports failed secret
+  cleanup and preserves the index/store for retry rather than silently claiming
+  removal. Encrypted fallback and OS-keychain errors remain distinguishable by
+  fallible APIs; no credential values enter logs or records.
+- The unused streaming blob module is test-only. A retained sequential
+  shared-chunk regression is evidence of the original flaw and sequential
+  fix, not proof of concurrent root ownership. Production callers remain
+  prohibited until an atomic ownership model exists.
+- Saved pages seal a bounded resource map of already-recorded artifact
+  versions in their immutable version bytes. Resolution uses the source
+  session's workspace, respects exact saved versions, checks source audience
+  while saving, and authorizes later reads through the page's actual grant.
+  Guests cannot name arbitrary resource artifacts. Responses preserve MIME
+  with nosniff. Unresolved historical references fail closed.
+- Ability tables/charts require an explicit recorded `call_id` and cross-check
+  `from`; failed, incomplete, unavailable and mismatched invocations refuse
+  filling. An explicitly selected earlier success remains an immutable
+  snapshot. `PresentationRecord.data_call_id` carries that selection through
+  delegation. Refresh means a newly admitted call, never an implicit fetch.
+- Chart `x_scale` opts into number/time geometry; the default retains lexical
+  categories. Missing observations split line/area paths. Empty or ambiguous
+  geometry preserves the data and shows an explanation. Schema arguments stay
+  portable: omit an optional y to declare a gap, rather than using a union.
+- Projected outline sections use actual explicitly named card delivery even
+  for planned text sections. Client prose cleanup preserves authored markers,
+  lifecycle words and JSON examples; typed server records filter controls.
+- Adaptive compilation validates meaningful resolved payloads and coverage.
+  The client checks persisted trees, supplies card identity context and uses
+  an error boundary with the original fallback for invalid/runtime-failed
+  rendering. Neither an empty tree nor an empty chart claims Rich success.
+- Live presentation frames transport text deltas; their in-process event
+  retains its accumulated snapshot. Live Documents retain exact source text
+  without compiling every prefix. Completion/durable settlement compiles it;
+  resync snapshots remain authoritative. This coordinated server/bundle
+  update requires existing open clients to reload. The new client also
+  accepts older accumulated-text frames during update. Local measurement
+  results are recorded after the focused projection benchmark runs.
+
+Acceptance remains explicit: browser access is disabled in current Work
+settings, A10 encryption is now approved and under implementation, and the
+remaining source/quality/ownership work in the disposition table is open.
+
+### Integrated verification and encryption decision
+
+The maintainer explicitly chose catalog encryption on 2026-10-18. The
+catalog now uses bundled SQLCipher through the existing rusqlite interface,
+with a `catalog` scope key obtained only through TenantObjects. Every
+connection access checks that the key remains available; an erased key
+blocks an already-open handle. Raw key setup errors map to a static protection
+error. No plaintext/key-file fallback exists. WAL pages are encrypted;
+SQLCipher is built with memory temporary storage and the connection requests
+memory-only temporary storage and memory sanitization. Derived catalogs are
+excluded from ordinary backups by the state registry, and reconstruct from
+primary records. A legacy plaintext catalog and its sidecars are removed
+under an open lock before rebuilding encrypted; this is not a guarantee that
+old plaintext cannot survive in preexisting backups, snapshots or SSD blocks.
+Wrong-key/corrupt encrypted catalogs fail without deleting the database.
+References: [SQLCipher design](https://www.zetetic.net/sqlcipher/design/) and
+[SQLCipher API](https://www.zetetic.net/sqlcipher/sqlcipher-api/).
+
+Focused catalog suite: 16 tests pass, including encrypted reopen, unkeyed and
+wrong-key refusal, database/WAL marker absence, plaintext derived rebuild and
+live key destruction. Three storage SQLite persistence/epoch race checks pass
+with the shared SQLCipher build. This does not establish platform packaging
+acceptance on every supported OS.
+
+Server projection suite passes 49 tests (one explicit performance workload
+ignored in the ordinary run). Saved/shared page and client-event focused run
+passes 13 tests, including real bearer/participant middleware and the shared
+Rust/TypeScript fixture. Frontend chart, prose, hydration, adaptive validation
+and fixture/type checks pass. The child factory attribution test, 10 worker,
+8 file-note and 10 credential checks, plus install erasure test pass.
+
+Local streaming workload: Apple M1 Pro arm64, unoptimized test profile,
+scripted event source (no provider/network route), 1,000 frames of 35 bytes,
+35,000 source bytes. Reconstructed previous prefix-compile/wire baseline:
+17,662,500 wire bytes and 1,504,812 microseconds. Changed real projector:
+120,896 wire bytes and 9,181 microseconds. One local run, no browser/frame-rate
+or production latency claim. In-process partial messages still carry full
+snapshots; completion/resync convergence remains covered by focused tests.
+
+Typed terminal outcomes now originate from TurnOutcome and explicit synthetic
+stop/delivery sources. No terminal classification parses summary text. The
+shared event fixture is checked against Rust serde output, a compiled TS
+`satisfies` contract and an exhaustive variant-name map. Adaptive coverage
+records consumed top-level properties, not proof that every nested value is
+visually shown. A task-quality corpus supplies prompts and scoring rubrics;
+semantic model-quality scores remain unrun.
+
+Final causal integration: all four selected tests pass (required assistant
+record before dispatch, abort partial preservation with unwritable history,
+fence-card write failure refusing successful delivery, and selected ability
+call behavior). FinOps/child factory integrated run passes 36 tests. A child
+terminal write failure now yields an error with partial output and withholds
+card delivery; aborted text remains visible with an explicit persistence
+failure marker if recording fails. No new dispatch-count limit was invented:
+`dispatch_ceiling` is per-step retry policy, and a separate aggregate run-tree
+cap needs an explicit configuration contract. Shared dollar reservations do
+not imply a configured call-count cap exists.
+
+Final batch verification: both desktop/web bundles build and their manifests
+include all 196 client source files. Focused Clippy passes for catalog,
+config, session, storage, presentation, delivery, tools, agent, core and server
+libraries with warnings denied. Repository formatting, records, document
+paths, version consistency and whitespace checks pass. The full workspace
+gate was not run, as requested. No manual browser acceptance is claimed.

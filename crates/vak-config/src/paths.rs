@@ -28,6 +28,27 @@ pub fn data_home() -> PathBuf {
     resolve(get_var("VAK_HOME").as_deref()).data
 }
 
+/// The metadata-only index of credentials stored by Vak. It contains
+/// credential scope/name pairs, never secret values.
+pub fn credential_index() -> PathBuf {
+    credential_index_at(&data_home())
+}
+
+/// The install-wide stable lock for credential index reads and replacement.
+pub fn credential_index_lock() -> PathBuf {
+    credential_index_lock_at(&data_home())
+}
+
+/// Resolve the credential index under an explicit data home.
+pub fn credential_index_at(data: &std::path::Path) -> PathBuf {
+    data.join("credential_index.json")
+}
+
+/// Resolve the stable credential index lock under an explicit data home.
+pub fn credential_index_lock_at(data: &std::path::Path) -> PathBuf {
+    data.join(".credential_index.lock")
+}
+
 /// Rebuildable artifacts only (the SQLite FTS index and WAL sidecars).
 /// Deleting this directory must always be safe; it is rebuilt from JSONL.
 pub fn cache_home() -> PathBuf {

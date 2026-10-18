@@ -258,6 +258,8 @@ pub enum OutputStreamEvent {
     TextDelta {
         item_id: String,
         delta: String,
+        /// Internal accumulated snapshot; ordinary wire frames omit it.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         text: String,
     },
     ItemReplaced {

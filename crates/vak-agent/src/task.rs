@@ -82,6 +82,9 @@ pub struct TaskDeps {
     /// Records a worker's cards in its own ledger as they validate, so they
     /// can be handed to the delegating conversation when the worker ends.
     pub presentation_rebuild: Option<crate::PresentationRebuild>,
+    /// Host factory for callbacks that must be rebound to this child's own
+    /// session and workspace after its identity is minted.
+    pub child_services: Option<crate::ChildServicesFactory>,
     pub mcp_tool_index: Option<McpToolIndex>,
     pub input_normalizer: Option<InputNormalizer>,
     /// Read-only subset (read/glob/grep) used when a task declares
@@ -980,6 +983,34 @@ impl TaskTool {
                 return ToolOutput::error(Fault::Tool, format!("cannot create child session: {e}"));
             }
         };
+        let child_bound = match &self.deps.child_services {
+            Some(factory) => match factory(crate::ChildServiceContext {
+                session_id: session_id.clone(),
+                cwd: self.deps.cwd.clone(),
+                agent_id: child_identity
+                    .as_ref()
+                    .map(|identity| identity.id.clone())
+                    .unwrap_or_else(|| "vak".into()),
+                agent_identity: child_identity.clone(),
+                trace: child_trace.clone(),
+            }) {
+                Ok(services) => Some(services),
+                Err(error) => {
+                    if let Some(run) = child_run.as_mut() {
+                        run.end_with(vak_session::runs::RunEnd::Settled(
+                            vak_session::runs::RunOutcome::Failed {
+                                reason: "child services unavailable".into(),
+                            },
+                        ));
+                    }
+                    return ToolOutput::error(
+                        Fault::Tool,
+                        format!("child services unavailable: {error}"),
+                    );
+                }
+            },
+            None => None,
+        };
         if let (Some(runs), Some(run)) = (&self.deps.runs, &child_run)
             && let Err(e) = runs.session(run.id(), &session_id)
         {
@@ -1048,6 +1079,16 @@ impl TaskTool {
         cfg.hooks = self.deps.hooks.clone();
         cfg.revocation_check = self.deps.revocation_check.clone();
         cfg.presentation_rebuild = self.deps.presentation_rebuild.clone();
+        cfg.child_services = None;
+        if let Some(services) = child_bound {
+            cfg.artifacts = services.artifacts;
+            cfg.file_note = services.file_note;
+            cfg.before_effect = services.before_effect;
+            cfg.presentation_rebuild = services.presentation_rebuild;
+            cfg.history_recall = services.history_recall;
+            cfg.history_refresh = services.history_refresh;
+            cfg.workspace_delta = services.workspace_delta;
+        }
         cfg.mcp_tool_index = self.deps.mcp_tool_index.clone().unwrap_or_default();
         cfg.input_normalizer = self.deps.input_normalizer.clone();
         cfg.max_turns = self.deps.max_turns;
@@ -1254,40 +1295,59 @@ impl DriveChild {
         };
         // Persist the terminal marker before notifying the parent. Recovery
         // must never observe a finished child without a durable status.
-        let _ = agent
+        let terminal_write_failed = match agent
             .session
             .lock()
             .await
-            .append_child_run_result(child_status, child_outcome);
+            .append_child_run_result(child_status, child_outcome)
+        {
+            Ok(_) => false,
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = %vak_telemetry::error_kind(&error),
+                    "child terminal result could not be recorded"
+                );
+                true
+            }
+        };
         if let Some(events) = &parent_events {
             let _ = events
                 .send(crate::AgentEvent::WorkerFinished {
                     label: label.clone(),
-                    is_error: !matches!(outcome, crate::TurnOutcome::Completed { .. }),
+                    is_error: terminal_write_failed
+                        || !matches!(outcome, crate::TurnOutcome::Completed { .. }),
                     elapsed_ms: started.elapsed().as_millis() as u64,
                 })
                 .await;
         }
         let _ = pump.await;
-        let cards: Vec<vak_tools::PresentationCard> = agent
-            .session
-            .lock()
-            .await
-            .active_presentations()
-            .into_iter()
-            .map(|(presentation_id, record)| vak_tools::PresentationCard {
-                presentation_id: Some(presentation_id),
-                semantic_type: record.semantic_type.clone(),
-                skill_id: record.skill_id.clone(),
-                skill_version: record.skill_version.clone(),
-                schema_version: record.schema_version,
-                payload: record.payload.clone(),
-                title: record.title.clone(),
-                identity_digest: record.identity_digest.clone(),
-                block: record.block.clone(),
-            })
-            .collect();
+        let cards: Vec<vak_tools::PresentationCard> = if terminal_write_failed {
+            Vec::new()
+        } else {
+            agent
+                .session
+                .lock()
+                .await
+                .active_presentations()
+                .into_iter()
+                .map(|(presentation_id, record)| vak_tools::PresentationCard {
+                    presentation_id: Some(presentation_id),
+                    semantic_type: record.semantic_type.clone(),
+                    skill_id: record.skill_id.clone(),
+                    skill_version: record.skill_version.clone(),
+                    schema_version: record.schema_version,
+                    payload: record.payload.clone(),
+                    title: record.title.clone(),
+                    identity_digest: record.identity_digest.clone(),
+                    block: record.block.clone(),
+                    data_call_id: record.data_call_id.clone(),
+                })
+                .collect()
+        };
         let mut output = worker_output(&session_id, outcome, contracted);
+        if terminal_write_failed {
+            output = terminal_write_failure(&session_id, output);
+        }
         // What the worker wrote can hold anything its turn held.
         output.provenance = agent.held();
         if !cards.is_empty() {
@@ -1347,6 +1407,16 @@ fn worker_output(session_id: &str, outcome: crate::TurnOutcome, contracted: bool
             format!("worker '{session_id}' hit its turn limit before finishing"),
         ),
     }
+}
+
+fn terminal_write_failure(session_id: &str, output: ToolOutput) -> ToolOutput {
+    ToolOutput::error(
+        Fault::Tool,
+        format!(
+            "worker '{session_id}' finished, but its terminal result could not be recorded; its output is not a final result and its cards were not delivered. Partial output:\n{}",
+            output.content
+        ),
+    )
 }
 
 /// A child session's id, unique by construction.
@@ -1688,6 +1758,26 @@ mod child_id_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod child_terminal_write_tests {
+    use super::terminal_write_failure;
+
+    #[test]
+    fn terminal_record_failure_turns_success_into_error_and_withholds_cards() {
+        let output = vak_tools::ToolOutput::ok("child answer");
+        let failed = terminal_write_failure("child", output);
+        assert!(failed.is_error());
+        assert!(
+            failed
+                .content
+                .contains("terminal result could not be recorded")
+        );
+        assert!(failed.content.contains("child answer"));
+        assert!(failed.delegated.is_empty());
+    }
+}
+
+#[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod finished_worker_transfer_tests {
     use super::{FinishedWorker, WorkerRegistry};
@@ -1714,6 +1804,7 @@ mod finished_worker_transfer_tests {
                     payload,
                     identity_digest: "digest".into(),
                     block: Some("chart".into()),
+                    data_call_id: None,
                 }],
             }],
             provenance: vak_control::Provenance::PRIVATE,

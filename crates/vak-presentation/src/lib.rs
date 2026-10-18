@@ -758,6 +758,7 @@ fn compile_rich(
     }
     let mut coverage = Coverage::default();
     let root = compile_node(&spec.root, &input.payload, "$", &mut coverage)?;
+    validate_render_node(&root)?;
     let accessibility_summary = spec
         .accessibility
         .summary
@@ -822,7 +823,11 @@ fn compile_node(
                 coverage,
             )?);
         }
-        coverage.rendered_paths.push(binding.path.clone());
+        if !items.is_empty() {
+            coverage.rendered_paths.push(binding.path.clone());
+        } else {
+            coverage.omitted_paths.push(binding.path.clone());
+        }
     }
     let mut props = BTreeMap::new();
     for (key, value) in &node.props {
@@ -834,11 +839,27 @@ fn compile_node(
                             "spread binding is not an object".into(),
                         ));
                     };
-                    props.extend(values);
+                    for (name, value) in values {
+                        let coverage_path = format!("{path}.{name}");
+                        if renderer_consumes_prop(node.primitive, &name) && meaningful_value(&value)
+                        {
+                            coverage.rendered_paths.push(coverage_path);
+                        } else {
+                            coverage.omitted_paths.push(coverage_path);
+                        }
+                        props.insert(name, value);
+                    }
                 } else {
+                    let meaningful =
+                        renderer_consumes_prop(node.primitive, key) && meaningful_value(&resolved);
                     props.insert(key.clone(), resolved);
+                    let coverage_path = format!("{path}.{key}");
+                    if meaningful {
+                        coverage.rendered_paths.push(coverage_path);
+                    } else {
+                        coverage.omitted_paths.push(coverage_path);
+                    }
                 }
-                coverage.rendered_paths.push(format!("{path}.{key}"));
             }
             None => coverage.omitted_paths.push(format!("{path}.{key}")),
         }
@@ -848,6 +869,354 @@ fn compile_node(
         props,
         children,
     })
+}
+
+fn meaningful_value(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(_) | Value::Number(_) => true,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(fields) => !fields.is_empty(),
+    }
+}
+
+/// Top-level prop names each renderer actually reads. A value being present
+/// in a resolved payload is not evidence that the client draws it; arbitrary
+/// pack props remain in the render tree for forward compatibility but are
+/// counted as omitted coverage.
+fn renderer_consumes_prop(primitive: Primitive, key: &str) -> bool {
+    let consumed: &[&str] = match primitive {
+        Primitive::Stack | Primitive::Row | Primitive::Group => &[],
+        Primitive::Section => &["title", "label", "text"],
+        Primitive::Text => &["text"],
+        Primitive::Metric => &["label", "value", "unit", "change"],
+        Primitive::Summary => &["headline", "label", "text", "points"],
+        Primitive::Steps => &["label", "title", "steps"],
+        Primitive::List => &["label", "title", "checkable", "items"],
+        Primitive::Details => &["label", "title", "text", "fields"],
+        Primitive::Table => &["label", "title", "columns", "rows"],
+        Primitive::Comparison => &["label", "title", "options", "aspects", "recommendation"],
+        Primitive::Stats => &["label", "title", "readings"],
+        Primitive::Chart => &[
+            "accessible_summary",
+            "chart_type",
+            "label",
+            "series",
+            "title",
+            "x_label",
+            "x_scale",
+            "y_label",
+        ],
+        Primitive::Callout => &["tone", "label", "title", "text"],
+        Primitive::Sources => &["label", "title", "sources"],
+        Primitive::Calendar => &["label", "title", "events"],
+        Primitive::Map => &["connect", "label", "places", "title"],
+        Primitive::Controls => &["inputs", "label", "max_points", "outputs", "title"],
+        Primitive::Link => &["url", "title", "image_url", "description", "site_name"],
+        Primitive::Media => &["format", "url", "alt"],
+        Primitive::FilePreview | Primitive::MarkupPreview => {
+            &["artifact_path", "html", "title", "libraries"]
+        }
+        Primitive::Diff => &["files"],
+        Primitive::TestReport => &[
+            "command",
+            "tests",
+            "passed",
+            "failed",
+            "total",
+            "suite_name",
+            "exit_code",
+            "duration_ms",
+        ],
+        Primitive::Terminal => &["command", "output", "exit_code", "duration_ms"],
+    };
+    consumed.contains(&key)
+}
+
+fn required_text<'a>(
+    props: &'a BTreeMap<String, Value>,
+    key: &str,
+    primitive: Primitive,
+) -> Result<&'a str, PresentationError> {
+    props
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| PresentationError::InvalidSpec(format!("{primitive:?} needs {key}")))
+}
+
+fn required_array<'a>(
+    props: &'a BTreeMap<String, Value>,
+    key: &str,
+    primitive: Primitive,
+) -> Result<&'a [Value], PresentationError> {
+    props
+        .get(key)
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+        .map(Vec::as_slice)
+        .ok_or_else(|| PresentationError::InvalidSpec(format!("{primitive:?} needs {key}")))
+}
+
+fn required_field(value: &Value, key: &str, primitive: Primitive) -> Result<(), PresentationError> {
+    value
+        .get(key)
+        .filter(|value| meaningful_value(value))
+        .map(|_| ())
+        .ok_or_else(|| PresentationError::InvalidSpec(format!("{primitive:?} items need {key}")))
+}
+
+/// Validate the closed client form contract against resolved props. A pack
+/// may choose bindings and layout, but a successful binding cannot turn an
+/// empty form into a Rich result.
+fn validate_render_node(node: &RenderNode) -> Result<(), PresentationError> {
+    let props = &node.props;
+    let primitive = node.primitive;
+    let valid_enum = |key: &str, allowed: &[&str]| {
+        props
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| allowed.contains(&value))
+    };
+    match primitive {
+        Primitive::Stack | Primitive::Row | Primitive::Group => {
+            if node.children.is_empty() {
+                return Err(PresentationError::InvalidSpec(format!(
+                    "{primitive:?} needs rendered children"
+                )));
+            }
+        }
+        Primitive::Section => {
+            if node.children.is_empty()
+                && !["title", "label", "text"]
+                    .iter()
+                    .any(|key| props.get(*key).is_some_and(meaningful_value))
+            {
+                return Err(PresentationError::InvalidSpec(
+                    "Section needs a heading, text, or rendered children".into(),
+                ));
+            }
+        }
+        Primitive::Text => {
+            required_text(props, "text", primitive)?;
+        }
+        Primitive::Metric => {
+            required_text(props, "label", primitive)?;
+            if !props.get("value").is_some_and(meaningful_value) {
+                return Err(PresentationError::InvalidSpec("Metric needs value".into()));
+            }
+        }
+        Primitive::Summary => {
+            required_text(props, "headline", primitive)?;
+        }
+        Primitive::Steps => {
+            let items = required_array(props, "steps", primitive)?;
+            for item in items {
+                required_field(item, "label", primitive)?;
+            }
+        }
+        Primitive::List => {
+            let items = required_array(props, "items", primitive)?;
+            for item in items {
+                required_field(item, "label", primitive)?;
+            }
+        }
+        Primitive::Details => {
+            let items = required_array(props, "fields", primitive)?;
+            for item in items {
+                required_field(item, "label", primitive)?;
+                required_field(item, "detail", primitive)?;
+            }
+        }
+        Primitive::Table => {
+            let columns = required_array(props, "columns", primitive)?;
+            let rows = required_array(props, "rows", primitive)?;
+            for column in columns {
+                required_field(column, "label", primitive)?;
+            }
+            if rows.iter().any(|row| {
+                row.as_array()
+                    .is_none_or(|cells| cells.len() != columns.len())
+            }) {
+                return Err(PresentationError::InvalidSpec(
+                    "Table rows must match its columns".into(),
+                ));
+            }
+        }
+        Primitive::Comparison => {
+            let options = required_array(props, "options", primitive)?;
+            if options.len() < 2 {
+                return Err(PresentationError::InvalidSpec(
+                    "Comparison needs at least two options".into(),
+                ));
+            }
+            for option in options {
+                required_field(option, "name", primitive)?;
+            }
+        }
+        Primitive::Stats => {
+            let readings = required_array(props, "readings", primitive)?;
+            for reading in readings {
+                required_field(reading, "label", primitive)?;
+                required_field(reading, "value", primitive)?;
+            }
+        }
+        Primitive::Chart => {
+            if !valid_enum("chart_type", &["line", "bar", "area"]) {
+                return Err(PresentationError::InvalidSpec(
+                    "Chart needs chart_type line, bar, or area".into(),
+                ));
+            }
+            let series = required_array(props, "series", primitive)?;
+            for item in series {
+                required_field(item, "name", primitive)?;
+                let points = item
+                    .get("points")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| {
+                        PresentationError::InvalidSpec("Chart series need points".into())
+                    })?;
+                let follows = item
+                    .get("follows")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty());
+                if points.is_empty() && !follows {
+                    return Err(PresentationError::InvalidSpec(
+                        "Chart series need points or a followed value".into(),
+                    ));
+                }
+                for point in points {
+                    if !point.get("x").is_some_and(meaningful_value)
+                        || !point.get("y").is_some_and(|value| {
+                            value.is_null() || value.as_f64().is_some_and(f64::is_finite)
+                        })
+                    {
+                        return Err(PresentationError::InvalidSpec(
+                            "Chart points need x and numeric or null y values".into(),
+                        ));
+                    }
+                }
+            }
+        }
+        Primitive::Callout => {
+            if !valid_enum("tone", &["tip", "note", "warning", "important"]) {
+                return Err(PresentationError::InvalidSpec(
+                    "Callout needs a supported tone".into(),
+                ));
+            }
+            required_text(props, "text", primitive)?;
+        }
+        Primitive::Sources => {
+            let items = required_array(props, "sources", primitive)?;
+            for item in items {
+                required_field(item, "title", primitive)?;
+                required_field(item, "url", primitive)?;
+                required_field(item, "finding", primitive)?;
+            }
+        }
+        Primitive::Calendar => {
+            let items = required_array(props, "events", primitive)?;
+            for item in items {
+                required_field(item, "title", primitive)?;
+                required_field(item, "date", primitive)?;
+            }
+        }
+        Primitive::Map => {
+            if !valid_enum("connect", &["none", "route", "area"]) {
+                return Err(PresentationError::InvalidSpec(
+                    "Map needs a supported connect value".into(),
+                ));
+            }
+            let places = required_array(props, "places", primitive)?;
+            for place in places {
+                required_field(place, "label", primitive)?;
+                let valid_coordinate = |key: &str, max: f64| {
+                    place
+                        .get(key)
+                        .and_then(Value::as_f64)
+                        .is_some_and(|value| value.is_finite() && value.abs() <= max)
+                };
+                if !valid_coordinate("latitude", 90.0) || !valid_coordinate("longitude", 180.0) {
+                    return Err(PresentationError::InvalidSpec(
+                        "Map places need valid latitude and longitude".into(),
+                    ));
+                }
+            }
+        }
+        Primitive::Controls => {
+            let inputs = required_array(props, "inputs", primitive)?;
+            let outputs = required_array(props, "outputs", primitive)?;
+            for item in inputs {
+                for key in ["name", "kind", "value", "label"] {
+                    required_field(item, key, primitive)?;
+                }
+            }
+            for item in outputs {
+                for key in ["name", "expression", "label"] {
+                    required_field(item, key, primitive)?;
+                }
+            }
+        }
+        Primitive::Link => {
+            required_text(props, "url", primitive)?;
+        }
+        Primitive::Media => {
+            if !valid_enum("format", &["image", "video", "audio"]) {
+                return Err(PresentationError::InvalidSpec(
+                    "Media needs a supported format".into(),
+                ));
+            }
+            required_text(props, "url", primitive)?;
+        }
+        Primitive::FilePreview => {
+            required_text(props, "artifact_path", primitive)?;
+        }
+        Primitive::MarkupPreview => {
+            required_text(props, "html", primitive)?;
+            if props.get("libraries").and_then(Value::as_array).is_none() {
+                return Err(PresentationError::InvalidSpec(
+                    "MarkupPreview needs a libraries list".into(),
+                ));
+            }
+        }
+        Primitive::Diff => {
+            let files = required_array(props, "files", primitive)?;
+            for file in files {
+                for key in ["filename", "hunks", "additions", "deletions"] {
+                    required_field(file, key, primitive)?;
+                }
+            }
+        }
+        Primitive::TestReport => {
+            required_text(props, "command", primitive)?;
+            let tests = required_array(props, "tests", primitive)?;
+            for test in tests {
+                required_field(test, "name", primitive)?;
+                if !test
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| ["passed", "failed", "skipped"].contains(&status))
+                {
+                    return Err(PresentationError::InvalidSpec(
+                        "TestReport tests need a supported status".into(),
+                    ));
+                }
+            }
+        }
+        Primitive::Terminal => {
+            required_text(props, "command", primitive)?;
+            if !props.get("output").is_some_and(Value::is_string) {
+                return Err(PresentationError::InvalidSpec(
+                    "Terminal needs output".into(),
+                ));
+            }
+        }
+    }
+    for child in &node.children {
+        validate_render_node(child)?;
+    }
+    Ok(())
 }
 
 fn resolve_spec_value(value: &SpecValue, data: &Value) -> Result<Option<Value>, PresentationError> {
@@ -966,8 +1335,14 @@ mod tests {
                 serde_json::json!({
                     "primitive": "row",
                     "children": [
-                        { "primitive": "media", "props": { "src": { "kind": "binding", "path": "$.src" } } },
-                        { "primitive": "media", "props": { "src": { "kind": "binding", "path": "$.clip" } } }
+                        { "primitive": "media", "props": {
+                            "format": { "kind": "text", "value": "image" },
+                            "url": { "kind": "binding", "path": "$.src" }
+                        } },
+                        { "primitive": "media", "props": {
+                            "format": { "kind": "text", "value": "video" },
+                            "url": { "kind": "binding", "path": "$.clip" }
+                        } }
                     ]
                 }),
             ),
@@ -975,14 +1350,10 @@ mod tests {
                 "card.universal",
                 serde_json::json!({
                     "primitive": "details",
-                    "props": { "title": { "kind": "binding", "path": "$.title" } },
-                    "children": [{
-                        "primitive": "details",
-                        "props": {
-                            "label": { "kind": "binding", "path": "$.label" },
-                            "value": { "kind": "binding", "path": "$.value" }
-                        }
-                    }]
+                    "props": {
+                        "title": { "kind": "binding", "path": "$.title" },
+                        "fields": { "kind": "binding", "path": "$.fields" }
+                    }
                 }),
             ),
         ] {
@@ -1001,8 +1372,7 @@ mod tests {
                     semantic_type: semantic_type.into(),
                     payload: serde_json::json!({
                         "title": "Card",
-                        "label": "Latency",
-                        "value": "12ms",
+                        "fields": [{"label":"Latency","detail":"12ms"}],
                         "src": "a.png",
                         "clip": "a.mp4",
                         "metrics": [{"label":"p50","value":"9ms"},{"label":"p99","value":"40ms"}],
@@ -1017,6 +1387,166 @@ mod tests {
         }
     }
 
+    fn primitive_spec(
+        primitive: Primitive,
+        props: Value,
+        children: Vec<SpecNode>,
+    ) -> PresentationSpec {
+        PresentationSpec {
+            schema_version: SPEC_SCHEMA_VERSION,
+            id: "test.primitive".into(),
+            revision: 1,
+            accepts: Vec::new(),
+            block: None,
+            root: SpecNode {
+                primitive,
+                props: props
+                    .as_object()
+                    .expect("fixture props are an object")
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            key.clone(),
+                            SpecValue::Literal {
+                                value: value.clone(),
+                            },
+                        )
+                    })
+                    .collect(),
+                children,
+                each: None,
+                item: None,
+            },
+            fallback: FallbackSpec::default(),
+            accessibility: AccessibilitySpec::default(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    fn valid_primitive_props(primitive: Primitive) -> Value {
+        match primitive {
+            Primitive::Stack | Primitive::Row | Primitive::Group => serde_json::json!({}),
+            Primitive::Section => serde_json::json!({"title":"Section"}),
+            Primitive::Text => serde_json::json!({"text":"Visible text"}),
+            Primitive::Metric => serde_json::json!({"label":"Latency","value":12}),
+            Primitive::Summary => serde_json::json!({"headline":"Summary"}),
+            Primitive::Steps => serde_json::json!({"steps":[{"label":"Step"}]}),
+            Primitive::List => serde_json::json!({"items":[{"label":"Item"}]}),
+            Primitive::Details => serde_json::json!({"fields":[{"label":"Fact","detail":"Value"}]}),
+            Primitive::Table => serde_json::json!({"columns":[{"label":"Name"}],"rows":[["A"]]}),
+            Primitive::Comparison => serde_json::json!({"options":[{"name":"A"},{"name":"B"}]}),
+            Primitive::Stats => serde_json::json!({"readings":[{"label":"Count","value":1}]}),
+            Primitive::Chart => {
+                serde_json::json!({"chart_type":"bar","series":[{"name":"Count","points":[{"x":"A","y":1}]}]})
+            }
+            Primitive::Callout => serde_json::json!({"tone":"note","text":"Note"}),
+            Primitive::Sources => {
+                serde_json::json!({"sources":[{"title":"Source","url":"https://example.test","finding":"Finding"}]})
+            }
+            Primitive::Calendar => {
+                serde_json::json!({"events":[{"title":"Event","date":"2026-10-18"}]})
+            }
+            Primitive::Map => {
+                serde_json::json!({"connect":"none","places":[{"label":"Place","latitude":12.5,"longitude":45.25}]})
+            }
+            Primitive::Controls => {
+                serde_json::json!({"inputs":[{"name":"amount","kind":"number","value":"2","label":"Amount"}],"outputs":[{"name":"total","expression":"amount * 2","label":"Total"}]})
+            }
+            Primitive::Link => serde_json::json!({"url":"https://example.test"}),
+            Primitive::Media => serde_json::json!({"format":"image","url":"image.png"}),
+            Primitive::FilePreview => serde_json::json!({"artifact_path":"index.html"}),
+            Primitive::MarkupPreview => serde_json::json!({"html":"<p>Preview</p>","libraries":[]}),
+            Primitive::Diff => {
+                serde_json::json!({"files":[{"filename":"main.rs","hunks":"@@ -1 +1 @@","additions":1,"deletions":0}]})
+            }
+            Primitive::TestReport => {
+                serde_json::json!({"command":"cargo test","tests":[{"name":"unit","status":"passed"}]})
+            }
+            Primitive::Terminal => serde_json::json!({"command":"pwd","output":"/tmp"}),
+        }
+    }
+
+    #[test]
+    fn every_advertised_primitive_requires_a_renderable_payload_and_keeps_valid_forms() {
+        for primitive in PRIMITIVES {
+            let children = if matches!(
+                primitive,
+                Primitive::Stack | Primitive::Row | Primitive::Group
+            ) {
+                vec![SpecNode {
+                    primitive: Primitive::Text,
+                    props: BTreeMap::from([(
+                        "text".into(),
+                        SpecValue::Text {
+                            value: "Child".into(),
+                        },
+                    )]),
+                    children: Vec::new(),
+                    each: None,
+                    item: None,
+                }]
+            } else {
+                Vec::new()
+            };
+            let spec = primitive_spec(*primitive, valid_primitive_props(*primitive), children);
+            let result = compile(
+                &spec,
+                &CompileInput {
+                    semantic_type: "test".into(),
+                    payload: Value::Null,
+                    fallback_text: "Original answer".into(),
+                },
+            );
+            assert!(
+                matches!(result, CompiledPresentation::Rich(_)),
+                "{primitive:?}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn coverage_only_marks_props_consumed_by_the_selected_renderer() {
+        let spec = primitive_spec(
+            Primitive::Text,
+            serde_json::json!({"text":"Shown", "hidden":"secret"}),
+            Vec::new(),
+        );
+        let CompiledPresentation::Rich(tree) = compile(
+            &spec,
+            &CompileInput {
+                semantic_type: "text".into(),
+                payload: Value::Null,
+                fallback_text: "Original answer".into(),
+            },
+        ) else {
+            panic!("valid text should compile richly");
+        };
+        assert!(tree.coverage.rendered_paths.contains(&"$.text".into()));
+        assert!(tree.coverage.omitted_paths.contains(&"$.hidden".into()));
+        assert_eq!(
+            tree.root.props.get("hidden"),
+            Some(&serde_json::json!("secret"))
+        );
+    }
+
+    #[test]
+    fn empty_chart_uses_the_original_fallback_instead_of_claiming_rich_coverage() {
+        let spec = primitive_spec(Primitive::Chart, serde_json::json!({}), Vec::new());
+        let fallback = "Original answer with all requested details.";
+        let result = compile(
+            &spec,
+            &CompileInput {
+                semantic_type: "chart".into(),
+                payload: serde_json::json!({"unused": true}),
+                fallback_text: fallback.into(),
+            },
+        );
+        assert!(
+            matches!(result, CompiledPresentation::Fallback { text, reason }
+            if text == fallback && reason.contains("Chart needs chart_type"))
+        );
+    }
+
     fn spec() -> PresentationSpec {
         PresentationSpec {
             schema_version: SPEC_SCHEMA_VERSION,
@@ -1025,7 +1555,7 @@ mod tests {
             accepts: vec!["trip".into()],
             block: None,
             root: SpecNode {
-                primitive: Primitive::Steps,
+                primitive: Primitive::Stack,
                 props: BTreeMap::from([(
                     String::from("title"),
                     SpecValue::Binding(Binding {

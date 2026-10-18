@@ -398,6 +398,13 @@ run needs nightly and is not part of the suite); streaming blobs
 manifest object); and exact workspace pins for `async-nats`,
 `webauthn-rs` and `webauthn-authenticator-rs`.
 
+**2026-10-18 qualification:** the streaming blob module above has no
+production callers and is now test-only. Its original release algorithm
+could revoke another manifest’s shared chunk. Sequential ownership tests
+remain, but a cross-process atomic ownership design is required before
+reintroducing the API into production. This qualifies the historical
+milestone; it does not remove its record.
+
 A library only, with no behaviour change elsewhere. It absorbs doc 79's
 requirements now, because they are cheap before the substrate exists and
 expensive after (review 2 R48–R53).

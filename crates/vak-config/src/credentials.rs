@@ -31,6 +31,11 @@ use std::sync::OnceLock;
 /// through, so a backend is free to store scopes any way it likes.
 pub trait CredentialStore: Send + Sync {
     fn get(&self, scope: &str, var: &str) -> Option<String>;
+    /// Fallible point lookup for callers that must distinguish a missing
+    /// credential from an unreadable or corrupt store.
+    fn try_get(&self, scope: &str, var: &str) -> io::Result<Option<String>> {
+        Ok(self.get(scope, var))
+    }
     fn set(&self, scope: &str, var: &str, value: &str) -> io::Result<()>;
     fn remove(&self, scope: &str, var: &str) -> io::Result<()>;
     /// Best-effort enumeration of everything stored for `scope`, used only
@@ -42,6 +47,11 @@ pub trait CredentialStore: Send + Sync {
     /// `get` are unaffected. Only the encrypted-file backend can answer
     /// this fully.
     fn list(&self, scope: &str) -> Vec<(String, String)>;
+    /// Fallible enumeration for callers that must not treat store damage as
+    /// an empty scope.
+    fn try_list(&self, scope: &str) -> io::Result<Vec<(String, String)>> {
+        Ok(self.list(scope))
+    }
 }
 
 fn fnv16(text: &str) -> String {
@@ -129,7 +139,8 @@ fn scope_key_for(hint_path: &Path) -> String {
 
 fn store() -> &'static dyn CredentialStore {
     if crate::paths::home_is_isolated_for_tests() {
-        return &EncryptedFileStore;
+        static ISOLATED_STORE: EncryptedFileStore = EncryptedFileStore { root: None };
+        return &ISOLATED_STORE;
     }
     static STORE: OnceLock<Box<dyn CredentialStore>> = OnceLock::new();
     STORE
@@ -137,7 +148,7 @@ fn store() -> &'static dyn CredentialStore {
             if os_keyring_reachable_cached() {
                 Box::new(OsKeyringStore) as Box<dyn CredentialStore>
             } else {
-                Box::new(EncryptedFileStore) as Box<dyn CredentialStore>
+                Box::new(EncryptedFileStore::default()) as Box<dyn CredentialStore>
             }
         })
         .as_ref()
@@ -205,7 +216,11 @@ fn os_keyring_reachable() -> bool {
 }
 
 pub fn get(scope_hint: &Path, var: &str) -> Option<String> {
-    store().get(&scope_key_for(scope_hint), var)
+    try_get(scope_hint, var).ok().flatten()
+}
+
+pub fn try_get(scope_hint: &Path, var: &str) -> io::Result<Option<String>> {
+    store().try_get(&scope_key_for(scope_hint), var)
 }
 
 pub fn set(scope_hint: &Path, var: &str, value: &str) -> io::Result<()> {
@@ -238,16 +253,26 @@ pub fn backend() -> &'static str {
 
 /// Removes every stored secret, in every scope: the erasure of the whole
 /// install (data-architecture plan M7b-f). The presence index names them,
-/// because the OS store cannot be listed. Returns how many it removed.
-pub fn forget_all() -> usize {
+/// because the OS store cannot be listed. The report counts removed and
+/// retained entries; index, lock, or store failures are never reported as an
+/// empty cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForgetReport {
+    pub removed: usize,
+    pub remaining: usize,
+}
+
+pub fn forget_all() -> io::Result<ForgetReport> {
     with_index_lock(|index| {
         let entries = index_entries(index)?;
         let (removed, retained) =
             remove_indexed_entries(&entries, |scope, var| store().remove(scope, var).is_ok());
         index_write(index, &retained)?;
-        Ok(removed)
+        Ok(ForgetReport {
+            removed,
+            remaining: retained.len(),
+        })
     })
-    .unwrap_or(0)
 }
 
 fn remove_indexed_entries(
@@ -286,6 +311,10 @@ pub fn list(scope_hint: &Path) -> Vec<(String, String)> {
     store().list(&scope_key_for(scope_hint))
 }
 
+pub fn try_list(scope_hint: &Path) -> io::Result<Vec<(String, String)>> {
+    store().try_list(&scope_key_for(scope_hint))
+}
+
 /// Whether *any* credential is stored for this scope — used for trust
 /// decisions (e.g. "does this project have a secret that makes it
 /// privileged") that a literal `.env`'s existence used to answer.
@@ -309,27 +338,45 @@ pub fn try_scope_has_any(scope_hint: &Path) -> io::Result<bool> {
 }
 
 fn index_path() -> PathBuf {
-    crate::paths::data_home().join("credential_index.json")
+    crate::paths::credential_index()
 }
 
-/// Lock the index inode itself. It is a small metadata file, and keeping
-/// that inode stable lets readers and writers coordinate across processes
-/// without a second lock path. All accesses to its contents go through this
-/// helper, including backend writes whose presence marker must be visible
-/// before the secret can become visible.
+/// Lock a stable sibling inode before opening the replaceable index. Every
+/// read and update goes through this helper, including backend writes whose
+/// presence marker must be visible before the secret can become visible.
 fn with_index_lock<T>(f: impl FnOnce(&mut std::fs::File) -> io::Result<T>) -> io::Result<T> {
-    let path = index_path();
+    with_index_lock_at(&index_path(), &crate::paths::credential_index_lock(), f)
+}
+
+fn with_index_lock_at<T>(
+    path: &Path,
+    lock_path: &Path,
+    f: impl FnOnce(&mut std::fs::File) -> io::Result<T>,
+) -> io::Result<T> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(path)?;
-    file.lock()?;
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let lock = open_private_file(lock_path, true)?;
+    lock.lock()?;
+    let mut file = open_private_file(path, true)?;
     f(&mut file)
+}
+
+fn open_private_file(path: &Path, create: bool) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true);
+    if create {
+        options.create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+    }
+    options.open(path)
 }
 
 fn index_entries(file: &mut std::fs::File) -> io::Result<Vec<String>> {
@@ -370,10 +417,23 @@ fn scope_has_any_conservative(result: io::Result<bool>) -> bool {
 }
 
 fn index_write(file: &mut std::fs::File, entries: &[String]) -> io::Result<()> {
-    file.set_len(0)?;
-    file.seek(SeekFrom::Start(0))?;
-    file.write_all(entries.join("\n").as_bytes())?;
-    file.sync_all()
+    index_write_at(file, &index_path(), entries)
+}
+
+fn index_write_at(file: &mut std::fs::File, path: &Path, entries: &[String]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("credential index has no parent directory"))?;
+    std::fs::create_dir_all(parent)?;
+    let tmp = unique_temporary_path(path);
+    write_private_synced(&tmp, entries.join("\n").as_bytes())?;
+    if let Err(error) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    sync_parent(parent)?;
+    *file = open_private_file(path, false)?;
+    Ok(())
 }
 
 fn index_mark_present(file: &mut std::fs::File, scope: &str, var: &str) -> io::Result<()> {
@@ -397,6 +457,56 @@ fn index_mark_absent(file: &mut std::fs::File, scope: &str, var: &str) -> io::Re
     Ok(())
 }
 
+fn unique_temporary_path(path: &Path) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let suffix = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    path.with_file_name(format!(
+        ".{}.{}.{}.tmp",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("credential"),
+        std::process::id(),
+        suffix
+    ))
+}
+
+fn sync_parent(parent: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn write_private_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let result = (|| {
+        let mut file = options.open(path)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
+
+fn publish_key(path: &Path, key: &[u8; 32]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("credential key has no parent directory"))?;
+    let tmp = unique_temporary_path(path);
+    write_private_synced(&tmp, key)?;
+    let published = std::fs::hard_link(&tmp, path);
+    let _ = std::fs::remove_file(&tmp);
+    published?;
+    sync_parent(parent)
+}
+
 // ---- OS-native backend -----------------------------------------------
 
 struct OsKeyringStore;
@@ -411,10 +521,16 @@ fn keyring_err(err: keyring::Error) -> io::Error {
 
 impl CredentialStore for OsKeyringStore {
     fn get(&self, scope: &str, var: &str) -> Option<String> {
-        keyring::Entry::new(&service_name(scope), var)
-            .ok()?
-            .get_password()
-            .ok()
+        self.try_get(scope, var).ok().flatten()
+    }
+
+    fn try_get(&self, scope: &str, var: &str) -> io::Result<Option<String>> {
+        let entry = keyring::Entry::new(&service_name(scope), var).map_err(keyring_err)?;
+        match entry.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(keyring_err(error)),
+        }
     }
 
     fn set(&self, scope: &str, var: &str, value: &str) -> io::Result<()> {
@@ -461,26 +577,30 @@ impl CredentialStore for OsKeyringStore {
 /// the rest of the process. Every call below re-resolves `home()` fresh
 /// instead; this is a handful of path joins and env lookups, not I/O, so
 /// there is no real cost to paying it on every access.
-struct EncryptedFileStore;
+#[derive(Default)]
+struct EncryptedFileStore {
+    /// Test-only explicit root; production always resolves the canonical home.
+    root: Option<PathBuf>,
+}
 
 impl EncryptedFileStore {
-    fn home() -> PathBuf {
+    fn home(&self) -> PathBuf {
         // The data home, never `default_workspace()`: that directory is
         // the built-in Agent's workspace, so a file there (and the key
         // beside it) is reachable by the workspace tools (invariant 10).
-        crate::paths::data_home()
+        self.root.clone().unwrap_or_else(crate::paths::data_home)
     }
 
-    fn data_path() -> PathBuf {
-        Self::home().join("credentials.enc")
+    fn data_path(&self) -> PathBuf {
+        self.home().join("credentials.enc")
     }
 
-    fn key_path() -> PathBuf {
-        Self::home().join(".credential_key")
+    fn key_path(&self) -> PathBuf {
+        self.home().join(".credential_key")
     }
 
-    fn lock_path() -> PathBuf {
-        Self::home().join(".credential_key.lock")
+    fn lock_path(&self) -> PathBuf {
+        self.home().join(".credential_key.lock")
     }
 
     /// Exclusive, cross-process advisory lock spanning key
@@ -490,83 +610,135 @@ impl EncryptedFileStore {
     /// or two concurrent writers can interleave a read-modify-write and
     /// silently drop one write. The lock file is separate from the key
     /// file so a reader never needs write access to the key itself.
-    fn with_lock<T>(&self, f: impl FnOnce() -> T) -> T {
-        let lock_path = Self::lock_path();
+    fn with_lock<T>(&self, f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+        let lock_path = self.lock_path();
         if let Some(parent) = lock_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent)?;
         }
-        match std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&lock_path)
-        {
-            Ok(file) => {
-                // Blocks until acquired; released on drop at the end of
-                // this scope regardless of how `f` returns.
-                let _ = file.lock();
-                f()
-            }
-            // No lock file, no lock — degrade to unsynchronized rather
-            // than fail the whole credential store over it.
-            Err(_) => f(),
-        }
+        let lock = open_private_file(&lock_path, true)?;
+        lock.lock()?;
+        f()
     }
 
     fn key(&self) -> io::Result<[u8; 32]> {
-        let key_path = Self::key_path();
-        if let Ok(bytes) = std::fs::read(&key_path)
-            && bytes.len() == 32
-        {
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&bytes);
-            return Ok(key);
+        let key_path = self.key_path();
+        match std::fs::read(&key_path) {
+            Ok(bytes) if bytes.len() == 32 => {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&bytes);
+                return Ok(key);
+            }
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "credential key is malformed",
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        match std::fs::metadata(self.data_path()) {
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "credential key is missing while encrypted credentials exist",
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
         }
         let rng = ring::rand::SystemRandom::new();
         let mut key = [0u8; 32];
         ring::rand::SecureRandom::fill(&rng, &mut key)
             .map_err(|_| io::Error::other("failed to generate credential key"))?;
-        if let Some(parent) = key_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&key_path, key)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))?;
-        }
+        let parent = key_path
+            .parent()
+            .ok_or_else(|| io::Error::other("credential key has no parent directory"))?;
+        std::fs::create_dir_all(parent)?;
+        publish_key(&key_path, &key)?;
         Ok(key)
     }
 
-    /// Loads and decrypts every `(scope, var, value)` triple. An absent or
-    /// corrupt file is treated as empty rather than an error — there is
-    /// nothing meaningful to recover, and the store is rewritten wholesale
-    /// on every `set`/`remove`.
-    fn load_all(&self) -> Vec<(String, String, String)> {
-        let Ok(key) = self.key() else {
-            return Vec::new();
+    /// An absent ciphertext file means an empty store. Once ciphertext
+    /// exists, every key, authentication, UTF-8, and row error is fatal so a
+    /// mutation cannot replace unknown credentials with an empty snapshot.
+    fn load_all(&self) -> io::Result<Vec<(String, String, String)>> {
+        let bytes = match std::fs::read(self.data_path()) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
         };
-        let Ok(bytes) = std::fs::read(Self::data_path()) else {
-            return Vec::new();
-        };
-        let Some(plaintext) = decrypt(&key, &bytes) else {
-            return Vec::new();
-        };
-        let Ok(plaintext) = String::from_utf8(plaintext) else {
-            return Vec::new();
-        };
-        plaintext
-            .lines()
-            .filter_map(|line| {
-                let (scope, rest) = line.split_once('\0')?;
-                let (var, value) = rest.split_once('\0')?;
-                Some((scope.to_string(), var.to_string(), value.to_string()))
-            })
-            .collect()
+        let key = self.key()?;
+        let plaintext = decrypt(&key, &bytes)?;
+        let plaintext = String::from_utf8(plaintext).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "credential store is not valid UTF-8",
+            )
+        })?;
+        if plaintext.is_empty() {
+            return Ok(Vec::new());
+        }
+        if plaintext.ends_with('\n') || plaintext.contains('\r') {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "credential store row is malformed",
+            ));
+        }
+        let mut entries = Vec::new();
+        for line in plaintext.split('\n') {
+            if line.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "credential store row is malformed",
+                ));
+            }
+            let mut fields = line.split('\0');
+            let scope = fields.next().unwrap_or_default();
+            let var = fields.next().unwrap_or_default();
+            let value = fields.next().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "credential store row is malformed",
+                )
+            })?;
+            if fields.next().is_some() || scope.is_empty() || var.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "credential store row is malformed",
+                ));
+            }
+            validate_index_component(var)?;
+            if entries
+                .iter()
+                .any(|(known_scope, known_var, _): &(String, String, String)| {
+                    known_scope == scope && known_var == var
+                })
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "credential store contains duplicate entries",
+                ));
+            }
+            entries.push((scope.to_string(), var.to_string(), value.to_string()));
+        }
+        Ok(entries)
     }
 
     fn save_all(&self, entries: &[(String, String, String)]) -> io::Result<()> {
         let key = self.key()?;
+        for (scope, var, value) in entries {
+            if scope.is_empty()
+                || scope.chars().any(|ch| matches!(ch, '\0' | '\r' | '\n'))
+                || value.chars().any(|ch| matches!(ch, '\0' | '\r' | '\n'))
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "credential entry cannot be represented in the encrypted store",
+                ));
+            }
+            validate_index_component(var)?;
+        }
         let plaintext = entries
             .iter()
             .map(|(scope, var, value)| format!("{scope}\0{var}\0{value}"))
@@ -574,34 +746,39 @@ impl EncryptedFileStore {
             .join("\n");
         let ciphertext = encrypt(&key, plaintext.as_bytes())
             .map_err(|_| io::Error::other("failed to encrypt credential store"))?;
-        let data_path = Self::data_path();
-        if let Some(parent) = data_path.parent() {
-            std::fs::create_dir_all(parent)?;
+        let data_path = self.data_path();
+        let parent = data_path
+            .parent()
+            .ok_or_else(|| io::Error::other("credential store has no parent directory"))?;
+        std::fs::create_dir_all(parent)?;
+        let tmp = unique_temporary_path(&data_path);
+        write_private_synced(&tmp, &ciphertext)?;
+        if let Err(error) = std::fs::rename(&tmp, &data_path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(error);
         }
-        let tmp = data_path.with_extension("enc.tmp");
-        std::fs::write(&tmp, ciphertext)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-        }
-        std::fs::rename(&tmp, &data_path)
+        sync_parent(parent)
     }
 }
 
 impl CredentialStore for EncryptedFileStore {
     fn get(&self, scope: &str, var: &str) -> Option<String> {
+        self.try_get(scope, var).ok().flatten()
+    }
+
+    fn try_get(&self, scope: &str, var: &str) -> io::Result<Option<String>> {
         self.with_lock(|| {
-            self.load_all()
+            Ok(self
+                .load_all()?
                 .into_iter()
                 .find(|(s, v, _)| s == scope && v == var)
-                .map(|(_, _, value)| value)
+                .map(|(_, _, value)| value))
         })
     }
 
     fn set(&self, scope: &str, var: &str, value: &str) -> io::Result<()> {
         self.with_lock(|| {
-            let mut entries = self.load_all();
+            let mut entries = self.load_all()?;
             entries.retain(|(s, v, _)| !(s == scope && v == var));
             entries.push((scope.to_string(), var.to_string(), value.to_string()));
             self.save_all(&entries)
@@ -610,19 +787,28 @@ impl CredentialStore for EncryptedFileStore {
 
     fn remove(&self, scope: &str, var: &str) -> io::Result<()> {
         self.with_lock(|| {
-            let mut entries = self.load_all();
+            let mut entries = self.load_all()?;
+            let before = entries.len();
             entries.retain(|(s, v, _)| !(s == scope && v == var));
+            if entries.len() == before {
+                return Ok(());
+            }
             self.save_all(&entries)
         })
     }
 
     fn list(&self, scope: &str) -> Vec<(String, String)> {
+        self.try_list(scope).unwrap_or_default()
+    }
+
+    fn try_list(&self, scope: &str) -> io::Result<Vec<(String, String)>> {
         self.with_lock(|| {
-            self.load_all()
+            Ok(self
+                .load_all()?
                 .into_iter()
                 .filter(|(s, _, _)| s == scope)
                 .map(|(_, var, value)| (var, value))
-                .collect()
+                .collect())
         })
     }
 }
@@ -645,20 +831,30 @@ fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, ring::error::Uns
     Ok(out)
 }
 
-fn decrypt(key: &[u8; 32], ciphertext: &[u8]) -> Option<Vec<u8>> {
+fn decrypt(key: &[u8; 32], ciphertext: &[u8]) -> io::Result<Vec<u8>> {
     use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
     if ciphertext.len() < NONCE_LEN {
-        return None;
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "credential ciphertext is truncated",
+        ));
     }
     let (nonce_bytes, sealed) = ciphertext.split_at(NONCE_LEN);
-    let unbound = UnboundKey::new(&AES_256_GCM, key).ok()?;
+    let unbound = UnboundKey::new(&AES_256_GCM, key)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "credential key is invalid"))?;
     let opening_key = LessSafeKey::new(unbound);
     let mut in_out = sealed.to_vec();
-    let nonce = Nonce::try_assume_unique_for_key(nonce_bytes).ok()?;
+    let nonce = Nonce::try_assume_unique_for_key(nonce_bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "credential nonce is invalid"))?;
     let plaintext = opening_key
         .open_in_place(nonce, Aad::empty(), &mut in_out)
-        .ok()?;
-    Some(plaintext.to_vec())
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "credential ciphertext is invalid",
+            )
+        })?;
+    Ok(plaintext.to_vec())
 }
 
 #[cfg(test)]
@@ -666,8 +862,8 @@ fn decrypt(key: &[u8; 32], ciphertext: &[u8]) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    /// `EncryptedFileStore` holds no per-instance paths — every access
-    /// re-resolves `data_home()` fresh (see the type's doc
+    /// Production `EncryptedFileStore` holds no per-instance paths — every
+    /// access re-resolves `data_home()` fresh (see the type's doc
     /// comment: a `OnceLock`-cached instance must never bake in a path
     /// from whenever it happened to be first constructed). Testing it
     /// therefore means pointing the real global home somewhere private.
@@ -685,8 +881,10 @@ mod tests {
     /// already cooperates through — confirmed reproducible without it.
     #[test]
     fn encrypted_file_store_roundtrips_and_scopes_correctly() {
-        crate::paths::isolate_home_for_tests();
-        let store = EncryptedFileStore;
+        let home = tempfile::tempdir().unwrap();
+        let store = EncryptedFileStore {
+            root: Some(home.path().to_path_buf()),
+        };
         // Scope/var names unique to this test so it can safely share the
         // process-wide isolated home with sibling tests.
         store
@@ -695,6 +893,16 @@ mod tests {
         store
             .set("credentials-rs-test-scope-b", "ANTHROPIC_API_KEY", "key-b")
             .unwrap();
+        let key_path = store.key_path();
+        assert_eq!(std::fs::read(&key_path).unwrap().len(), 32);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&key_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
         assert_eq!(
             store.get("credentials-rs-test-scope-a", "ANTHROPIC_API_KEY"),
             Some("key-a".to_string())
@@ -718,12 +926,88 @@ mod tests {
         );
 
         // The file on disk must not contain the plaintext secret.
-        let raw = std::fs::read(EncryptedFileStore::data_path()).unwrap();
+        let raw = std::fs::read(store.data_path()).unwrap();
         assert!(!raw.windows(5).any(|w| w == b"key-b"));
 
         store
             .remove("credentials-rs-test-scope-b", "ANTHROPIC_API_KEY")
             .unwrap();
+    }
+
+    #[test]
+    fn corrupt_ciphertext_or_key_makes_mutations_fail_without_replacement() {
+        let home = tempfile::tempdir().unwrap();
+        let store = EncryptedFileStore {
+            root: Some(home.path().to_path_buf()),
+        };
+        store.set("scope", "TOKEN", "secret-value").unwrap();
+        let data = store.data_path();
+        let good = std::fs::read(&data).unwrap();
+
+        std::fs::write(&data, b"truncated ciphertext").unwrap();
+        assert!(store.try_get("scope", "TOKEN").is_err());
+        assert!(store.try_list("scope").is_err());
+        assert!(store.set("scope", "OTHER", "must-not-write").is_err());
+        assert!(store.remove("scope", "TOKEN").is_err());
+        assert_eq!(std::fs::read(&data).unwrap(), b"truncated ciphertext");
+
+        let key_bytes = store.key().unwrap();
+        let malformed = encrypt(&key_bytes, b"scope\0TOKEN").unwrap();
+        std::fs::write(&data, &malformed).unwrap();
+        assert!(store.set("scope", "OTHER", "must-not-write").is_err());
+        assert_eq!(std::fs::read(&data).unwrap(), malformed);
+
+        std::fs::write(&data, &good).unwrap();
+        let key = store.key_path();
+        let original_key = std::fs::read(&key).unwrap();
+        std::fs::write(&key, b"bad key").unwrap();
+        assert!(store.set("scope", "OTHER", "must-not-write").is_err());
+        assert!(store.remove("scope", "TOKEN").is_err());
+        assert_eq!(std::fs::read(&data).unwrap(), good);
+        assert_eq!(std::fs::read(&key).unwrap(), b"bad key");
+
+        std::fs::write(&key, original_key).unwrap();
+        std::fs::remove_file(key).unwrap();
+        assert!(store.set("scope", "OTHER", "must-not-write").is_err());
+        assert!(std::fs::read(&data).unwrap() == good);
+    }
+
+    #[test]
+    fn failed_store_lock_never_runs_a_mutation() {
+        let home = tempfile::tempdir().unwrap();
+        let store = EncryptedFileStore {
+            root: Some(home.path().to_path_buf()),
+        };
+        std::fs::create_dir(store.lock_path()).unwrap();
+        assert!(store.set("scope", "TOKEN", "value").is_err());
+        assert!(!store.data_path().exists());
+    }
+
+    #[test]
+    fn index_replacement_keeps_the_locked_handle_current_and_lock_failures_stop() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("credential_index.json");
+        let lock = home.path().join(".credential_index.lock");
+        with_index_lock_at(&path, &lock, |index| {
+            index_write_at(index, &path, &["scope\0TOKEN".into()])?;
+            assert_eq!(index_entries(index)?, vec!["scope\0TOKEN"]);
+            Ok(())
+        })
+        .unwrap();
+        let mut reopened = open_private_file(&path, false).unwrap();
+        assert_eq!(index_entries(&mut reopened).unwrap(), vec!["scope\0TOKEN"]);
+
+        let bad_lock = home.path().join("lock-is-a-directory");
+        std::fs::create_dir(&bad_lock).unwrap();
+        let mut ran = false;
+        assert!(
+            with_index_lock_at(&path, &bad_lock, |_| {
+                ran = true;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(!ran);
     }
 
     /// Exit test of M3b slice 5 (review R12): a secret scope is named by

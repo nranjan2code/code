@@ -1828,6 +1828,29 @@ export async function readExecutionArtifactBytes(sessionId: string, executionId:
   return { bytes: new Uint8Array(await response.arrayBuffer()), mime: response.headers.get("Content-Type") ?? "application/octet-stream" };
 }
 
+/** A resource captured by a saved page. The server resolves `path` only
+ * through the immutable references embedded in that page version. */
+export function pageResourceReader(artifact: string | undefined, version: string): {
+  readFile(path: string): Promise<FileResponse>;
+  readFileRaw(path: string): Promise<string>;
+  readFileBytes(path: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }>;
+} {
+  const fetchResource = async (path: string) => {
+    if (!artifact) throw new Error("This page has no saved resource context.");
+    const response = await authFetch(`/library/${encodeURIComponent(artifact)}/versions/${encodeURIComponent(version)}/resources?path=${encodeURIComponent(path)}`);
+    if (!response.ok) throw await rawRefusal(response);
+    return response;
+  };
+  return {
+    readFile: async (path) => ({ content: await (await fetchResource(path)).text(), path, kind: "text", bytes: 0, editable: false }),
+    readFileRaw: async (path) => URL.createObjectURL(await (await fetchResource(path)).blob()),
+    readFileBytes: async (path) => {
+      const response = await fetchResource(path);
+      return { bytes: new Uint8Array(await response.arrayBuffer()), mime: response.headers.get("Content-Type") ?? "application/octet-stream" };
+    },
+  };
+}
+
 export function writeFile(path: string, content: string, session: string): Promise<unknown> {
   return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content, session }) });
 }

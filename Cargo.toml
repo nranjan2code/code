@@ -133,8 +133,9 @@ semver = "1"
 sha2 = "0.10"
 # Ed25519 verification for signed plugin/catalog evidence; no signing or key generation.
 ring = "=0.17.14"
-# Bundled SQLite: the CAS refs (vak-storage) and the data catalog (vak-catalog).
-rusqlite = { version = "=0.32.1", features = ["bundled", "hooks"] }
+# Bundled SQLCipher: the data catalog is encrypted at rest; CAS refs remain
+# ordinary SQLite files through their existing storage boundary.
+rusqlite = { version = "=0.32.1", features = ["bundled-sqlcipher-vendored-openssl", "hooks"] }
 # zstd compresses every object and record frame before it is sealed (vak-storage).
 zstd = "=0.13.3"
 # Leveled, structured events in place of eprintln (plan M5); vak-telemetry

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mergePresentationSnapshot } from "../src/presentationHydration.ts";
+import { applyPresentationDelta, mergePresentationSnapshot } from "../src/presentationHydration.ts";
 
 const settled = {
   schema_version: 2,
@@ -69,3 +69,13 @@ assert.deepEqual(
   [],
   "a durable snapshot remains an authoritative full replacement",
 );
+
+let streaming = { ...nextRunLive, items: [{ ...nextRunLive.items[0], fallback_text: "", content: { type: "document", document: { source_markdown: "", blocks: [] } } }] };
+for (const delta of ["Literal ", "[recovery] ", "completed"]) streaming = applyPresentationDelta(streaming, { type: "text_delta", item_id: "live-assistant-42", delta });
+assert.equal(streaming.items[0].fallback_text, "Literal [recovery] completed");
+assert.equal(streaming.items[0].content.document.source_markdown, "Literal [recovery] completed");
+// An older server's accumulated text still replaces, rather than duplicates.
+streaming = applyPresentationDelta(streaming, { type: "text_delta", item_id: "live-assistant-42", delta: "!", text: "Exact snapshot!" });
+assert.equal(streaming.items[0].fallback_text, "Exact snapshot!");
+assert.equal(mergePresentationSnapshot(streaming, durable).items.length, 0);
+console.log("presentation delta hydration ok");

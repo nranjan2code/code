@@ -1626,12 +1626,27 @@ impl Core {
                 .destroy_scope_key(scope)
                 .map_err(|error| failed(error.to_string()))?;
         }
-        vak_config::credentials::forget_all();
         let mut not_reached: Vec<String> = INSTALL_NOT_REACHED
             .iter()
             .map(|line| line.to_string())
             .collect();
-        let left = self.clear_install();
+        let keep_credential_state = match vak_config::credentials::forget_all() {
+            Ok(report) if report.remaining == 0 => false,
+            Ok(report) => {
+                not_reached.push(format!(
+                    "Credentials for {} entries could not be removed. Their presence index and encrypted store were preserved for retry.",
+                    report.remaining
+                ));
+                true
+            }
+            Err(_) => {
+                not_reached.push(
+                    "Credential cleanup could not read or update its index. Its index and encrypted store were preserved for retry.".into(),
+                );
+                true
+            }
+        };
+        let left = self.clear_install(keep_credential_state);
         if left > 0 {
             not_reached.push(format!(
                 "Files in {left} of Vakyartha's own directories could not be removed. Their keys are destroyed, so nothing in them can be read."
@@ -1673,10 +1688,17 @@ impl Core {
     /// install erasures and any folder a person owns that lies inside one
     /// (the Vakyartha folder under a `VAK_HOME` override). Returns how many
     /// of the directories still hold something it could not remove.
-    fn clear_install(&self) -> usize {
+    fn clear_install(&self, preserve_credential_state: bool) -> usize {
         let keep = vak_config::paths::default_workspace();
         let data = self.shared_root();
         let receipts = self.shared_scope().install_receipts();
+        let credential_files = [
+            vak_config::paths::credential_index_at(&data),
+            vak_config::paths::credential_index_lock_at(&data),
+            data.join("credentials.enc"),
+            data.join(".credential_key"),
+            data.join(".credential_key.lock"),
+        ];
         let mut roots = vec![data.clone()];
         for root in crate::state::Root::ALL {
             let path = crate::state::root_path(root);
@@ -1696,7 +1718,9 @@ impl Core {
             let mut failed = false;
             for child in std::fs::read_dir(&root).into_iter().flatten().flatten() {
                 let path = child.path();
-                if path == receipts {
+                if path == receipts
+                    || (preserve_credential_state && credential_files.contains(&path))
+                {
                     continue;
                 }
                 let removed = if path.is_dir() && !path.is_symlink() {
@@ -1718,7 +1742,20 @@ impl Core {
     /// that ran `erase_install`, as the last thing before it exits.
     pub fn sweep_erased_install(&self) {
         if vak_session::fence::is_fenced() {
-            self.clear_install();
+            // Keep retry state only when the signed receipt says credential
+            // cleanup failed. A successful erase still clears files written
+            // by the stopping process after the erasure.
+            let preserve_credential_state = self.install_receipts().iter().any(|receipt| {
+                receipt
+                    .not_reached
+                    .iter()
+                    .any(|item| item.starts_with("Credential cleanup"))
+                    || receipt
+                        .not_reached
+                        .iter()
+                        .any(|item| item.starts_with("Credentials for "))
+            });
+            self.clear_install(preserve_credential_state);
         }
     }
 

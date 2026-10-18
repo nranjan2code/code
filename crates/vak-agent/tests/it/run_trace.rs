@@ -198,6 +198,7 @@ async fn one_run_one_trace_id() {
             hooks: None,
             revocation_check: None,
             presentation_rebuild: None,
+            child_services: None,
             mcp_tool_index: None,
             input_normalizer: None,
             read_only_tools: vec![probe.clone()],

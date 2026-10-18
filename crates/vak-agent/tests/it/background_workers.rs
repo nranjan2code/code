@@ -236,8 +236,10 @@ fn harness(parent_script: Vec<AssistantMessage>, child: Child) -> Harness {
                 title,
                 identity_digest: "test-digest".into(),
                 block: Some("chart".into()),
+                data_call_id: None,
             })
         })),
+        child_services: None,
         mcp_tool_index: None,
         input_normalizer: None,
         read_only_tools: vec![Arc::new(ReadTool), Arc::new(EmitCard)],

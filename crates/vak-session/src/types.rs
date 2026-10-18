@@ -924,6 +924,10 @@ pub struct PresentationRecord {
     /// gone (docs/design/91-presentation-capabilities.md §2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block: Option<String>,
+    /// Exact ability invocation used to fill this card, when applicable.
+    /// Older records predate pinned ability-call snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_call_id: Option<String>,
 }
 
 /// Recursively sorts object keys so two payloads that differ only in field

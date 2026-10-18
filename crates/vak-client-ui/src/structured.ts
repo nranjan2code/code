@@ -57,78 +57,23 @@ export function assistantParts(text: string, streaming = false): AssistantPart[]
   return parts;
 }
 
-export const INLINE_HINT_MARKERS = ["[recovery]", "[post-tool-use hook]", "[limit]"] as const;
-export const CONTEXT_BLOCK_TAGS = [
-  "conversation_thread",
-  "context_summary",
-  "intent",
-  "work_contract",
-  "managed_work",
-  "context_packet",
-  "system_reminder",
-  "runtime_guidance",
-  "scratchpad",
-  "workspace_delta",
-  "card_marks",
-] as const;
-
-const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const INLINE_HINT_PATTERNS = INLINE_HINT_MARKERS.map((marker) => new RegExp(`${escapeRegExp(marker)}[\\s\\S]*$`, "gi"));
-const CONTEXT_BLOCK_PATTERNS = CONTEXT_BLOCK_TAGS.map(
-  (tag) => new RegExp(`<${tag}[\\s\\S]*?(?:</${tag}>|$)`, "gi"),
-);
-
-/**
- * Removes inline runtime hints and context blocks from text before it is
- * shown, so they never leak into user or assistant views.
- */
+/** Control/authorship metadata is filtered by the server projection. Text
+ * itself is user content: examples, quoted markers and lifecycle words must
+ * survive. Retained as the common whitespace boundary for existing views. */
 export function stripControlScaffolding(text: string): string {
-  if (!text) return "";
-  let out = text;
-  for (const pattern of INLINE_HINT_PATTERNS) out = out.replace(pattern, "");
-  for (const pattern of CONTEXT_BLOCK_PATTERNS) out = out.replace(pattern, "");
-  return out.trim();
+  return text.trim();
 }
 
-/**
- * Strips internal scaffolding, prompt leaking, and lifecycle metadata from assistant prose.
- */
+/** Preserve authored prose; typed vak fences are parsed by assistantParts. */
 export function cleanAssistantText(text: string): string {
-  const normalized = stripControlScaffolding(text)
-    // Strip transport-layer code fences so structured cards don't leave raw JSON artifacts in prose.
-    .replace(/^[ \t]*```(?:vak|json)[^\n]*\r?\n[\s\S]*?(?:^[ \t]*```[^\n]*(?:\r?\n|$)|$)/gim, (fence) => {
-      return fence.includes('"semantic_type"') ? "" : fence;
-    })
-    // Keep the chat focused on the result. Execution narration belongs in
-    // Workbench and approval details, not in the assistant's answer bubble.
-    .replace(/^\s*I will write and execute this within the sandbox[^\n]*\.?\s*$/gim, "")
-    .replace(/^\s*Surface:\s+(?:desktop app|web client)\.?(?:\s*)/gim, "")
-    .replace(/(?:\r?\n)?\s*primary deliverable\s*:\s*(?:produced|completed|done)[\s\S]*$/gi, "")
-    .replace(/(?:\r?\n)?\s*completed\s*$/gi, "")
-    .replace(/^\s*Outcome:\s+[^\n]*(?:\n|$)/gim, "")
-    .replace(/^\s*contract_id:\s+[^\n]*(?:\n|$)/gim, "")
-    .replace(/^\s*vak(?:\r?\n|\s+|$)/gim, "");
-
-  return normalized
-    .split("\n")
-    .filter((line) => !/^\s*Surface:\s+(?:desktop app|web client)\.?\s*$/i.test(line))
-    .filter((line) => !/^\s*primary deliverable\s*:\s*(?:produced|completed|done)\s*$/i.test(line))
-    .filter((line) => !/^\s*completed\s*$/i.test(line))
-    .filter((line) => !/^\s*Outcome:\s+/i.test(line))
-    .filter((line) => !/^\s*contract_id:\s+/i.test(line))
-    .filter((line) => !/^\s*vak\s*$/i.test(line))
-    .filter((line) => !/^\s*\[(?:stop-(?:guard|hook)|recovery|post-tool-use hook)/i.test(line))
-    .join("\n")
-    .replace(/^\s*\n+|\n+\s*$/g, "")
-    .trim();
+  return text.trim();
 }
 
 /** Speech uses the same visible prose as chat, never transport fences or
  * model-authored transcript blocks. A card-only result stays visible on
  * screen and gets a short review cue instead of reading raw JSON aloud. */
 export function spokenReplyText(text: string): string {
-  const withoutTranscript = text.replace(/<conversation>[^]*?<\/conversation>/gi, "");
-  const prose = cleanAssistantText(withoutTranscript)
+  const prose = cleanAssistantText(text)
     .replace(/^[ \t]*```[^\n]*\r?\n[^]*?^[ \t]*```[^\n]*(?:\r?\n|$)/gim, "")
     .replace(/^#{1,6}[ \t]+(?:metric|dataset|chart|table)[ \t]*$/gim, "")
     .replace(/^#{1,6}[ \t]+/gm, "")

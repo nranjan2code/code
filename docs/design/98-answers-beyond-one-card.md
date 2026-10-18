@@ -11,6 +11,23 @@ docs/design/66-immersive-artifact-canvas.md (the Canvas) and
 docs/design/96-answer-projection-gaps.md (P1 controls, P2 living pages,
 Q1 preview tokens).
 
+## Current resource and ability snapshot contract
+
+Saved-page versions carry an immutable map from referenced file paths to
+recorded artifact/version pairs, resolved in the source session's workspace.
+The viewer reads only those captured references through the page's current
+audience. It does not consult an unrelated active conversation. A missing
+exact version never substitutes the artifact head; historical pages without
+captured references explicitly lack that resource context.
+
+Ability table/chart tools name both the data-producing tool (`from`) and its
+recorded invocation (`call_id`). The runtime uses that exact completed
+successful result, with its full evidence body, and records `data_call_id` on
+the presentation. A later failure cannot select an earlier success by name.
+An explicitly chosen earlier success is a stable snapshot. Refresh requires a
+newly admitted ability call and a newly selected snapshot. Identical values
+from different selected invocations retain distinct provenance.
+
 ## 1. The problem
 
 Every card stands alone. A person who moves a slider on a controls card

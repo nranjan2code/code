@@ -453,19 +453,23 @@ pub fn workspace_path(cwd: &Path, path: &str) -> String {
     normalize(&relative)
 }
 
-/// The state of `path` in `space` as the Core sees it now: the record, and
-/// the digest of the workspace file's bytes (doc 90 §3.1). Reads the file;
-/// hashing is not parsing. `None` when the file cannot be read.
-/// A found version is recorded in one [`Artifacts::transaction`]; when it
-/// cannot be recorded, the state is as read.
+/// The authoritative state of `path` in `space`: the record and the digest
+/// of the workspace file's bytes (doc 90 §3.1). Reads the file; hashing is
+/// not parsing. A found version is recorded in one [`Artifacts::transaction`].
+/// Chain, object, and workspace read failures are returned; callers making
+/// decisions must not treat an unreadable record as an absent artifact.
+pub fn try_observe(
+    artifacts: &Artifacts,
+    space: &str,
+    cwd: &Path,
+    path: &str,
+) -> Result<Option<FileState>, crate::artifacts::ArtifactError> {
+    artifacts.transaction(|tx| observe_in(tx, space, cwd, path, true))
+}
+
+/// Best-effort view for browsing surfaces that can omit state on failure.
 pub fn observe(artifacts: &Artifacts, space: &str, cwd: &Path, path: &str) -> Option<FileState> {
-    match artifacts.transaction(|tx| Ok(observe_in(tx, space, cwd, path, true))) {
-        Ok(state) => state,
-        Err(_) => artifacts
-            .transaction(|tx| Ok(observe_in(tx, space, cwd, path, false)))
-            .ok()
-            .flatten(),
-    }
+    try_observe(artifacts, space, cwd, path).ok().flatten()
 }
 
 /// [`observe`] inside a caller's transaction: what the folder holds is
@@ -480,16 +484,18 @@ pub(crate) fn observe_in(
     cwd: &Path,
     path: &str,
     record: bool,
-) -> Option<FileState> {
+) -> Result<Option<FileState>, crate::artifacts::ArtifactError> {
     let normal = workspace_path(cwd, path);
     // A path Vak never recorded has nothing to say beyond the folder: the
     // file is not read, so a model reading large files pays nothing.
     let id = artifact_id(space, &normal);
-    let artifact = tx.get(&id.to_string())?;
+    let Some(artifact) = tx.get(&id.to_string()) else {
+        return Ok(None);
+    };
     let bytes = match std::fs::read(cwd.join(&normal)) {
         Ok(bytes) => Some(bytes),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(_) => return None,
+        Err(error) => return Err(crate::artifacts::ArtifactError::Store(error.to_string())),
     };
     let workspace = |bytes: &Option<Vec<u8>>| match bytes {
         Some(bytes) => Workspace::Present {
@@ -509,14 +515,16 @@ pub(crate) fn observe_in(
         _ => None,
     };
     if record && let (Some(parent), Some(found)) = (parent, &bytes) {
-        let recorded = tx.found_in_workspace(id, parent, found);
-        if recorded.is_ok()
-            && let Some(artifact) = tx.get(&id.to_string())
-        {
-            return Some(file_state(Some(&artifact), &normal, workspace(&bytes)));
+        tx.found_in_workspace(id, parent, found)?;
+        if let Some(artifact) = tx.get(&id.to_string()) {
+            return Ok(Some(file_state(
+                Some(&artifact),
+                &normal,
+                workspace(&bytes),
+            )));
         }
     }
-    Some(state)
+    Ok(Some(state))
 }
 
 /// What a search hit on the artifact `id` says of its file (doc 90 §3.3):
@@ -529,6 +537,25 @@ pub fn describe(artifacts: &Artifacts, cwd: &Path, id: &str, reader: Reader<'_>)
         Some(note) => format!("file `{}`\n{note}", artifact.path),
         None => format!("file `{}`, in the workspace as recorded", artifact.path),
     })
+}
+
+/// Strict counterpart to [`describe`] for model-visible or decision use.
+pub fn try_describe(
+    artifacts: &Artifacts,
+    cwd: &Path,
+    id: &str,
+    reader: Reader<'_>,
+) -> Result<Option<String>, crate::artifacts::ArtifactError> {
+    let Some(artifact) = artifacts.try_get(id)? else {
+        return Ok(None);
+    };
+    let Some(state) = try_observe(artifacts, &artifact.space, cwd, &artifact.path)? else {
+        return Ok(None);
+    };
+    Ok(Some(match note(&state, reader) {
+        Some(note) => format!("file `{}`\n{note}", artifact.path),
+        None => format!("file `{}`, in the workspace as recorded", artifact.path),
+    }))
 }
 
 /// The recorded files a listing by `pattern` cannot see, because they are
@@ -563,6 +590,48 @@ pub fn matching_note(
             lines.join("\n")
         )
     })
+}
+
+/// Strict counterpart to [`matching_note`]. A matching record that cannot
+/// be read aborts the result instead of silently disappearing from the
+/// model-visible list.
+pub fn try_matching_note(
+    artifacts: &Artifacts,
+    space: &str,
+    cwd: &Path,
+    pattern: &str,
+    session: Option<&str>,
+) -> Result<Option<String>, crate::artifacts::ArtifactError> {
+    let matcher = globset::Glob::new(pattern)
+        .map_err(|error| crate::artifacts::ArtifactError::Invalid(error.to_string()))?
+        .compile_matcher();
+    let mut lines = Vec::new();
+    for artifact in artifacts
+        .try_list()?
+        .into_iter()
+        .filter(|artifact| artifact.space == space && matcher.is_match(&artifact.path))
+    {
+        let Some(state) = try_observe(artifacts, space, cwd, &artifact.path)? else {
+            continue;
+        };
+        if !matches!(state.workspace, Workspace::Absent) {
+            continue;
+        }
+        let Some(newest) = state.drafts.first() else {
+            continue;
+        };
+        lines.push(format!(
+            "- `{}`: {}",
+            artifact.path,
+            draft_line(newest, session)
+        ));
+    }
+    Ok((!lines.is_empty()).then(|| {
+        format!(
+            "[file] Matching `{pattern}` and not in the workspace yet:\n{}",
+            lines.join("\n")
+        )
+    }))
 }
 
 /// Who the note is for: the Agent reading and the conversation it reads
@@ -1393,6 +1462,56 @@ mod tests {
                 "[file] `porto-notes.docx` was in the workspace as version {accepted} and is not there now."
             )
         );
+    }
+
+    #[test]
+    fn strict_artifact_reads_fail_on_an_unreadable_cached_suffix() {
+        vak_config::paths::isolate_home_for_tests();
+        let data = tempfile::tempdir().unwrap();
+        let shared = vak_config::scope::SharedScope::new(data.path());
+        let tenant =
+            vak_config::paths::tenant_home_at(data.path(), vak_config::paths::LOCAL_TENANT);
+        let artifacts = Artifacts::at(&shared, tenant);
+        let id = artifacts
+            .declare(
+                "spc_strict_file_state",
+                "vak",
+                PATH,
+                ArtifactKind::Document,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let segments = vak_storage::segments::SegmentSet::open(artifacts.path()).unwrap();
+        segments.seal(1, &segments.lock().unwrap()).unwrap();
+        artifacts
+            .version(
+                id,
+                crate::artifacts::NewVersion {
+                    parent: None,
+                    bytes: b"recorded draft",
+                    source: VersionSource::Person,
+                },
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Warm the tolerant projection, then damage the segment that contains
+        // the newer version. Strict readers must not reuse the old cached
+        // artifact or report that no file state exists.
+        assert!(artifacts.get(&id.to_string()).is_some());
+        let suffix = segments.log_path(2);
+        let good = std::fs::read(&suffix).unwrap();
+        std::fs::write(&suffix, b"truncated").unwrap();
+        assert!(artifacts.try_get(&id.to_string()).is_err());
+        assert!(artifacts.try_list().is_err());
+        assert!(try_observe(&artifacts, "spc_strict_file_state", data.path(), PATH).is_err());
+        // A browsing read is permitted to omit the broken projection.
+        assert!(observe(&artifacts, "spc_strict_file_state", data.path(), PATH).is_none());
+        std::fs::write(suffix, good).unwrap();
     }
 
     #[test]

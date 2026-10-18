@@ -68,15 +68,16 @@ export function applyPresentationDelta(
         ...current,
         items: current.items.map((item) => {
           if (item.id !== delta.item_id) return item;
+          const text = delta.text ?? `${item.fallback_text}${delta.delta}`;
           if (item.content.type !== "document") {
-            return { ...item, fallback_text: delta.text };
+            return { ...item, fallback_text: text };
           }
           return {
             ...item,
-            fallback_text: delta.text,
+            fallback_text: text,
             content: {
               type: "document",
-              document: { ...item.content.document, source_markdown: delta.text, blocks: [] },
+              document: { ...item.content.document, source_markdown: text, blocks: [] },
             },
           };
         }),

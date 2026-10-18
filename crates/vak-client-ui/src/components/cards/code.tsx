@@ -6,7 +6,7 @@ import { inlineTitle } from "../../canvasSubject";
 import { artifactPreviewHtml } from "../../artifactPreview";
 import * as api from "../../api";
 import Icon from "../Icon";
-import { PresentationSessionContext, records, type Payload } from "./shared";
+import { PresentationPageResourceContext, PresentationSessionContext, records, type Payload } from "./shared";
 import { themedPreview } from "../../previewTheme";
 import { withPreviewLibraries } from "../../previewLibraries";
 import { mediaSource } from "../../mediaSource";
@@ -349,8 +349,9 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
  */
 function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
   const compact = surface === "compact";
-  const session = useContext(PresentationSessionContext) ?? activeId() ?? undefined;
-  const reader = api.workspaceReader(session);
+  const pageReader = useContext(PresentationPageResourceContext);
+  const session = pageReader ? undefined : useContext(PresentationSessionContext) ?? activeId() ?? undefined;
+  const reader = pageReader ?? api.workspaceReader(session);
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
   const inlineHtml = () => str(node.props, "html");
   const [htmlContent, setHtmlContent] = createSignal<string>(inlineHtml() ?? "");
@@ -506,8 +507,9 @@ function renderMedia(node: AdaptiveRenderNode, _surface: RenderSurface) {
   const alt = () => str(node.props, "alt") ?? "";
 
   if (kind === "image" || kind === "video" || kind === "audio") {
-    const session = useContext(PresentationSessionContext) ?? activeId() ?? undefined;
-    const reader = api.workspaceReader(session);
+    const pageReader = useContext(PresentationPageResourceContext);
+    const session = pageReader ? undefined : useContext(PresentationSessionContext) ?? activeId() ?? undefined;
+    const reader = pageReader ?? api.workspaceReader(session);
     const origin = createMemo(() => mediaSource(str(node.props, "source") ?? ""));
     const [fileUrl, setFileUrl] = createSignal<string>();
     const [fileError, setFileError] = createSignal<string>();

@@ -206,6 +206,7 @@ async fn run_with_worker_question(
         hooks: None,
         revocation_check: None,
         presentation_rebuild: None,
+        child_services: None,
         mcp_tool_index: None,
         input_normalizer: None,
         read_only_tools: vec![Arc::new(ReadTool)],

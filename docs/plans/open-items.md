@@ -41,15 +41,24 @@ overlapping fixes should close their original entries as well.
   canonical grant records, with the full repository gate passing.
   Artifact transactions and verified-cache provenance pass the full
   repository gate. Read-only
-  artifact callers, catalog policy and blob ownership remain open.
+  artifact callers are now strict through file notes/recall/promotion. The
+  maintainer approved catalog encryption; SQLCipher implementation passes
+  catalog tests, with combined checks in progress. The unused streaming blob
+  module is quarantined to tests; production reintroduction requires atomic
+  ownership. Other strict decision consumers remain under audit.
   Routing evidence and day-budget admission now use verified rollups;
   settlement retains unresolved liabilities on failed writes. The full
   repository gate passes. Durable and cross-process pending reservation
-  accounting remain open.
+  accounting now use a fenced shared reservation Document with independent
+  gate/restart/release/settlement tests. Durable run-wide accounting and owner
+  reconciliation of abandoned reservations remain open.
   Commitment decisions now use verified reads and propagate failures; the
   full repository gate passes. Credential presence updates serialize and fail
   conservatively on detected read errors. Crash-safe presence publication
-  and cleanup error receipts remain open. The stage is not complete.
+  and cleanup error receipts are now implemented, including refusal to
+  overwrite corrupt encrypted credentials and preservation for retry after
+  failed install cleanup. Focused credential/erasure tests pass. The stage is
+  not complete.
 - [ ] S2: causal recording, consistent run services/policy, cancellation,
   compaction locks and conservative tool claims (A03–A07).
   A05 owned circuit permits and stale-reservation protection are implemented;
@@ -65,7 +74,10 @@ overlapping fixes should close their original entries as well.
   Focused tests cover settings, path refusal, disabled completion marker
   policy, readonly narrowing and 30 FinOps cases. The full gate passes;
   child-bound artifact/history/file-note/
-  checkpoint services and aggregate dispatch ceilings remain open.
+  checkpoint services now bind through a child-context factory; a production
+  factory regression verifies artifact agent/session attribution. Aggregate
+  dispatch ceilings remain open; the per-step retry ceiling is not a run-tree
+  budget and must not be repurposed as one.
 - [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
   actual outline attribution and typed cleanup (P01–P03, P13, P14).
   P01 chart categories retain lexical text and ambiguous y strings are
@@ -84,7 +96,9 @@ overlapping fixes should close their original entries as well.
   imported/deduplicated parent IDs and report transfer errors. Background
   result/wait retain card groups and provenance per worker; only successful
   imports count as emitted. Focused foreground/background/multiworker tests
-  and the full gate pass. Durable child-card provenance remains open.
+  and the full gate pass. Explicit invocation provenance is now persisted on
+  ability cards and transferred with the worker session source; combined
+  identity/deduplication verification is in progress.
 - [ ] S4: interaction ownership/invalidation, replacement, graph scope and
   invocation/freshness provenance (P04, D01–D04).
   P04 now scopes input text and published values to session/turn or immutable
@@ -140,10 +154,21 @@ overlapping fixes should close their original entries as well.
   for this slice; wider geometry, authorization and provenance acceptance
   remain open.
   The focused table fixture passes all four required viewport/theme cases.
+  Further source repairs now validate adaptive payloads and fallback, preserve
+  literal prose, attribute actual card deliveries, use typed terminal outcomes
+  and mechanically check client-event fixtures across Rust/TypeScript.
+  Numeric/time chart geometry and missing-data gaps have focused tests.
+  Streaming frames send deltas and defer prefix Markdown compilation; local
+  measurement is in progress. The [task quality corpus](../audits/answer-quality-corpus-2026-10-18.md)
+  supplies acceptance prompts/rubrics, not unrun semantic scores.
 - [ ] S7: narrow Core ownership and bounded history-dependent work
-  (A08, A09), retaining the earlier guarantees.
+  (A08, A09), retaining the earlier guarantees. Effects now use a verified
+  incremental Rollup, indexed lookup/order, cursor pages, and blocking-pool
+  reads in server list/detail. The whole Document snapshot still decodes on
+  a read; fully bounded storage decoding and growth measurements remain.
 
-Unresolved choices are in the plan: catalog confidentiality, interaction
+Catalog encryption is decided and in implementation. Other choices/limits
+are in the plan: interaction
 scope, replacement identity, generic DAG versus controls-to-consumers,
 and ability snapshot/refresh semantics. Existing living-page control values
 remain viewer-local and unsaved. Further Astra consultation is excluded by

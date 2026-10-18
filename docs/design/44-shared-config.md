@@ -3,6 +3,17 @@ Shared / Global Configuration
 
 Status: implemented in 3.0.24; checked against the code on 2026-10-14.
 
+## Credential failure and crash behavior
+
+Credential mutations require the cross-process lock and a readable encrypted
+snapshot. Authentication, decoding and key errors are not an empty store;
+known ciphertext prevents replacement of a missing key. Key/ciphertext
+publication syncs private temporary files before atomic publication and syncs
+the directory. The nonsecret presence index uses its own stable lock, with
+atomic replacement rather than truncate-in-place publication. Read failures
+remain conservative for trust. Install erasure counts incomplete removals in
+its receipt and preserves retry metadata/store when cleanup fails.
+
 ## Provider-neutral model routes
 
 Provider/model routes are persisted atomically using the same

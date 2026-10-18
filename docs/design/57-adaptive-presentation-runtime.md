@@ -7,6 +7,13 @@ Status: **in progress; P1/P4 library, durable-store, session-audit, mode-toggle,
 > (2026-10-14): eighteen forms, drawn by block, nothing decided by words.
 
 
+Resolved adaptive nodes must have meaningful primitive payloads before a
+Rich result is accepted. Empty values do not count as rendered source
+coverage; unavailable bindings remain omitted. Invalid persisted trees and
+client render exceptions use the original fallback, with the presentation's
+card identity retained for valid interaction. The acceptance corpus includes
+all advertised primitive names; it does not claim live browser verification.
+
 Current implementation: `crates/vak-presentation` provides the bounded
 declarative spec, JSON-path binding validator, deterministic compiler,
 content digest, coverage accounting, semantic-type matching, and explicit

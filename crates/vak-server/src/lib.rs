@@ -5293,10 +5293,15 @@ async fn run_turn_chain<F, Fut>(
                 tracing::warn!(run = %trace.run, error_kind = %vak_telemetry::error_kind(&error), "a run did not settle");
             }
         };
-        let (ledger, summary, is_error) = settle(&session_id, outcome).await;
-        let _ = handle
-            .events_tx
-            .send(AgentEvent::RunFinished { summary, is_error });
+        let agent_outcome = match &outcome {
+            Ok((turn, _)) => turn.agent_run_outcome(),
+            Err(_) => vak_agent::AgentRunOutcome::Failed,
+        };
+        let (ledger, summary, _is_error) = settle(&session_id, outcome).await;
+        let _ = handle.events_tx.send(AgentEvent::RunFinished {
+            outcome: agent_outcome,
+            summary,
+        });
 
         let Some(ledger) = ledger else {
             settle_admitted(leg_outcome);
@@ -19850,10 +19855,15 @@ async fn side_chat(
                 events,
             )
             .await;
-        let (summary, is_error) = match &outcome {
+        let agent_outcome = match &outcome {
+            Ok((turn, _)) => turn.agent_run_outcome(),
+            Err(_) => vak_agent::AgentRunOutcome::Failed,
+        };
+        let (summary, _is_error) = match &outcome {
             Ok((vak_agent::TurnOutcome::Completed { .. }, _)) => ("completed".to_string(), false),
             Ok((vak_agent::TurnOutcome::Aborted { .. }, _)) => ("aborted".to_string(), false),
-            Ok((_, _)) => ("ended".to_string(), false),
+            Ok((vak_agent::TurnOutcome::MaxTurnsReached, _)) => ("max_turns".to_string(), true),
+            Ok((vak_agent::TurnOutcome::Failed { error }, _)) => (format!("failed: {error}"), true),
             Err(e) => (format!("error: {e}"), true),
         };
         let turn_ok = matches!(&outcome, Ok((_, _)));
@@ -19881,7 +19891,10 @@ async fn side_chat(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
         }
-        let _ = side_tx.send(AgentEvent::RunFinished { summary, is_error });
+        let _ = side_tx.send(AgentEvent::RunFinished {
+            outcome: agent_outcome,
+            summary,
+        });
         // On a failed turn the taken log is gone with the Err — reopen the
         // durable ledger so the session does not stay wedged as
         // "run in progress" forever (found by the v0.6 deployment gate).
@@ -19906,8 +19919,8 @@ async fn side_cancel_run(State(state): State<AppState>, Path(id): Path<String>) 
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .cancel();
     let _ = handle.side_events_tx.send(AgentEvent::RunFinished {
+        outcome: vak_agent::AgentRunOutcome::Stopped,
         summary: "cancelled by client".into(),
-        is_error: false,
     });
     StatusCode::ACCEPTED
 }
@@ -20310,6 +20323,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
             .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
         match outcome {
             Ok((outcome, mut restored)) => {
+                let agent_outcome = outcome.agent_run_outcome();
                 for activity in std::mem::take(
                     &mut *h2
                         .activity_buffer
@@ -20326,18 +20340,15 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
                 // A turn that ended without its answer says how it ended.
-                let (summary, is_error) = match outcome.run_outcome() {
-                    vak_session::runs::RunOutcome::Completed => ("completed".to_string(), false),
-                    vak_session::runs::RunOutcome::Failed { reason } => {
-                        (format!("error: {reason}"), true)
-                    }
-                    vak_session::runs::RunOutcome::Cancelled => {
-                        ("error: it was stopped".to_string(), true)
-                    }
+                let summary = match outcome.run_outcome() {
+                    vak_session::runs::RunOutcome::Completed => "completed".to_string(),
+                    vak_session::runs::RunOutcome::Failed { reason } => format!("error: {reason}"),
+                    vak_session::runs::RunOutcome::Cancelled => "error: it was stopped".to_string(),
                 };
-                let _ = h2
-                    .events_tx
-                    .send(AgentEvent::RunFinished { summary, is_error });
+                let _ = h2.events_tx.send(AgentEvent::RunFinished {
+                    outcome: agent_outcome,
+                    summary,
+                });
             }
             Err(e) => {
                 // Same leak class as side chats: restore from the durable
@@ -20348,8 +20359,8 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
                 }
                 let _ = h2.events_tx.send(AgentEvent::RunFinished {
+                    outcome: vak_agent::AgentRunOutcome::Failed,
                     summary: format!("error: {e}"),
-                    is_error: true,
                 });
             }
         }
@@ -23160,6 +23171,7 @@ mod sandbox_promotion_tests {
                 title: String::new(),
                 identity_digest: String::new(),
                 block: None,
+                data_call_id: None,
             }
         };
         let list = log
@@ -28149,5 +28161,219 @@ mod delivered_file_declaration_tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "ok");
         assert!(successful_office_calls(&session, &[]).is_empty());
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod saved_page_resource_authorization_tests {
+    use super::*;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn page_resources_are_bound_to_the_shown_page_version_and_share_audience() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::spaces::bind(dir.path()).unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
+        let source_workspace = tempfile::tempdir().unwrap();
+        vak_config::spaces::bind(source_workspace.path()).unwrap();
+        let space = vak_session::trace::local::space(source_workspace.path()).to_string();
+        let session_header = vak_session::types::SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
+            agent: None,
+            session_id: "session-page".into(),
+            created_at: chrono::Utc::now(),
+            cwd: source_workspace.path().to_path_buf(),
+            parent_session_id: None,
+            contract_id: None,
+            work_item_id: None,
+            conversation: None,
+            contract: vak_session::types::FrozenContract {
+                app_version: "test".into(),
+                provider: "test".into(),
+                model: "test".into(),
+                route_ladder: Vec::new(),
+                route_objective: String::new(),
+                route_annotations: Vec::new(),
+                system_prompt: String::new(),
+                permission_mode: "workspace-write".into(),
+                capabilities: Vec::new(),
+                prompt_layers: Vec::new(),
+            },
+        };
+        drop(
+            vak_session::SessionLog::create(
+                core.scope().session_file(core.cwd(), "session-page"),
+                session_header,
+            )
+            .unwrap(),
+        );
+        let artifacts = core.artifacts();
+        let source = artifacts
+            .declare(
+                &space,
+                "vak",
+                "media.png",
+                vak_core::artifacts::ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        artifacts
+            .version(
+                source,
+                vak_core::artifacts::NewVersion {
+                    parent: None,
+                    bytes: b"captured-media",
+                    source: vak_core::artifacts::VersionSource::Person,
+                },
+                None,
+                None,
+            )
+            .unwrap();
+        let state = AppState::new(core.clone());
+        let page = vak_delivery::page::Page::new(
+            "Page".into(),
+            vec![vak_delivery::OutputItem {
+                id: "item-1".into(),
+                timestamp: "now".into(),
+                turn_id: "turn".into(),
+                role: vak_delivery::OutputRole::Assistant,
+                kind: vak_delivery::OutputKind::Artifact,
+                status: vak_delivery::OutputStatus::Succeeded,
+                outcome: None,
+                content: vak_delivery::OutputContent::Artifact {
+                    artifact: vak_delivery::ArtifactRef {
+                        name: "media.png".into(),
+                        path: Some("media.png".into()),
+                        media_type: Some("image/png".into()),
+                        description: None,
+                        size_bytes: None,
+                        status: None,
+                    },
+                },
+                provenance: None,
+                actions: Vec::new(),
+                card_state: None,
+                fallback_text: String::new(),
+            }],
+            None,
+            "Page".into(),
+        );
+        let page_id =
+            library::record_page(&state, None, &page, "session-page", "turn-page", None).unwrap();
+        let page_artifact = core
+            .artifacts()
+            .try_get(&page_id.to_string())
+            .unwrap()
+            .unwrap();
+        let page_version = page_artifact.head().unwrap().id;
+        let guest_token = "saved-page-guest-token";
+        let grant = vak_core::grants::Grant {
+            id: vak_session::ids::GrantId::new(),
+            principal: "guest-page".into(),
+            display_name: "Reader".into(),
+            object: vak_core::grants::GrantObject::Artifact(page_id),
+            role: vak_core::grants::Role::Viewer,
+            audience_id: Some(format!("artifact:{page_id}")),
+            capabilities: vec!["read".into()],
+            token_hash: Some(vak_core::grants::token_hash(guest_token)),
+            created_at: chrono::Utc::now(),
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            history_from: None,
+        };
+        vak_core::grants::Grants::at(&core.shared_scope())
+            .grant(grant, None, None)
+            .unwrap();
+        let auth = AuthPolicy {
+            token: "operator-page-token".into(),
+            home: core.scope().into_root(),
+            shared: core.shared_scope().into_root(),
+            trusted_hosts: Vec::new(),
+            public_url: None,
+            browser_sessions: web::BrowserSessions::default(),
+        };
+        let app = library::routes()
+            .with_state(state.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                enforce_participant_audience,
+            ))
+            .layer(axum::middleware::from_fn_with_state(auth, require_bearer));
+        let request = |path: String, token: &str| {
+            axum::http::Request::builder()
+                .uri(path)
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let captured = app
+            .clone()
+            .oneshot(request(
+                format!("/shared/artifact/versions/{page_version}/resources?path=media.png"),
+                guest_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(captured.status(), StatusCode::OK);
+        assert_eq!(
+            captured
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .unwrap(),
+            "image/png"
+        );
+        assert_eq!(
+            axum::body::to_bytes(captured.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .as_ref(),
+            b"captured-media"
+        );
+        let guessed = app
+            .clone()
+            .oneshot(request(
+                format!("/shared/artifact/versions/{page_version}/resources?path=private.txt"),
+                guest_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(guessed.status(), StatusCode::NOT_FOUND);
+        let direct_source = app
+            .clone()
+            .oneshot(request(
+                format!(
+                    "/library/{source}/versions/{}",
+                    core.artifacts()
+                        .try_get(&source.to_string())
+                        .unwrap()
+                        .unwrap()
+                        .head()
+                        .unwrap()
+                        .id
+                ),
+                guest_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(direct_source.status(), StatusCode::FORBIDDEN);
+        let unauthenticated = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!(
+                        "/shared/artifact/versions/{page_version}/resources?path=media.png"
+                    ))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
     }
 }

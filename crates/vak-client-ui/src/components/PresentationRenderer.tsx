@@ -1,3 +1,4 @@
+import { validateAdaptiveTree } from "../adaptiveValidation";
 import AnswerValuesScope, { conversationValuesKey } from "./AnswerValuesScope";
 import { answerDocument, answerSegments, groupAnswerEntries } from "../answerComposition";
 import { createContext, createEffect, createMemo, createResource, createSignal, ErrorBoundary, For, onCleanup, Show, useContext } from "solid-js";
@@ -61,7 +62,7 @@ import MermaidViewer from "./presentation/MermaidViewer";
 // Technical details are a disclosure preference only; they never change the
 // result, route, authority, or which safety states remain visible.
 const showOperatorChrome = () => technicalDetails();
-import { CardIdContext, FormView, PackTree, PresentationInteractionContext, PresentationSessionContext, downloadCsv, formNames } from "./cards";
+import { CardIdContext, FormView, PackTree, PresentationInteractionContext, PresentationPageResourceContext, PresentationSessionContext, downloadCsv, formNames } from "./cards";
 import AgentMark from "./AgentMark";
 import { assistantParts, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
 import type { AssistantPart } from "../structured";
@@ -247,6 +248,7 @@ function Heading(props: { block: Extract<DocumentBlock, { type: "heading" }> }) 
 }
 
 function CodeBlock(props: { language?: string | null; filename?: string | null; content: string; diff?: boolean }) {
+  const pageResources = useContext(PresentationPageResourceContext);
   let pre!: HTMLPreElement;
   let renderSeq = 0;
   createEffect(() => {
@@ -300,7 +302,7 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
   };
 
   const openPreview = () => {
-    openArtifactCanvas({ kind: "inline", title: inlineTitle(props.content, props.filename), html: props.content, sessionId: activeId() ?? undefined });
+    openArtifactCanvas({ kind: "inline", title: inlineTitle(props.content, props.filename), html: props.content, sessionId: pageResources ? undefined : activeId() ?? undefined });
   };
 
   return (
@@ -646,6 +648,7 @@ function RenderAudit(props: { document: PresentationDocument }) {
 /** What the reader says about an Office file, and Download and Open with,
  * shared by the file row and the result card. */
 function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: string) {
+  const pageResources = useContext(PresentationPageResourceContext);
   const path = () => artifact.path ?? null;
   const status = artifact.status;
   const inFolder = status?.state === "in_folder";
@@ -667,7 +670,9 @@ function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: st
   const download = async (value: string) => {
     setProblem(null);
     try {
-      const { bytes, mime } = saved && sessionId
+      const { bytes, mime } = pageResources
+        ? await pageResources.readFileBytes(saved?.path ?? value)
+        : saved && sessionId
         ? await api.draftReader(sessionId, saved.version_id).readFileBytes(saved.path)
         : executionId && sessionId
           ? await api.readExecutionArtifactBytes(sessionId, executionId, value)
@@ -688,7 +693,7 @@ function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: st
   const canOpenWith = () => host.can("open-with") && Boolean(facts()) && !facts()!.macro_enabled;
   const flags = () => { const value = facts(); return value ? officeFlagsLabel(value) : null; };
   /** Opens the Library on the artifact a saved draft is a version of. */
-  const inLibrary = saved && sessionId
+  const inLibrary = !pageResources && saved && sessionId
     ? () => void api.versionOf(sessionId, saved.version_id, saved.path)
         .then((at) => openInLibrary(at.artifact))
         .catch((cause) => setProblem(cause instanceof Error ? cause.message : String(cause)))
@@ -763,6 +768,7 @@ function formatBytes(bytes: number): string {
  * when there is one, so the card shows what Review would.
  */
 function ResultPreview(props: { item: OutputItem; sessionId: string }) {
+  const pageResources = useContext(PresentationPageResourceContext);
   const artifact = () => (props.item.content.type === "artifact" ? props.item.content.artifact : null);
   const source = createMemo(() => {
     const value = artifact();
@@ -770,7 +776,9 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
     const status = value.status;
     const saved = status && status.state !== "in_folder" ? status.saved_as : null;
     const run = status?.state === "in_folder" ? undefined : props.item.provenance?.tool_call_id;
-    const reader: ArtifactPreviewReader = saved
+    const reader: ArtifactPreviewReader = pageResources
+      ? pageResources
+      : saved
       ? api.draftReader(props.sessionId, saved.version_id)
       : run
         ? { readFile: (file) => api.readExecutionArtifact(props.sessionId, run, file), readFileRaw: (file) => api.readExecutionArtifactRaw(props.sessionId, run, file) }
@@ -831,6 +839,7 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
  * nothing about it rather than guess. Size and path are technical details.
  */
 export function ResultCard(props: { item: OutputItem; sessionId: string; resultId?: string; showReview?: boolean; askForChanges?: boolean }) {
+  const pageResources = useContext(PresentationPageResourceContext);
   if (props.item.content.type !== "artifact") return null;
   const artifact = props.item.content.artifact;
   const file = useFileActions(artifact, props.item, props.sessionId);
@@ -897,7 +906,7 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
         <Show when={review()}>
           {(action) => <button type="button" class={primary() ? "btn primary" : "btn"} onClick={() => openCandidateReview(action().data.execution_id, props.sessionId, action().data.candidate_id)}>Review changes</button>}
         </Show>
-        <Show when={file.path()}><button type="button" class="btn" onClick={() => openFile(props.item, props.sessionId)}>Open</button></Show>
+        <Show when={file.path() && !pageResources}><button type="button" class="btn" onClick={() => openFile(props.item, props.sessionId)}>Open</button></Show>
         <Show when={!words()?.waiting && file.path()}>{(value) => <button type="button" class="btn" onClick={() => void file.download(value())}>Download</button>}</Show>
         <Show when={file.canOpenWith() && file.path()}>{(value) => <button type="button" class="btn" onClick={() => void file.openWith(value())}>Open with…</button>}</Show>
         <Show
@@ -1484,15 +1493,20 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
 }
 
 export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string; sessionId?: string; resultId?: string; presentationId?: string; cardState?: import("../types").CardState | null }) {
-  return (
-    <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>
-      <PresentationSessionContext.Provider value={props.sessionId}>
-        <PresentationInteractionContext.Provider value={cardInteractionFor(props.sessionId, props.presentationId, props.cardState)}>
-          <PackTree node={props.tree.root} />
-        </PresentationInteractionContext.Provider>
-      </PresentationSessionContext.Provider>
-    </section>
-  );
+  const original = () => <section aria-label="Original result"><p role="status">Rich presentation unavailable. Original content:</p><MarkdownView text={props.fallback} /></section>;
+  return <ErrorBoundary fallback={original}>
+    <Show when={uiPreferences.richPreviews && validateAdaptiveTree(props.tree?.root)} fallback={original()}>
+      <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>
+        <PresentationSessionContext.Provider value={props.sessionId}>
+          <PresentationInteractionContext.Provider value={cardInteractionFor(props.sessionId, props.presentationId, props.cardState)}>
+            <CardIdContext.Provider value={props.presentationId}>
+              <PackTree node={props.tree.root} />
+            </CardIdContext.Provider>
+          </PresentationInteractionContext.Provider>
+        </PresentationSessionContext.Provider>
+      </section>
+    </Show>
+  </ErrorBoundary>;
 }
 
 /** True when an answer is drawn in the Canvas, where it is already open. */

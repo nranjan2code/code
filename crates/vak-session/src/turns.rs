@@ -1831,6 +1831,7 @@ mod tests {
             .unwrap();
         log.append_presentation(PresentationRecord {
             block: None,
+            data_call_id: None,
             turn_id: t2.clone(),
             source: PresentationSource::ToolCall {
                 tool_use_id: "card-1".into(),
@@ -2047,6 +2048,7 @@ mod tests {
         let payload = serde_json::json!({"label": "Temperature", "value": 29.1, "unit": "C"});
         let record = PresentationRecord {
             block: None,
+            data_call_id: None,
             turn_id: "t".into(),
             source: PresentationSource::ToolCall {
                 tool_use_id: "card-9".into(),

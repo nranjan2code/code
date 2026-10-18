@@ -1100,8 +1100,21 @@ impl Artifacts {
         all
     }
 
+    /// Every artifact from a verified chain snapshot. Use this when the
+    /// result affects authorization, promotion, or another durable decision.
+    pub fn try_list(&self) -> Result<Vec<Artifact>, ArtifactError> {
+        let mut all: Vec<Artifact> = self.strict_snapshot()?.0.artifacts.into_values().collect();
+        all.sort_by_key(|artifact| std::cmp::Reverse(artifact.updated_at));
+        Ok(all)
+    }
+
     pub fn get(&self, id: &str) -> Option<Artifact> {
         self.state().artifacts.remove(id)
+    }
+
+    /// One artifact from a verified chain snapshot.
+    pub fn try_get(&self, id: &str) -> Result<Option<Artifact>, ArtifactError> {
+        Ok(self.strict_snapshot()?.0.artifacts.remove(id))
     }
 
     /// Declares the artifact at `path` in `space` (once; a later
@@ -1203,7 +1216,7 @@ impl Artifacts {
         actor: Option<PrincipalId>,
     ) -> Result<(), ArtifactError> {
         let current = self
-            .get(&artifact.to_string())
+            .try_get(&artifact.to_string())?
             .ok_or_else(|| ArtifactError::NotFound(artifact.to_string()))?;
         let found = current
             .versions
@@ -1234,7 +1247,7 @@ impl Artifacts {
         actor: Option<PrincipalId>,
     ) -> Result<bool, ArtifactError> {
         let current = self
-            .get(&artifact.to_string())
+            .try_get(&artifact.to_string())?
             .ok_or_else(|| ArtifactError::NotFound(artifact.to_string()))?;
         let found = current
             .versions
@@ -1446,7 +1459,7 @@ impl vak_tools::ArtifactSink for CallSink {
                     let parent = match parent {
                         Some(parent) => Some(parent),
                         None if declaration.drafted => {
-                            match crate::file_state::observe_in(tx, &space, &self.cwd, &path, true)
+                            match crate::file_state::observe_in(tx, &space, &self.cwd, &path, true)?
                                 .map(|state| state.workspace_is)
                             {
                                 Some(crate::file_state::WorkspaceIs::Version(id)) => Some(id),

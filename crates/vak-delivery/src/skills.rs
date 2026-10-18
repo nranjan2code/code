@@ -639,6 +639,7 @@ pub fn validate_form(form: &str, payload: &Value) -> Check {
             card.only(&[
                 "title",
                 "chart_type",
+                "x_scale",
                 "x_label",
                 "y_label",
                 "accessible_summary",
@@ -646,6 +647,9 @@ pub fn validate_form(form: &str, payload: &Value) -> Check {
             ])?;
             card.texts(&["title", "x_label", "y_label"])?;
             card.one_of("chart_type", &["line", "bar", "area"])?;
+            if card.fields.contains_key("x_scale") {
+                card.one_of("x_scale", &["category", "number", "time"])?;
+            }
             card.text("accessible_summary")?;
             for series in card.records("series", false)? {
                 series.only(&["name", "points", "follows"])?;

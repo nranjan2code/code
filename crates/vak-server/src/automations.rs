@@ -994,7 +994,11 @@ async fn fire(
             use tokio_stream::wrappers::BroadcastStream;
             let mut stream = BroadcastStream::new(rx);
             while let Some(Ok(ev)) = stream.next().await {
-                if let AgentEvent::RunFinished { summary, is_error } = ev.event {
+                if let AgentEvent::RunFinished { summary, outcome } = ev.event {
+                    let is_error = matches!(
+                        outcome,
+                        vak_agent::AgentRunOutcome::Failed | vak_agent::AgentRunOutcome::MaxTurns
+                    );
                     let answer = child_handle
                         .session
                         .lock()
@@ -1019,6 +1023,8 @@ async fn fire(
                                     .take(200)
                                     .collect(),
                             }
+                        } else if outcome == vak_agent::AgentRunOutcome::Stopped {
+                            RunOutcome::Cancelled
                         } else {
                             RunOutcome::Completed
                         },
@@ -1532,7 +1538,7 @@ pub(crate) async fn deliver_home(
                     Ok(turn) => {
                         let _ = handle.events_tx.send(AgentEvent::RunFinished {
                             summary: "scheduled".into(),
-                            is_error: false,
+                            outcome: vak_agent::AgentRunOutcome::Completed,
                         });
                         Some(turn)
                     }
