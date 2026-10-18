@@ -38,7 +38,7 @@ Only findings with a cost today; the evidence for each is under [Findings](#find
 | Check | State |
 |---|---|
 | records | ok |
-| doc paths | failing: FAIL: 4 stale doc link(s):; docs/README.md:18: ../blueprint/README.md; docs/README.md:78: ../blueprint/README.md |
+| doc paths | ok |
 | versions | ok |
 | advisories | not measured: run `run.py deep` with network access |
 | record drift | 233 cited code names missing in 46 living documents (`run.py names`) |

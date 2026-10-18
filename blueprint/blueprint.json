@@ -77,14 +77,8 @@
    },
    {
     "check": "doc paths",
-    "ok": false,
-    "problems": [
-     "FAIL: 4 stale doc link(s):",
-     "docs/README.md:18: ../blueprint/README.md",
-     "docs/README.md:78: ../blueprint/README.md",
-     "docs/architecture/README.md:36: ../../blueprint/README.md",
-     "docs/architecture/README.md:42: ../../blueprint/README.md"
-    ]
+    "ok": true,
+    "problems": []
    },
    {
     "check": "versions",
