@@ -76,7 +76,11 @@ overlapping fixes should close their original entries as well.
   recording failures, and connected-account result windows/full bodies keep
   their account scope for successes and errors; eleven provenance tests pass.
   Pre-fix account results may retain only conversation-scope protection;
-  account-erasure reachability for those historical rows still needs audit.
+  historical reachability is now reproduced: unsealed older results remain
+  readable and signed account-erasure receipts explicitly exclude them.
+  Erasure preconditions fail closed on inventory/connection-history errors
+  using the active install scope. Historical removal still requires erasing
+  the affected conversations; no automatic destructive cleanup is approved.
   Append-only frames are not rewritten by this repair.
   Live outcome publication and steering
   now require successful recording; budget approval requires successful

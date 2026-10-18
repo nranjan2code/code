@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Account erasure refuses unreadable connection state and checks the active
+  install’s Agent ledgers. Receipts disclose that older results stored without
+  account-scope protection can remain readable in their conversations.
+
 - Session spend limits survive gate recreation and restart, include delegated
   calls, and coordinate concurrent admissions. Settlement IDs reconcile
   recorded costs with pending reservations; unknown costs stay conservative.

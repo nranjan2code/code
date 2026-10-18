@@ -1171,3 +1171,24 @@ integration target compiles with all CostRow fixtures updated; its macOS linker
 emits the existing oversized unwind-section warning. Formatting, records,
 document paths, version consistency and diff checks pass. Full gate and manual
 browser acceptance remain waived/deferred as instructed. No release or install.
+
+### Account-erasure preconditions and historical reach (2026-10-18)
+
+The continuation audit reproduced another authoritative-reader failure:
+`account_connected` converted invalid connection history into `false` and
+Agent-directory errors into an empty inventory. Erasure now propagates those
+failures before destroying any key. Connection ledgers resolve through the
+Core’s explicit shared install scope, rather than checking another canonical
+data home. `ConnectionLedger::for_agent_at` preserves Agent-id validation.
+
+The cross-Agent account-erasure regression now includes pre-fix storage:
+Account metadata followed by an unsealed provider result. That older result
+remains readable after account-key destruction; the signed receipt explicitly
+excludes it. This is a truthful reachability limit, not historical cleanup.
+Conversation erasure remains the supported removal path; no ledger rewriting
+or automatic conversation erasure is introduced. Additional regressions refuse
+a malformed connection row and an unreadable inventory while the key remains
+readable. All six Core erasure integration tests and 17 connection-ledger
+tests pass. Core/mail-calendar library Clippy with warnings denied, formatting,
+records, document paths, version consistency and diff checks pass. No full gate
+or browser acceptance ran.

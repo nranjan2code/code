@@ -141,6 +141,7 @@ const GUEST_NOT_REACHED: &[&str] = &[
 ];
 
 const ACCOUNT_NOT_REACHED: &[&str] = &[
+    "Older provider results recorded without account-scope protection: these may remain readable in their conversations; erase those conversations to remove them. This receipt does not certify their removal.",
     "What an Agent wrote from this account's data (an answer, a card, a summary, a later turn that repeats it): it is each conversation's own content and stays until that conversation is erased.",
     "Messages and calendar changes already sent through the account: they stay with the provider and whoever received them.",
     "Copies the AI services received when they answered: they are held by those services under their own terms.",
@@ -1467,7 +1468,7 @@ impl Core {
         if tenant.scope_held(&scope) {
             return Err(ErasureError::Held);
         }
-        if self.account_connected(account) {
+        if self.account_connected(account)? {
             return Err(ErasureError::StillConnected);
         }
         self.destroy_and_record(
@@ -1499,21 +1500,41 @@ impl Core {
     }
 
     /// Whether any Agent still has `account` connected.
-    fn account_connected(&self, account: &str) -> bool {
-        let mut agents: Vec<String> = vak_session_agent_homes(&self.shared_scope())
-            .into_iter()
-            .map(|(agent, _)| agent)
-            .collect();
-        agents.push("vak".to_string());
-        agents.iter().any(|agent| {
-            vak_mail_calendar::connection_ledger::ConnectionLedger::for_agent(agent)
-                .and_then(|ledger| ledger.read_all())
-                .is_ok_and(|accounts| {
-                    accounts
-                        .iter()
-                        .any(|saved| saved.id == account && saved.revoked_at.is_none())
-                })
-        })
+    fn account_connected(&self, account: &str) -> Result<bool, ErasureError> {
+        let unknown =
+            || ErasureError::Failed("account connection state could not be verified".into());
+        let shared = self.shared_scope();
+        let entries = match std::fs::read_dir(shared.agents_dir()) {
+            Ok(entries) => Some(entries),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => return Err(unknown()),
+        };
+        let mut agents = BTreeSet::from(["vak".to_string()]);
+        for entry in entries.into_iter().flatten() {
+            let entry = entry.map_err(|_| unknown())?;
+            let kind = entry.file_type().map_err(|_| unknown())?;
+            // An unresolved home cannot prove the account is disconnected.
+            if kind.is_symlink() {
+                return Err(unknown());
+            }
+            if kind.is_dir() {
+                agents.insert(entry.file_name().into_string().map_err(|_| unknown())?);
+            }
+        }
+        // Read every Agent, even after finding a connection: no unreadable
+        // ledger may be silently interpreted as an empty account list.
+        let mut connected = false;
+        for agent in agents {
+            let accounts = vak_mail_calendar::connection_ledger::ConnectionLedger::for_agent_at(
+                &agent, &shared,
+            )
+            .and_then(|ledger| ledger.read_all())
+            .map_err(|_| unknown())?;
+            connected |= accounts
+                .iter()
+                .any(|saved| saved.id == account && saved.revoked_at.is_none());
+        }
+        Ok(connected)
     }
 
     /// The part every erasure that leaves its conversations shares: the

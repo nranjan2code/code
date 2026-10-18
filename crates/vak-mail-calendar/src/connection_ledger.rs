@@ -93,6 +93,17 @@ impl ConnectionLedger {
     /// Resolves storage from the authenticated Agent identity. The identifier
     /// is validated before it reaches the canonical path resolver.
     pub fn for_agent(agent_id: &str) -> Result<Self, LedgerError> {
+        Self::for_agent_at(
+            agent_id,
+            &vak_config::scope::SharedScope::new(vak_config::paths::data_home()),
+        )
+    }
+
+    /// The same validated Agent identity in an explicit install's data home.
+    pub fn for_agent_at(
+        agent_id: &str,
+        shared: &vak_config::scope::SharedScope,
+    ) -> Result<Self, LedgerError> {
         if agent_id.is_empty()
             || !agent_id
                 .bytes()
@@ -100,7 +111,7 @@ impl ConnectionLedger {
         {
             return Err(LedgerError::InvalidRecord);
         }
-        let scope = vak_config::scope::AgentScope::new(vak_config::paths::agent_home(agent_id));
+        let scope = shared.agent(agent_id);
         let chain = scope.mail_calendar_connections();
         Ok(Self {
             rollup: Rollup::new(&chain, scope.mail_calendar_connections_rollup()),

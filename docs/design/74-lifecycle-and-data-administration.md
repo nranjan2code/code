@@ -619,3 +619,17 @@ invoke only reconciler actions classed as mechanical (invariant 19).
   - erasing the conversation that made one version of a Saved artifact
     keeps the Saved version and removes the unsaved drafts;
   - a paused schedule records every skipped slot.
+
+## Account-erasure verification follow-up
+
+Account erasure verifies the active install’s Agent inventory and every Agent
+connection ledger, including the built-in Agent. An unreadable inventory,
+unresolved Agent home or invalid connection record refuses erasure before
+destroying the account key. An absent inventory is allowed for an install
+without named Agents; the built-in Agent ledger is still checked.
+
+Receipts explicitly exclude older provider results stored without account-scope
+protection. Those bytes remain conversation-owned; account-key destruction
+cannot make them unreadable. Their conversations must be erased through the
+normal conversation-erasure flow to remove them. No append-only ledger is
+rewritten and no automatic conversation erasure is performed.

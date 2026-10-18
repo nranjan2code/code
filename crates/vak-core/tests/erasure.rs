@@ -450,6 +450,26 @@ async fn provider_account_erasure_spans_agents_and_conversations() {
         ),
     ] {
         let mut log = SessionLog::open(ledger.clone()).unwrap();
+        // Reproduce pre-fix storage: an Account effect existed but the result
+        // was appended before result_from_account registered its key scope.
+        log.append_call_effect(vak_session::types::CallEffectRecord {
+            tool_use_id: "legacy-call".into(),
+            effect: vak_session::types::CallEffect::Account {
+                account: account.into(),
+            },
+        })
+        .unwrap();
+        log.append_message(vak_session::MessageRecord {
+            message: vak_llm::Message {
+                role: vak_llm::Role::User,
+                content: vec![ContentBlock::tool_result(
+                    "legacy-call",
+                    "older-provider-unsealed",
+                )],
+            },
+            meta: None,
+        })
+        .unwrap();
         log.result_from_account("call-mail", account);
         log.append_message(vak_session::MessageRecord {
             message: vak_llm::Message {
@@ -514,12 +534,22 @@ async fn provider_account_erasure_spans_agents_and_conversations() {
         "the receipt says what the Agent wrote from it stays"
     );
 
+    assert!(
+        receipt
+            .not_reached
+            .iter()
+            .any(|line| line.contains("without account-scope protection"))
+    );
     for (ledger, was) in ledgers.iter().zip(&before) {
         assert_eq!(&bytes_of(ledger), was, "no ledger byte changes");
         let now = results(ledger);
         assert!(!now.contains("lease") && !now.contains("Dana"), "{now}");
         assert!(now.contains(vak_session::log::ACCOUNT_REMOVED_TEXT));
         assert!(now.contains("notes:"), "other results are untouched");
+        assert!(
+            now.contains("older-provider-unsealed"),
+            "the receipt must acknowledge the old storage limit"
+        );
     }
     assert!(transcript_of(&first_ledger).contains("walnut"));
     assert!(!indexed(&core, "lease"), "search no longer holds its data");
@@ -528,4 +558,59 @@ async fn provider_account_erasure_spans_agents_and_conversations() {
         core.erase_account(account, Cause::Person, None),
         Err(ErasureError::AlreadyErased)
     ));
+}
+
+#[tokio::test]
+async fn account_erasure_refuses_unverifiable_connection_history_without_destroying_content() {
+    let _serial = SERIAL.lock().await;
+    vak_config::paths::isolate_home_for_tests();
+    let work = tempfile::tempdir().unwrap();
+    let core = core(work.path());
+    let data = tempfile::tempdir().unwrap();
+    core.set_shared_scope(vak_config::scope::SharedScope::new(data.path()));
+    let account = "acct-unknown-connection";
+    let shared = core.shared_scope();
+    let tenant =
+        vak_session::objects::TenantObjects::for_tenant(&vak_config::paths::local_tenant_home())
+            .unwrap();
+    let scope = vak_session::objects::account_scope(account);
+    tenant.create_scope_key(&scope).unwrap();
+    let ledger =
+        vak_mail_calendar::connection_ledger::ConnectionLedger::for_agent_at("scout", &shared)
+            .unwrap();
+    vak_session::chain::RecordChain::at(ledger.path())
+        .append(&serde_json::json!({"invalid_connection_record": true}))
+        .unwrap();
+    let error = core
+        .erase_account(account, Cause::Person, None)
+        .unwrap_err();
+    assert!(matches!(error, ErasureError::Failed(_)), "{error:?}");
+    assert!(!tenant.scope_destroyed(&scope));
+    assert!(
+        tenant.scope_key(&scope).is_ok(),
+        "the failed precondition must leave content readable"
+    );
+}
+
+#[tokio::test]
+async fn account_erasure_refuses_an_unreadable_agent_inventory() {
+    let _serial = SERIAL.lock().await;
+    vak_config::paths::isolate_home_for_tests();
+    let work = tempfile::tempdir().unwrap();
+    let core = core(work.path());
+    let data = tempfile::tempdir().unwrap();
+    core.set_shared_scope(vak_config::scope::SharedScope::new(data.path()));
+    let account = "acct-unknown-inventory";
+    let shared = core.shared_scope();
+    let tenant =
+        vak_session::objects::TenantObjects::for_tenant(&vak_config::paths::local_tenant_home())
+            .unwrap();
+    let scope = vak_session::objects::account_scope(account);
+    tenant.create_scope_key(&scope).unwrap();
+    std::fs::write(shared.agents_dir(), b"not an inventory directory").unwrap();
+    assert!(matches!(
+        core.erase_account(account, Cause::Person, None),
+        Err(ErasureError::Failed(_))
+    ));
+    assert!(!tenant.scope_destroyed(&scope));
 }
