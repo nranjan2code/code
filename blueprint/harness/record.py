@@ -81,17 +81,17 @@ def _checkboxes(body):
 
 
 def open_items(root):
-    """Per tracker section: open and closed counts, and the open items'
-    first sentences. Nested items count as items of their own."""
+    """Per tracker section with open work: how many items are open, and their
+    first sentences. Nested items count as items of their own; closed items
+    are left out, since only open work needs attention."""
     text = open(os.path.join(root, "docs/plans/open-items.md"), encoding="utf-8").read()
     sections = []
     for section in re.split(r"(?m)^## ", text)[1:]:
         title, _, body = section.partition("\n")
         items = _checkboxes(body)
         todo = [t for checked, t in items if not checked]
-        done = [t for checked, t in items if checked]
-        if todo or done:
-            sections.append({"section": title.strip(), "open": len(todo), "closed": len(done),
+        if todo:
+            sections.append({"section": title.strip(), "open": len(todo),
                              "items": [_first_sentence(t) for t in todo]})
     return sections
 

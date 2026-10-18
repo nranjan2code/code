@@ -109,7 +109,7 @@ def markdown(model):
     for s in att["open_items"]:
         if not s["open"]:
             continue
-        out.append(f"<details><summary><b>{esc(s['section'])}</b>: {s['open']} open, {s['closed']} closed</summary>\n")
+        out.append(f"<details><summary><b>{esc(s['section'])}</b>: {s['open']} open</summary>\n")
         out += [f"- {i}" for i in s["items"]]
         out += ["", "</details>", ""]
 
@@ -283,7 +283,7 @@ def attention_html(model):
     out.append(f'<div style="display:grid;gap:10px;align-content:start"><h3>Open work: {att["open_total"]} items</h3><p class="muted">From <code>docs/plans/open-items.md</code>, the one tracker.</p>')
     for s in att["open_items"]:
         if s["open"]:
-            out.append(f'<details><summary><b>{esc(s["section"])}</b>: {s["open"]} open, {s["closed"]} closed</summary><ul class="plain">'
+            out.append(f'<details><summary><b>{esc(s["section"])}</b>: {s["open"]} open</summary><ul class="plain">'
                        + "".join(f"<li>{md_inline_to_html(i)}</li>" for i in s["items"]) + "</ul></details>")
     out.append("</div></div>")
     return "\n".join(out)
