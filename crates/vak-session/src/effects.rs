@@ -841,7 +841,7 @@ impl Effects {
     /// error, never skipped.
     pub fn events(&self) -> Result<Vec<EffectEvent>, SessionError> {
         self.chain
-            .read::<serde_json::Value>()
+            .try_read::<serde_json::Value>()?
             .into_iter()
             .map(|row| {
                 serde_json::from_value(row).map_err(|error| SessionError::Corrupt {
@@ -925,6 +925,26 @@ mod tests {
             AgentId::new(),
             Cause::Heartbeat,
         )
+    }
+
+    #[test]
+    fn malformed_and_unreadable_records_cannot_enable_dispatch() {
+        let (_dir, effects) = home();
+        let record = delivery(&effects, &trace(), "queued");
+        assert!(effects.get(record.id).unwrap().is_some());
+        let segments = vak_storage::segments::SegmentSet::open(effects.chain.path()).unwrap();
+        let lock = segments.lock().unwrap();
+        let mut writer = segments.writer(1, &lock).unwrap();
+        writer.append(b"{", None).unwrap();
+        drop(writer);
+        drop(lock);
+        assert!(effects.events().is_err());
+        assert!(effects.get(record.id).is_err());
+        assert!(effects.dispatchable().is_err());
+
+        std::fs::write(segments.log_path(1), b"broken").unwrap();
+        assert!(effects.events().is_err());
+        assert!(effects.dispatchable().is_err());
     }
 
     #[test]

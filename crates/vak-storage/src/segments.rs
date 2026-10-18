@@ -129,11 +129,17 @@ pub struct SegmentSet {
 }
 
 impl SegmentSet {
+    /// Names a segment set without creating or repairing it. Readers use
+    /// this constructor; each read reports its own filesystem errors.
+    pub fn at(dir: &Path) -> Self {
+        Self {
+            dir: dir.to_path_buf(),
+        }
+    }
+
     pub fn open(dir: &Path) -> Result<Self> {
         fs::create_dir_all(dir)?;
-        Ok(Self {
-            dir: dir.to_path_buf(),
-        })
+        Ok(Self::at(dir))
     }
 
     /// Takes the single-writer lock of this segment set: an exclusive
@@ -198,6 +204,33 @@ impl SegmentSet {
             .iter()
             .map(|e| SealEntry::decode(e))
             .collect()
+    }
+
+    /// Reads the seal manifest without repairing it. Strict readers use
+    /// this path so a torn tail is reported and the manifest stays untouched.
+    pub fn verified_seals(&self) -> Result<Vec<SealEntry>> {
+        let p = self.seals_path();
+        let bytes = match fs::read(&p) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
+        };
+        let report = records::verify_bytes(&bytes, GENESIS)?;
+        if report.torn_tail.is_some() {
+            return Err(StorageError::Integrity);
+        }
+        let seals: Vec<_> = records::entries_from_bytes(&bytes, GENESIS, None)?
+            .iter()
+            .map(|entry| SealEntry::decode(entry))
+            .collect::<Result<_>>()?;
+        if seals.first().is_some_and(|seal| seal.segment == 0)
+            || seals
+                .windows(2)
+                .any(|pair| pair[0].segment >= pair[1].segment)
+        {
+            return Err(StorageError::Malformed("seal order"));
+        }
+        Ok(seals)
     }
 
     /// Where segment `n`'s chain starts: the sealed head of `n - 1`.
@@ -581,6 +614,40 @@ mod tests {
             Err(StorageError::TornTail(_))
         ));
         assert!(set.log_path(1).exists());
+    }
+
+    #[test]
+    fn verified_seals_reports_torn_tail_without_repairing_manifest() {
+        let d = tempfile::tempdir().unwrap();
+        let set = SegmentSet::open(d.path()).unwrap();
+        fill(&set, 1, &[b"a"], None);
+        set.seal(1, &set.lock().unwrap()).unwrap();
+        let path = set.seals_path();
+        let mut bytes = fs::read(&path).unwrap();
+        bytes.push(0xff);
+        fs::write(&path, &bytes).unwrap();
+
+        assert!(matches!(set.verified_seals(), Err(StorageError::Integrity)));
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn verified_seals_rejects_duplicate_numbers_without_changing_the_manifest() {
+        let d = tempfile::tempdir().unwrap();
+        let set = SegmentSet::open(d.path()).unwrap();
+        fill(&set, 1, &[b"a"], None);
+        let seal = set.seal(1, &set.lock().unwrap()).unwrap();
+        let path = set.seals_path();
+        let mut writer = RecordWriter::open(&path).unwrap();
+        writer.append(&seal.encode(), None).unwrap();
+        drop(writer);
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(records::verify_chain(&path).unwrap().entries, 2);
+        assert!(matches!(
+            set.verified_seals(),
+            Err(StorageError::Malformed("seal order"))
+        ));
+        assert_eq!(fs::read(path).unwrap(), bytes);
     }
 
     #[test]

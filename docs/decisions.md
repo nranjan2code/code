@@ -7,6 +7,24 @@ maintainer decides something a later session might otherwise ask again or
 undo, in the same commit that records it. Do not ask again about anything
 listed here unless the maintainer reopens it.
 
+## 2026-10-18
+
+- Begin implementing the hardening plan. Do not use Astra; use Luna for
+  well-defined delegated work and keep token use lean. The main agent owns
+  integration and review; the first slice addresses strict authoritative
+  reads and writer fencing (the plan's implementation log).
+
+- Consolidate every review pass from this session into a new handover and
+  an actionable plan, including system architecture, answer/projection,
+  UI/canvas and dynamic/interlinked cards with abilities. Replace and
+  delete the old handover; retain other historical records. No further
+  Astra consultation. The evidence is in
+  [the consolidated audit](audits/architecture-and-presentation-review-2026-10-18.md)
+  and the proposed work in
+  [the hardening plan](plans/architecture-and-presentation-hardening-plan.md).
+  Recording the plan does not approve its unresolved architecture choices
+  or claim the repairs are implemented.
+
 ## 2026-10-17
 
 - Where an automation's result goes is one argument of the automation

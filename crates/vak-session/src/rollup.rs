@@ -39,7 +39,9 @@ impl Rollup {
         &self.chain
     }
 
-    /// The state as of the chain's last row: the stored state, with every
+    /// Best-effort projection for inspection, not authoritative decisions.
+    /// Use [`Self::try_read`] when unreadable history must fail closed.
+    /// The stored state, with every
     /// row appended since folded in by `fold` (which sees each row's bytes,
     /// oldest first). A Document that is missing or does not decode is
     /// rebuilt from the chain's start.
@@ -87,6 +89,54 @@ impl Rollup {
             );
         }
         (state, to)
+    }
+
+    /// Authoritative state: every new frame must be readable and every fold
+    /// must succeed. A cache is only an optimization: an unreadable cache is
+    /// rebuilt from the verified chain, never used as a successful stale read.
+    pub fn try_read<S>(
+        &self,
+        fold: impl FnMut(&mut S, &[u8]) -> Result<(), SessionError>,
+    ) -> Result<S, SessionError>
+    where
+        S: Default + Serialize + DeserializeOwned,
+    {
+        self.try_read_at(fold).map(|(state, _)| state)
+    }
+
+    /// As [`Rollup::try_read`], with the position required by a conditional
+    /// append. A chain behind its cached position is an error, not permission
+    /// to decide from a potentially missing revocation or dispatch record.
+    pub fn try_read_at<S>(
+        &self,
+        mut fold: impl FnMut(&mut S, &[u8]) -> Result<(), SessionError>,
+    ) -> Result<(S, Position), SessionError>
+    where
+        S: Default + Serialize + DeserializeOwned,
+    {
+        let stored = crate::documents::read(&self.document)
+            .ok()
+            .flatten()
+            .and_then(|text| serde_json::from_str::<Stored<S>>(&text).ok());
+        let (from, mut state) = stored.map_or_else(
+            || (Position::default(), S::default()),
+            |stored| (stored.position, stored.state),
+        );
+        let mut folded = false;
+        let to = tail::try_tail(&self.chain, from, |_, bytes| {
+            fold(&mut state, bytes)?;
+            folded = true;
+            Ok(true)
+        })?;
+        // A failed cache save cannot invalidate a successfully verified read.
+        if folded && let Err(error) = self.save(to, &state) {
+            tracing::warn!(
+                kind = "rollup",
+                error_kind = %vak_telemetry::error_kind(&error),
+                "a rollup was not saved; the next read folds the same rows"
+            );
+        }
+        Ok((state, to))
     }
 
     /// Saves `state` as covering the chain up to `position`, unless another
@@ -158,5 +208,38 @@ mod tests {
         chain.append(&serde_json::json!({ "n": 1000 })).unwrap();
         let next: Sum = rollup.read(fold);
         assert_eq!((next.rows, next.total), (301, (0..300).sum::<u64>() + 1000));
+    }
+
+    #[test]
+    fn a_failed_fold_never_saves_a_partially_advanced_rollup() {
+        vak_config::paths::isolate_home_for_tests();
+        let home = vak_config::paths::data_home().join(uuid::Uuid::now_v7().to_string());
+        let chain = crate::chain::RecordChain::at(home.join("rows"));
+        let rollup = Rollup::new(chain.path(), home.join("rollup"));
+        chain.append(&serde_json::json!({"n": 1})).unwrap();
+        let first: Sum = rollup
+            .try_read(|sum, bytes| {
+                fold(sum, bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(first.rows, 1);
+        chain.append(&serde_json::json!({"n": 2})).unwrap();
+        chain.append(&serde_json::json!({"n": 3})).unwrap();
+        let failed = rollup.try_read::<Sum>(|sum, bytes| {
+            fold(sum, bytes);
+            Err(SessionError::InvalidSelection)
+        });
+        assert!(failed.is_err());
+        let mut folded = 0;
+        let recovered: Sum = rollup
+            .try_read(|sum, bytes| {
+                folded += 1;
+                fold(sum, bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(folded, 2);
+        assert_eq!((recovered.rows, recovered.total), (3, 6));
     }
 }

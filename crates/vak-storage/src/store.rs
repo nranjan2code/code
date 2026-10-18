@@ -84,16 +84,8 @@ fn counter(refs: &dyn RefStore, name: &str) -> Result<u64> {
     }
 }
 
-fn bump(refs: &dyn RefStore, name: &str) -> Result<u64> {
-    let cur = refs.get(name)?;
-    let next = counter(refs, name)? + 1;
-    refs.cas(name, cur.map(|c| c.generation), 0, &next.to_le_bytes())?;
-    Ok(next)
-}
-
 struct Meta {
     refs: Box<dyn RefStore>,
-    serial: Mutex<()>,
     hook: Mutex<Option<PreAck>>,
 }
 
@@ -101,19 +93,17 @@ impl Meta {
     fn new(refs: Box<dyn RefStore>) -> Self {
         Self {
             refs,
-            serial: Mutex::new(()),
             hook: Mutex::new(None),
         }
     }
 
     fn committed(&self) -> Result<u64> {
-        let generation = {
-            let _g = self
-                .serial
-                .lock()
-                .map_err(|_| StorageError::Malformed("store state poisoned"))?;
-            bump(self.refs.as_ref(), COMMIT_REF)?
-        };
+        let generation = self.refs.bump_counter(COMMIT_REF)?;
+        self.pre_ack(generation)?;
+        Ok(generation)
+    }
+
+    fn pre_ack(&self, generation: u64) -> Result<()> {
         let hook = self
             .hook
             .lock()
@@ -122,7 +112,7 @@ impl Meta {
         if let Some(h) = hook {
             h(generation)?;
         }
-        Ok(generation)
+        Ok(())
     }
 
     fn cas_ref(
@@ -133,40 +123,24 @@ impl Meta {
         target: &[u8],
     ) -> Result<RefValue> {
         user_ref(name)?;
-        let current = counter(self.refs.as_ref(), EPOCH_REF)?;
-        if epoch < current {
-            return Err(StorageError::StaleEpoch {
-                presented: epoch,
-                current,
-            });
-        }
-        let v = self.refs.cas(name, expected, epoch, target)?;
-        self.committed()?;
+        let (v, commit) = self
+            .refs
+            .cas_guarded(name, expected, epoch, EPOCH_REF, COMMIT_REF, target)?;
+        self.pre_ack(commit)?;
         Ok(v)
     }
 
     fn remove_ref(&self, name: &str, expected: u64, epoch: u64) -> Result<()> {
         user_ref(name)?;
-        let current = counter(self.refs.as_ref(), EPOCH_REF)?;
-        if epoch < current {
-            return Err(StorageError::StaleEpoch {
-                presented: epoch,
-                current,
-            });
-        }
-        self.refs.remove(name, expected, epoch)?;
-        self.committed().map(|_| ())
+        let commit = self
+            .refs
+            .remove_guarded(name, expected, epoch, EPOCH_REF, COMMIT_REF)?;
+        self.pre_ack(commit)
     }
 
     fn restore(&self) -> Result<u64> {
-        let e = {
-            let _g = self
-                .serial
-                .lock()
-                .map_err(|_| StorageError::Malformed("store state poisoned"))?;
-            bump(self.refs.as_ref(), EPOCH_REF)?
-        };
-        self.committed()?;
+        let (e, commit) = self.refs.advance_epoch(EPOCH_REF, COMMIT_REF)?;
+        self.pre_ack(commit)?;
         Ok(e)
     }
 
@@ -562,6 +536,44 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_object_and_ref_commits_share_one_atomic_counter() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        let d = tempfile::tempdir().unwrap();
+        let shared = Arc::new(local(d.path()));
+        let workers = 8;
+        let iterations = 8;
+        let barrier = Arc::new(Barrier::new(workers));
+        let mut threads = Vec::new();
+        for worker in 0..workers {
+            let store = if worker < workers / 2 {
+                shared.clone()
+            } else {
+                Arc::new(local(d.path()))
+            };
+            let barrier = barrier.clone();
+            threads.push(thread::spawn(move || {
+                barrier.wait();
+                for iteration in 0..iterations {
+                    let scope = format!("writer-{worker}-{iteration}");
+                    let body = format!("object-{worker}-{iteration}");
+                    store.put_object(body.as_bytes(), &scope).unwrap();
+                    let name = format!("ref/{worker}/{iteration}");
+                    store.cas_ref(&name, None, 0, body.as_bytes()).unwrap();
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert_eq!(
+            local(d.path()).commit_generation().unwrap(),
+            (workers * iterations * 2) as u64
+        );
+    }
+
+    #[test]
     fn restore_bumps_epoch() {
         let d = tempfile::tempdir().unwrap();
         for s in [
@@ -593,6 +605,128 @@ mod tests {
     }
 
     #[test]
+    fn independent_handles_atomically_fence_cas_and_remove_after_restore() {
+        let d = tempfile::tempdir().unwrap();
+        let old_writer = local(d.path());
+        let restoring_writer = local(d.path());
+        let old_epoch = old_writer.epoch().unwrap();
+        let value = old_writer
+            .cas_ref("head", None, old_epoch, b"before")
+            .unwrap();
+
+        let new_epoch = restoring_writer.restore().unwrap();
+        assert_eq!(new_epoch, old_epoch + 1);
+        assert!(matches!(
+            old_writer.cas_ref("head", Some(value.generation), old_epoch, b"stale"),
+            Err(StorageError::StaleEpoch { presented, current }) if presented == old_epoch && current == new_epoch
+        ));
+        assert!(matches!(
+            old_writer.remove_ref("head", value.generation, old_epoch),
+            Err(StorageError::StaleEpoch { presented, current }) if presented == old_epoch && current == new_epoch
+        ));
+        assert_eq!(
+            old_writer.get_ref("head").unwrap().unwrap().target,
+            b"before"
+        );
+    }
+
+    #[test]
+    fn sqlite_epoch_guard_waits_for_concurrent_epoch_advance() {
+        use rusqlite::{Connection, TransactionBehavior};
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let d = tempfile::tempdir().unwrap();
+        let stale_handle = local(d.path());
+        let current = stale_handle.epoch().unwrap();
+        let path = d.path().join("refs.db");
+        let mut blocker = Connection::open(path).unwrap();
+        let tx = blocker
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = stale_handle.cas_ref("race", None, current, b"stale");
+            done_tx.send(result).unwrap();
+        });
+        started_rx.recv().unwrap();
+        assert!(done_rx.recv_timeout(Duration::from_millis(50)).is_err());
+
+        let next = current + 1;
+        tx.execute(
+            "INSERT INTO refs(name, generation, epoch, target) VALUES('_store/epoch',1,0,?1)
+             ON CONFLICT(name) DO UPDATE SET generation=generation+1, target=?1",
+            rusqlite::params![next.to_le_bytes().as_slice()],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        assert!(matches!(
+            done_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Err(StorageError::StaleEpoch { presented, current: observed }) if presented == current && observed == next
+        ));
+        worker.join().unwrap();
+        assert!(local(d.path()).get_ref("race").unwrap().is_none());
+    }
+
+    #[test]
+    fn sqlite_remove_epoch_guard_waits_for_concurrent_epoch_advance() {
+        use rusqlite::{Connection, TransactionBehavior};
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let d = tempfile::tempdir().unwrap();
+        let stale_handle = local(d.path());
+        let current = stale_handle.epoch().unwrap();
+        let value = stale_handle
+            .cas_ref("remove-race", None, current, b"keep")
+            .unwrap();
+        let path = d.path().join("refs.db");
+        let mut blocker = Connection::open(path).unwrap();
+        let tx = blocker
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = stale_handle.remove_ref("remove-race", value.generation, current);
+            done_tx.send(result).unwrap();
+        });
+        started_rx.recv().unwrap();
+        assert!(done_rx.recv_timeout(Duration::from_millis(50)).is_err());
+
+        let next = current + 1;
+        tx.execute(
+            "INSERT INTO refs(name, generation, epoch, target) VALUES('_store/epoch',1,0,?1)
+             ON CONFLICT(name) DO UPDATE SET generation=generation+1, target=?1",
+            rusqlite::params![next.to_le_bytes().as_slice()],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        assert!(matches!(
+            done_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Err(StorageError::StaleEpoch { presented, current: observed }) if presented == current && observed == next
+        ));
+        worker.join().unwrap();
+        assert_eq!(
+            local(d.path())
+                .get_ref("remove-race")
+                .unwrap()
+                .unwrap()
+                .target,
+            b"keep"
+        );
+    }
+
+    #[test]
     fn pre_ack_hook_sees_each_generation_and_can_refuse() {
         let s = MemoryStore::new(IdKey::new(&[1; 32]));
         let seen = Arc::new(AtomicU64::new(0));
@@ -612,5 +746,31 @@ mod tests {
         assert_eq!(s.commit_generation().unwrap(), 2);
         s.set_pre_ack(None).unwrap();
         s.put_object(b"c", "x").unwrap();
+    }
+
+    #[test]
+    fn ref_and_epoch_mutations_commit_before_pre_ack_refusal() {
+        fn check(s: &dyn Store) {
+            s.set_pre_ack(Some(Arc::new(|_| Err(StorageError::Integrity))))
+                .unwrap();
+            assert!(s.cas_ref("head", None, 0, b"committed").is_err());
+            assert_eq!(s.commit_generation().unwrap(), 1);
+            let head = s.get_ref("head").unwrap().unwrap();
+            assert_eq!(head.target, b"committed");
+            assert!(s.remove_ref("head", head.generation, 0).is_err());
+            assert!(s.get_ref("head").unwrap().is_none());
+            assert_eq!(s.commit_generation().unwrap(), 2);
+            assert!(s.restore().is_err());
+            assert_eq!(s.epoch().unwrap(), 1);
+            assert_eq!(s.commit_generation().unwrap(), 3);
+            assert!(matches!(
+                s.cas_ref("stale", None, 0, b"no"),
+                Err(StorageError::StaleEpoch { .. })
+            ));
+            assert_eq!(s.commit_generation().unwrap(), 3);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        check(&local(dir.path()));
+        check(&MemoryStore::new(IdKey::new(&[1; 32])));
     }
 }

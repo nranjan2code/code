@@ -9,7 +9,7 @@
 
 use chrono::{Duration, Utc};
 use vak_core::artifacts::{ArtifactKind, Artifacts};
-use vak_core::grants::{Grant, GrantObject, Grants, Role};
+use vak_core::grants::{Grant, GrantError, GrantObject, Grants, Role};
 use vak_session::ids::{GrantId, PrincipalId};
 
 fn grant(
@@ -199,4 +199,89 @@ fn revoked_grant_hides_from_search() {
     let incremental = catalog.dump().unwrap();
     catalog.rebuild().unwrap();
     assert_eq!(catalog.dump().unwrap(), incremental);
+}
+
+#[test]
+fn an_unreadable_revocation_never_preserves_a_cached_grant() {
+    let (_shared, _artifacts, grants, _catalog) = setup();
+    let guest = PrincipalId::new().to_string();
+    let object = GrantObject::Conversation(uuid::Uuid::now_v7().to_string());
+    let viewer = grant(&guest, object.clone(), Role::Viewer, None);
+    let id = viewer.id;
+    grants.grant(viewer, None, None).unwrap();
+    assert!(grants.may(&guest, &object, Role::Viewer, false, Utc::now()));
+
+    let segments = vak_storage::segments::SegmentSet::open(&grants.path()).unwrap();
+    let lock = segments.lock().unwrap();
+    segments.seal(1, &lock).unwrap();
+    drop(lock);
+    grants.revoke(id, None).unwrap();
+    let revocation = segments.log_path(2);
+    let original = std::fs::read(&revocation).unwrap();
+
+    for broken in [
+        b"unreadable".to_vec(),
+        original[..original.len() - 1].to_vec(),
+    ] {
+        std::fs::write(&revocation, broken).unwrap();
+        assert!(matches!(grants.on(&object), Err(GrantError::Unreadable)));
+        assert!(!grants.may(&guest, &object, Role::Viewer, false, Utc::now()));
+        // Even inherited access must not turn an unreadable store into yes.
+        assert!(!grants.may(&guest, &object, Role::Viewer, true, Utc::now()));
+    }
+    std::fs::write(&revocation, original).unwrap();
+    assert!(!grants.may(&guest, &object, Role::Viewer, false, Utc::now()));
+    assert_eq!(
+        grants.on(&object).unwrap()[0].status(Utc::now()),
+        vak_core::grants::GrantStatus::Revoked
+    );
+}
+
+#[test]
+fn a_malformed_grant_row_and_a_missing_cached_chain_fail_closed() {
+    let (_shared, _artifacts, grants, _catalog) = setup();
+    let guest = PrincipalId::new().to_string();
+    let object = GrantObject::Conversation(uuid::Uuid::now_v7().to_string());
+    grants
+        .grant(
+            grant(&guest, object.clone(), Role::Viewer, None),
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(grants.may(&guest, &object, Role::Viewer, false, Utc::now()));
+    let segment = grants.path().join("seg-00000001.log");
+    let original = std::fs::read(&segment).unwrap();
+    std::fs::remove_file(&segment).unwrap();
+    assert!(matches!(grants.on(&object), Err(GrantError::Unreadable)));
+    assert!(!grants.may(&guest, &object, Role::Viewer, true, Utc::now()));
+    std::fs::write(&segment, original).unwrap();
+    vak_session::chain::RecordChain::at(grants.path())
+        .append(&serde_json::json!({"step": "unknown"}))
+        .unwrap();
+    assert!(matches!(grants.on(&object), Err(GrantError::Unreadable)));
+    assert!(!grants.may(&guest, &object, Role::Viewer, false, Utc::now()));
+}
+
+#[test]
+fn a_missing_revocation_segment_cannot_be_skipped_for_a_later_segment() {
+    let (_shared, _artifacts, grants, _catalog) = setup();
+    let guest = PrincipalId::new().to_string();
+    let object = GrantObject::Conversation(uuid::Uuid::now_v7().to_string());
+    let viewer = grant(&guest, object.clone(), Role::Viewer, None);
+    let id = viewer.id;
+    grants.grant(viewer, None, None).unwrap();
+    assert!(grants.may(&guest, &object, Role::Viewer, false, Utc::now()));
+    let segments = vak_storage::segments::SegmentSet::open(&grants.path()).unwrap();
+    segments.seal(1, &segments.lock().unwrap()).unwrap();
+    grants.revoke(id, None).unwrap();
+    segments.seal(2, &segments.lock().unwrap()).unwrap();
+    grants.restore_inheritance(object.clone(), None).unwrap();
+    let path = segments.sealed_path(2);
+    let bytes = std::fs::read(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(matches!(grants.on(&object), Err(GrantError::Unreadable)));
+    assert!(!grants.may(&guest, &object, Role::Viewer, false, Utc::now()));
+    std::fs::write(path, bytes).unwrap();
+    assert!(!grants.may(&guest, &object, Role::Viewer, false, Utc::now()));
 }

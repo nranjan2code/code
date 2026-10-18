@@ -109,10 +109,36 @@ fn commits(entry: &Entry) -> bool {
 /// The segment numbers present in a ledger directory, ascending, and
 /// whether the newest is still open (has a `.log`).
 pub(crate) fn segment_numbers(dir: &Path) -> Vec<(u64, bool)> {
+    segment_numbers_with(dir, false).unwrap_or_default()
+}
+
+/// Authoritative readers must distinguish an absent chain from a directory
+/// they could not enumerate. The infallible helper is for best-effort views.
+pub(crate) fn try_segment_numbers(dir: &Path) -> Result<Vec<(u64, bool)>, SessionError> {
+    segment_numbers_with(dir, true)
+}
+
+fn segment_numbers_with(dir: &Path, strict: bool) -> Result<Vec<(u64, bool)>, SessionError> {
     let mut found: std::collections::BTreeMap<u64, bool> = std::collections::BTreeMap::new();
-    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if strict => return Err(error.into()),
+            Err(_) => continue,
+        };
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
+            if strict {
+                return Err(SessionError::Corrupt {
+                    line: 0,
+                    message: "invalid segment directory entry".into(),
+                });
+            }
             continue;
         };
         let Some(rest) = name.strip_prefix("seg-") else {
@@ -126,11 +152,22 @@ pub(crate) fn segment_numbers(dir: &Path) -> Vec<(u64, bool)> {
             continue;
         };
         if let Ok(number) = number.parse::<u64>() {
+            if strict && (number == 0 || found.contains_key(&number)) {
+                return Err(SessionError::Corrupt {
+                    line: 0,
+                    message: "ambiguous segment number".into(),
+                });
+            }
             let slot = found.entry(number).or_insert(false);
             *slot |= open;
+        } else if strict {
+            return Err(SessionError::Corrupt {
+                line: 0,
+                message: "invalid segment number".into(),
+            });
         }
     }
-    found.into_iter().collect()
+    Ok(found.into_iter().collect())
 }
 
 fn storage_error(error: vak_storage::StorageError) -> SessionError {

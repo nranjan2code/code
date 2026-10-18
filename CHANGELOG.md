@@ -1,3 +1,12 @@
+## Unreleased
+
+- Grant-service permission checks, outbound-action decisions and connected
+  account reads now fail when new records cannot be read, rather than
+  silently trusting cached state.
+- Ref writes and removals check the current writer epoch atomically with
+  their commit record, so a restored store refuses a stale writer even
+  when the two operations race.
+
 ## 8.9.0 — 2026-10-18
 
 - A turn can be asked again: Retry on your message answers it afresh, and

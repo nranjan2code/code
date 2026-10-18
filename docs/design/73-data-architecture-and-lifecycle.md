@@ -690,6 +690,10 @@ model for all of them; each proposal uses it rather than building its own.
   a store, or moving work to another host, bumps the epoch, so the old
   writer is fenced even when no remote is configured. §11's leases extend
   the same epochs across remotes.
+  Ref CAS/removal checks the global epoch and changes the user ref and
+  commit generation in one underlying transaction; advancing the epoch
+  uses that transaction boundary too. The pre-ack hook runs after the
+  local commit and can still report an unacknowledged durable mutation.
 - **Environments are named by the full run id.** A git worktree is used only
   when the space *is* a git repository. Otherwise the run gets a
   `CopyEnvironment`: the first real `EnvironmentBackend` (D20). It copies
@@ -757,6 +761,18 @@ demands it). The query API is identical, so every surface calls one
   audience. A share is an explicit grant (viewer / commenter / editor) that
   breaks inheritance for that Artifact only. Coworking grants (doc 69)
   become artifact and conversation grants in the same table.
+- **Authoritative readers fail closed.** Grant decisions, effect dispatch
+  state and connected-account state use strict chain/rollup reads. These
+  verify frame integrity and seal metadata and propagate unreadable keys,
+  incomplete frames and row decoding failures. A failed suffix cannot
+  preserve a cached grant or advance a conditional append decision.
+  Strict reads never repair/truncate a seal manifest; a failed rollup save
+  may cost a later refold but does not change a verified read's result.
+  The older infallible APIs remain for best-effort views and unmigrated
+  consumers; catalog/search grant projections, artifact, commitment,
+  routing and accounting decision readers still need the A01 audit/rollout in
+  `docs/plans/architecture-and-presentation-hardening-plan.md`. The presence
+  of a strict API alone does not close that finding.
 - **Concurrent edits produce sibling Versions.** Reconciling them is the
   existing Review path (redline for Office, semantic diff for data, file diff
   for code). There is no merge UI for documents.

@@ -6986,6 +6986,7 @@ dependencies = [
  "vak-config",
  "vak-core",
  "vak-session",
+ "vak-storage",
  "zeroize",
 ]
 

@@ -15,6 +15,49 @@ item says what is missing and what closes it. A design doc's own Status
 line says what of that doc is built; this file lists only what is open
 across them. Nothing here is started unless it says so.
 
+## Architecture and presentation review consolidation (2026-10-18)
+
+All session review scopes are retained in
+[the consolidated audit](../audits/architecture-and-presentation-review-2026-10-18.md):
+system architecture, answer/presentation/projection, UI/right panel/canvas/
+saved pages, and dynamic/interlinked ability-backed cards. Its 30 stable
+finding IDs distinguish probes, source risks and product choices. Passing
+dynamic-card behavior is evidence to preserve, not work to rebuild.
+
+The [hardening plan](architecture-and-presentation-hardening-plan.md) owns
+scope, dependencies and exit criteria. S1 has started with strict grant,
+effect and connection reads and atomic ref fencing; see its implementation
+log for verification and remaining scope. Existing open items below remain open;
+overlapping fixes should close their original entries as well.
+
+- [ ] S0: revalidate all IDs on the current implementation baseline and
+  establish a lifecycle/surface matrix; determine blob API reachability.
+- [ ] S1: authoritative reads and atomic fencing, catalog confidentiality
+  decision/protection, shared blob ownership (A01, A02, A10, A12).
+  First slice implements strict grant/effect/connection reads and verified
+  conditional-append checks plus transactional epoch/ref/commit updates.
+  The full repository gate passed, including the new regressions.
+  A01's other consumers, catalog policy and blob ownership remain open;
+  the stage is not complete.
+- [ ] S2: causal recording, consistent run services/policy, cancellation,
+  compaction locks and conservative tool claims (A03–A07).
+- [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
+  actual outline attribution and typed cleanup (P01–P03, P13, P14).
+- [ ] S4: interaction ownership/invalidation, replacement, graph scope and
+  invocation/freshness provenance (P04, D01–D04).
+- [ ] S5: subject persistence, protected drafts, encrypted fenced canvas
+  Documents and authorized page resources (P05–P08, D04).
+- [ ] S6: adaptive coverage/fallback, truthful charts, streaming, task-level
+  quality and checked wire outcomes (P09–P12, A11, D04).
+- [ ] S7: narrow Core ownership and bounded history-dependent work
+  (A08, A09), retaining the earlier guarantees.
+
+Unresolved choices are in the plan: catalog confidentiality, interaction
+scope, replacement identity, generic DAG versus controls-to-consumers,
+and ability snapshot/refresh semantics. Existing living-page control values
+remain viewer-local and unsaved. Further Astra consultation is excluded by
+the maintainer's instruction.
+
 ## Turns that poison later turns (doc 99, 2026-10-17)
 
 Found in an installed-home conversation: after a few turns whose calls

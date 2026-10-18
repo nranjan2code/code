@@ -118,19 +118,23 @@ impl ConnectionLedger {
     }
 
     fn state(&self) -> Result<State, LedgerError> {
-        let state = self.rollup.read(|state: &mut State, bytes: &[u8]| {
-            if state.broken {
-                return;
-            }
-            match serde_json::from_slice::<ConnectionEvent>(bytes) {
-                Ok(event) => {
-                    if self.apply_event(state, &event).is_err() {
-                        state.broken = true;
-                    }
+        let state = self
+            .rollup
+            .try_read(|state: &mut State, bytes: &[u8]| {
+                if state.broken {
+                    return Ok(());
                 }
-                Err(_) => state.broken = true,
-            }
-        });
+                match serde_json::from_slice::<ConnectionEvent>(bytes) {
+                    Ok(event) => {
+                        if self.apply_event(state, &event).is_err() {
+                            state.broken = true;
+                        }
+                    }
+                    Err(_) => state.broken = true,
+                }
+                Ok(())
+            })
+            .map_err(|_| LedgerError::InvalidRecord)?;
         if state.broken {
             return Err(LedgerError::InvalidRecord);
         }
@@ -608,6 +612,34 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[test]
+    fn unreadable_disconnect_cannot_preserve_a_cached_connected_account() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("strict-connections-{}", Uuid::now_v7());
+        let ledger = ConnectionLedger::for_agent(&agent_id).unwrap();
+        let account_id = Uuid::now_v7().to_string();
+        let mut pending = connected_account(&agent_id, &account_id, 1);
+        pending.status = AccountStatus::Pending;
+        ledger.append_pending(pending.clone()).unwrap();
+        pending.status = AccountStatus::Connected;
+        pending.revision = 2;
+        ledger.append_connected(pending).unwrap();
+        assert_eq!(
+            ledger.read_all().unwrap()[0].status,
+            AccountStatus::Connected
+        );
+
+        let segments = vak_storage::segments::SegmentSet::open(ledger.path()).unwrap();
+        let lock = segments.lock().unwrap();
+        segments.seal(1, &lock).unwrap();
+        drop(lock);
+        ledger
+            .append_disconnected(&account_id, Provider::Google, Utc::now())
+            .unwrap();
+        std::fs::write(segments.log_path(2), b"unreadable").unwrap();
+        assert!(matches!(ledger.read_all(), Err(LedgerError::InvalidRecord)));
     }
 
     #[test]

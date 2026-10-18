@@ -6,12 +6,133 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::types::SessionError;
+
 /// A place in a segment directory: the segment, and how many of its frames
 /// lie before it. The default is the start.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Position {
     pub segment: u64,
     pub frames: u64,
+}
+
+fn corrupt(error: impl std::fmt::Display) -> SessionError {
+    SessionError::Corrupt {
+        line: 0,
+        message: error.to_string(),
+    }
+}
+
+/// A verified, read-only walk for authoritative decisions. Unlike [`tail`],
+/// an unreadable segment, incomplete frame or failed fold is an error, never
+/// a successfully consumed prefix. Callers must discard state on error.
+pub fn try_tail(
+    dir: &Path,
+    from: Position,
+    mut visit: impl FnMut(Position, &[u8]) -> Result<bool, SessionError>,
+) -> Result<Position, SessionError> {
+    let numbers = crate::log::try_segment_numbers(dir)?;
+    let segments = vak_storage::segments::SegmentSet::at(dir);
+    let seals = segments.verified_seals().map_err(corrupt)?;
+    if numbers.is_empty() {
+        return if from == Position::default() && seals.is_empty() {
+            Ok(from)
+        } else {
+            Err(corrupt("the chain no longer holds the reader's position"))
+        };
+    }
+    if numbers
+        .last()
+        .is_some_and(|(number, _)| *number < from.segment)
+    {
+        return Err(corrupt("the chain no longer holds the reader's position"));
+    }
+    for seal in &seals {
+        if seal.segment == from.segment && from.frames > seal.entries {
+            return Err(corrupt("the chain no longer holds the reader's position"));
+        }
+        let unread = seal.segment > from.segment
+            || (seal.segment == from.segment && from.frames < seal.entries);
+        if unread
+            && numbers
+                .binary_search_by_key(&seal.segment, |(number, _)| *number)
+                .is_err()
+        {
+            return Err(corrupt("an unread segment is missing"));
+        }
+    }
+    let key = crate::keys::of(dir)?;
+    let mut at = from;
+    for (number, open) in numbers {
+        if number < from.segment {
+            continue;
+        }
+        let path = if open {
+            segments.log_path(number)
+        } else {
+            segments.sealed_path(number)
+        };
+        let previous = if number <= 1 {
+            vak_storage::records::GENESIS
+        } else {
+            seals
+                .iter()
+                .find(|seal| seal.segment == number - 1)
+                .ok_or_else(|| corrupt("the previous segment has no seal"))?
+                .head
+        };
+        let bytes = vak_storage::segments::frame_bytes(&path).map_err(corrupt)?;
+        let report = vak_storage::records::verify_bytes(&bytes, previous).map_err(corrupt)?;
+        if report.torn_tail.is_some() {
+            return Err(corrupt("the chain has an incomplete frame"));
+        }
+        if !open {
+            let seal = seals
+                .iter()
+                .find(|seal| seal.segment == number)
+                .ok_or_else(|| corrupt("the segment has no seal"))?;
+            if seal.head != report.head || seal.entries != report.entries {
+                return Err(corrupt("the segment does not match its seal"));
+            }
+        }
+        let frames =
+            vak_storage::records::located_entries(&bytes, 0, key.as_ref()).map_err(corrupt)?;
+        let skip = if number == from.segment {
+            from.frames
+        } else {
+            0
+        };
+        if skip > frames.len() as u64 {
+            return Err(corrupt("the chain no longer holds the reader's position"));
+        }
+        at = Position {
+            segment: number,
+            frames: skip,
+        };
+        for (index, frame) in frames.iter().enumerate().skip(skip as usize) {
+            at.frames = index as u64 + 1;
+            if !visit(at, &frame.entry)? {
+                return Ok(at);
+            }
+        }
+    }
+    Ok(at)
+}
+
+/// The latest verified position. Reads only the newest data segment and its
+/// seal metadata; it never recovers or truncates files on a reader's behalf.
+pub fn try_head(dir: &Path) -> Result<Position, SessionError> {
+    let Some(&(last, _)) = crate::log::try_segment_numbers(dir)?.last() else {
+        return try_tail(dir, Position::default(), |_, _| Ok(true));
+    };
+    try_tail(
+        dir,
+        Position {
+            segment: last,
+            frames: 0,
+        },
+        |_, _| Ok(true),
+    )
 }
 
 /// Visits each frame after `from`, oldest first, with the position just
@@ -108,6 +229,21 @@ pub fn head(dir: &Path) -> Position {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strict_empty_reads_create_nothing_and_missing_sealed_history_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rows");
+        assert_eq!(try_head(&path).unwrap(), Position::default());
+        assert!(!path.exists());
+        let chain = crate::chain::RecordChain::at(&path);
+        chain.append(&serde_json::json!({"n": 1})).unwrap();
+        let segments = vak_storage::segments::SegmentSet::open(&path).unwrap();
+        segments.seal(1, &segments.lock().unwrap()).unwrap();
+        std::fs::remove_file(segments.sealed_path(1)).unwrap();
+        assert!(try_head(&path).is_err());
+        assert!(try_tail(&path, Position::default(), |_, _| Ok(true)).is_err());
+    }
 
     #[test]
     fn a_reader_resumes_where_it_stopped_across_seals() {

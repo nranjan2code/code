@@ -208,7 +208,13 @@ impl Grants {
     }
 
     fn state(&self) -> Result<State, GrantError> {
-        let state = self.rollup.read(fold);
+        let state = self
+            .rollup
+            .try_read(|state, bytes| {
+                fold(state, bytes);
+                Ok(())
+            })
+            .map_err(|_| GrantError::Unreadable)?;
         if state.unreadable {
             return Err(GrantError::Unreadable);
         }

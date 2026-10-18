@@ -150,10 +150,10 @@ impl RecordChain {
         segments.recover(&lock).map_err(storage_error)?;
         if let Some(after) = after {
             let mut moved = false;
-            crate::tail::tail(&self.dir, after, |_, _| {
+            crate::tail::try_tail(&self.dir, after, |_, _| {
                 moved = true;
-                false
-            });
+                Ok(false)
+            })?;
             if moved {
                 return Ok(false);
             }
@@ -276,6 +276,21 @@ impl RecordChain {
         rows
     }
 
+    /// Every row for a decision: unreadable frames and malformed rows are
+    /// errors. Use [`Self::read`] only for explicitly best-effort inspection.
+    pub fn try_read<T: DeserializeOwned>(&self) -> Result<Vec<T>, SessionError> {
+        let mut rows = Vec::new();
+        crate::tail::try_tail(&self.dir, Default::default(), |_, bytes| {
+            let row = serde_json::from_slice(bytes).map_err(|error| SessionError::Corrupt {
+                line: 0,
+                message: error.to_string(),
+            })?;
+            rows.push(row);
+            Ok(true)
+        })?;
+        Ok(rows)
+    }
+
     /// The rows as JSON, one per line, in order: a plain-text rendering for
     /// inspection and tests. Not a format anything parses back.
     pub fn text(&self) -> String {
@@ -313,6 +328,63 @@ impl RecordChain {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authoritative_reads_reject_bad_rows_torn_frames_and_broken_hashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let chain = RecordChain::at(dir.path().join("strict"));
+        chain.append(&serde_json::json!({"n": 1})).unwrap();
+        assert_eq!(chain.try_read::<serde_json::Value>().unwrap().len(), 1);
+        assert!(chain.try_read::<u64>().is_err());
+        let segment = chain.path().join("seg-00000001.log");
+        let original = std::fs::read(&segment).unwrap();
+        std::fs::write(&segment, &original[..original.len() - 1]).unwrap();
+        assert!(chain.try_read::<serde_json::Value>().is_err());
+        let mut changed_hash = original;
+        let last = changed_hash.len() - 1;
+        changed_hash[last] ^= 1;
+        std::fs::write(&segment, changed_hash).unwrap();
+        assert!(chain.try_read::<serde_json::Value>().is_err());
+    }
+
+    #[test]
+    fn authoritative_reads_report_an_erased_scope_instead_of_an_empty_chain() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let session = uuid::Uuid::now_v7().to_string();
+        let chain = RecordChain::at(dir.path().join("private")).of_conversation(&session);
+        chain.append(&serde_json::json!({"n": 1})).unwrap();
+        assert_eq!(chain.try_read::<serde_json::Value>().unwrap().len(), 1);
+        crate::objects::TenantObjects::for_tenant(&vak_config::paths::local_tenant_home())
+            .unwrap()
+            .destroy_scope_key(&crate::objects::conversation_scope(&session))
+            .unwrap();
+        assert!(matches!(
+            chain.try_read::<serde_json::Value>(),
+            Err(SessionError::Erased(_))
+        ));
+    }
+
+    #[test]
+    fn authoritative_reads_reject_ambiguous_segment_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let chain = RecordChain::at(dir.path().join("rows"));
+        chain.append(&serde_json::json!({"n": 1})).unwrap();
+        let original = chain.path().join("seg-00000001.log");
+        let malformed = chain.path().join("seg-bad.log");
+        std::fs::rename(&original, &malformed).unwrap();
+        assert!(chain.try_read::<serde_json::Value>().is_err());
+        std::fs::rename(&malformed, &original).unwrap();
+        let segments = vak_storage::segments::SegmentSet::open(chain.path()).unwrap();
+        let lock = segments.lock().unwrap();
+        let bytes = std::fs::read(&original).unwrap();
+        segments.seal(1, &lock).unwrap();
+        drop(lock);
+        std::fs::write(&original, bytes).unwrap();
+        assert!(chain.try_read::<serde_json::Value>().is_err());
+        std::fs::remove_file(&original).unwrap();
+        assert_eq!(chain.try_read::<serde_json::Value>().unwrap().len(), 1);
+    }
 
     #[test]
     fn rows_read_back_in_order_across_seals_and_handles() {

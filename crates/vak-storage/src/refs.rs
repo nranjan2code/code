@@ -24,6 +24,30 @@ pub trait RefStore: Send + Sync {
     /// A name that is created again later starts over at generation 1, so
     /// remove only refs whose name is never reused.
     fn remove(&self, name: &str, expected: u64, epoch: u64) -> Result<()>;
+    /// Advances a numeric counter ref atomically across every handle.
+    fn bump_counter(&self, name: &str) -> Result<u64>;
+    /// CAS guarded by the store-wide epoch ref, checked in the same atomic
+    /// operation as the user ref mutation.
+    fn cas_guarded(
+        &self,
+        name: &str,
+        expected: Option<u64>,
+        epoch: u64,
+        epoch_name: &str,
+        commit_name: &str,
+        target: &[u8],
+    ) -> Result<(RefValue, u64)>;
+    /// Remove guarded by the store-wide epoch ref, checked atomically.
+    fn remove_guarded(
+        &self,
+        name: &str,
+        expected: u64,
+        epoch: u64,
+        epoch_name: &str,
+        commit_name: &str,
+    ) -> Result<u64>;
+    /// Advances the writer epoch and commit generation atomically.
+    fn advance_epoch(&self, epoch_name: &str, commit_name: &str) -> Result<(u64, u64)>;
     /// Names starting with `prefix`, sorted.
     fn names(&self, prefix: &str) -> Result<Vec<String>>;
     /// Makes the store hold exactly `rows`, generations and epochs as
@@ -49,6 +73,41 @@ fn decide(cur: Option<&RefValue>, expected: Option<u64>, epoch: u64) -> Result<u
         });
     }
     Ok(cg.map_or(1, |g| g + 1))
+}
+
+fn check_epoch(value: Option<&RefValue>, presented: u64) -> Result<()> {
+    let current = counter_value(value)?;
+    if presented < current {
+        return Err(StorageError::StaleEpoch { presented, current });
+    }
+    Ok(())
+}
+
+fn counter_value(value: Option<&RefValue>) -> Result<u64> {
+    match value {
+        None => Ok(0),
+        Some(value) => {
+            let bytes: [u8; 8] = value
+                .target
+                .as_slice()
+                .try_into()
+                .map_err(|_| StorageError::Malformed("store counter"))?;
+            Ok(u64::from_le_bytes(bytes))
+        }
+    }
+}
+
+fn next_counter(value: Option<&RefValue>) -> Result<(u64, u64)> {
+    let next = counter_value(value)?
+        .checked_add(1)
+        .ok_or(StorageError::Malformed("store counter overflow"))?;
+    let generation = value.map_or(Ok(1), |value| {
+        value
+            .generation
+            .checked_add(1)
+            .ok_or(StorageError::Malformed("store counter generation overflow"))
+    })?;
+    Ok((next, generation))
 }
 
 #[derive(Default)]
@@ -112,6 +171,97 @@ impl RefStore for MemoryRefStore {
         decide(m.get(name), Some(expected), epoch)?;
         m.remove(name);
         Ok(())
+    }
+
+    fn bump_counter(&self, name: &str) -> Result<u64> {
+        let mut m = self.lock()?;
+        let (next, generation) = next_counter(m.get(name))?;
+        m.insert(
+            name.into(),
+            RefValue {
+                generation,
+                epoch: 0,
+                target: next.to_le_bytes().to_vec(),
+            },
+        );
+        Ok(next)
+    }
+
+    fn cas_guarded(
+        &self,
+        name: &str,
+        expected: Option<u64>,
+        epoch: u64,
+        epoch_name: &str,
+        commit_name: &str,
+        target: &[u8],
+    ) -> Result<(RefValue, u64)> {
+        let mut m = self.lock()?;
+        check_epoch(m.get(epoch_name), epoch)?;
+        let generation = decide(m.get(name), expected, epoch)?;
+        let (commit, commit_generation) = next_counter(m.get(commit_name))?;
+        let value = RefValue {
+            generation,
+            epoch,
+            target: target.to_vec(),
+        };
+        m.insert(name.into(), value.clone());
+        m.insert(
+            commit_name.into(),
+            RefValue {
+                generation: commit_generation,
+                epoch: 0,
+                target: commit.to_le_bytes().to_vec(),
+            },
+        );
+        Ok((value, commit))
+    }
+
+    fn remove_guarded(
+        &self,
+        name: &str,
+        expected: u64,
+        epoch: u64,
+        epoch_name: &str,
+        commit_name: &str,
+    ) -> Result<u64> {
+        let mut m = self.lock()?;
+        check_epoch(m.get(epoch_name), epoch)?;
+        decide(m.get(name), Some(expected), epoch)?;
+        let (commit, generation) = next_counter(m.get(commit_name))?;
+        m.remove(name);
+        m.insert(
+            commit_name.into(),
+            RefValue {
+                generation,
+                epoch: 0,
+                target: commit.to_le_bytes().to_vec(),
+            },
+        );
+        Ok(commit)
+    }
+
+    fn advance_epoch(&self, epoch_name: &str, commit_name: &str) -> Result<(u64, u64)> {
+        let mut m = self.lock()?;
+        let (epoch, epoch_generation) = next_counter(m.get(epoch_name))?;
+        let (commit, commit_generation) = next_counter(m.get(commit_name))?;
+        m.insert(
+            epoch_name.into(),
+            RefValue {
+                generation: epoch_generation,
+                epoch: 0,
+                target: epoch.to_le_bytes().to_vec(),
+            },
+        );
+        m.insert(
+            commit_name.into(),
+            RefValue {
+                generation: commit_generation,
+                epoch: 0,
+                target: commit.to_le_bytes().to_vec(),
+            },
+        );
+        Ok((epoch, commit))
     }
 }
 
@@ -242,6 +392,96 @@ impl RefStore for SqliteRefStore {
         tx.commit()?;
         Ok(())
     }
+
+    fn bump_counter(&self, name: &str) -> Result<u64> {
+        let mut c = self
+            .conn
+            .lock()
+            .map_err(|_| StorageError::Malformed("ref state poisoned"))?;
+        let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let next = bump_counter_tx(&tx, name)?;
+        tx.commit()?;
+        Ok(next)
+    }
+
+    fn cas_guarded(
+        &self,
+        name: &str,
+        expected: Option<u64>,
+        epoch: u64,
+        epoch_name: &str,
+        commit_name: &str,
+        target: &[u8],
+    ) -> Result<(RefValue, u64)> {
+        let mut c = self
+            .conn
+            .lock()
+            .map_err(|_| StorageError::Malformed("ref state poisoned"))?;
+        let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_epoch(Self::read(&tx, epoch_name)?.as_ref(), epoch)?;
+        let cur = Self::read(&tx, name)?;
+        let generation = decide(cur.as_ref(), expected, epoch)?;
+        tx.execute(
+            "INSERT INTO refs(name, generation, epoch, target) VALUES(?1,?2,?3,?4)
+             ON CONFLICT(name) DO UPDATE SET generation=?2, epoch=?3, target=?4",
+            params![name, generation as i64, epoch as i64, target],
+        )?;
+        let commit = bump_counter_tx(&tx, commit_name)?;
+        tx.commit()?;
+        Ok((
+            RefValue {
+                generation,
+                epoch,
+                target: target.to_vec(),
+            },
+            commit,
+        ))
+    }
+
+    fn remove_guarded(
+        &self,
+        name: &str,
+        expected: u64,
+        epoch: u64,
+        epoch_name: &str,
+        commit_name: &str,
+    ) -> Result<u64> {
+        let mut c = self
+            .conn
+            .lock()
+            .map_err(|_| StorageError::Malformed("ref state poisoned"))?;
+        let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_epoch(Self::read(&tx, epoch_name)?.as_ref(), epoch)?;
+        let cur = Self::read(&tx, name)?;
+        decide(cur.as_ref(), Some(expected), epoch)?;
+        tx.execute("DELETE FROM refs WHERE name=?1", params![name])?;
+        let commit = bump_counter_tx(&tx, commit_name)?;
+        tx.commit()?;
+        Ok(commit)
+    }
+
+    fn advance_epoch(&self, epoch_name: &str, commit_name: &str) -> Result<(u64, u64)> {
+        let mut c = self
+            .conn
+            .lock()
+            .map_err(|_| StorageError::Malformed("ref state poisoned"))?;
+        let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let epoch = bump_counter_tx(&tx, epoch_name)?;
+        let commit = bump_counter_tx(&tx, commit_name)?;
+        tx.commit()?;
+        Ok((epoch, commit))
+    }
+}
+
+fn bump_counter_tx(tx: &rusqlite::Transaction<'_>, name: &str) -> Result<u64> {
+    let current = SqliteRefStore::read(tx, name)?;
+    let (next, generation) = next_counter(current.as_ref())?;
+    tx.execute(
+        "INSERT INTO refs(name, generation, epoch, target) VALUES(?1,?2,0,?3)
+         ON CONFLICT(name) DO UPDATE SET generation=?2, epoch=0, target=?3",
+        params![name, generation as i64, next.to_le_bytes().as_slice()],
+    )?;
+    Ok(next)
 }
 
 #[cfg(test)]
