@@ -6,6 +6,7 @@ use crate::CatalogError;
 use crate::sources::Source;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::Value;
+use vak_session::grants::{GrantEvent, GrantObject, GrantStep, Role};
 use vak_session::tail::{self, Position};
 use vak_session::types::{CallEffect, EntryPayload};
 
@@ -194,7 +195,31 @@ pub(crate) fn source(
             })
         }
         Source::Artifacts(dir) => walk(dir, &mut rows, &mut |_, bytes| artifact_row(tx, bytes)),
-        Source::Grants(dir) => walk(dir, &mut rows, &mut |_, bytes| grant_row(tx, bytes)),
+        Source::Grants(dir) => {
+            let mut sql_error = None;
+            let to = tail::try_tail(dir, from, |_, bytes| {
+                let event: GrantEvent = serde_json::from_slice(bytes).map_err(|error| {
+                    vak_session::types::SessionError::Corrupt {
+                        line: 0,
+                        message: error.to_string(),
+                    }
+                })?;
+                match grant_row(tx, &event) {
+                    Ok(()) => {
+                        rows += 1;
+                        Ok(true)
+                    }
+                    Err(error) => {
+                        sql_error = Some(error);
+                        Ok(false)
+                    }
+                }
+            })?;
+            if let Some(error) = sql_error {
+                return Err(error.into());
+            }
+            to
+        }
         Source::Lifecycle(dir) => walk(dir, &mut rows, &mut |_, bytes| transition_row(tx, bytes)),
         Source::Erasures(dir) => walk(dir, &mut rows, &mut |_, bytes| erasure_row(tx, bytes)),
         Source::IntakeSource(path) => {
@@ -1097,12 +1122,10 @@ fn artifact_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
 }
 
 /// The catalog node a grant's object names.
-fn granted_node(object: &Value) -> Option<String> {
-    let id = object.get("id").and_then(Value::as_str)?;
-    match object.get("kind").and_then(Value::as_str)? {
-        "artifact" => Some(id.to_string()),
-        "conversation" => Some(session_node(id)),
-        _ => None,
+fn granted_node(object: &GrantObject) -> String {
+    match object {
+        GrantObject::Artifact(id) => id.to_string(),
+        GrantObject::Conversation(id) => session_node(id),
     }
 }
 
@@ -1215,59 +1238,44 @@ fn erasure_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn grant_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
-    let Ok(row) = serde_json::from_slice::<Value>(bytes) else {
-        return Ok(());
-    };
-    match row.get("step").and_then(Value::as_str) {
-        Some("granted") => {
-            let Some(grant) = row.get("grant") else {
-                return Ok(());
+fn grant_row(tx: &Transaction<'_>, event: &GrantEvent) -> rusqlite::Result<()> {
+    match &event.step {
+        GrantStep::Granted { grant } => {
+            let expires = grant
+                .expires_at
+                .map(|at| at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string());
+            let role = match grant.role {
+                Role::Viewer => "viewer",
+                Role::Commenter => "commenter",
+                Role::Editor => "editor",
             };
-            let field = |key: &str| grant.get(key).and_then(Value::as_str);
-            let (Some(id), Some(principal), Some(node)) = (
-                field("id"),
-                field("principal"),
-                grant.get("object").and_then(granted_node),
-            ) else {
-                return Ok(());
-            };
-            // In the format SQLite's strftime produces, so expiry compares.
-            let expires = field("expires_at")
-                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-                .map(|at| {
-                    at.with_timezone(&chrono::Utc)
-                        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-                        .to_string()
-                });
             tx.execute(
                 "INSERT OR IGNORE INTO grants (grant_id, node, principal, role, expires)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
-                    id,
-                    node,
-                    principal,
-                    field("role").unwrap_or("viewer"),
+                    grant.id.to_string(),
+                    granted_node(&grant.object),
+                    grant.principal,
+                    role,
                     expires
                 ],
             )?;
         }
-        Some("revoked") => {
-            if let Some(id) = row.get("grant").and_then(Value::as_str) {
-                tx.execute("UPDATE grants SET revoked = 1 WHERE grant_id = ?1", [id])?;
-            }
+        GrantStep::Revoked { grant } => {
+            tx.execute(
+                "UPDATE grants SET revoked = 1 WHERE grant_id = ?1",
+                [grant.to_string()],
+            )?;
         }
-        Some("inheritance_broken") => {
-            if let Some(node) = row.get("object").and_then(granted_node) {
-                tx.execute("INSERT OR IGNORE INTO broken (node) VALUES (?1)", [node])?;
-            }
+        GrantStep::InheritanceBroken { object } => {
+            tx.execute(
+                "INSERT OR IGNORE INTO broken (node) VALUES (?1)",
+                [granted_node(object)],
+            )?;
         }
-        Some("inheritance_restored") => {
-            if let Some(node) = row.get("object").and_then(granted_node) {
-                tx.execute("DELETE FROM broken WHERE node = ?1", [node])?;
-            }
+        GrantStep::InheritanceRestored { object } => {
+            tx.execute("DELETE FROM broken WHERE node = ?1", [granted_node(object)])?;
         }
-        _ => {}
     }
     Ok(())
 }

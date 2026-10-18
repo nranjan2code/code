@@ -205,9 +205,9 @@ fn records() -> Vec<Record> {
                 "verification": {"status": "s", "before": "b", "after": "a", "detail": "d"},
             }),
         ),
-        record::<vak_core::grants::GrantEvent>(
+        record::<vak_session::grants::GrantEvent>(
             "GrantEvent",
-            "crates/vak-core/src/grants.rs",
+            "crates/vak-session/src/grants.rs",
             "ledger",
             "grants",
             serde_json::json!({

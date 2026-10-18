@@ -13,6 +13,7 @@ pub mod cursors;
 pub mod documents;
 pub mod effects;
 pub mod fence;
+pub mod grants;
 pub mod ids;
 pub mod keys;
 pub mod log;

@@ -56,19 +56,26 @@ impl Source {
     }
 
     /// Whether rows lie past `from`.
-    pub fn has_more(&self, from: Position) -> bool {
-        match self {
+    pub fn has_more(&self, from: Position) -> Result<bool, vak_session::types::SessionError> {
+        Ok(match self {
+            Self::Grants(dir) => {
+                let mut more = false;
+                tail::try_tail(dir, from, |_, _| {
+                    more = true;
+                    Ok(false)
+                })?;
+                more
+            }
             Self::Session(dir) | Self::Runs(dir) | Self::Effects(dir) => chain_has_more(dir, from),
             Self::Commitments { dir, .. }
             | Self::Intake { dir, .. }
             | Self::Artifacts(dir)
             | Self::Lifecycle(dir)
-            | Self::Erasures(dir)
-            | Self::Grants(dir) => chain_has_more(dir, from),
+            | Self::Erasures(dir) => chain_has_more(dir, from),
             Self::Trigger(path) | Self::IntakeSource(path) | Self::Memory { path, .. } => {
                 vak_session::documents::version_count(path) as u64 > from.frames
             }
-        }
+        })
     }
 }
 
@@ -121,9 +128,9 @@ pub fn discover(data: &Path) -> Vec<Source> {
     if shared.artifacts().is_dir() {
         found.push(Source::Artifacts(shared.artifacts()));
     }
-    if shared.grants().is_dir() {
-        found.push(Source::Grants(shared.grants()));
-    }
+    // An absent source with a previously indexed cursor is an error, not
+    // permission to keep its cached grants. A never-created chain is empty.
+    found.push(Source::Grants(shared.grants()));
     if shared.lifecycle().is_dir() {
         found.push(Source::Lifecycle(shared.lifecycle()));
     }

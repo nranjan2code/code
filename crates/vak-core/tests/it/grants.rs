@@ -285,3 +285,224 @@ fn a_missing_revocation_segment_cannot_be_skipped_for_a_later_segment() {
     std::fs::write(path, bytes).unwrap();
     assert!(!grants.may(&guest, &object, Role::Viewer, false, Utc::now()));
 }
+
+#[test]
+fn catalog_queries_refresh_grants_without_a_caller_catch_up() {
+    let (_shared, artifacts, grants, catalog) = setup();
+    let id = artifacts
+        .declare(
+            "spc_guard",
+            "vak",
+            "guard.md",
+            ArtifactKind::File,
+            Some("Guarded lighthouse".into()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let guest = PrincipalId::new().to_string();
+    let audience = vak_catalog::Audience {
+        principal: Some(guest.clone()),
+        ..Default::default()
+    };
+    let viewer = grant(&guest, GrantObject::Artifact(id), Role::Viewer, None);
+    let grant_id = viewer.id;
+    grants.grant(viewer, None, None).unwrap();
+    assert_eq!(
+        found(&catalog, &audience, "lighthouse"),
+        vec![id.to_string()]
+    );
+    grants.revoke(grant_id, None).unwrap();
+    assert!(
+        catalog
+            .search("lighthouse", &audience, &Default::default(), 20)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(catalog.list("artifact", &audience, 20).unwrap().is_empty());
+    let agent_view = vak_catalog::Audience {
+        agents: Some(vec![vak_session::trace::local::agent("vak").to_string()]),
+        ..Default::default()
+    };
+    assert_eq!(
+        catalog
+            .search("lighthouse", &agent_view, &Default::default(), 20)
+            .unwrap()
+            .len(),
+        1
+    );
+    grants
+        .break_inheritance(GrantObject::Artifact(id), None)
+        .unwrap();
+    assert!(
+        catalog
+            .list("artifact", &agent_view, 20)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn catalog_queries_reject_unreadable_or_missing_grant_history() {
+    let (_shared, artifacts, grants, catalog) = setup();
+    let id = artifacts
+        .declare(
+            "spc_guard",
+            "vak",
+            "guard.md",
+            ArtifactKind::File,
+            Some("Guarded harbour".into()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let guest = PrincipalId::new().to_string();
+    let audience = vak_catalog::Audience {
+        principal: Some(guest.clone()),
+        ..Default::default()
+    };
+    let viewer = grant(&guest, GrantObject::Artifact(id), Role::Viewer, None);
+    let grant_id = viewer.id;
+    grants.grant(viewer, None, None).unwrap();
+    assert_eq!(found(&catalog, &audience, "harbour"), vec![id.to_string()]);
+    let segments = vak_storage::segments::SegmentSet::open(&grants.path()).unwrap();
+    segments.seal(1, &segments.lock().unwrap()).unwrap();
+    grants.revoke(grant_id, None).unwrap();
+    let path = segments.log_path(2);
+    let original = std::fs::read(&path).unwrap();
+    for broken in [b"broken".to_vec(), original[..original.len() - 1].to_vec()] {
+        std::fs::write(&path, broken).unwrap();
+        assert!(catalog.catch_up().is_err());
+        assert!(
+            catalog
+                .search("harbour", &audience, &Default::default(), 20)
+                .is_err()
+        );
+        assert!(catalog.list("artifact", &audience, 20).is_err());
+        assert!(catalog.calls_of("read", None, &audience).is_err());
+    }
+    std::fs::write(&path, original).unwrap();
+    let backup = grants.path().with_extension("missing-for-test");
+    std::fs::rename(grants.path(), &backup).unwrap();
+    assert!(catalog.catch_up().is_err());
+    assert!(
+        catalog
+            .search("harbour", &audience, &Default::default(), 20)
+            .is_err()
+    );
+    std::fs::rename(backup, grants.path()).unwrap();
+    assert!(
+        catalog
+            .search("harbour", &audience, &Default::default(), 20)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn malformed_grant_suffix_rolls_back_projection_and_recovers_without_skipping() {
+    let (_shared, artifacts, grants, catalog) = setup();
+    let id = artifacts
+        .declare(
+            "spc_atomic",
+            "vak",
+            "atomic.md",
+            ArtifactKind::File,
+            Some("Atomic harbour".into()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let guest = PrincipalId::new().to_string();
+    let audience = vak_catalog::Audience {
+        principal: Some(guest.clone()),
+        ..Default::default()
+    };
+    let viewer = grant(&guest, GrantObject::Artifact(id), Role::Viewer, None);
+    let grant_id = viewer.id;
+    grants.grant(viewer, None, None).unwrap();
+    assert_eq!(found(&catalog, &audience, "harbour"), vec![id.to_string()]);
+    let before = catalog.dump().unwrap();
+    grants.revoke(grant_id, None).unwrap();
+    let path = grants.path().join("seg-00000001.log");
+    let valid = std::fs::read(&path).unwrap();
+    vak_session::chain::RecordChain::at(grants.path())
+        .append(&serde_json::json!({"at": Utc::now(), "step": "unknown"}))
+        .unwrap();
+    assert!(catalog.catch_up().is_err());
+    assert_eq!(
+        catalog.dump().unwrap(),
+        before,
+        "the whole suffix rolls back"
+    );
+    assert!(
+        catalog
+            .search("harbour", &audience, &Default::default(), 20)
+            .is_err()
+    );
+    std::fs::write(path, valid).unwrap();
+    assert!(
+        catalog
+            .search("harbour", &audience, &Default::default(), 20)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn legacy_tolerant_grant_cursors_are_rebuilt_before_authorizing_queries() {
+    let (_shared, artifacts, grants, catalog) = setup();
+    let id = artifacts
+        .declare(
+            "spc_legacy",
+            "vak",
+            "legacy.md",
+            ArtifactKind::File,
+            Some("Legacy harbour".into()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let guest = PrincipalId::new().to_string();
+    let audience = vak_catalog::Audience {
+        principal: Some(guest.clone()),
+        ..Default::default()
+    };
+    grants
+        .grant(
+            grant(&guest, GrantObject::Artifact(id), Role::Viewer, None),
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(found(&catalog, &audience, "harbour"), vec![id.to_string()]);
+    vak_session::chain::RecordChain::at(grants.path())
+        .append(&serde_json::json!({"at": Utc::now(), "step": "unknown"}))
+        .unwrap();
+    let source = vak_catalog::Source::Grants(grants.path());
+    let at = vak_catalog::head_of(&grants.path());
+    // Version six could skip this bad row while retaining a positive grant.
+    catalog
+        .seed(|tx| {
+            tx.execute("UPDATE meta SET value='6' WHERE key='schema'", [])?;
+            tx.execute(
+                "UPDATE cursors SET segment=?1, frames=?2 WHERE source=?3",
+                (at.segment as i64, at.frames as i64, source.key()),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let path = catalog.path().to_path_buf();
+    let data = path.parent().unwrap();
+    drop(catalog);
+    let reopened = vak_catalog::Catalog::open(&path, data).unwrap();
+    assert!(
+        reopened
+            .search("harbour", &audience, &Default::default(), 20)
+            .is_err()
+    );
+}

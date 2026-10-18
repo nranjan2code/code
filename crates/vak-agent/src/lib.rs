@@ -22,7 +22,7 @@ pub mod write_lease;
 // The context engine (docs/design/68-context-engine.md) is its own crate;
 // the loop here only orchestrates it: probe, plan, assemble, dispatch,
 // write back.
-pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
+pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen, CircuitPermit};
 pub use goal::GoalState;
 pub use questions::{AskParentTool, PendingQuestion, QuestionBoard};
 pub use spend::{SpendCheck, SpendGate, SpendReservationId};
@@ -5289,12 +5289,16 @@ impl Agent {
             let capacity_identity = provider_arc.rate_limit_key_for_model(model);
             let rate_limit_gate = vak_llm::RateLimitGate::for_key(capacity_identity.clone());
             let model_capacity_gate = vak_llm::RateLimitGate::for_model(capacity_identity, model);
-            if let Some(breaker) = &self.config.circuit_breaker
-                && let Err(open) = breaker.check_key(&breaker_key)
-            {
-                last_err = Some(LlmError::Network(open.to_string()));
-                continue 'legs;
-            }
+            let mut circuit_permit = match &self.config.circuit_breaker {
+                Some(breaker) => match breaker.check_key(&breaker_key) {
+                    Ok(permit) => Some(permit),
+                    Err(open) => {
+                        last_err = Some(LlmError::Network(open.to_string()));
+                        continue 'legs;
+                    }
+                },
+                None => None,
+            };
             let route_provider = if li == 0 {
                 self.config
                     .provider_name
@@ -5663,8 +5667,8 @@ impl Agent {
                             }
                         }
                         rate_limit_gate.record_probe_success(waited_for_rate_limit);
-                        if let Some(breaker) = &self.config.circuit_breaker {
-                            breaker.record_success_key(&breaker_key);
+                        if let Some(permit) = circuit_permit.as_mut() {
+                            permit.record_success();
                         }
                         ledger.last_first_token_ms = first_token_ms;
                         ledger.receipt.record_response(reason, elapsed_ms, &r);
@@ -5734,9 +5738,9 @@ impl Agent {
                         );
                         if e.is_retryable() && attempt < self.config.max_retries {
                             if trips_breaker(&e)
-                                && let Some(breaker) = &self.config.circuit_breaker
+                                && let Some(permit) = circuit_permit.as_mut()
                             {
-                                breaker.record_failure_key(&breaker_key);
+                                permit.record_failure();
                             }
                             attempt += 1;
                             let delay = backoff_delay(
@@ -5773,9 +5777,9 @@ impl Agent {
                             // Leg exhausted (retries burned or permanent error):
                             // defer to the next frozen candidate.
                             if trips_breaker(&e)
-                                && let Some(breaker) = &self.config.circuit_breaker
+                                && let Some(permit) = circuit_permit.as_mut()
                             {
-                                breaker.record_failure_key(&breaker_key);
+                                permit.record_failure();
                             }
                             note_leg_failure(ledger, &mut primary_context, li, &e);
                             last_err = Some(e);

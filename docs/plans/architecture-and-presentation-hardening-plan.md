@@ -3,8 +3,10 @@
 Status: in progress — requested on 2026-10-18 to address all observations from
 the session's architecture, answer/projection, surface and dynamic-card
 reviews. The first S1 slice implements strict grant/effect/connection reads
-and atomic ref fencing; the full repository gate passes. Other stages
-remain open. Unresolved product choices are not maintainer decisions.
+and atomic ref fencing; its full repository gate passed. Catalog grant
+authorization (S1) and owned circuit probes (S2/A05) are now implemented,
+with the full repository gate passing. Other work remains open.
+Unresolved product choices are not maintainer decisions.
 
 ## Outcome and scope
 
@@ -282,6 +284,9 @@ presentation conformance checks through each refactor.
 
 ### Implementation log — 2026-10-18, first S1 slice
 
+> **Historical record** — committed as `e469dc976`; the continuation below
+> updates coverage beyond this first slice.
+
 - Baseline `5c218fc9b` (8.9.0), with only this session's consolidation
   documents already dirty. Implementation authorized by the maintainer;
   narrow storage work delegated to Luna, with integration here. No Astra.
@@ -322,6 +327,37 @@ presentation conformance checks through each refactor.
   attempts were deliberately interrupted to finish the missing-segment
   coverage; they are not counted as completed gates. No browser acceptance,
   release, install or deployment is claimed. The maintainer requested committing this verified slice before continuation.
+
+### Continuation — catalog grant authorization and owned probes
+
+- Baseline `e469dc976`, after committing the verified first slice at the
+  maintainer's request. No Astra; Luna handled A05 and a read-only catalog
+  review, with integration and catalog implementation by the main agent.
+- A01 catalog scope: two new tests first reproduced stale search access
+  without caller catch-up and silent acceptance of unreadable grant
+  history. Catalog search/list/tool-history queries now catch up grants in
+  the query transaction, using shared canonical grant types from
+  `vak-session::grants` (re-exported by `vak-core::grants`). Strict ingestion
+  rejects malformed rows/frames and missing indexed history, rolling back
+  the projection and cursor together. Schema 7 rebuilds the older derived
+  grant cursors; the primary-data baseline is unchanged.
+- Focused catalog tests: all 9 grant integration tests and all 12 catalog
+  unit tests pass, including the existing million-node query check. Added
+  rollback/recovery and version-six tolerant-cursor rebuild regressions.
+- A05: a provider leg holds an owned admission permit. Neutral drop
+  releases an abandoned probe; unique reservation tokens prevent stale
+  drops or late outcomes from altering a newer probe. Added concurrent,
+  retry, stale ownership and real Agent abort regressions. The diagnostic
+  health caller was adapted to retain/drop the new permit correctly.
+- A01 remains open for artifact, commitment, routing, accounting and other
+  authoritative decision readers. Other S2 findings remain open; A05 alone
+  does not complete S2. Catalog confidentiality (A10) is a separate choice.
+- Verification: the full `bash scripts/gate.sh` passed (formatting, workspace
+  Clippy, workspace tests, version, paths and records). The first run exposed
+  a stale traced-record reference after moving GrantEvent; its source path
+  and generated dictionary are corrected and the completed gate includes
+  that check. Circuit tests: 8 unit and 7 integration cases. No UI acceptance
+  or deployment is claimed.
 
 ### Reporting contract
 

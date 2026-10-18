@@ -37,10 +37,13 @@ overlapping fixes should close their original entries as well.
   First slice implements strict grant/effect/connection reads and verified
   conditional-append checks plus transactional epoch/ref/commit updates.
   The full repository gate passed, including the new regressions.
-  A01's other consumers, catalog policy and blob ownership remain open;
+  Continuation implements strict transactional catalog grant queries and
+  canonical grant records, with the full repository gate passing. A01's other consumers, catalog policy and blob ownership remain open;
   the stage is not complete.
 - [ ] S2: causal recording, consistent run services/policy, cancellation,
   compaction locks and conservative tool claims (A03–A07).
+  A05 owned circuit permits and stale-reservation protection are implemented;
+  the full gate passes. A03/A04/A06/A07 remain open.
 - [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
   actual outline attribution and typed cleanup (P01–P03, P13, P14).
 - [ ] S4: interaction ownership/invalidation, replacement, graph scope and

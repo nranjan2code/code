@@ -1,6 +1,17 @@
 # 15 — Reliability: QoS, crash, recovery, start/stop/resume
 Status: implemented in 2.0.0
 
+## Circuit probe ownership
+
+A provider leg owns its circuit admission permit until it settles or exits.
+Dropping an unsettled half-open permit releases its reservation without
+counting a user abort as a provider failure. The expired cooldown marker
+remains, so another caller can probe. Reservations carry monotonically
+issued tokens: dropping or settling an old probe cannot release or change
+a newer probe. Normal success/failure and same-leg retry accounting retain
+their existing semantics. The real Agent abort path and stale/concurrent
+permit cases are covered by circuit tests (hardening finding A05).
+
 ## Tool and MCP error recovery
 
 Tool and MCP failures are append-only, model-visible values rather than

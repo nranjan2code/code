@@ -194,7 +194,7 @@ Type `EvidenceRow` in `crates/vak-core/src/routing.rs`. Class: ledger. Stored in
 
 ## grant_event
 
-Type `GrantEvent` in `crates/vak-core/src/grants.rs`. Class: ledger. Stored in: `grants`. Version: 1.
+Type `GrantEvent` in `crates/vak-session/src/grants.rs`. Class: ledger. Stored in: `grants`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|

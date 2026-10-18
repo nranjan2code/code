@@ -639,7 +639,7 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
     facts.push(format!(
         "circuit breaker: {}",
         match core.breaker().check() {
-            Ok(()) => "closed (provider healthy)".to_string(),
+            Ok(_permit) => "closed (provider healthy)".to_string(),
             Err(open) => format!(
                 "OPEN — cooling down {}s after {} failure(s)",
                 open.remaining_secs, open.failures

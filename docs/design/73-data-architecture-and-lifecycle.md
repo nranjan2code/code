@@ -769,10 +769,20 @@ demands it). The query API is identical, so every surface calls one
   Strict reads never repair/truncate a seal manifest; a failed rollup save
   may cost a later refold but does not change a verified read's result.
   The older infallible APIs remain for best-effort views and unmigrated
-  consumers; catalog/search grant projections, artifact, commitment,
-  routing and accounting decision readers still need the A01 audit/rollout in
+  consumers; artifact, commitment, routing and accounting decision readers
+  still need the A01 audit/rollout in
   `docs/plans/architecture-and-presentation-hardening-plan.md`. The presence
   of a strict API alone does not close that finding.
+- **Catalog grants use the same records.** The grant wire types live in
+  `vak-session/src/grants.rs`, re-exported by `vak-core::grants`; the
+  catalog decodes them rather than tolerantly interpreting a second JSON
+  shape. Its audience-filtered search, list and tool-history queries catch
+  up the canonical grant source in the same SQLite transaction as the
+  query. Missing/unreadable history, bad rows and SQL row decoding errors
+  fail the query; the source cursor and projection roll back together.
+  A missing previously indexed grant directory is still checked. Derived
+  catalog schema 7 rebuilds version-six cursors that could have skipped
+  bad grant rows; this is not a new primary-data baseline.
 - **Concurrent edits produce sibling Versions.** Reconciling them is the
   existing Review path (redline for Office, semantic diff for data, file diff
   for code). There is no merge UI for documents.

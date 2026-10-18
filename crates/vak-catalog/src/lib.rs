@@ -14,8 +14,10 @@
 //! process. [`Catalog::rebuild`] replays every source from its start and
 //! must produce the same rows.
 //!
-//! The catalog decides nothing that must be right (plan §M6 design): it
-//! finds and explains. Lineage edges point from a thing to what produced
+//! Discovery projections find and explain. The grant projection also gates
+//! audience-filtered queries, so it must catch up strictly in the query's
+//! transaction; unreadable grant history never permits cached access.
+//! Lineage edges point from a thing to what produced
 //! it: a file is `produced_by` its call, a call `produced_by` its turn, a
 //! turn `produced_by` its run and `part_of` its session, a session
 //! `caused_by` its run, a run `caused_by` its trigger or parent run, and an
@@ -25,7 +27,7 @@
 //! text, each tool result's digest, memory notes, trigger names and
 //! commitment objectives. Never thinking, never raw tool output.
 
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -48,7 +50,7 @@ pub const FILE_NAME: &str = "catalog.db";
 /// The schema this build writes, and what it derives from the records (5:
 /// a call's outcome as its status, `done` or `failed`). A catalog stamped with another is dropped and rebuilt,
 /// never adapted: it is derived.
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
@@ -56,6 +58,8 @@ pub enum CatalogError {
     Sql(#[from] rusqlite::Error),
     #[error("catalog file: {0}")]
     Io(#[from] std::io::Error),
+    #[error("catalog records could not be read")]
+    Records(#[from] vak_session::types::SessionError),
     #[error("the lookup was cancelled or ran out of time")]
     Interrupted,
 }
@@ -223,18 +227,14 @@ impl Catalog {
     /// sends after an append. Returns how many rows it took.
     pub fn catch_up_source(&self, source: &Source) -> Result<usize, CatalogError> {
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
-        let from = cursor(&tx, &source.key())?;
-        let (to, rows) = ingest::source(&tx, source, from)?;
-        if to != from {
-            tx.execute(
-                "INSERT INTO cursors (source, segment, frames) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(source) DO UPDATE SET segment = ?2, frames = ?3",
-                params![source.key(), to.segment as i64, to.frames as i64],
-            )?;
-        }
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let rows = catch_up_source_tx(&tx, source)?;
         tx.commit()?;
         Ok(rows)
+    }
+
+    fn grant_source(&self) -> Source {
+        Source::Grants(vak_config::scope::SharedScope::new(&self.data).grants())
     }
 
     /// The session ledger at `dir` as a source, for a hint after a turn.
@@ -247,7 +247,7 @@ impl Catalog {
         let conn = self.conn();
         for source in sources::discover(&self.data) {
             let from = cursor(&conn, &source.key())?;
-            if source.has_more(from) {
+            if source.has_more(from)? {
                 return Ok(true);
             }
         }
@@ -361,7 +361,9 @@ impl Catalog {
         audience: &Audience,
         limit: usize,
     ) -> Result<Vec<Node>, CatalogError> {
-        let conn = self.conn();
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        catch_up_source_tx(&tx, &self.grant_source())?;
         let (filter, args) = audience_filter(audience, 2);
         let sql = format!(
             "SELECT {NODE_COLUMNS} FROM nodes n WHERE n.kind = ?1 AND {filter}
@@ -370,9 +372,12 @@ impl Catalog {
         );
         let mut values: Vec<rusqlite::types::Value> = vec![kind.to_string().into()];
         values.extend(args);
-        let mut statement = conn.prepare(&sql)?;
+        let mut statement = tx.prepare(&sql)?;
         let rows = statement.query_map(rusqlite::params_from_iter(values), row_node)?;
-        Ok(rows.filter_map(Result::ok).collect())
+        let found = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        tx.commit()?;
+        Ok(found)
     }
 
     /// The calls of `tool` the audience may see, made at or after `since`
@@ -383,7 +388,9 @@ impl Catalog {
         since: Option<&str>,
         audience: &Audience,
     ) -> Result<Vec<Node>, CatalogError> {
-        let conn = self.conn();
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        catch_up_source_tx(&tx, &self.grant_source())?;
         let (filter, args) = audience_filter(audience, 3);
         let sql = format!(
             "SELECT {NODE_COLUMNS} FROM nodes n WHERE n.kind = 'call' AND n.title = ?1
@@ -397,9 +404,12 @@ impl Catalog {
             }),
         ];
         values.extend(args);
-        let mut statement = conn.prepare(&sql)?;
+        let mut statement = tx.prepare(&sql)?;
         let rows = statement.query_map(rusqlite::params_from_iter(values), row_node)?;
-        Ok(rows.filter_map(Result::ok).collect())
+        let found = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        tx.commit()?;
+        Ok(found)
     }
 
     /// A call's arguments as written and what its result said (the
@@ -451,7 +461,9 @@ impl Catalog {
         let Some(matched) = fts_query(query) else {
             return Ok(Vec::new());
         };
-        let conn = self.conn();
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        catch_up_source_tx(&tx, &self.grant_source())?;
         let (mut filter, mut args) = audience_filter(audience, 2);
         let mut next = 2 + args.len();
         if let Some(space) = &scope.space {
@@ -480,7 +492,7 @@ impl Catalog {
         );
         let mut values: Vec<rusqlite::types::Value> = vec![matched.into()];
         values.extend(args);
-        let mut statement = conn.prepare(&sql)?;
+        let mut statement = tx.prepare(&sql)?;
         let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
             Ok(Hit {
                 node: row_node(row)?,
@@ -488,7 +500,10 @@ impl Catalog {
                 score: -row.get::<_, f64>(NODE_COLUMN_COUNT + 1)?,
             })
         })?;
-        Ok(rows.filter_map(Result::ok).collect())
+        let found = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        tx.commit()?;
+        Ok(found)
     }
 
     /// What caused `id`: the path from it up to its root, and its run,
@@ -736,6 +751,19 @@ fn remove_db(path: &Path) {
         name.push(suffix);
         let _ = std::fs::remove_file(PathBuf::from(name));
     }
+}
+
+fn catch_up_source_tx(tx: &Transaction<'_>, source: &Source) -> Result<usize, CatalogError> {
+    let from = cursor(tx, &source.key())?;
+    let (to, rows) = ingest::source(tx, source, from)?;
+    if to != from {
+        tx.execute(
+            "INSERT INTO cursors (source, segment, frames) VALUES (?1, ?2, ?3)
+             ON CONFLICT(source) DO UPDATE SET segment = ?2, frames = ?3",
+            params![source.key(), to.segment as i64, to.frames as i64],
+        )?;
+    }
+    Ok(rows)
 }
 
 fn cursor(conn: &Connection, source: &str) -> Result<Position, CatalogError> {

@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Search, lists and tool-history queries refresh sharing permissions before
+  returning results, and report unreadable sharing records instead of
+  trusting stale grants. The derived search index rebuilds once to discard
+  cursors created by the old tolerant reader.
+- Stopping a recovery probe no longer leaves a provider permanently
+  unavailable. Late results from an older probe cannot release a newer one.
+
 - Grant-service permission checks, outbound-action decisions and connected
   account reads now fail when new records cannot be read, rather than
   silently trusting cached state.

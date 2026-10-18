@@ -30,10 +30,10 @@ fn breaker_opens_after_threshold_and_half_closes_after_cooldown() {
     assert!(br.check().is_err(), "open at threshold");
 
     std::thread::sleep(std::time::Duration::from_millis(150));
-    assert!(br.check().is_ok(), "cooldown half-closes");
+    let mut probe = br.check().expect("cooldown half-closes");
 
     // A success resets the failure count.
-    br.record_success();
+    probe.record_success();
     br.record_failure();
     br.record_failure();
     assert!(br.check().is_ok(), "success reset the counter");
@@ -47,12 +47,12 @@ fn half_open_breaker_allows_only_one_probe() {
     });
     br.record_failure();
     std::thread::sleep(std::time::Duration::from_millis(5));
-    assert!(br.check().is_ok());
+    let mut probe = br.check().expect("cooldown admits one probe");
     assert!(
         br.check().is_err(),
         "a second caller must not race the probe"
     );
-    br.record_success();
+    probe.record_success();
     assert!(br.check().is_ok());
 }
 
@@ -276,4 +276,41 @@ async fn second_run_fails_fast_when_circuit_is_open() {
         .await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
     assert!(breaker.check().is_ok(), "success must close the circuit");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn aborted_half_open_probe_is_released_without_counting_a_failure() {
+    let calls = Arc::new(Mutex::new(0u32));
+    let provider = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
+        calls: calls.clone(),
+        fail_with: LlmError::Aborted { partial: None },
+    });
+    let breaker = Arc::new(CircuitBreaker::new(CircuitBreakerConfig {
+        threshold: 1,
+        cooldown: std::time::Duration::ZERO,
+    }));
+    let key = provider.circuit_key();
+    breaker.record_failure_key(&key);
+
+    let mut agent = build_agent(provider, breaker.clone(), "aborted-probe");
+    let outcome = agent
+        .run(
+            "go",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+
+    assert!(matches!(outcome, TurnOutcome::Aborted { .. }));
+    assert_eq!(*calls.lock().unwrap(), 1);
+    let permit = breaker
+        .check_key(&key)
+        .expect("aborted probe releases the reservation");
+    let blocked = breaker
+        .check_key(&key)
+        .expect_err("the next probe remains exclusive");
+    assert_eq!(blocked.failures, 1, "abort does not count as failure");
+    drop(permit);
 }
