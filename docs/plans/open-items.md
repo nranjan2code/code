@@ -106,8 +106,13 @@ overlapping fixes should close their original entries as well.
   acceptance remains open; this does not close the wider Canvas stage.
   P06 automatic eviction now skips unsent notes and refuses a ninth tab if
   every tab has one; pure-state regressions, both bundles and the full gate
-  pass. Sync failures, conflict
-  rebasing and reload durability remain open. New UI acceptance is pending.
+  pass. Failed saves now retain queued operations and show recovery/retry
+  status; paused/transient failures, in-flight prefix acknowledgement and
+  delayed-read races have focused coverage. Before-unload warns while
+  pending work remains. Both client bundles and the full repository gate
+  pass for this slice; the new UI fixture is typechecked but not browser-run.
+  Conflict rebasing, forced-reload/process-loss durability and encrypted
+  Documents remain open. New UI acceptance is pending.
 - [ ] S6: adaptive coverage/fallback, truthful charts, streaming, task-level
   quality and checked wire outcomes (P09–P12, A11, D04).
   P10 numerical ranges, compact precise labels and overflow-safe y

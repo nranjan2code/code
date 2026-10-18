@@ -35,6 +35,20 @@ The Canvas is the same on every surface showing the conversation: the desktop ap
 
 A preview opened in a window of its own is a sandboxed frame inside a wrapper with no script (`previewWindowDocument`), never the page itself: a `blob:` page takes the app's origin.
 
+Canvas save failures retain the pending operations in memory until a write
+acknowledges them. The frame shows saving or a recoverable failure and a
+Retry saving action. Authentication, missing conversations, invalid/newer
+formats and oversized writes pause automatic retries; network, server and
+throttling failures retry after five seconds. Focus, returning to a visible
+window, a new local edit or explicit retry can retry paused work; stream
+hints only read and cannot overwrite pending work. An in-flight write only
+acknowledges the prefix it sent. A delayed read cannot lower the observed
+revision. While any conversation has pending work, the client requests the
+standard before-unload warning. This queue is not durable: forced reload or
+process loss can still lose it. Safe conflict rebase and encrypted Document
+persistence remain separate open work; the new status is not evidence that
+a failed write was saved.
+
 ### 0b. Pointing, discussion and new versions
 
 A viewer says what a reader can point at in each of its views (`ViewerSpec.selects`): source lines, or a place in a document (the reader's own address, shown only under Show technical details). A preview page or an image has no place a comment could name, so nothing is selected there and a comment is about the whole file. Pointing opens the discussion; the discussion (`CanvasContext`) offers **Comment** (saved on the version being read, asks nobody) and **Ask Agent** (saves it and asks for a revision, or for a file that is not a saved draft, sends a request that names the place). A comment's place can be shown again with Show where. Activity lists only what the sandbox records and comments show (versions saved, the Agent revising, comments), and Changes lists the files this version adds, changes or removes.

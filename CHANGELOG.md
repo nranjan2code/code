@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Canvas keeps unacknowledged changes after failed saves and shows a recovery
+  message with Retry saving. Authentication, unavailable-conversation and
+  oversized-write failures pause retries; temporary failures retry later.
+  Returning to the window retries pending work, and leaving with unsaved
+  changes requests the browser’s unload warning. Delayed reads cannot roll
+  back an already observed Canvas revision.
+
 - Card replacements use one active-card view for runtime validation and
   display. Unused controls can retain their published names when replaced;
   retired controls no longer supply new bindings or worker transfers. A

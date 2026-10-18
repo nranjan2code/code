@@ -342,6 +342,8 @@ async fn persisted_conversation_accepts_followup_and_streams_without_explicit_at
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
+    // Process-global stores can outlive this Core and retain SQLite WAL mappings.
+    std::mem::forget(dir);
     let mut session = core.start_session().await.unwrap();
     let id = session.header().unwrap().session_id.clone();
     session
@@ -426,6 +428,8 @@ async fn sessions_list_hides_abandoned_header_only_drafts() {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
+    // Process-global stores can outlive this Core and retain SQLite WAL mappings.
+    std::mem::forget(dir);
     let draft = core.start_session().await.unwrap();
     let draft_id = draft.header().unwrap().session_id.clone();
     drop(draft);

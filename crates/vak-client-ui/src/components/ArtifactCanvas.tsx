@@ -1,3 +1,5 @@
+import { canvasSaveState, retryCanvas } from "../canvasSync";
+import CanvasSaveNotice from "./canvas/CanvasSaveNotice";
 import { createEffect, createMemo, createSignal, ErrorBoundary, For, on, onCleanup, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import {
@@ -269,6 +271,8 @@ export default function ArtifactCanvas() {
             }</For>
           </div>
         </Show>
+
+        <CanvasSaveNotice status={canvasSaveState(canvasConversation())} onRetry={() => retryCanvas(canvasConversation())} />
 
         <Show when={draft()}>{(version) =>
           <Show when={canvasEntry()}>{(entry) =>

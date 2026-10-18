@@ -709,6 +709,36 @@ This does not settle replacement identity or the wider lifecycle matrix.
   supersession, dependent identity migration, interaction-action cleanup
   and the wider lifecycle matrix remain open. No browser acceptance claimed.
 
+### Continuation — preserve failed Canvas saves
+
+- Extracted the existing queue into an injected coordinator so failure/race
+  tests execute its production policy. No additional durable store or queue
+  model was introduced. All pending operations survive failed writes until
+  their sent prefix receives an acknowledgement.
+- Authentication, missing/invalid/newer/oversized responses pause automatic
+  retries; network, server and throttling failures retry after five seconds.
+  The frame shows saving/error status and Retry saving; focus/visibility and
+  local edits can retry paused work. Stream hints cannot force retries of
+  paused queues or overwrite pending notes. A standard before-unload warning
+  is requested while any conversation has unsaved changes.
+- Cancel a timer scheduled by newer edits when an in-flight request fails
+  permanently. Prevent a delayed read from lowering an observed revision.
+  Track only active conversation changes in the setup effect, preserving
+  the intended typing debounce.
+- Focused Node queue/Canvas tests and fixture typechecking pass; both client
+  bundles pass. The first full gate stopped in `server_ext` with SIGBUS:
+  the macOS report showed a SQLite WAL page-in failure during a fence check.
+  Two fixtures dropped directories while process-global stores retained
+  their mapped files. They now retain those directories for the process's
+  lifetime, matching the other fixtures. A standalone rerun passed all 27
+  tests before the fix; all 27 also pass after the correction. The fresh full
+  gate passes: formatting, workspace Clippy, all workspace tests (661 seconds),
+  version, doc paths, records and advisories. Source was frozen throughout
+  the completed gate. The UI fixture is not browser-run because
+  local browser access remains denied. This queue remains in memory; forced
+  reload/process loss, conflict rebase losses and encrypted Document
+  persistence are still open. Do not close P06/P07 or S5 from this slice.
+
 ### Reporting contract
 
 For each slice record finding IDs, exact baseline, reproduction, chosen
