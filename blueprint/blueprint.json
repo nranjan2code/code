@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "8ff039582",
+  "revision": "3ebfb2add",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -13,13 +13,13 @@
    "ts_crates": 2,
    "rust_src": 327811,
    "rust_tests": 84602,
-   "ts_src": 61369,
+   "ts_src": 61487,
    "routes": 411,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2352,
+   "total_commits": 2353,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
@@ -199,15 +199,15 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 500,
+  "commits": 501,
   "areas": [
    [
     "docs",
-    425
+    426
    ],
    [
     "(root)",
-    255
+    256
    ],
    [
     "vak-core",
@@ -219,7 +219,7 @@
    ],
    [
     "vak-client-ui",
-    112
+    113
    ],
    [
     "vak-agent",
@@ -251,6 +251,16 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "3ebfb2add",
+    "date": "2026-10-18",
+    "subject": "Scope linked-card inputs and values to their answer views",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-client-ui"
+    ]
+   },
    {
     "hash": "8ff039582",
     "date": "2026-10-18",
@@ -390,17 +400,10 @@
     "areas": [
      "docs"
     ]
-   },
-   {
-    "hash": "1ac94fe55",
-    "date": "2026-10-18",
-    "subject": "Regenerate the system blueprint",
-    "areas": [
-     "docs"
-    ]
    }
   ],
   "unreleased": [
+   "Linked-card controls share current inputs across views of the same conversation turn.",
    "Delegated workers inherit configured model-step defaults, protected paths and completion policy.",
    "Worker cards keep their live bindings when copied into the parent conversation, including when duplicate cards reuse existing IDs.",
    "Opening another Canvas tab no longer evicts a tab with an unsent note.",
@@ -588,7 +591,7 @@
     "date": "2026-10-18",
     "text": "Commit and push directly to `main`;",
     "links": [
-     "docs/plans/handover-2026-10-18.md#current-childcardcanvas-batch"
+     "docs/plans/handover-2026-10-18.md#current-interaction-scope-batch"
     ]
    },
    {
@@ -861,7 +864,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 82607,
+   "lines": 82725,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1155,10 +1158,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 36633,
-   "tests": 222,
-   "files": 181,
-   "commits": 632,
+   "src": 36751,
+   "tests": 279,
+   "files": 182,
+   "commits": 633,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -2576,7 +2579,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1330,
+  "docs_commits": 1331,
   "hot": 629
  },
  "findings": [
