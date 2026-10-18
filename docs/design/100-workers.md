@@ -3,7 +3,7 @@
 Status: proposal (2026-10-18). Nothing in this document is built. It
 records the maintainer's direction for workers and the narrow scope chosen
 to build first (§9); everything else is recorded as deferred with its
-reason (§10). The stages and their gates are
+reason (§10). The four choices left open were decided on 2026-10-18 (§12). The stages and their gates are
 `docs/plans/workers-plan.md`. It supersedes `81-pieces-and-home.md` (its
 pieces become kept workers, §3.4) and, once stage W2 is built, the
 lifetime, depth and cap rules of `84-worker-questions-and-control.md` §5.
@@ -100,8 +100,10 @@ utterance the model turns into a call of the loop's `worker` tool
 - what it looks after (the artifact version, the folder);
 - its duties and when it wakes;
 - what it may reach: folders, hosts, connected accounts;
-- what it may do unasked (fix within scope; nothing else by default);
-- what it may spend per run and per month, tokens and compute together;
+- what it may do unasked (§12.1; the sheet lists it, it is not a choice
+  of the sheet);
+- what one run cost in its trial run, what a month would cost on its
+  schedule, and the monthly cap the owner sets (§12.4);
 - where it runs (this home; §8).
 
 The owner approves once. The sheet is the pack's authority; the worker
@@ -159,7 +161,7 @@ within a major version:
 | `checks` | deterministic checks a run must pass for its result to become current (the page renders, totals are not empty) |
 | `duties` | the triggers and what each delivers (§3) |
 | `limits` | spend per run and per month, how many runs or items at once, a freshness promise |
-| `unasked` | what the worker may do without the owner: by default nothing beyond delivering candidates |
+| `unasked` | fixed by §12.1, not a field a pack can widen; the pack only lists which outward effect kinds the owner approved on the sheet |
 | `owner` | the Agent; the worker's conversation lives in that Agent's home |
 
 The pack reuses existing types rather than defining new ones: deliverables
@@ -284,12 +286,89 @@ review. These are recorded so a later session does not start them unasked.
 | Invariant 43 | a run that holds someone else's words and the owner's data asks before any exit; unattended, it is refused |
 | Doc 84 §5.2 | replaced at W2: a worker outlives the turn that created it, because its results go to its own conversation |
 
-## 12. Open decisions for the maintainer
+## 12. Decisions (2026-10-18)
 
-1. What `unasked` may hold beyond delivering candidates: applying a fix
-   inside scope? applying a security update?
-2. Whether a worker's conversation is a conversation of the owner Agent
-   (proposed) or of an Agent created per worker.
-3. Whether a code step's runtime is the existing broker worker and
-   sandbox only (proposed for W1 to W4) or a container per pack.
-4. The budget defaults shown on the approval sheet.
+The maintainer asked for the best choice for each open question, weighing
+every scenario in §3 and the blast radius at runtime. Each choice is the
+one that changes the fewest existing contracts and fails smallest.
+
+### 12.1 What a worker may do without asking
+
+Unasked, a worker may:
+
+- run its approved pack on its triggers, retry its own step under the
+  ladder, and claim again an item whose run was interrupted;
+- make a new version of **its own output** current when every check
+  passes: the refreshed dashboard or report its approved pack produces
+  (keep it current needs no Review per refresh, because the code and steps
+  that made it were approved and only the data moved);
+- deliver candidates, cards and inbox notes;
+- pause itself, with a reason, when it reaches its cap or its checks keep
+  failing.
+
+Always asks, whatever the pack says:
+
+- any change to the pack itself (steps, code, scope, hosts, accounts,
+  duties), including the caretaker's fixes and dependency or security
+  updates: each is a candidate for Review;
+- any change to the owner's files or to anything the worker does not own;
+- every outward effect the sheet did not name, and every mail or calendar
+  change, which stays one reviewed candidate per effect (invariant 41);
+- every exit once a run holds someone else's words beside the owner's
+  data (invariant 43); unattended, that is a refusal.
+
+Why: a refresh is the duty itself, so asking for it would make "keep it
+current" useless, and its blast radius is one dated version with the last
+good one kept. Applying fixes or updates unattended could break a working
+thing with nobody watching; whether any fix may apply itself is decided
+only after the W4 gate measures how often proposed fixes were right.
+
+### 12.2 Whose conversation a worker has
+
+A worker's conversation is a conversation of **the Agent that owns it**,
+shown on the worker's card, and its runs carry that Agent's identity with
+the worker named in the trace key. A result is also noted in the
+conversation where the worker was handed over, as doc 94 delivers
+scheduled results. A pack may name a saved Agent's identity and working
+style for its model steps, as `task` already allows, without changing
+permissions.
+
+Why: an Agent per worker would mean a thousand Agent homes, memories,
+settings and lifecycles for a thousand workers, and a second answer to
+who owns the work (invariant 37). Under the owner Agent, pausing or
+archiving the Agent stops its workers at the next boundary with the rule
+that already exists, audiences and search are unchanged, and nothing new
+is admitted.
+
+### 12.3 Where code steps run
+
+Code steps run through the **existing broker worker and sandbox**
+(invariant 14): Seatbelt or Landlock, or the Docker backend where the
+owner already chose it for the environment. Dependencies are pinned in the
+pack and installed by their own worker run into the execution cache, as a
+skill's program does (`93-self-evolving-capabilities.md`). There is no
+container per pack.
+
+Why: one execution boundary is already reviewed, tested and fail-closed;
+a container per pack needs Docker on every home (a Mac often has none),
+image building and pinning, and a second boundary to keep equal to the
+first. Containers are reconsidered only with remote placement (§10).
+
+### 12.4 Budgets on the approval sheet
+
+Nothing is guessed. Before a worker's first scheduled run, it does one
+**trial run** while the owner watches; the sheet then shows that run's
+measured cost (tokens, and time on this home) and what its schedule would
+cost in a month. The owner sets the worker's monthly cap; the sheet fills
+it with that estimate, and the owner may change it. Every run reserves
+through the shared spend gate, so the install's existing day and month
+caps still bound all workers together. Items at once in a fan-out run
+default to one, an operator limit in `[control.limits]` shown in Settings
+beside that shipped default; one is not a tuned number but no
+concurrency, which fails smallest. There is no default freshness promise:
+the owner sets one or there is none.
+
+Why: a picked default budget would be a number tuned to nobody, and a
+worker that has never run has no cost to show. A measured trial gives the
+owner a real figure, and serial items mean a fault in a new pack affects
+one item at a time.

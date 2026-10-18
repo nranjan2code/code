@@ -835,8 +835,7 @@ Proposal only; the stages, gates and "done when" are
 - [ ] W3: work through items (fan-out, grouped Review).
 - [ ] W4: keep building it, and the caretaker.
 - [ ] W5: keep analysing, only after W2 to W4 pass their gates.
-- [ ] Maintainer decisions open in doc 100 §12: what `unasked` may hold,
-  whose conversation a worker has, the code-step runtime, budget defaults.
+- [x] The four open choices, decided 2026-10-18 (doc 100 §12).
 
 ## Scheduled work (docs/design/94)
 

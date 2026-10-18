@@ -39,8 +39,9 @@ the worker's conversation and card, the Workers page; a run on the home in
 a task environment that survives a restart and delivers candidates.
 
 Done when: from a dashboard made in a live conversation, the owner gives
-it to a worker, approves the sheet, presses Run now, and gets a candidate
-in the worker's conversation; a restart mid-run continues or records the
+it to a worker, the trial run's measured cost fills the sheet (doc 100
+§12.4), the owner approves it, and the result arrives in the worker's
+conversation, a conversation of the owner Agent (§12.2); a restart mid-run continues or records the
 run as interrupted; a run that needs a host outside its scope is refused
 and says so; Hand back leaves the artifact as it was.
 
@@ -107,3 +108,6 @@ unasked.
 ## Progress log
 
 - 2026-10-18: design and plan written; no stage started.
+- 2026-10-18: the four open choices decided (doc 100 §12): what a worker
+  does unasked, the owner Agent's conversation, the existing sandbox for
+  code steps, budgets from a measured trial run.

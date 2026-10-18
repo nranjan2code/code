@@ -9,6 +9,16 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-18
 
+- Workers, the four open choices (asked to choose by scenario and blast
+  radius): unasked, a worker only runs its approved pack, makes its own
+  output's new version current when its checks pass, delivers candidates
+  and pauses itself; every pack change, fix, update, unnamed effect and
+  mail or calendar change asks. A worker's conversation belongs to the
+  owner Agent. Code steps run in the existing broker worker and sandbox,
+  no container per pack. Budgets come from a measured trial run; the owner
+  sets the monthly cap; fan-out items run one at a time by default.
+  Recorded in [docs/design/100-workers.md](design/100-workers.md) §12.
+
 - A worker is a run of a well-defined pack that carries the engine,
   handed over from something Vakyartha made and kept running; one owner may
   have one or a thousand. Build only the narrow path: the pack, give it to a
