@@ -565,6 +565,34 @@ These bounded inspections do not close P01/P02:
   other readers/causal writes and durable/cross-process reservations are
   not closed. No UI source changed and no new live UI acceptance is claimed.
 
+### Continuation — table scalar fidelity
+
+- Authored tables preserve string cells; `numeric_columns` explicitly names
+  decimal columns and refuses missing/ambiguous/repeated labels, malformed
+  declarations and ambiguous numeric spelling. Ability tables derive default
+  numeric semantics from source JSON types and preserve integer text.
+- Existing stored table payloads remain valid. Validation and text delivery
+  keep exact decimal strings, IDs and commas; CSV keeps its existing formula
+  escaping. Dynamic bindings keep their existing path and numeric evaluator.
+- Client numeric sorting compares decimal order/significands exactly, with
+  stable invalid/missing ordering; text columns sort lexically. A review
+  caught and fixed a zero-versus-subunit ordering error. Six helper tests and
+  10,000 deterministic comparisons against integer-scaled reference values
+  pass; the delivery compatibility/text fallback regression passes.
+- `tests/table-fidelity.html` uses production FormView, controls publication,
+  binding and CSV. Seven checks pass at 1440×900 and 390×844, light and dark:
+  display, numeric sort in both directions, text sort, CSV, binding updates
+  and page overflow. Screenshots were inspected in all four configurations.
+- The general presentation gallery fails its 260px chart/map fit assertion;
+  this batch changes no chart/map renderer. Its remaining checks did not run
+  after that assertion. This is separate unresolved S6 responsive acceptance,
+  not a passing whole-gallery claim.
+- Both client bundles and the full repository gate pass: formatting,
+  workspace Clippy, workspace tests (722 seconds), version, doc paths,
+  records and advisories. Source float token recovery,
+  arbitrary-precision dynamic expression arithmetic and remaining S3–S6
+  findings are not closed by this slice.
+
 ### Reporting contract
 
 For each slice record finding IDs, exact baseline, reproduction, chosen

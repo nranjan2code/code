@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Tables preserve textual IDs, comma-containing values and large integers.
+  Numeric columns are explicit for authored tables and follow source JSON
+  types for ability tables. Decimal strings sort exactly without rounding;
+  display, text delivery and CSV keep their spelling. Existing numeric
+  payloads and linked controls remain supported.
+
 - Route planning stops on unreadable evidence instead of planning from an
   incomplete history. Day-budget admission verifies recorded costs before
   dispatch, including costs written by another gate on the same day.

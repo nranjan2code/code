@@ -1452,7 +1452,7 @@ mod tests {
             "details" => json!({"title": "Pune", "fields": [{"label": "State", "detail": "MH"}]}),
             "table" => {
                 json!({"columns": [{"label": "Item", "numeric": false}, {"label": "Kg", "numeric": true}],
-                "rows": [["Rice", 2]]})
+                "rows": [["Rice", "2"]]})
             }
             "comparison" => json!({"options": [{"name": "A", "strengths": ["x"]}, {"name": "B"}],
                 "aspects": [{"label": "Cost", "values": ["Low", "High"]}], "recommendation": "A"}),
@@ -1486,6 +1486,25 @@ mod tests {
             "terminal" => json!({"command": "ls", "output": "a.rs", "exit_code": 0}),
             other => panic!("no sample for {other}"),
         }
+    }
+
+    #[test]
+    fn table_decimal_strings_survive_validation_and_text_delivery() {
+        let skills = built_in_skill_registry();
+        let payload = json!({
+            "columns": [{"label": "ID", "numeric": false}, {"label": "Amount", "numeric": true}],
+            "rows": [["00123", "9007199254740993"], ["1,5", "0.0100"]]
+        });
+        let output = structured_output("table", None, payload.clone(), &skills).unwrap();
+        assert_eq!(output.payload, payload);
+        let text = structured_markdown(&output);
+        assert!(text.contains("| 00123 | 9007199254740993 |"));
+        assert!(text.contains("| 1,5 | 0.0100 |"));
+
+        let mut legacy = payload;
+        legacy["rows"][0][1] = json!(42);
+        let output = structured_output("table", None, legacy, &skills).unwrap();
+        assert!(structured_markdown(&output).contains("| 00123 | 42 |"));
     }
 
     #[test]

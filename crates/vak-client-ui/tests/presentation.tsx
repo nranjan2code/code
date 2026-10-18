@@ -43,7 +43,7 @@ const samples: Record<string, Record<string, unknown>> = {
   steps: { title: "Release", steps: [{ label: "Build", time: "09:00 · 5 min", detail: "Run the full gate." }, { label: "Publish", choices: [{ label: "Now", facts: ["fast"] }] }] },
   list: { title: "To bring", checkable: true, items: [{ label: "Charger" }, { label: "Passport", detail: "Valid until 2030" }] },
   details: { title: "Pune", text: "A city in Maharashtra.", fields: [{ label: "Population", detail: "7.4 million" }, { label: "Best season", detail: "October to February" }] },
-  table: { title: "Lighthouses", columns: [{ label: "Name", numeric: false }, { label: "Height (m)", numeric: true }], rows: [["Tower of Hercules", 55], ["Bell Rock", 35.3]] },
+  table: { title: "Lighthouses", columns: [{ label: "Name", numeric: false }, { label: "Height (m)", numeric: true }], rows: [["Tower of Hercules", "55"], ["Bell Rock", "35.3"]] },
   comparison: { options: [{ name: "By shelf", verdict: "Simple", strengths: ["Easy"] }, { name: "By meal", weaknesses: ["Relabelling"] }], aspects: [{ label: "Effort", values: ["Low", "High"] }], recommendation: "Keep by shelf." },
   stats: { readings: [{ label: "Organisations using AI", value: 88, unit: "%" }, { label: "Agent task success", value: 66, unit: "%", change: "+12 since 2025" }] },
   chart: { title: "Share by measure", chart_type: "bar", y_label: "Share (%)", accessible_summary: "Adoption 88, success 66.", series: [{ name: "Share", points: [{ x: "Organisations using AI", y: 88 }, { x: "OSWorld task success", y: 66 }, { x: "Unsuccessful tasks", y: 34 }] }] },

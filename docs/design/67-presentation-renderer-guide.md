@@ -7,6 +7,30 @@ history of this file.
 
 Read this before touching anything that decides how a result looks.
 
+## Table scalar fidelity
+
+Authored table cells remain strings. The optional `numeric_columns` tool
+argument names headers whose cells have decimal meaning; repeated, missing
+or ambiguous declarations and malformed decimals are refused. The grammar
+accepts signs, decimal fractions and exponents, excludes locale commas,
+NaN and Infinity, and never converts through f64. Ability tables derive
+numeric columns from the source JSON value types; explicit declarations
+can also name decimal strings. Parsed source floats already have their
+source parser's precision; this builder cannot recover their original tokens.
+
+The stored shape remains columns with `label`/`numeric` and scalar rows;
+existing numeric JSON cells remain valid. New cells preserve their decimal
+spelling as strings. Numeric sorting compares sign, decimal order and
+significant digits exactly, with invalid/missing values stably last in
+both directions. Text sorting is lexical. Zero and negative zero compare
+equally. The comparator never expands exponent zeroes. Rendering and text
+fallback preserve strings; CSV retains its existing formula escaping.
+Dynamic expression cells retain their binding paths and computed numbers.
+
+`tests/table-fidelity.html` exercises production form rendering, sorting,
+CSV and controls-to-table bindings. Its `window.runTableChecks()` is a
+scoped fixture, not installed-app or whole-gallery acceptance.
+
 ## Numeric chart scales
 
 Chart category labels remain text; numeric-looking identifiers are never

@@ -154,22 +154,6 @@ fn scalar(value: &Value) -> Value {
     }
 }
 
-/// A number written as text, as a JSON number; anything else stays text.
-fn number_or_text(text: &str) -> Value {
-    let trimmed = text.trim();
-    let plain = trimmed.replace(',', "");
-    match plain.parse::<f64>() {
-        Ok(n) if n.is_finite() && !plain.is_empty() => {
-            if n.fract() == 0.0 && n.abs() < 9.0e15 {
-                Value::from(n as i64)
-            } else {
-                Value::from(n)
-            }
-        }
-        _ => Value::String(trimmed.to_string()),
-    }
-}
-
 // ---- summary -----------------------------------------------------------------
 
 fn summary_fields() -> Value {
@@ -444,7 +428,8 @@ fn table_fields() -> Value {
                     "description": "One line of the table with its cells separated by |: the first line names every column, each later line gives one row's cells in the same order. A cell may be `= expression` over what a controls card earlier in this answer publishes (= a * b)."
                 },
                 "description": "The table, one string per line: first the column names in one string, then one string for each row. Example: [\"Name | Value\", \"A | 1\", \"B | 2\"]."
-            }
+            },
+            "numeric_columns": texts("Optional. Column labels whose non-empty cells are numeric decimals. The labels must match one column exactly; numeric text is kept exactly as written. Commas and non-finite values are not accepted. A cell beginning with = remains a live expression.")
         }),
         &["rows"],
     )
@@ -455,7 +440,7 @@ fn build_table(args: &Map<String, Value>) -> Result<Value, String> {
         "`rows` must be an array of row strings or arrays of string cells".to_string()
     })?)?;
     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-    let (labels, rows) = table_rows(&lines)?;
+    let (labels, rows, ambiguous_labels) = table_rows(&lines)?;
     if labels.len() < 2 {
         return Err(
             "every line has one cell, so this is not a table: a table's first string \
@@ -465,16 +450,12 @@ fn build_table(args: &Map<String, Value>) -> Result<Value, String> {
                 .into(),
         );
     }
-    let numeric: Vec<bool> = (0..labels.len())
-        .map(|column| {
-            let cells: Vec<&str> = rows
-                .iter()
-                .map(|row| row[column].as_str())
-                .filter(|cell| !cell.is_empty())
-                .collect();
-            !cells.is_empty() && cells.iter().all(|cell| number_or_text(cell).is_number())
-        })
-        .collect();
+    let numeric = table_numeric_flags(
+        &labels,
+        &ambiguous_labels,
+        &rows,
+        args.get("numeric_columns"),
+    )?;
     let columns: Vec<Value> = labels
         .iter()
         .zip(&numeric)
@@ -482,25 +463,105 @@ fn build_table(args: &Map<String, Value>) -> Result<Value, String> {
         .collect();
     let rows: Vec<Value> = rows
         .iter()
-        .map(|row| {
-            Value::Array(
-                row.iter()
-                    .zip(&numeric)
-                    .map(|(cell, numeric)| {
-                        if *numeric && !cell.is_empty() {
-                            number_or_text(cell)
-                        } else {
-                            Value::String(cell.clone())
-                        }
-                    })
-                    .collect(),
-            )
-        })
+        .map(|row| Value::Array(row.iter().map(|cell| Value::String(cell.clone())).collect()))
         .collect();
     let mut payload = copy(args, &["title"]);
     payload.insert("columns".into(), Value::Array(columns));
     payload.insert("rows".into(), Value::Array(rows));
     Ok(Value::Object(payload))
+}
+
+fn table_numeric_flags(
+    labels: &[String],
+    ambiguous_labels: &[String],
+    rows: &[Vec<String>],
+    declarations: Option<&Value>,
+) -> Result<Vec<bool>, String> {
+    let Some(declarations) = declarations else {
+        return Ok(vec![false; labels.len()]);
+    };
+    let Some(declarations) = declarations.as_array() else {
+        return Err("`numeric_columns` must be a list of column labels".into());
+    };
+    let mut numeric = vec![false; labels.len()];
+    let mut seen = std::collections::BTreeSet::new();
+    for declaration in declarations {
+        let Some(label) = declaration
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return Err("each `numeric_columns` entry must be a non-empty column label".into());
+        };
+        if !seen.insert(label.to_string()) {
+            return Err(format!(
+                "`numeric_columns` repeats `{label}`; name each column once"
+            ));
+        }
+        if ambiguous_labels.iter().any(|ambiguous| ambiguous == label) {
+            return Err(format!(
+                "`numeric_columns` label `{label}` is ambiguous because the table header repeats it"
+            ));
+        }
+        let Some(column) = labels.iter().position(|candidate| candidate == label) else {
+            return Err(format!(
+                "`numeric_columns` names `{label}`, which is not a table column"
+            ));
+        };
+        for (row_index, row) in rows.iter().enumerate() {
+            let cell = &row[column];
+            if cell.is_empty() || cell.starts_with('=') {
+                continue;
+            }
+            if !plain_decimal(cell) {
+                return Err(format!(
+                    "cell {} in numeric column `{label}` must be a plain decimal number or a `= expression`",
+                    row_index + 1
+                ));
+            }
+        }
+        numeric[column] = true;
+    }
+    Ok(numeric)
+}
+
+/// A finite decimal's written grammar, without converting it to a machine
+/// number: optional sign, digits, optional fractional digits, and optional
+/// signed exponent. Commas, NaN and Infinity are deliberately excluded.
+fn plain_decimal(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut at = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let integer_start = at;
+    while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+        at += 1;
+    }
+    let integer_digits = at - integer_start;
+    if bytes.get(at) == Some(&b'.') {
+        at += 1;
+        let fraction_start = at;
+        while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+        }
+        if integer_digits == 0 && at == fraction_start {
+            return false;
+        }
+    } else if integer_digits == 0 {
+        return false;
+    }
+    if matches!(bytes.get(at), Some(b'e' | b'E')) {
+        at += 1;
+        if matches!(bytes.get(at), Some(b'+' | b'-')) {
+            at += 1;
+        }
+        let exponent_start = at;
+        while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+        }
+        if at == exponent_start {
+            return false;
+        }
+    }
+    at == bytes.len()
 }
 
 /// Normalize both accepted table input shapes before applying the same
@@ -575,7 +636,9 @@ fn matrix_row_is_separator(cells: &[String]) -> bool {
 /// separator rows such as `---|---` are skipped, labels are unique (a
 /// repeat gets ` (2)`), an empty label is `Column N`, a short row is padded,
 /// and a cell's outer `**`/`__` emphasis is dropped.
-fn table_rows(lines: &[&str]) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
+type ParsedTableRows = (Vec<String>, Vec<Vec<String>>, Vec<String>);
+
+fn table_rows(lines: &[&str]) -> Result<ParsedTableRows, String> {
     let separator = |row: &Vec<String>| {
         row.iter().all(|cell| {
             let cell = cell.trim_matches(':');
@@ -601,21 +664,7 @@ fn table_rows(lines: &[&str]) -> Result<(Vec<String>, Vec<Vec<String>>), String>
     if rows.len() < 2 {
         return Err("`rows` needs the header row first, then at least one row".into());
     }
-    let mut labels: Vec<String> = Vec::new();
-    for (at, label) in rows[0].iter().enumerate() {
-        let base = if label.is_empty() {
-            format!("Column {}", at + 1)
-        } else {
-            label.clone()
-        };
-        let mut unique = base.clone();
-        let mut n = 2;
-        while labels.contains(&unique) {
-            unique = format!("{base} ({n})");
-            n += 1;
-        }
-        labels.push(unique);
-    }
+    let (labels, ambiguous_labels) = unique_table_labels(&rows[0]);
     let mut data = Vec::new();
     for (at, mut row) in rows.into_iter().skip(1).enumerate() {
         if row.len() > labels.len() {
@@ -632,7 +681,34 @@ fn table_rows(lines: &[&str]) -> Result<(Vec<String>, Vec<Vec<String>>), String>
     if data.is_empty() {
         return Err("`rows` has a header but no rows".into());
     }
-    Ok((labels, data))
+    Ok((labels, data, ambiguous_labels))
+}
+
+fn unique_table_labels(headers: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut labels = Vec::with_capacity(headers.len());
+    let mut ambiguous_labels = Vec::new();
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    for (at, label) in headers.iter().enumerate() {
+        let base = if label.is_empty() {
+            format!("Column {}", at + 1)
+        } else {
+            label.clone()
+        };
+        *counts.entry(base.clone()).or_default() += 1;
+        let mut unique = base.clone();
+        let mut n = 2;
+        while labels.contains(&unique) {
+            unique = format!("{base} ({n})");
+            n += 1;
+        }
+        labels.push(unique);
+    }
+    for (label, count) in counts {
+        if count > 1 {
+            ambiguous_labels.push(label);
+        }
+    }
+    (labels, ambiguous_labels)
 }
 
 fn markdown_cells(line: &str) -> Vec<String> {
@@ -1670,7 +1746,8 @@ fn ability_table_fields() -> Value {
             "title": string(TITLE),
             "from": string(FROM),
             "list": string(LIST),
-            "columns": texts("Optional. The keys of a record to show as columns, in order. Every key of the first record when left out.")
+            "columns": texts("Optional. The keys of a record to show as columns, in order. Every key of the first record when left out."),
+            "numeric_columns": texts("Optional. Column labels whose non-empty cells are numeric decimals. The labels must match one column exactly; numeric text is kept exactly as written. Commas and non-finite values are not accepted. A cell beginning with = remains a live expression.")
         }),
         &["from"],
     )
@@ -1698,6 +1775,7 @@ fn fill_table_from(args: &mut Map<String, Value>, records: &[Value]) -> Result<(
     } else {
         named
     };
+    let (labels, _) = unique_table_labels(&columns);
     if let Some(missing) = columns.iter().find(|column| {
         !objects
             .iter()
@@ -1708,6 +1786,48 @@ fn fill_table_from(args: &mut Map<String, Value>, records: &[Value]) -> Result<(
             "no record has the key `{missing}`; a record's keys are {}",
             keys.join(", ")
         ));
+    }
+    let mut numeric_columns: Vec<String> = match args.get("numeric_columns") {
+        None => Vec::new(),
+        Some(Value::Array(declarations)) => declarations
+            .iter()
+            .map(|declaration| {
+                declaration
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|label| !label.is_empty())
+                    .map(str::to_string)
+                    .ok_or_else(|| {
+                        "each `numeric_columns` entry must be a non-empty column label".to_string()
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => return Err("`numeric_columns` must be a list of column labels".into()),
+    };
+    for (index, column) in columns.iter().enumerate() {
+        let mut saw_number = false;
+        let all_nonempty_numbers = objects.iter().all(|record| match record.get(column) {
+            None | Some(Value::Null) => true,
+            Some(Value::Number(_)) => {
+                saw_number = true;
+                true
+            }
+            Some(Value::String(value)) if value.is_empty() => true,
+            Some(_) => false,
+        });
+        let label = &labels[index];
+        if all_nonempty_numbers
+            && saw_number
+            && !numeric_columns.iter().any(|existing| existing == label)
+        {
+            numeric_columns.push(label.clone());
+        }
+    }
+    if !numeric_columns.is_empty() || args.contains_key("numeric_columns") {
+        args.insert(
+            "numeric_columns".into(),
+            Value::Array(numeric_columns.into_iter().map(Value::String).collect()),
+        );
     }
     let mut rows = vec![Value::Array(
         columns
@@ -2790,10 +2910,50 @@ mod tests {
         let card = built("emit_ability_table_card", table).unwrap();
         let rows = card["rows"].as_array().unwrap();
         assert_eq!(rows.len(), 300);
+        assert_eq!(card["columns"][1]["numeric"], true);
         for (at, row) in rows.iter().enumerate() {
             assert_eq!(row[0], format!("City {at}"));
-            assert_eq!(row[1], serde_json::json!(at * 1000));
+            assert_eq!(row[1], (at * 1000).to_string());
             assert_eq!(row[2], "a | b c");
+        }
+
+        let typed = vec![
+            json!({"id": "00123", "amount": 9007199254740993_u64}),
+            json!({"id": "1,5", "amount": 2_u64}),
+        ];
+        let mut table = json!({"from": "records", "columns": ["id", "amount"]});
+        table_tool.fill_from_data(&mut table, &typed).unwrap();
+        let card = built("emit_ability_table_card", table).unwrap();
+        assert_eq!(
+            card["columns"],
+            json!([
+                {"label": "id", "numeric": false}, {"label": "amount", "numeric": true}
+            ])
+        );
+        assert_eq!(card["rows"][0], json!(["00123", "9007199254740993"]));
+        assert_eq!(card["rows"][1], json!(["1,5", "2"]));
+
+        let explicit_values = vec![
+            json!({"id": "00123", "kind": "a"}),
+            json!({"id": "00002", "kind": "b"}),
+        ];
+        let mut declared =
+            json!({"from": "records", "columns": ["id", "kind"], "numeric_columns": ["id"]});
+        table_tool
+            .fill_from_data(&mut declared, &explicit_values)
+            .unwrap();
+        let card = built("emit_ability_table_card", declared).unwrap();
+        assert_eq!(card["columns"][0]["numeric"], true);
+        assert_eq!(card["rows"][0][0], "00123");
+        for declaration in [json!(1), json!([1]), json!([""])] {
+            let mut malformed = json!({
+                "from": "records", "columns": ["id", "kind"], "numeric_columns": declaration
+            });
+            assert!(
+                table_tool
+                    .fill_from_data(&mut malformed, &explicit_values)
+                    .is_err()
+            );
         }
 
         let mut chart =
@@ -3273,10 +3433,91 @@ mod tests {
         assert_eq!(
             payload["columns"],
             json!([
-                {"label": "Name", "numeric": false}, {"label": "Country", "numeric": false}, {"label": "Height (m)", "numeric": true}
+                {"label": "Name", "numeric": false}, {"label": "Country", "numeric": false}, {"label": "Height (m)", "numeric": false}
             ])
         );
-        assert_eq!(payload["rows"][1], json!(["Bell Rock", "Scotland", 35.3]));
+        assert_eq!(payload["rows"][1], json!(["Bell Rock", "Scotland", "35.3"]));
+        let declared = built(
+            "emit_table_card",
+            json!({
+                "rows": ["Name | Height", "Tower | 00123", "Bell | 9007199254740993"],
+                "numeric_columns": ["Height"]
+            }),
+        )
+        .unwrap();
+        assert_eq!(declared["columns"][1]["numeric"], true);
+        assert_eq!(
+            declared["rows"],
+            json!([["Tower", "00123"], ["Bell", "9007199254740993"]])
+        );
+        let decimal_forms = built(
+            "emit_table_card",
+            json!({
+                "rows": ["Name | Amount", "A | .1", "B | 1.", "C | +1e-2"],
+                "numeric_columns": ["Amount"]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            decimal_forms["rows"],
+            json!([["A", ".1"], ["B", "1."], ["C", "+1e-2"]])
+        );
+        let lexical = built(
+            "emit_table_card",
+            json!({
+                "rows": ["ID | Locale value | Large integer", "00123 | 1,5 | 9007199254740993"]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            lexical["rows"],
+            json!([["00123", "1,5", "9007199254740993"]])
+        );
+        for (rows, numeric_columns) in [
+            (json!(["Name | Amount", "A | 1,5"]), json!(["Amount"])),
+            (json!(["Name | Amount", "A | NaN"]), json!(["Amount"])),
+            (json!(["Name | Amount", "A | Infinity"]), json!(["Amount"])),
+            (json!(["Name | Amount", "A | 1"]), json!(["Missing"])),
+            (
+                json!(["Name | Amount | Amount", "A | 1 | 2"]),
+                json!(["Amount"]),
+            ),
+            (
+                json!(["Name | Amount", "A | 1"]),
+                json!(["Amount", "Amount"]),
+            ),
+        ] {
+            assert!(
+                built(
+                    "emit_table_card",
+                    json!({"rows": rows, "numeric_columns": numeric_columns})
+                )
+                .is_err()
+            );
+        }
+
+        let mut expression = built(
+            "emit_table_card",
+            json!({
+                "rows": ["Name | Total", "A | = left * right"]
+            }),
+        )
+        .unwrap();
+        let followable = vec![vec!["rows".into(), "*".into(), "*".into()]];
+        let scope = std::collections::BTreeMap::from([
+            ("left".to_string(), (2.0, "controls-1".to_string())),
+            ("right".to_string(), (3.0, "controls-1".to_string())),
+        ]);
+        vak_delivery::controls::bind(
+            "table",
+            &followable,
+            &mut expression,
+            &scope,
+            &Default::default(),
+        )
+        .unwrap();
+        assert_eq!(expression["rows"][0][1], 6);
+        assert_eq!(expression["bound"][0]["path"], json!(["rows", 0, 1]));
         let matrix = built(
             "emit_table_card",
             json!({"rows": [["Name", "Value"], ["---", "---"], ["A", "B"]]}),
@@ -3291,7 +3532,7 @@ mod tests {
             built("emit_table_card", json!({"rows": ["Category", "Day 1"]})).unwrap_err();
         assert!(one_cell.contains("emit_list_card"), "{one_cell}");
         let text = built("emit_table_card", json!({"rows": "A | B\n1 | 2"})).unwrap();
-        assert_eq!(text["rows"], json!([[1, 2]]));
+        assert_eq!(text["rows"], json!([["1", "2"]]));
     }
 
     #[test]

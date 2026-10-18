@@ -63,8 +63,13 @@ overlapping fixes should close their original entries as well.
 - [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
   actual outline attribution and typed cleanup (P01–P03, P13, P14).
   P01 chart categories retain lexical text and ambiguous y strings are
-  refused; the full repository gate passes. Table fidelity and exact numeric
-  transport remain open.
+  refused; the full repository gate passes. Table builders now preserve
+  scalar strings and declare numeric columns; client decimal sorting and
+  legacy payload/text delivery regressions pass. The production-form table
+  fixture passes sorting, CSV, bindings and overflow checks at 1440×900 and
+  390×844 in light/dark. Both bundles and the full repository gate pass. This does
+  not recover precision already lost in parsed source floats or dynamic
+  expression arithmetic. Other S3 work remains open.
 - [ ] S4: interaction ownership/invalidation, replacement, graph scope and
   invocation/freshness provenance (P04, D01–D04).
 - [ ] S5: subject persistence, protected drafts, encrypted fenced canvas
@@ -78,6 +83,9 @@ overlapping fixes should close their original entries as well.
   P10 numerical ranges, compact precise labels and overflow-safe y
   positioning pass source tests, both bundle builds and the full gate.
   Running-app acceptance remains open. Geometry and gaps remain open.
+  The presentation gallery currently fails its 260px chart/map fit assertion
+  (2026-10-18 browser run); remaining checks after that assertion did not run.
+  The focused table fixture passes all four required viewport/theme cases.
 - [ ] S7: narrow Core ownership and bounded history-dependent work
   (A08, A09), retaining the earlier guarantees.
 

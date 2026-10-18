@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal, useContext } from "solid-js";
 import { safeUrl } from "../../safeUrl";
-import { Card, PresentationInteractionContext, Prose, downloadCsv, exportName, num, record, records, text, texts, type Payload } from "./shared";
+import { Card, PresentationInteractionContext, Prose, downloadCsv, exportName, record, records, text, texts, type Payload } from "./shared";
+import { sortTableRows } from "./tableNumbers";
 
 /** The answer itself: prose on the page, not a card (DESIGN.md "Cards and results"). */
 export function SummaryForm(props: { payload: Payload }) {
@@ -119,11 +120,7 @@ export function TableForm(props: { payload: Payload }) {
     const order = sort();
     if (!order) return rows();
     const numeric = columns()[order.column]?.numeric;
-    return [...rows()].sort((a, b) => {
-      const [x, y] = [a[order.column], b[order.column]];
-      const compared = numeric ? (num(x) ?? -Infinity) - (num(y) ?? -Infinity) : String(x ?? "").localeCompare(String(y ?? ""), undefined, { numeric: true });
-      return order.ascending ? compared : -compared;
-    });
+    return sortTableRows(rows(), order.column, numeric, order.ascending);
   });
   const toggle = (column: number) =>
     setSort((current) => (current?.column === column ? { column, ascending: !current.ascending } : { column, ascending: true }));
