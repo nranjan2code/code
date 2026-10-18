@@ -193,7 +193,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
     <dl class="tb-grid">
       <dt>Project</dt><dd>vak / Vakyartha</dd>
       <dt>Version</dt><dd>8.9.0</dd>
-      <dt>Measured at</dt><dd>142c83869 · 2026-10-18</dd>
+      <dt>Measured at</dt><dd>9c229454c · 2026-10-18</dd>
       <dt>Prose reviewed</dt><dd>8.9.0 · 2026-10-18</dd>
       <dt>Method</dt><dd>measured from code and git; judgements in content.toml, each with its evidence</dd>
     </dl>
@@ -217,7 +217,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
     <div class="stat"><b>14</b><span>worker task kinds across the process boundary</span></div>
     <div class="stat"><b>70</b><span>registered durable paths</span></div>
     <div class="stat"><b>764</b><span>crates in Cargo.lock</span></div>
-    <div class="stat"><b>2,349</b><span>commits in 59 days (peak 174 in a day)</span></div>
+    <div class="stat"><b>2,350</b><span>commits in 59 days (peak 174 in a day)</span></div>
     <div class="stat"><b>95</b><span>design docs; AGENTS.md is 20,046 words</span></div>
     <div class="stat"><b>1</b><span>user</span></div>
   </div>
@@ -252,10 +252,10 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 <section class="sheet" id="happening" data-group="overview">
   <header><span class="sno">Sheet 03</span><h2>What's happening</h2><span class="muted">The fortnight before the last measured commit, and what is not yet released or built.</span></header>
 <div class="two"><div style="display:grid;gap:10px;align-content:start">
-<h3>497 commits, 2026-10-04 to 2026-10-18</h3>
-<p><code>docs</code> 422, <code>(root)</code> 252, <code>vak-core</code> 219, <code>vak-server</code> 179, <code>vak-client-ui</code> 109, <code>vak-agent</code> 98, <code>vak-session</code> 86, <code>vak-tools</code> 84, <code>vak</code> 75, <code>vak-admin-ui</code> 70, <code>vak-config</code> 59, <code>vak-control</code> 39</p>
-<ul class="plain"><li><code>142c83869</code> 2026-10-18: Show only open work in the blueprint</li><li><code>3047f374d</code> 2026-10-18: Count nested tracker items in the blueprint</li><li><code>530764e2e</code> 2026-10-18: Verify route and budget decisions and record live revisions before use</li><li><code>6062009b6</code> 2026-10-18: Check every open item against the code and history</li><li><code>e4a25bd62</code> 2026-10-18: Make blueprint/ the one place to see the system</li><li><code>0aa091665</code> 2026-10-18: Keep the three blueprint findings the evidence supports</li><li><code>24452bef0</code> 2026-10-18: Regenerate the system blueprint from the committed tree</li><li><code>deb625ab5</code> 2026-10-18: Drop the completion-vocabularies finding: the evidence does not support it</li><li><code>26a6c563b</code> 2026-10-18: Regenerate the system blueprint after integrity hardening</li><li><code>08e149400</code> 2026-10-18: Verify commitment state and preserve chart and credential integrity</li><li><code>88d73ff03</code> 2026-10-18: Regenerate the system blueprint from the committed tree</li><li><code>1ac94fe55</code> 2026-10-18: Regenerate the system blueprint</li><li><code>085665f4d</code> 2026-10-18: Mark the moved UI release pause note historical</li><li><code>b03f2757f</code> 2026-10-18: Regenerate the system blueprint</li><li><code>825b18564</code> 2026-10-18: Clear reachable advisories, gate on cargo audit, and bring the record up to date</li></ul></div>
-<div style="display:grid;gap:10px;align-content:start"><h3>Not yet released</h3><ul class="plain"><li>Route planning stops on unreadable evidence instead of planning from an incomplete history.</li><li>Budget reservations retain unresolved costs when recording fails and keep their original attribution.</li><li>Live outcome revisions and steering messages must be recorded before they change the running contract or reach the model.</li><li>Two dependency updates clear seven known vulnerabilities:</li><li>Concurrent credential updates preserve every presence marker, and trust checks treat unreadable presence metadata conservatively.</li><li>Commitment admission and portfolio reads report unreadable history instead of treating it as an empty portfolio.</li><li>Chart category labels retain their original text, including leading zeroes and punctuation.</li><li>Charts retain tiny ranges, distinguish nearby values and position extreme finite values without overflowing.</li><li>Tools stop before execution if their assistant message cannot be saved.</li><li>Saved answer and page views reopen in the Canvas after a reload.</li><li>Calls whose effects are unknown wait for other potentially mutating calls instead of bypassing resource conflict checks.</li><li>Artifact changes stop before deciding or writing when their history is unreadable.</li><li>Search, lists and tool-history queries refresh sharing permissions before returning results, and report unreadable sharing records instead of trusting stale grants.</li><li>Stopping a recovery probe no longer leaves a provider permanently unavailable.</li><li>Grant-service permission checks, outbound-action decisions and connected account reads now fail when new records cannot be read, rather than silently trusting cached state.</li><li>Ref writes and removals check the current writer epoch atomically with their commit record, so a restored store refuses a stale writer even when the two operations race.</li></ul>
+<h3>498 commits, 2026-10-04 to 2026-10-18</h3>
+<p><code>docs</code> 423, <code>(root)</code> 253, <code>vak-core</code> 220, <code>vak-server</code> 179, <code>vak-client-ui</code> 110, <code>vak-agent</code> 98, <code>vak-session</code> 86, <code>vak-tools</code> 84, <code>vak</code> 75, <code>vak-admin-ui</code> 70, <code>vak-config</code> 59, <code>vak-control</code> 39</p>
+<ul class="plain"><li><code>9c229454c</code> 2026-10-18: Preserve table scalar values and sort decimal strings exactly</li><li><code>142c83869</code> 2026-10-18: Show only open work in the blueprint</li><li><code>3047f374d</code> 2026-10-18: Count nested tracker items in the blueprint</li><li><code>530764e2e</code> 2026-10-18: Verify route and budget decisions and record live revisions before use</li><li><code>6062009b6</code> 2026-10-18: Check every open item against the code and history</li><li><code>e4a25bd62</code> 2026-10-18: Make blueprint/ the one place to see the system</li><li><code>0aa091665</code> 2026-10-18: Keep the three blueprint findings the evidence supports</li><li><code>24452bef0</code> 2026-10-18: Regenerate the system blueprint from the committed tree</li><li><code>deb625ab5</code> 2026-10-18: Drop the completion-vocabularies finding: the evidence does not support it</li><li><code>26a6c563b</code> 2026-10-18: Regenerate the system blueprint after integrity hardening</li><li><code>08e149400</code> 2026-10-18: Verify commitment state and preserve chart and credential integrity</li><li><code>88d73ff03</code> 2026-10-18: Regenerate the system blueprint from the committed tree</li><li><code>1ac94fe55</code> 2026-10-18: Regenerate the system blueprint</li><li><code>085665f4d</code> 2026-10-18: Mark the moved UI release pause note historical</li><li><code>b03f2757f</code> 2026-10-18: Regenerate the system blueprint</li></ul></div>
+<div style="display:grid;gap:10px;align-content:start"><h3>Not yet released</h3><ul class="plain"><li>Tables preserve textual IDs, comma-containing values and large integers.</li><li>Route planning stops on unreadable evidence instead of planning from an incomplete history.</li><li>Budget reservations retain unresolved costs when recording fails and keep their original attribution.</li><li>Live outcome revisions and steering messages must be recorded before they change the running contract or reach the model.</li><li>Two dependency updates clear seven known vulnerabilities:</li><li>Concurrent credential updates preserve every presence marker, and trust checks treat unreadable presence metadata conservatively.</li><li>Commitment admission and portfolio reads report unreadable history instead of treating it as an empty portfolio.</li><li>Chart category labels retain their original text, including leading zeroes and punctuation.</li><li>Charts retain tiny ranges, distinguish nearby values and position extreme finite values without overflowing.</li><li>Tools stop before execution if their assistant message cannot be saved.</li><li>Saved answer and page views reopen in the Canvas after a reload.</li><li>Calls whose effects are unknown wait for other potentially mutating calls instead of bypassing resource conflict checks.</li><li>Artifact changes stop before deciding or writing when their history is unreadable.</li><li>Search, lists and tool-history queries refresh sharing permissions before returning results, and report unreadable sharing records instead of trusting stale grants.</li><li>Stopping a recovery probe no longer leaves a provider permanently unavailable.</li><li>Grant-service permission checks, outbound-action decisions and connected account reads now fail when new records cannot be read, rather than silently trusting cached state.</li><li>Ref writes and removals check the current writer epoch atomically with their commit record, so a restored store refuses a stale writer even when the two operations race.</li></ul>
 <h3>Designs in progress</h3><ul class="plain"><li><code>49-live-voice.md</code>: the foundation is shipped (redesigned 2026-09-23)</li><li><code>54-task-environments-and-promotion.md</code>: slices 1 to 3 have code in the tree (drafts in the execution root, readiness and setup, candidates with promotion and undo, copy environments for a folder that is not a git repository)</li><li><code>57-adaptive-presentation-runtime.md</code>: P1/P4 library, durable-store, session-audit, mode-toggle, bounded-revision, plugin-pack, pack-lifecycle, plugin-lifecycle-revocation, server-control, client-control, activation-control, revision-control, lifecycle-test, visible-management, delivery-integration, generic feedback-audit, visible-feedback, primitive-introspection, scoped-precedence, pack-portability, pack-management, result-scoped-proposal, original-fallback, declarative-seed-pack, everyday-theme-pack, semantic-selection, reset, cross-surface audit, generic constrained-surface lowering, live projection library-awareness, native adaptive output-contract, selected-tree emission, domain-neutral shape-inference, canonical renderer-envelope, cross-surface packet-validation, bounded proposal-chain, light-theme chrome polish, and fail-closed fallback regression slices landed</li><li><code>59-reference-ui-acceptance.md</code>: an acceptance backlog, not shipped until every acceptance item passes on the installed desktop build</li><li><code>61-adaptive-assistant-experience.md</code>: Phase 1 implemented in the desktop and web client</li><li><code>70-calm-agent-experience-implementation.md</code>: (approved direction</li><li><code>71-agent-character-system.md</code>: eight built-in expression atlases and runtime states shipped, with sized WebP copies since V4.2 of the visual refresh</li><li><code>72-openxml-documents.md</code>: the core loop is shipped</li><li><code>75-visual-refresh.md</code>: the implementation record, updated 2026-09-27</li><li><code>78-headless-identity.md</code>: This document is the implementation contract for human sign-in on a network-exposed Vakyartha server</li><li><code>80-mail-and-calendar.md</code>: (on main</li><li><code>84-worker-questions-and-control.md</code>: Built: M3 (pause and stop now, §7), M1 (a worker's question: the board, <code>ask_parent</code>, the HTTP list and answer endpoints and the events, §4) and M2 (background tasks, read-only or leased writers, the <code>workers</code> tool and the stop-gate join, §5)</li><li><code>85-turn-graph.md</code>: G0 is built, and G1 is built (2026-10-03): turn links, recall links, merged threads and the planner's two-step <code>link</code> signal (§10)</li><li><code>86-model-plans-runtime-checks.md</code>: direction approved by the maintainer on 2026-10-11</li><li><code>87-composed-answers.md</code>: direction approved by the maintainer on 2026-10-11</li><li><code>89-constrained-tool-arguments.md</code>: stages 1 to 4 built 2026-10-12 (the capability, strict tools, schema-bound output on every wire, regeneration of unreadable calls, the ladder by fault class)</li><li><code>90-file-state.md</code>: Decisions taken 2026-10-12 (D1–D4, §4)</li><li><code>96-answer-projection-gaps.md</code>: (2026-10-16): Q1, Q2 and Q3 are built, Q2's card shell superseded by live cards and the plan wheel</li><li><code>97-cards-end-the-answer.md</code>: (2026-10-16): stages A to C built and verified live on the dev route</li><li><code>99-turns-that-do-not-poison.md</code>: (2026-10-17): stages A to F and A2 to A4 built, with retry from a turn</li><li><code>architecture-and-presentation-hardening-plan.md</code>: requested on 2026-10-18 to address all observations from the session's architecture, answer/projection, surface and dynamic-card reviews</li><li><code>context-selection-repair.md</code>: The immediate defects are repaired (on main)</li><li><code>mail-calendar-implementation-plan.md</code>: (on main</li><li><code>reliable-work-execution-plan.md</code>: E0 audit is incomplete and E2 has a first recovery slice</li><li><code>social-platform-connectors.md</code>: see shipped slice and remaining gates below</li><li><code>visual-refresh-plan.md</code>: plan and tracker, 2026-09-25</li></ul></div></div>
 </section>
 
@@ -269,18 +269,18 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 
 <section class="sheet" id="layers" data-group="system" hidden>
   <header><span class="sno">Sheet 05</span><h2>Layer stack</h2><span class="muted">Box width is proportional to source lines within its layer. Labels show thousand lines and commits.</span></header>
-  <div class="legend"><span><i></i>crate</span><span><i class="hot"></i>627+ commits (busiest tenth)</span><span><i class="dash"></i>outside the repo</span></div>
+  <div class="legend"><span><i></i>crate</span><span><i class="hot"></i>628+ commits (busiest tenth)</span><span><i class="dash"></i>outside the repo</span></div>
   <div class="scroll"><svg viewBox="0 0 1240 894" role="img" aria-label="Layer stack of every crate; box width is proportional to source lines within its layer">
 <rect class="band" x="10" y="20" width="1220" height="92"/>
 <text class="lid" x="22" y="50">L7</text><text class="lname" x="22" y="70">Surfaces</text><text class="lsub" x="22" y="86">83k lines</text>
-<g><title>vak-client-ui: 36,608 source lines, 629 commits</title><rect class="box hot" x="150.0" y="32" width="385.8" height="68" rx="2"/>
-<text class="bl" x="158.0" y="56">client-ui</text><text class="bs" x="158.0" y="74">36.6k · 629c</text>
+<g><title>vak-client-ui: 36,692 source lines, 630 commits</title><rect class="box hot" x="150.0" y="32" width="386.2" height="68" rx="2"/>
+<text class="bl" x="158.0" y="56">client-ui</text><text class="bs" x="158.0" y="74">36.7k · 630c</text>
 </g>
-<g><title>vak-admin-ui: 24,736 source lines, 259 commits</title><rect class="box" x="541.8" y="32" width="281.5" height="68" rx="2"/>
-<text class="bl" x="549.8" y="56">admin-ui</text><text class="bs" x="549.8" y="74">24.7k · 259c</text>
+<g><title>vak-admin-ui: 24,736 source lines, 259 commits</title><rect class="box" x="542.2" y="32" width="281.2" height="68" rx="2"/>
+<text class="bl" x="550.2" y="56">admin-ui</text><text class="bs" x="550.2" y="74">24.7k · 259c</text>
 </g>
-<g><title>vak: 14,389 source lines, 211 commits</title><rect class="box" x="829.3" y="32" width="190.5" height="68" rx="2"/>
-<text class="bl" x="837.3" y="56">vak (CLI)</text><text class="bs" x="837.3" y="74">14.4k · 211c</text>
+<g><title>vak: 14,389 source lines, 211 commits</title><rect class="box" x="829.5" y="32" width="190.4" height="68" rx="2"/>
+<text class="bl" x="837.5" y="56">vak (CLI)</text><text class="bs" x="837.5" y="74">14.4k · 211c</text>
 </g>
 <g><title>vak-terminal: 5,110 source lines, 11 commits</title><rect class="box" x="1025.8" y="32" width="108.9" height="68" rx="2"/>
 <text class="bl" x="1033.8" y="56">terminal</text><text class="bs" x="1033.8" y="74">5.1k · 11c</text>
@@ -301,14 +301,14 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 </g>
 <rect class="band" x="10" y="232" width="1220" height="92"/>
 <text class="lid" x="22" y="262">L5</text><text class="lname" x="22" y="282">Orchestration facade</text><text class="lsub" x="22" y="298">62k lines</text>
-<g><title>vak-core: 57,502 source lines, 627 commits</title><rect class="box hot" x="150.0" y="244" width="866.7" height="68" rx="2"/>
-<text class="bl" x="158.0" y="268">core</text><text class="bs" x="158.0" y="286">57.5k · 627c</text>
+<g><title>vak-core: 57,743 source lines, 628 commits</title><rect class="box hot" x="150.0" y="244" width="866.9" height="68" rx="2"/>
+<text class="bl" x="158.0" y="268">core</text><text class="bs" x="158.0" y="286">57.7k · 628c</text>
 </g>
-<g><title>vak-eval: 2,454 source lines, 56 commits</title><rect class="box" x="1022.7" y="244" width="98.3" height="68" rx="2"/>
-<text class="bl" x="1030.7" y="268">eval</text><text class="bs" x="1030.7" y="286">2.5k · 56c</text>
+<g><title>vak-eval: 2,454 source lines, 56 commits</title><rect class="box" x="1022.9" y="244" width="98.1" height="68" rx="2"/>
+<text class="bl" x="1030.9" y="268">eval</text><text class="bs" x="1030.9" y="286">2.5k · 56c</text>
 </g>
-<g><title>vak-flow: 2,081 source lines, 67 commits</title><rect class="box" x="1127.0" y="244" width="93.0" height="68" rx="2"/>
-<text class="bl" x="1135.0" y="268">flow</text><text class="bs" x="1135.0" y="286">2.1k · 67c</text>
+<g><title>vak-flow: 2,081 source lines, 67 commits</title><rect class="box" x="1127.1" y="244" width="92.9" height="68" rx="2"/>
+<text class="bl" x="1135.1" y="268">flow</text><text class="bs" x="1135.1" y="286">2.1k · 67c</text>
 </g>
 <rect class="band" x="10" y="338" width="1220" height="92"/>
 <text class="lid" x="22" y="368">L4</text><text class="lname" x="22" y="388">Agent runtime</text><text class="lsub" x="22" y="404">54k lines</text>
@@ -358,16 +358,16 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 <g><title>vak-mail-calendar: 18,903 source lines, 96 commits</title><rect class="box" x="150.0" y="562" width="253.1" height="68" rx="2"/>
 <text class="bl" x="158.0" y="586">mail-calendar</text><text class="bs" x="158.0" y="604">18.9k · 96c</text>
 </g>
-<g><title>vak-ooxml: 16,986 source lines, 35 commits</title><rect class="box" x="409.1" y="562" width="234.0" height="68" rx="2"/>
+<g><title>vak-ooxml: 16,986 source lines, 35 commits</title><rect class="box" x="409.1" y="562" width="233.9" height="68" rx="2"/>
 <text class="bl" x="417.1" y="586">ooxml</text><text class="bs" x="417.1" y="604">17.0k · 35c</text>
 </g>
-<g><title>vak-pdf: 9,581 source lines, 6 commits</title><rect class="box" x="649.1" y="562" width="159.9" height="68" rx="2"/>
-<text class="bl" x="657.1" y="586">pdf</text><text class="bs" x="657.1" y="604">9.6k · 6c</text>
+<g><title>vak-pdf: 9,581 source lines, 6 commits</title><rect class="box" x="649.0" y="562" width="159.8" height="68" rx="2"/>
+<text class="bl" x="657.0" y="586">pdf</text><text class="bs" x="657.0" y="604">9.6k · 6c</text>
 </g>
-<g><title>vak-delivery: 8,475 source lines, 108 commits</title><rect class="box" x="814.9" y="562" width="148.8" height="68" rx="2"/>
-<text class="bl" x="822.9" y="586">delivery</text><text class="bs" x="822.9" y="604">8.5k · 108c</text>
+<g><title>vak-delivery: 8,494 source lines, 109 commits</title><rect class="box" x="814.8" y="562" width="149.0" height="68" rx="2"/>
+<text class="bl" x="822.8" y="586">delivery</text><text class="bs" x="822.8" y="604">8.5k · 109c</text>
 </g>
-<g><title>vak-presentation: 2,020 source lines, 37 commits</title><rect class="box" x="969.7" y="562" width="84.2" height="68" rx="2"/>
+<g><title>vak-presentation: 2,020 source lines, 37 commits</title><rect class="box" x="969.8" y="562" width="84.2" height="68" rx="2"/>
 <text class="bl small" x="1011.9" y="590" text-anchor="middle">presentation</text><text class="bs" x="1011.9" y="606" text-anchor="middle">2.0k</text>
 </g>
 <g><title>vak-intake: 1,703 source lines, 2 commits</title><rect class="box" x="1060.0" y="562" width="81.0" height="68" rx="2"/>
@@ -580,7 +580,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
   <table class="bom">
     <thead><tr><th>Crate</th><th>Layer</th><th>Lang</th><th>Src lines</th><th>Test lines</th><th>Files</th><th>Commits</th><th>Deps</th><th>Used by</th><th>Ext</th><th>Role</th><th>Measured notes</th></tr></thead>
     <tbody id="bom-body">
-<tr data-layer="L7"><td><code>vak-client-ui</code></td><td>L7</td><td>TS</td><td class="n">36,608</td><td class="n">180</td><td class="n">179</td><td class="n">629</td><td class="n">—</td><td class="n">0</td><td class="n">9</td><td>SolidJS workspace client: the desktop bundle and the /app web bundle</td><td class="note">largest file api.ts (3,120)</td></tr>
+<tr data-layer="L7"><td><code>vak-client-ui</code></td><td>L7</td><td>TS</td><td class="n">36,692</td><td class="n">222</td><td class="n">180</td><td class="n">630</td><td class="n">—</td><td class="n">0</td><td class="n">9</td><td>SolidJS workspace client: the desktop bundle and the /app web bundle</td><td class="note">largest file api.ts (3,120)</td></tr>
 <tr data-layer="L7"><td><code>vak-admin-ui</code></td><td>L7</td><td>TS</td><td class="n">24,736</td><td class="n">0</td><td class="n">30</td><td class="n">259</td><td class="n">—</td><td class="n">0</td><td class="n">3</td><td>SolidJS admin console at /admin</td><td class="note">largest file App.tsx (7,944)</td></tr>
 <tr data-layer="L7"><td><code>vak</code></td><td>L7</td><td>Rust</td><td class="n">14,389</td><td class="n">1,517</td><td class="n">31</td><td class="n">211</td><td class="n">24</td><td class="n">0</td><td class="n">17</td><td>The CLI binary and every subcommand</td><td class="note">largest file main.rs (2,798)</td></tr>
 <tr data-layer="L7"><td><code>vak-terminal</code></td><td>L7</td><td>Rust</td><td class="n">5,110</td><td class="n">750</td><td class="n">16</td><td class="n">11</td><td class="n">0</td><td class="n">1</td><td class="n">11</td><td>ratatui client of a running server (vak term)</td><td class="note">largest file app.rs (1,184)</td></tr>
@@ -588,7 +588,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 <tr data-layer="L6"><td><code>vak-server</code></td><td>L6</td><td>Rust</td><td class="n">72,470</td><td class="n">23,676</td><td class="n">51</td><td class="n">827</td><td class="n">25</td><td class="n">2</td><td class="n">27</td><td>HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes</td><td class="note">largest file lib.rs (28,130)</td></tr>
 <tr data-layer="L6"><td><code>vak-ops</code></td><td>L6</td><td>Rust</td><td class="n">2,716</td><td class="n">0</td><td class="n">2</td><td class="n">39</td><td class="n">2</td><td class="n">3</td><td class="n">3</td><td>launchd/systemd control and service logs</td><td class="note">largest file services.rs (2,202); <span class="warn">no tests/</span></td></tr>
 <tr data-layer="L6"><td><code>vak-bus</code></td><td>L6</td><td>Rust</td><td class="n">1,453</td><td class="n">591</td><td class="n">6</td><td class="n">5</td><td class="n">0</td><td class="n">1</td><td class="n">14</td><td>NATS JetStream fabric, causal lineage, encrypted envelopes</td><td class="note">largest file bus.rs (561)</td></tr>
-<tr data-layer="L5"><td><code>vak-core</code></td><td>L5</td><td>Rust</td><td class="n">57,502</td><td class="n">9,964</td><td class="n">70</td><td class="n">627</td><td class="n">25</td><td class="n">4</td><td class="n">21</td><td>SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure</td><td class="note">largest file lib.rs (12,385)</td></tr>
+<tr data-layer="L5"><td><code>vak-core</code></td><td>L5</td><td>Rust</td><td class="n">57,743</td><td class="n">9,964</td><td class="n">70</td><td class="n">628</td><td class="n">25</td><td class="n">4</td><td class="n">21</td><td>SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure</td><td class="note">largest file lib.rs (12,385)</td></tr>
 <tr data-layer="L5"><td><code>vak-eval</code></td><td>L5</td><td>Rust</td><td class="n">2,454</td><td class="n">225</td><td class="n">7</td><td class="n">56</td><td class="n">9</td><td class="n">1</td><td class="n">8</td><td>Deterministic suite, live mode, context and banned-token gates</td><td class="note">largest file cases.rs (664)</td></tr>
 <tr data-layer="L5"><td><code>vak-flow</code></td><td>L5</td><td>Rust</td><td class="n">2,081</td><td class="n">1,358</td><td class="n">7</td><td class="n">67</td><td class="n">9</td><td class="n">3</td><td class="n">10</td><td>Static flow DAGs and the dynamic planner</td><td class="note">largest file exec.rs (780)</td></tr>
 <tr data-layer="L4"><td><code>vak-tools</code></td><td>L4</td><td>Rust</td><td class="n">15,874</td><td class="n">1,136</td><td class="n">28</td><td class="n">201</td><td class="n">11</td><td class="n">9</td><td class="n">23</td><td>Built-in tools, argument reader, broker worker protocol, egress proxy</td><td class="note">largest file broker.rs (2,154)</td></tr>
@@ -607,7 +607,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 <tr data-layer="L2"><td><code>vak-mail-calendar</code></td><td>L2</td><td>Rust</td><td class="n">18,903</td><td class="n">117</td><td class="n">7</td><td class="n">96</td><td class="n">2</td><td class="n">2</td><td class="n">21</td><td>Mail and calendar accounts, OAuth, IMAP, vault, effects</td><td class="note">largest file provider.rs (7,839)</td></tr>
 <tr data-layer="L2"><td><code>vak-ooxml</code></td><td>L2</td><td>Rust</td><td class="n">16,986</td><td class="n">4,916</td><td class="n">16</td><td class="n">35</td><td class="n">0</td><td class="n">6</td><td class="n">5</td><td>Open XML engine: read, edit, blank packages</td><td class="note">largest file read.rs (3,267)</td></tr>
 <tr data-layer="L2"><td><code>vak-pdf</code></td><td>L2</td><td>Rust</td><td class="n">9,581</td><td class="n">749</td><td class="n">16</td><td class="n">6</td><td class="n">0</td><td class="n">4</td><td class="n">4</td><td>PDF engine from ISO 32000-2</td><td class="note">largest file edit.rs (2,060)</td></tr>
-<tr data-layer="L2"><td><code>vak-delivery</code></td><td>L2</td><td>Rust</td><td class="n">8,475</td><td class="n">4,405</td><td class="n">13</td><td class="n">108</td><td class="n">3 · <span class="warn">up: intent</span></td><td class="n">5</td><td class="n">5</td><td>Semantic output contract, Markdown fallback, channel markup</td><td class="note">largest file lib.rs (2,328)</td></tr>
+<tr data-layer="L2"><td><code>vak-delivery</code></td><td>L2</td><td>Rust</td><td class="n">8,494</td><td class="n">4,405</td><td class="n">13</td><td class="n">109</td><td class="n">3 · <span class="warn">up: intent</span></td><td class="n">5</td><td class="n">5</td><td>Semantic output contract, Markdown fallback, channel markup</td><td class="note">largest file lib.rs (2,328)</td></tr>
 <tr data-layer="L2"><td><code>vak-presentation</code></td><td>L2</td><td>Rust</td><td class="n">2,020</td><td class="n">2,022</td><td class="n">2</td><td class="n">37</td><td class="n">0</td><td class="n">5</td><td class="n">5</td><td>Closed primitive vocabulary, packs, compiler</td><td class="note">largest file lib.rs (1,627)</td></tr>
 <tr data-layer="L2"><td><code>vak-intake</code></td><td>L2</td><td>Rust</td><td class="n">1,703</td><td class="n">0</td><td class="n">5</td><td class="n">2</td><td class="n">1</td><td class="n">2</td><td class="n">8</td><td>Feed connectors, bounded parsers, HTML reader</td><td class="note">largest file html.rs (674); <span class="warn">no tests/</span></td></tr>
 <tr data-layer="L2"><td><code>vak-voice</code></td><td>L2</td><td>Rust</td><td class="n">900</td><td class="n">0</td><td class="n">6</td><td class="n">12</td><td class="n">0</td><td class="n">2</td><td class="n">6</td><td>Voice provider vocabulary and session protocol</td><td class="note">largest file local.rs (306); <span class="warn">no tests/</span></td></tr>
@@ -635,7 +635,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 <tr><td><code>crates/vak-server/src/projection.rs</code></td><td class="n">6,008</td></tr>
 <tr><td><code>crates/vak-server/src/gateway.rs</code></td><td class="n">5,559</td></tr>
 <tr><td><code>crates/vak-server/src/mail_calendar.rs</code></td><td class="n">4,798</td></tr>
-<tr><td><code>crates/vak-core/src/presentation_tools.rs</code></td><td class="n">3,707</td></tr>
+<tr><td><code>crates/vak-core/src/presentation_tools.rs</code></td><td class="n">3,948</td></tr>
 <tr><td><code>crates/vak-session/src/log.rs</code></td><td class="n">3,574</td></tr>
 <tr><td><code>crates/vak-ooxml/src/read.rs</code></td><td class="n">3,267</td></tr>
 <tr><td><code>crates/vak-mail-calendar/src/effect.rs</code></td><td class="n">3,207</td></tr>
@@ -675,13 +675,13 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 </section>
 
 <section class="sheet" id="work" data-group="inventory" hidden>
-  <header><span class="sno">Sheet 11</span><h2>Where the work went</h2><span class="muted">Commits touching each path, of 2,349 since 2026-08-21. One commit can touch several.</span></header>
+  <header><span class="sno">Sheet 11</span><h2>Where the work went</h2><span class="muted">Commits touching each path, of 2,350 since 2026-08-21. One commit can touch several.</span></header>
   <div class="two">
     <div class="bars">
-<div class="bar"><span>docs/</span><span class="t"><i style="width:100.0%"></i></span><span class="v">1,327</span></div>
+<div class="bar"><span>docs/</span><span class="t"><i style="width:100.0%"></i></span><span class="v">1,328</span></div>
 <div class="bar"><span>vak-server</span><span class="t"><i class=hot style="width:62.3%"></i></span><span class="v">827</span></div>
-<div class="bar"><span>vak-client-ui</span><span class="t"><i class=hot style="width:47.4%"></i></span><span class="v">629</span></div>
-<div class="bar"><span>vak-core</span><span class="t"><i class=hot style="width:47.2%"></i></span><span class="v">627</span></div>
+<div class="bar"><span>vak-client-ui</span><span class="t"><i class=hot style="width:47.4%"></i></span><span class="v">630</span></div>
+<div class="bar"><span>vak-core</span><span class="t"><i class=hot style="width:47.3%"></i></span><span class="v">628</span></div>
 <div class="bar"><span>vak-agent</span><span class="t"><i style="width:25.3%"></i></span><span class="v">336</span></div>
 <div class="bar"><span>vak-admin-ui</span><span class="t"><i style="width:19.5%"></i></span><span class="v">259</span></div>
 <div class="bar"><span>vak (CLI)</span><span class="t"><i style="width:15.9%"></i></span><span class="v">211</span></div>
@@ -689,7 +689,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
 <div class="bar"><span>vak-tools</span><span class="t"><i style="width:15.1%"></i></span><span class="v">201</span></div>
 <div class="bar"><span>vak-session</span><span class="t"><i style="width:14.9%"></i></span><span class="v">198</span></div>
 <div class="bar"><span>vak-desktop</span><span class="t"><i style="width:9.8%"></i></span><span class="v">130</span></div>
-<div class="bar"><span>vak-delivery</span><span class="t"><i style="width:8.1%"></i></span><span class="v">108</span></div>
+<div class="bar"><span>vak-delivery</span><span class="t"><i style="width:8.2%"></i></span><span class="v">109</span></div>
 <div class="bar"><span>vak-llm</span><span class="t"><i style="width:7.2%"></i></span><span class="v">96</span></div>
 <div class="bar"><span>vak-mail-calendar</span><span class="t"><i style="width:7.2%"></i></span><span class="v">96</span></div>
 <div class="bar"><span>vak-intent</span><span class="t"><i style="width:6.6%"></i></span><span class="v">87</span></div>
@@ -720,7 +720,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
     <div style="display:grid;gap:12px;align-content:start">
       <p>The work concentrates where the architecture is weakest. The three facade crates took most of the commits, while the well-shaped lower crates (permission, storage, ooxml, pdf, lifecycle) were written once and changed little.</p>
       <p>Low churn in the lower crates is a good sign: they have clear contracts. High churn in the top three is the opposite. Every new behaviour lands in the same few files, because the boundaries that would let it land elsewhere don't exist.</p>
-      <p>Docs were touched in 56% of commits. Keeping the record true is a stated rule and it is followed, but each rule added to <code>AGENTS.md</code> (20,046 words) is enforced by whoever reads it, not by the type system or a crate boundary. The contract stands in for structure the code doesn't have.</p>
+      <p>Docs were touched in 57% of commits. Keeping the record true is a stated rule and it is followed, but each rule added to <code>AGENTS.md</code> (20,046 words) is enforced by whoever reads it, not by the type system or a crate boundary. The contract stands in for structure the code doesn't have.</p>
     </div>
   </div>
 </section>

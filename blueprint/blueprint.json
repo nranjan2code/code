@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "142c83869",
+  "revision": "9c229454c",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 327202,
+   "rust_src": 327462,
    "rust_tests": 84180,
-   "ts_src": 61344,
+   "ts_src": 61428,
    "routes": 411,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2349,
+   "total_commits": 2350,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
@@ -199,19 +199,19 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 497,
+  "commits": 498,
   "areas": [
    [
     "docs",
-    422
+    423
    ],
    [
     "(root)",
-    252
+    253
    ],
    [
     "vak-core",
-    219
+    220
    ],
    [
     "vak-server",
@@ -219,7 +219,7 @@
    ],
    [
     "vak-client-ui",
-    109
+    110
    ],
    [
     "vak-agent",
@@ -251,6 +251,18 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "9c229454c",
+    "date": "2026-10-18",
+    "subject": "Preserve table scalar values and sort decimal strings exactly",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-client-ui",
+     "vak-core",
+     "vak-delivery"
+    ]
+   },
    {
     "hash": "142c83869",
     "date": "2026-10-18",
@@ -378,20 +390,10 @@
     "areas": [
      "docs"
     ]
-   },
-   {
-    "hash": "825b18564",
-    "date": "2026-10-18",
-    "subject": "Clear reachable advisories, gate on cargo audit, and bring the record up to date",
-    "areas": [
-     "(root)",
-     ".cargo",
-     "docs",
-     "scripts"
-    ]
    }
   ],
   "unreleased": [
+   "Tables preserve textual IDs, comma-containing values and large integers.",
    "Route planning stops on unreadable evidence instead of planning from an incomplete history.",
    "Budget reservations retain unresolved costs when recording fails and keep their original attribution.",
    "Live outcome revisions and steering messages must be recorded before they change the running contract or reach the model.",
@@ -845,7 +847,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 82582,
+   "lines": 82666,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -867,7 +869,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 62037,
+   "lines": 62278,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -904,7 +906,7 @@
   {
    "id": "L2",
    "name": "Domain engines",
-   "lines": 58568,
+   "lines": 58587,
    "crates": [
     "vak-mail-calendar",
     "vak-ooxml",
@@ -1139,10 +1141,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 36608,
-   "tests": 180,
-   "files": 179,
-   "commits": 629,
+   "src": 36692,
+   "tests": 222,
+   "files": 180,
+   "commits": 630,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -1309,10 +1311,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 57502,
+   "src": 57743,
    "tests": 9964,
    "files": 70,
-   "commits": 627,
+   "commits": 628,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -1380,10 +1382,10 @@
    "layer": "L2",
    "kind": "rust",
    "role": "Semantic output contract, Markdown fallback, channel markup",
-   "src": 8475,
+   "src": 8494,
    "tests": 4405,
    "files": 13,
-   "commits": 108,
+   "commits": 109,
    "deps": [
     "vak-intent",
     "vak-presentation",
@@ -2395,7 +2397,7 @@
    },
    {
     "file": "crates/vak-core/src/presentation_tools.rs",
-    "lines": 3707
+    "lines": 3948
    },
    {
     "file": "crates/vak-session/src/log.rs",
@@ -2560,8 +2562,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1327,
-  "hot": 627
+  "docs_commits": 1328,
+  "hot": 628
  },
  "findings": [
   {
