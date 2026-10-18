@@ -572,6 +572,14 @@ export interface FinOpsAlertRow {
   session_id: string;
 }
 
+export interface PendingCharge {
+  id: string;
+  created_at: string;
+  estimate_usd: number | null;
+  model?: string;
+  provider?: string;
+}
+
 export interface FinOpsStatus {
   day_usd: number;
   day_input_tokens: number;

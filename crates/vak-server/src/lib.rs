@@ -55,6 +55,7 @@ mod agent_chats;
 pub mod agents;
 mod auth_identity;
 mod automations;
+mod budget_recovery;
 mod bus;
 mod canvas;
 mod card_actions;
@@ -1469,6 +1470,11 @@ fn router_with_state(state: AppState) -> Router {
         // never register a service; this is the one action that does.
         .route("/ops/services/activate", post(activate_services))
         .route("/finops", get(finops_status).patch(patch_finops))
+        .route("/finops/reservations", get(budget_recovery::pending))
+        .route(
+            "/finops/reservations/{id}/reconcile",
+            post(budget_recovery::reconcile),
+        )
         .route("/voice/speak", post(voice::voice_speak))
         .route("/voice/providers", get(voice::voice_providers))
         .route("/memory", get(list_memory).post(append_memory))
@@ -2075,7 +2081,10 @@ async fn finops_status(
     let mut rows: Vec<vak_core::finops::CostRow> = Vec::new();
     let mut activity: Vec<vak_core::finops::ActivityRow> = Vec::new();
     for home in &homes {
-        rows.extend(vak_core::finops::FinOpsLedger::new(home).all_rows());
+        let Ok(accounted) = vak_core::finops::FinOpsLedger::new(home).accounted_rows() else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        rows.extend(accounted);
         activity.extend(vak_core::finops::ActivityLedger::new(home).all_rows());
     }
     let ledger = vak_core::finops::FinOpsLedger::new(&shared_home);
@@ -13610,8 +13619,16 @@ async fn list_session_sandbox_records(
                 .collect::<Vec<_>>();
             // Which artifact and version each candidate and declared file
             // is, so a client addresses Review through the Library.
-            let artifacts = library::bindings(&state, &id, &principal);
-            Json(serde_json::json!({ "records": records, "artifacts": artifacts })).into_response()
+            match library::bindings(&state, &id, &principal) {
+                Ok(artifacts) => {
+                    Json(serde_json::json!({ "records": records, "artifacts": artifacts }))
+                        .into_response()
+                }
+                Err(error) => {
+                    tracing::warn!(kind = "artifact", error_kind = %vak_telemetry::error_kind(&error), "the Library bindings could not verify the artifact history");
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "artifact history could not be verified" }))).into_response()
+                }
+            }
         }
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -25151,6 +25168,30 @@ mod sandbox_promotion_tests {
                 .len(),
             3
         );
+    }
+
+    /// Plan M8.4c-a: a candidate of a declared file is read, accepted and
+    /// undone by its artifact id and version, and the conversation's
+    /// sandbox records name that artifact and version.
+    #[tokio::test]
+    async fn sandbox_records_endpoint_surfaces_unreadable_artifact_projection() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
+        let state = AppState::new(core.clone());
+        let artifacts = core.artifacts();
+        vak_session::chain::RecordChain::at(artifacts.path())
+            .append(&serde_json::json!({"invalid_artifact_row": true}))
+            .unwrap();
+
+        let response = list_session_sandbox_records(
+            State(state),
+            Path("missing-session".into()),
+            axum::Extension(AuthenticatedPrincipal::Operator),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     /// Plan M8.4c-a: a candidate of a declared file is read, accepted and

@@ -31,8 +31,8 @@ pub struct CostRow {
     /// UNKNOWN, never zero.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usd: Option<f64>,
-    /// Always "estimated" today; reserved for providers that return real
-    /// settlement data.
+    /// "estimated" for runtime pricing; "owner_verified" for an explicit
+    /// owner-confirmed final charge or append-only unknown-cost correction.
     pub source: String,
     pub session_id: String,
     /// Exact admission that produced this row, allowing a crash after append
@@ -47,6 +47,18 @@ pub struct CostRow {
     pub trace: Option<vak_session::trace::TraceKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<vak_session::ids::PrincipalId>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingReservation {
+    pub id: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub estimate_usd: Option<f64>,
+    pub budget_session_id: String,
+    pub session_id: String,
+    pub model: String,
+    pub provider: String,
+    pub trace: Option<vak_session::trace::TraceKey>,
 }
 
 vak_session::impl_traced!(CostRow, "cost_row");
@@ -149,8 +161,233 @@ impl FinOpsLedger {
         }
     }
 
-    fn strict_cost_totals(&self) -> Result<DailyCostTotals, vak_session::types::SessionError> {
-        Rollup::new(&self.path, &self.rollup_path).try_read(
+    /// Live admission liabilities that still need an owner-verified outcome.
+    /// Priced rows already in the strict cost rollup are omitted even if a
+    /// prior cleanup write was interrupted.
+    pub fn pending_reservations(&self) -> Result<Vec<PendingReservation>, String> {
+        let state = self.read_reservations()?;
+        let totals = self
+            .strict_session_totals()
+            .map_err(|_| "cost history could not be verified".to_string())?;
+        let mut found = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for row in state.reservations {
+            seen.insert(row.id.clone());
+            if let Some(settled) = totals.reservations.get(&row.id) {
+                if row.budget_session_id.is_empty() || settled.session_id != row.budget_session_id {
+                    return Err("reservation settlement ownership could not be verified".into());
+                }
+                if settled.usd.is_some() {
+                    continue;
+                }
+            }
+            found.push(PendingReservation {
+                id: row.id,
+                created_at: row.created_at,
+                estimate_usd: row.estimate_usd,
+                budget_session_id: row.budget_session_id,
+                session_id: row.session_id,
+                model: if row.model.is_empty() {
+                    "unknown".into()
+                } else {
+                    row.model
+                },
+                provider: row.provider,
+                trace: row.trace,
+            });
+        }
+        for (id, settled) in totals.reservations {
+            if settled.usd.is_none() && !seen.contains(&id) {
+                found.push(PendingReservation {
+                    id,
+                    created_at: settled.created_at,
+                    estimate_usd: None,
+                    budget_session_id: settled.session_id,
+                    session_id: settled.original_session_id,
+                    model: settled.model,
+                    provider: settled.provider,
+                    trace: settled.trace,
+                });
+            }
+        }
+        found.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(found)
+    }
+
+    /// Reconciles an unresolved admission with a dollar amount verified by
+    /// the owner. The append is unique by reservation id under the cost-chain
+    /// writer lock; cleanup follows only after that row is verified durable.
+    pub fn reconcile_reservation(
+        &self,
+        reservation_id: &str,
+        actual_usd: f64,
+        actor: vak_session::ids::PrincipalId,
+    ) -> Result<(), String> {
+        if !valid_usd(actual_usd) {
+            return Err("verified cost must be finite and non-negative".into());
+        }
+        let parsed = uuid::Uuid::parse_str(reservation_id)
+            .map_err(|_| "reservation id is invalid".to_string())?;
+        if parsed.get_version_num() != 7 || parsed.hyphenated().to_string() != reservation_id {
+            return Err("reservation id is invalid".into());
+        }
+
+        let reservation = self
+            .read_reservations()?
+            .reservations
+            .into_iter()
+            .find(|row| row.id == reservation_id);
+        loop {
+            let (totals, at) = self
+                .strict_cost_totals_at()
+                .map_err(|_| "cost history could not be verified".to_string())?;
+            if let Some(existing) = totals.reservations.get(reservation_id) {
+                let expected_owner = reservation
+                    .as_ref()
+                    .map(|row| row.budget_session_id.as_str())
+                    .filter(|owner| !owner.is_empty())
+                    .unwrap_or(existing.session_id.as_str());
+                if existing.session_id != expected_owner {
+                    return Err("reservation already has a different verified outcome".into());
+                }
+                if existing.usd == Some(actual_usd)
+                    && existing.source == "owner_verified"
+                    && existing.actor == Some(actor)
+                {
+                    return match reservation.as_ref() {
+                        Some(row) => self.remove_reconciled_reservation(row),
+                        None => Ok(()),
+                    };
+                }
+                if existing.usd.is_some() {
+                    return Err("reservation already has a different verified outcome".into());
+                }
+            }
+            let derived;
+            let row = if let Some(row) = reservation.as_ref() {
+                row
+            } else if let Some(existing) = totals.reservations.get(reservation_id) {
+                derived = DurableReservation {
+                    id: reservation_id.to_string(),
+                    created_at: existing.created_at,
+                    day: existing.created_at.date_naive(),
+                    estimate_usd: None,
+                    budget_session_id: existing.session_id.clone(),
+                    session_id: existing.original_session_id.clone(),
+                    model: existing.model.clone(),
+                    provider: existing.provider.clone(),
+                    trace: existing.trace.clone(),
+                    actor: existing.actor,
+                };
+                &derived
+            } else {
+                return Err("reservation was not found".into());
+            };
+            if row.budget_session_id.is_empty() {
+                return Err("reservation has no verifiable budget owner".into());
+            }
+            let cost = CostRow {
+                ts: chrono::Utc::now(),
+                model: if row.model.is_empty() {
+                    "unknown".into()
+                } else {
+                    row.model.clone()
+                },
+                provider: row.provider.clone(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_input_tokens: None,
+                usd: Some(actual_usd),
+                source: "owner_verified".into(),
+                session_id: if row.session_id.is_empty() {
+                    row.budget_session_id.clone()
+                } else {
+                    row.session_id.clone()
+                },
+                reservation_id: Some(row.id.clone()),
+                budget_session_id: Some(row.budget_session_id.clone()),
+                trace: row.trace.clone(),
+                actor: Some(actor),
+            };
+            if self
+                .cost_chain()
+                .append_all_after(at, &[cost])
+                .map_err(|error| error.to_string())?
+            {
+                // Read the synchronized row back through the strict rollup;
+                // cleanup cannot happen on an unverified append.
+                continue;
+            }
+        }
+    }
+
+    fn read_reservations(&self) -> Result<DurableReservations, String> {
+        let Some(raw) = vak_session::documents::read(&self.reservations_path)? else {
+            return Ok(DurableReservations {
+                schema: 1,
+                reservations: Vec::new(),
+            });
+        };
+        let state: DurableReservations = serde_json::from_str(&raw)
+            .map_err(|_| "durable budget reservations are unreadable".to_string())?;
+        if state.schema != 1 {
+            return Err("durable budget reservations have an unsupported schema".into());
+        }
+        let mut ids = std::collections::BTreeSet::new();
+        for row in &state.reservations {
+            let parsed = uuid::Uuid::parse_str(&row.id)
+                .map_err(|_| "durable budget reservation id is invalid".to_string())?;
+            if parsed.get_version_num() != 7 || !ids.insert(row.id.as_str()) {
+                return Err("durable budget reservation ids are invalid or duplicated".into());
+            }
+            if row.estimate_usd.is_some_and(|amount| !valid_usd(amount)) {
+                return Err("durable budget reservation estimate is invalid".into());
+            }
+        }
+        Ok(state)
+    }
+
+    fn remove_reconciled_reservation(&self, expected: &DurableReservation) -> Result<(), String> {
+        vak_session::documents::update(&self.reservations_path, |current| {
+            let Some(raw) = current else {
+                return Ok(None);
+            };
+            let mut state: DurableReservations = serde_json::from_str(raw)
+                .map_err(|_| "durable budget reservations are unreadable".to_string())?;
+            if state.schema != 1 {
+                return Err("durable budget reservations have an unsupported schema".into());
+            }
+            let Some(index) = state
+                .reservations
+                .iter()
+                .position(|row| row.id == expected.id)
+            else {
+                return Ok(None);
+            };
+            let current = &state.reservations[index];
+            if current.budget_session_id != expected.budget_session_id
+                || current.session_id != expected.session_id
+                || current.trace != expected.trace
+            {
+                return Err("reservation changed while its outcome was being recorded".into());
+            }
+            state.reservations.remove(index);
+            let next = serde_json::to_string(&state)
+                .map_err(|_| "durable budget reservations could not be encoded".to_string())?;
+            Ok(Some((next, ())))
+        })?;
+        Ok(())
+    }
+
+    fn strict_cost_totals_at(
+        &self,
+    ) -> Result<(DailyCostTotals, vak_session::tail::Position), vak_session::types::SessionError>
+    {
+        Rollup::new(&self.path, &self.rollup_path).try_read_at(
             |totals: &mut DailyCostTotals, bytes| {
                 let row: CostRow = serde_json::from_slice(bytes).map_err(|error| {
                     vak_session::types::SessionError::Corrupt {
@@ -165,26 +402,68 @@ impl FinOpsLedger {
                     });
                 }
                 if let Some(id) = &row.reservation_id {
-                    if totals.reservations.contains_key(id) {
-                        // A dispatch has exactly one settlement row. A repeat
-                        // may describe another paid dispatch accidentally
-                        // reusing the id; never hide that cost by deduping it.
-                        return Err(vak_session::types::SessionError::Corrupt {
-                            line: 0,
-                            message: "reservation id has multiple settled rows".into(),
-                        });
+                    let budget_session =
+                        row.budget_session_id.as_deref().unwrap_or(&row.session_id);
+                    let correction = if let Some(previous) = totals.reservations.get(id) {
+                        if previous.usd.is_none()
+                            && row.usd.is_some()
+                            && row.source == "owner_verified"
+                            && row.actor.is_some()
+                            && previous.session_id == budget_session
+                            && !previous.corrected
+                        {
+                            Some(previous.clone())
+                        } else {
+                            return Err(vak_session::types::SessionError::Corrupt {
+                                line: 0,
+                                message: "reservation id has multiple settled rows".into(),
+                            });
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(previous) = correction {
+                        let old_day = totals.days.entry(previous.day).or_default();
+                        old_day.unknown_calls = old_day.unknown_calls.saturating_sub(1);
+                        let old_session = totals
+                            .sessions
+                            .entry(previous.session_id.clone())
+                            .or_default();
+                        old_session.unknown_calls = old_session.unknown_calls.saturating_sub(1);
+                        totals.reservations.insert(
+                            id.clone(),
+                            SettledReservation {
+                                session_id: budget_session.to_string(),
+                                usd: row.usd,
+                                source: row.source.clone(),
+                                actor: row.actor,
+                                day: row.ts.date_naive(),
+                                corrected: true,
+                                created_at: row.ts,
+                                original_session_id: row.session_id.clone(),
+                                model: row.model.clone(),
+                                provider: row.provider.clone(),
+                                trace: row.trace.clone(),
+                            },
+                        );
+                    } else {
+                        totals.reservations.insert(
+                            id.clone(),
+                            SettledReservation {
+                                session_id: budget_session.to_string(),
+                                usd: row.usd,
+                                source: row.source.clone(),
+                                actor: row.actor,
+                                day: row.ts.date_naive(),
+                                corrected: false,
+                                created_at: row.ts,
+                                original_session_id: row.session_id.clone(),
+                                model: row.model.clone(),
+                                provider: row.provider.clone(),
+                                trace: row.trace.clone(),
+                            },
+                        );
                     }
-                    totals.reservations.insert(
-                        id.clone(),
-                        SettledReservation {
-                            session_id: row
-                                .budget_session_id
-                                .as_deref()
-                                .unwrap_or(&row.session_id)
-                                .to_string(),
-                            usd: row.usd,
-                        },
-                    );
                 }
                 let total = totals.days.entry(row.ts.date_naive()).or_default();
                 if let Some(usd) = row.usd {
@@ -227,8 +506,16 @@ impl FinOpsLedger {
         )
     }
 
+    fn strict_cost_totals(&self) -> Result<DailyCostTotals, vak_session::types::SessionError> {
+        self.strict_cost_totals_at().map(|(totals, _)| totals)
+    }
+
     fn strict_session_totals(&self) -> Result<DailyCostTotals, String> {
         self.strict_cost_totals().map_err(|error| error.to_string())
+    }
+
+    fn cost_chain(&self) -> RecordChain {
+        RecordChain::at(&self.path)
     }
 
     /// Every row from the ledger, oldest first, for callers that need to
@@ -237,6 +524,57 @@ impl FinOpsLedger {
     /// lines are skipped, same tolerance `total_usd_since` already has.
     pub fn all_rows(&self) -> Vec<CostRow> {
         RecordChain::at(&self.path).read()
+    }
+
+    /// Cost rows for summaries. A verified owner correction replaces its
+    /// earlier unpriced row in this projection while preserving the original
+    /// usage counts; `all_rows` remains the unmodified audit evidence.
+    pub fn accounted_rows(&self) -> Result<Vec<CostRow>, String> {
+        let rows = self
+            .cost_chain()
+            .try_read::<CostRow>()
+            .map_err(|_| "cost history could not be verified".to_string())?;
+        self.strict_cost_totals()
+            .map_err(|_| "cost history could not be verified".to_string())?;
+        let corrections: std::collections::BTreeMap<_, _> = rows
+            .iter()
+            .filter(|row| {
+                row.reservation_id.is_some()
+                    && row.source == "owner_verified"
+                    && row.usd.is_some()
+                    && row.actor.is_some()
+            })
+            .filter_map(|row| {
+                row.reservation_id
+                    .as_ref()
+                    .map(|id| (id.clone(), row.clone()))
+            })
+            .collect();
+        let mut output = Vec::with_capacity(rows.len());
+        let mut emitted = std::collections::BTreeSet::new();
+        for row in rows {
+            let Some(id) = row.reservation_id.as_ref() else {
+                output.push(row);
+                continue;
+            };
+            if row.usd.is_none()
+                && let Some(correction) = corrections.get(id)
+            {
+                if emitted.insert(id.clone()) {
+                    let mut accounted = correction.clone();
+                    accounted.input_tokens = row.input_tokens;
+                    accounted.output_tokens = row.output_tokens;
+                    accounted.cache_read_input_tokens = row.cache_read_input_tokens;
+                    output.push(accounted);
+                }
+                continue;
+            }
+            if row.source == "owner_verified" && emitted.contains(id) {
+                continue;
+            }
+            output.push(row);
+        }
+        Ok(output)
     }
 
     /// One USD total per UTC calendar day, oldest first, for the trailing
@@ -296,6 +634,15 @@ struct SessionSpend {
 struct SettledReservation {
     session_id: String,
     usd: Option<f64>,
+    source: String,
+    actor: Option<vak_session::ids::PrincipalId>,
+    day: chrono::NaiveDate,
+    corrected: bool,
+    created_at: chrono::DateTime<chrono::Utc>,
+    original_session_id: String,
+    model: String,
+    provider: String,
+    trace: Option<vak_session::trace::TraceKey>,
 }
 
 fn valid_usd(usd: f64) -> bool {
@@ -377,6 +724,12 @@ struct DurableReservation {
     created_at: chrono::DateTime<chrono::Utc>,
     day: chrono::NaiveDate,
     estimate_usd: Option<f64>,
+    #[serde(default)]
+    session_id: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    provider: String,
     #[serde(default)]
     budget_session_id: String,
     trace: Option<vak_session::trace::TraceKey>,
@@ -641,6 +994,9 @@ impl CoreSpendGate {
                 created_at: now,
                 day: now.date_naive(),
                 estimate_usd: estimate,
+                session_id: check.session_id.to_string(),
+                model: check.model.to_string(),
+                provider: check.provider.to_string(),
                 budget_session_id: budget_session_id.clone(),
                 trace: trace.clone(),
                 actor,
@@ -753,6 +1109,26 @@ impl CoreSpendGate {
             } else {
                 None
             };
+            if let Some(totals) = &totals {
+                // A priced settlement is the durable acknowledgement of this
+                // exact admission. Finish its interrupted cleanup in the same
+                // CAS that publishes the new admission. Never infer an
+                // outcome, expire a liability, or remove an unknown charge.
+                for pending in &state.reservations {
+                    if let Some(settled) = totals.reservations.get(&pending.id)
+                        && (pending.budget_session_id.is_empty()
+                            || settled.session_id != pending.budget_session_id)
+                    {
+                        return Err("reservation settlement ownership could not be verified".into());
+                    }
+                }
+                state.reservations.retain(|pending| {
+                    !totals
+                        .reservations
+                        .get(&pending.id)
+                        .is_some_and(|settled| settled.usd.is_some())
+                });
+            }
             let total = if let Some(_cap) = day_cap {
                 let day = totals
                     .as_ref()
@@ -977,7 +1353,16 @@ impl CoreSpendGate {
             if actual.is_some_and(|usd| !valid_usd(usd)) {
                 return Err("settled cost is invalid".into());
             }
-            state.reservations.retain(|entry| entry.id != id_text);
+            if actual.is_some() {
+                state.reservations.retain(|entry| entry.id != id_text);
+            } else if let Some(reservation) = state
+                .reservations
+                .iter_mut()
+                .find(|entry| entry.id == id_text)
+            {
+                // Keep unknown outcomes owner-reconcilable after restart.
+                reservation.estimate_usd = None;
+            }
             let next = serde_json::to_string(&state)
                 .map_err(|_| "durable budget reservations could not be encoded".to_string())?;
             Ok(Some((next, ())))
@@ -1264,6 +1649,9 @@ impl SpendGate for CoreSpendGate {
                     created_at: now,
                     day: now.date_naive(),
                     estimate_usd: usd,
+                    session_id: session_id.to_string(),
+                    model: model.to_string(),
+                    provider: provider.to_string(),
                     budget_session_id,
                     trace,
                     actor,
@@ -1656,7 +2044,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn appended_actual_keeps_any_larger_pending_estimate_by_reservation_id() {
+    async fn priced_settlement_completes_interrupted_cleanup_before_next_admission() {
         let dir = tempdir().unwrap();
         let finops = vak_config::FinopsResolved {
             max_run_usd: Some(5.0),
@@ -1707,11 +2095,20 @@ mod tests {
             planned_output_tokens: 0,
             ..check("claude-sonnet")
         };
-        let error = reopened
+        let next = reopened
             .reserve_dispatch(&small)
             .await
-            .expect_err("the unresolved estimate excess remains charged");
-        assert!(error.contains("run budget"), "{error}");
+            .expect("the verified final cost replaces the interrupted estimate")
+            .unwrap();
+        let state = durable_reservations(dir.path());
+        assert_eq!(state.reservations.len(), 1);
+        assert_eq!(state.reservations[0].id, next.as_str());
+        assert!(
+            !state
+                .reservations
+                .iter()
+                .any(|pending| pending.id == id.as_str())
+        );
     }
 
     #[tokio::test]
@@ -2519,7 +2916,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn durable_unpriced_settlement_blocks_today_but_not_a_later_day() {
+    async fn durable_unpriced_settlement_stays_reserved_across_day_rollover() {
         let dir = tempdir().unwrap();
         let gate = CoreSpendGate::new(dir.path(), &vak_config::FinopsResolved::default());
         let id = gate
@@ -2540,7 +2937,7 @@ mod tests {
             durable_reservations(dir.path())
                 .reservations
                 .iter()
-                .all(|entry| entry.id != id.as_str())
+                .any(|entry| { entry.id == id.as_str() && entry.estimate_usd.is_none() })
         );
 
         gate.refresh_caps(&vak_config::FinopsResolved {
@@ -2553,7 +2950,19 @@ mod tests {
         assert!(today_error.contains("budget"));
 
         let tomorrow = chrono::Utc::now() + chrono::Duration::days(1);
-        assert!(gate.admit_at(&check("claude-sonnet"), tomorrow).is_ok());
+        let rollover_error = gate
+            .admit_at(&check("claude-sonnet"), tomorrow)
+            .expect_err("unresolved unknown owner liability remains reserved across rollover");
+        assert!(
+            rollover_error.contains("unknown") || rollover_error.contains("budget"),
+            "{rollover_error}"
+        );
+        assert!(
+            durable_reservations(dir.path())
+                .reservations
+                .iter()
+                .any(|entry| entry.id == id.as_str() && entry.estimate_usd.is_none())
+        );
     }
 
     #[tokio::test]
@@ -2640,6 +3049,244 @@ mod tests {
             .await
             .expect_err("unknown settlement remains fail-closed after restart");
         assert!(error.contains("unknown pricing"), "{error}");
+    }
+
+    #[test]
+    fn owner_reconcile_records_actual_above_estimate_and_is_idempotent() {
+        use vak_session::ids::{AgentId, PrincipalId, SpaceId, TenantId};
+        use vak_session::trace::{Cause, TraceKey};
+        let dir = tempdir().unwrap();
+        let gate = CoreSpendGate::new(dir.path(), &vak_config::FinopsResolved::default());
+        let trace = TraceKey::root(
+            TenantId::new(),
+            SpaceId::new(),
+            AgentId::new(),
+            Cause::Heartbeat,
+        );
+        gate.set_trace(Some(trace.clone()));
+        let id = futures::executor::block_on(gate.reserve_dispatch(&check("claude-sonnet")))
+            .unwrap()
+            .unwrap();
+        let reservation = durable_reservations(dir.path()).reservations[0].clone();
+        let estimate = reservation.estimate_usd.unwrap();
+        let actor = PrincipalId::new();
+        let ledger = FinOpsLedger::new(dir.path());
+
+        ledger
+            .reconcile_reservation(id.as_str().as_str(), estimate + 2.0, actor)
+            .unwrap();
+        ledger
+            .reconcile_reservation(id.as_str().as_str(), estimate + 2.0, actor)
+            .unwrap();
+        assert!(
+            ledger
+                .reconcile_reservation(id.as_str().as_str(), estimate + 3.0, actor)
+                .is_err()
+        );
+        assert!(ledger.pending_reservations().unwrap().is_empty());
+        let rows = ledger.all_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].usd, Some(estimate + 2.0));
+        assert_eq!(rows[0].source, "owner_verified");
+        assert_eq!(
+            rows[0].reservation_id.as_deref(),
+            Some(id.as_str().as_str())
+        );
+        assert_eq!(rows[0].budget_session_id.as_deref(), Some("s1"));
+        assert_eq!(rows[0].trace.as_ref(), Some(&trace));
+        assert_eq!(rows[0].actor, Some(actor));
+        assert_eq!(rows[0].model, "claude-sonnet");
+        assert_eq!(rows[0].provider, "anthropic");
+    }
+
+    #[test]
+    fn concurrent_owner_reconcile_conflicts_append_exactly_one_row() {
+        use vak_session::ids::PrincipalId;
+        let dir = tempdir().unwrap();
+        let gate = CoreSpendGate::new(dir.path(), &vak_config::FinopsResolved::default());
+        let id = futures::executor::block_on(gate.reserve_dispatch(&check("claude-sonnet")))
+            .unwrap()
+            .unwrap();
+        let ledger = Arc::new(FinOpsLedger::new(dir.path()));
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let a_ledger = ledger.clone();
+        let a_barrier = barrier.clone();
+        let a_id = id.as_str();
+        let a = std::thread::spawn(move || {
+            a_barrier.wait();
+            a_ledger.reconcile_reservation(&a_id, 6.0, PrincipalId::new())
+        });
+        let b_id = id.as_str();
+        let b = std::thread::spawn(move || {
+            barrier.wait();
+            ledger.reconcile_reservation(&b_id, 7.0, PrincipalId::new())
+        });
+        let results = [a.join().unwrap(), b.join().unwrap()];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        let rows = FinOpsLedger::new(dir.path()).all_rows();
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0].usd, Some(6.0) | Some(7.0)));
+    }
+
+    #[test]
+    fn owner_reconcile_refuses_unknown_or_unmatched_outcomes() {
+        use vak_session::ids::PrincipalId;
+        let dir = tempdir().unwrap();
+        let gate = CoreSpendGate::new(dir.path(), &vak_config::FinopsResolved::default());
+        let id = futures::executor::block_on(gate.reserve_dispatch(&check("mystery-model")))
+            .unwrap()
+            .unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        assert_eq!(ledger.pending_reservations().unwrap().len(), 1);
+        let reservation = durable_reservations(dir.path()).reservations[0].clone();
+        ledger
+            .append(&CostRow {
+                ts: chrono::Utc::now(),
+                model: "mystery-model".into(),
+                provider: "anthropic".into(),
+                input_tokens: 1_000_000,
+                output_tokens: 100_000,
+                cache_read_input_tokens: None,
+                usd: None,
+                source: "estimated".into(),
+                session_id: "s1".into(),
+                reservation_id: Some(id.as_str()),
+                budget_session_id: Some("s1".into()),
+                trace: reservation.trace.clone(),
+                actor: None,
+            })
+            .unwrap();
+        let actor = PrincipalId::new();
+        ledger
+            .reconcile_reservation(&id.as_str(), 1.0, actor)
+            .expect("an owner may replace an unknown settlement with a verified amount");
+        ledger
+            .reconcile_reservation(&id.as_str(), 1.0, actor)
+            .expect("the verified correction is idempotent");
+        assert!(
+            ledger
+                .reconcile_reservation(&id.as_str(), 2.0, actor)
+                .is_err()
+        );
+        assert_eq!(durable_reservations(dir.path()).reservations.len(), 0);
+        assert_eq!(ledger.pending_reservations().unwrap().len(), 0);
+        assert_eq!(
+            ledger.all_rows().len(),
+            2,
+            "the original unknown row stays append-only"
+        );
+        let accounted = ledger.accounted_rows().unwrap();
+        assert_eq!(accounted.len(), 1);
+        assert_eq!(accounted[0].usd, Some(1.0));
+        assert_eq!(accounted[0].input_tokens, 1_000_000);
+        assert_eq!(accounted[0].source, "owner_verified");
+        let totals = ledger.strict_cost_totals().unwrap();
+        assert_eq!(totals.sessions.get("s1").unwrap().unknown_calls, 0);
+        assert_eq!(totals.sessions.get("s1").unwrap().usd, 1.0);
+        assert_eq!(
+            totals
+                .days
+                .values()
+                .map(|day| day.unknown_calls)
+                .sum::<u64>(),
+            0
+        );
+        assert!(
+            ledger
+                .reconcile_reservation(&SpendReservationId::new().as_str(), 1.0, PrincipalId::new())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn owner_reconcile_can_resolve_legacy_unknown_row_by_its_recorded_reservation_id() {
+        use vak_session::ids::PrincipalId;
+        let dir = tempdir().unwrap();
+        let id = SpendReservationId::new();
+        let ledger = FinOpsLedger::new(dir.path());
+        ledger
+            .append(&CostRow {
+                ts: chrono::Utc::now(),
+                model: "legacy-model".into(),
+                provider: "legacy-provider".into(),
+                input_tokens: 8,
+                output_tokens: 3,
+                cache_read_input_tokens: None,
+                usd: None,
+                source: "estimated".into(),
+                session_id: "session-a".into(),
+                reservation_id: Some(id.as_str()),
+                budget_session_id: Some("session-a".into()),
+                trace: None,
+                actor: None,
+            })
+            .unwrap();
+
+        let pending = ledger.pending_reservations().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, id.as_str());
+        assert_eq!(pending[0].model, "legacy-model");
+        assert!(pending[0].estimate_usd.is_none());
+        ledger
+            .reconcile_reservation(&id.as_str(), 4.5, PrincipalId::new())
+            .unwrap();
+        assert!(ledger.pending_reservations().unwrap().is_empty());
+        assert_eq!(ledger.all_rows().len(), 2);
+        let totals = ledger.strict_cost_totals().unwrap();
+        assert_eq!(totals.sessions.get("session-a").unwrap().usd, 4.5);
+        assert_eq!(totals.sessions.get("session-a").unwrap().unknown_calls, 0);
+    }
+
+    #[test]
+    fn owner_reconcile_fails_closed_on_corrupt_history() {
+        use vak_session::ids::PrincipalId;
+        let dir = tempdir().unwrap();
+        let gate = CoreSpendGate::new(dir.path(), &vak_config::FinopsResolved::default());
+        let id = futures::executor::block_on(gate.reserve_dispatch(&check("claude-sonnet")))
+            .unwrap()
+            .unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        RecordChain::at(&ledger.path)
+            .append(&serde_json::json!({"invalid_cost_row": true}))
+            .unwrap();
+        assert!(
+            ledger
+                .reconcile_reservation(&id.as_str(), 5.0, PrincipalId::new())
+                .is_err()
+        );
+        assert!(ledger.pending_reservations().is_err());
+        assert_eq!(durable_reservations(dir.path()).reservations.len(), 1);
+    }
+
+    #[test]
+    fn owner_reconcile_uses_unknown_model_for_legacy_reservation_metadata() {
+        use vak_session::ids::PrincipalId;
+        let dir = tempdir().unwrap();
+        let id = SpendReservationId::new();
+        let path = vak_config::scope::SharedScope::new(dir.path()).cost_reservations();
+        vak_session::documents::update(&path, |_| {
+            Ok(Some((
+                serde_json::json!({
+                    "schema": 1,
+                    "reservations": [{
+                        "id": id.as_str(), "created_at": chrono::Utc::now(),
+                        "day": chrono::Utc::now().date_naive(), "estimate_usd": null,
+                        "budget_session_id": "s1", "trace": null, "actor": null
+                    }]
+                })
+                .to_string(),
+                (),
+            )))
+        })
+        .unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        ledger
+            .reconcile_reservation(&id.as_str(), 2.5, PrincipalId::new())
+            .unwrap();
+        let row = &ledger.all_rows()[0];
+        assert_eq!(row.model, "unknown");
+        assert_eq!(row.provider, "");
+        assert_eq!(row.session_id, "s1");
     }
 
     /// `record_settled` releases a dispatch's reservation and folds the

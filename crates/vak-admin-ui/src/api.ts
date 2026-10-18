@@ -34,6 +34,7 @@ import type {
   ConfigInfo,
   DiscoveredModelsResponse,
   FinOpsStatus,
+  PendingCharge,
   SameModelSuggestions,
   FrozenContract,
   GatewayStatus,
@@ -838,6 +839,16 @@ export const api = {
 
   finops: (agent?: string): Promise<FinOpsStatus> =>
     fetch(withAgent("/finops", agent)).then((r) => handle(r)),
+
+  pendingCosts: (): Promise<{ reservations: PendingCharge[]; unaddressable_unknown_calls: number }> =>
+    fetch("/finops/reservations").then((response) => handle<{ reservations: PendingCharge[]; unaddressable_unknown_calls: number }>(response)),
+
+  reconcileCost: (id: string, actualUsd: number): Promise<void> =>
+    fetch(`/finops/reservations/${encodeURIComponent(id)}/reconcile`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ actual_usd: actualUsd, verified_with_provider: true }),
+    }).then(handleVoid),
 
   /** Absent = leave alone, `null` = clear the cap, a number = set it. */
   patchFinops: (

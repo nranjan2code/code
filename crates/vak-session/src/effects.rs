@@ -1147,6 +1147,67 @@ mod tests {
         assert!(effects.list_page(None, None, 2, Some("zz")).is_err());
     }
 
+    /// Local growth measurement for A09. Run with
+    /// `cargo test -p vak-session effects_index_growth_measurement -- --ignored --nocapture`.
+    /// The chain is seeded through RecordChain in one synced batch so setup
+    /// does not measure per-row fsync. Reads below use the production Effects
+    /// Rollup and lookup/page APIs. This measures whole-Document decode too;
+    /// indexed lookup does not imply bounded decoding.
+    #[test]
+    #[ignore = "manual local growth measurement; writes up to 10,000 effect rows"]
+    fn effects_index_growth_measurement() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        for count in [100usize, 1_000, 10_000] {
+            let (_dir, effects) = home();
+            let events: Vec<_> = (0..count)
+                .map(|n| EffectEvent {
+                    effect: EffectId::new(),
+                    at: Utc::now() + chrono::Duration::microseconds(n as i64),
+                    trace: None,
+                    actor: None,
+                    step: EffectStep::Prepared {
+                        kind: EffectKind::delivery("benchmark:target"),
+                        run: None,
+                        idempotency_key: format!("{n:020}"),
+                        payload_digest: "0".repeat(64),
+                        target: "benchmark:target".into(),
+                        payload: ObjectRef {
+                            id: "benchmark-object".into(),
+                            len: 0,
+                        },
+                        supersedes: None,
+                    },
+                })
+                .collect();
+            effects.chain.append_all(&events).expect("seed effect rows");
+            let chosen = events[count / 2].effect;
+
+            let cold_start = Instant::now();
+            let cold = effects.list_page(None, None, 25, None).expect("cold page");
+            let cold_page = cold_start.elapsed();
+            assert_eq!(cold.effects.len(), 25);
+
+            let get_start = Instant::now();
+            let found = effects.get(black_box(chosen)).expect("indexed get");
+            let get = get_start.elapsed();
+            assert!(found.is_some());
+
+            let page_start = Instant::now();
+            let page = effects.list_page(None, None, 25, None).expect("warm page");
+            let warm_page = page_start.elapsed();
+            assert_eq!(page.effects.len(), 25);
+
+            eprintln!(
+                "effects_growth rows={count} cold_page_ms={:.3} warm_get_ms={:.3} warm_page_ms={:.3}",
+                cold_page.as_secs_f64() * 1_000.0,
+                get.as_secs_f64() * 1_000.0,
+                warm_page.as_secs_f64() * 1_000.0,
+            );
+        }
+    }
+
     #[test]
     fn a_delivery_from_a_conversation_goes_with_it() {
         let (dir, effects) = home();

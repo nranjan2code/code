@@ -107,6 +107,8 @@ pub struct TaskDeps {
     pub run_retry_attempts: u32,
     pub run_retry_base_backoff_ms: u64,
     pub dispatch_ceiling: u32,
+    /// Shared request-wide model-call accounting inherited by every worker.
+    pub model_call_budget: Option<Arc<crate::ModelCallBudget>>,
     /// Parent turn's per-purpose model settings; workers must not fall back
     /// to shipped defaults when the operator configured these.
     pub steps: vak_control::StepDefaults,
@@ -1104,6 +1106,7 @@ impl TaskTool {
         cfg.run_retry_attempts = self.deps.run_retry_attempts;
         cfg.run_retry_base_backoff_ms = self.deps.run_retry_base_backoff_ms;
         cfg.dispatch_ceiling = self.deps.dispatch_ceiling;
+        cfg.model_call_budget = self.deps.model_call_budget.clone();
         cfg.steps = self.deps.steps.clone();
         cfg.protected_paths = self.deps.protected_paths.clone();
         cfg.stop_policy = self.deps.stop_policy.clone();

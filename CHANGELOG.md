@@ -1,5 +1,15 @@
 ## Unreleased
 
+- FinOps lets the owner record a provider-verified actual charge for an
+  uncertain reservation. Unresolved charges remain reserved; live work and
+  unverified histories refuse reconciliation.
+- Optional `[control].max_model_calls` caps provider dispatches across a
+  request, its workers and flow planner. Counts survive recreation of the
+  same run; retries consume the shared cap. It is disabled by default.
+- Required admission, framing, authorization, work receipts and successful
+  endings stop on journal failures. Library review bindings report unreadable
+  history instead of presenting an empty projection.
+
 - Account erasure refuses unreadable connection state and checks the active
   install’s Agent ledgers. Receipts disclose that older results stored without
   account-scope protection can remain readable in their conversations.

@@ -62,6 +62,8 @@ pub type NodePrompt = Arc<dyn Fn(&[&str]) -> String + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ExecutorDeps {
+    /// Request-wide provider-call accounting inherited by all flow nodes.
+    pub model_call_budget: Option<Arc<vak_agent::ModelCallBudget>>,
     /// The tenant object store node ledgers keep their large payloads in.
     pub objects: Arc<dyn vak_session::objects::Objects>,
     pub provider: Arc<dyn Provider>,
@@ -668,6 +670,7 @@ async fn execute_node(
             cfg.run_retry_attempts = deps.run_retry_attempts;
             cfg.run_retry_base_backoff_ms = deps.run_retry_base_backoff_ms;
             cfg.dispatch_ceiling = deps.dispatch_ceiling;
+            cfg.model_call_budget = deps.model_call_budget.clone();
             cfg.spend_gate = deps.spend_gate.clone();
             cfg.model = deps.model.clone();
             cfg.tools = tools;

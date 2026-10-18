@@ -89,12 +89,12 @@ The audit remains the historical evidence; the implementation log names checks.
 | A01 | Partly repaired | Strict artifact consumers and credential tests pass; remaining decision-reader audit |
 | A02 | Repaired, full gate previously passed | Preserve atomic fencing regressions |
 | A03 | Dispatch, abort partials, fence cards and child terminal writes repaired | Preserve fault-injection regressions; remaining causal-write audit |
-| A04 | Child-bound services repaired | Explicit aggregate run-tree dispatch configuration remains open |
+| A04 | Child-bound services and optional durable shared call cap implemented | Detached maintenance is outside request scope; budget Document retention remains open |
 | A05 | Repaired, full gate previously passed | Preserve cancellation/stale probe tests |
 | A06 | Repaired, full gate previously passed | Preserve failed-compaction regression |
 | A07 | Conservative scheduling repaired | Preserve unknown/exclusive tool behavior |
-| A08 | Source-confirmed architectural work | Narrow ownership after child-service contracts |
-| A09 | Effects incremental Rollup, indexed lookup and cursor pages implemented | Whole-snapshot decoding and growth measurements remain |
+| A08 | Shared parent/child history and presentation construction extracted | Further Core ownership separation remains |
+| A09 | Growth benchmark confirms linear snapshot decode | Sharded or transactional projection required; warm 10k-row reads ~308 ms |
 | A10 | Encrypted catalog implemented; focused suite passes | Multi-platform packaging and wider acceptance remain |
 | A11 | Typed outcomes and mechanically checked ClientEvent fixture implemented | Wider presentation wire fixture coverage/replay acceptance |
 | A12 | Unreachable production API quarantined | Module now test-only; concurrent chunk ownership must precede any production reintroduction |
@@ -109,7 +109,7 @@ The audit remains the historical evidence; the implementation log names checks.
 | P09 | Payload checks, consumed-property coverage and isolated fallback implemented | Browser acceptance; coverage is top-level property granularity |
 | P10 | Scales, gaps and explicit x geometry tests pass | Running-app numeric/time/gap cases |
 | P11 | Delta-only wire and deferred prefix compilation measured | Browser streaming/reconnect acceptance |
-| P12 | Task-level corpus/rubric added | Live semantic quality evaluation remains unrun |
+| P12 | Three installed-baseline text smoke cases scored | Multipart cost-label ambiguity found; full current-build corpus and surfaces remain |
 | P13 | Actual card delivery attribution regression passes | Broader browser composition acceptance |
 | P14 | Literal marker/code preservation tests pass | Broader browser speech/export acceptance |
 | D01 | Active-card replacement repaired with explicit refusal | Existing dependents stay pinned; no implicit identity migration |
@@ -1192,3 +1192,49 @@ readable. All six Core erasure integration tests and 17 connection-ledger
 tests pass. Core/mail-calendar library Clippy with warnings denied, formatting,
 records, document paths, version consistency and diff checks pass. No full gate
 or browser acceptance ran.
+
+### Verified recovery and request cap continuation (2026-10-18)
+
+The maintainer approved verified actual charges without dismissal and an
+optional aggregate call cap. FinOps now exposes owner-only pending charge
+review/correction with real bearer/audience middleware coverage. Corrections
+retain actor, original identity and budget attribution, are append-only and
+idempotent, and refuse live runs. The admin panel requires an explicit amount
+and provider-verification checkbox; historical unknown rows without an ID
+remain visible as unresolved. Local cached gates are invalidated; other
+processes may need gate recreation. Unknown charges remain reserved.
+
+The optional call cap is a fenced Document keyed by the existing root RunId,
+shared across workers, flow nodes, retries, auxiliary calls and the direct
+planner. Its count survives recreation and its cap can only narrow. Zero is
+persisted even before the first dispatch. Detached probes/standalone
+compaction are outside request scope; retention is not yet assigned.
+
+Main-path admission/framing/authorization/receipts/successful endings now
+require journal persistence. Post-card acceptance audit writes and auxiliary
+diagnostics are not a completed whole-system audit. Library bindings and
+review selection propagate unreadable history. Shared history/presentation
+construction moved into `crates/vak-core/src/run_services.rs`; this is a
+bounded A08 extraction, not full Core separation.
+
+The real Effects Rollup growth benchmark measured cold page / warm lookup /
+warm page in milliseconds: 100 rows 131.435 / 3.638 / 3.258; 1,000 rows
+83.025 / 30.198 / 30.077; 10,000 rows 502.670 / 307.920 / 308.245.
+Whole-snapshot decoding remains linear; indexed lookup alone does not close
+A09. A storage projection change is required.
+
+Three synthetic actual-answer smoke cases against the older installed
+baseline are retained in [the scored record](../audits/answer-quality-smoke-2026-10-18.md).
+One multipart answer lost the source's fuel-cost qualifier. These are not
+current-build acceptance or a completed corpus; browser/export/speech and
+remaining prompts still need evaluation.
+
+Focused verification for this continuation: 49 FinOps unit cases, durable
+call-budget concurrency/recreation/narrowing/fault tests, all 22 agent-loop
+integration cases, five worker-card integration cases, seven Library cases,
+one corrupted-binding endpoint case, owner recovery through real auth/audience
+middleware, the direct planner cap regression and config round-trip test pass.
+The flow integration target compiles. The admin production bundle builds.
+Clippy for Core/Agent/Server/Flow/Config libraries passes with warnings denied;
+formatting and record/path/version checks pass. No full gate, new release,
+installation, or visual acceptance is claimed.

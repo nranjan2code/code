@@ -40,6 +40,123 @@ use vak_context::{assemble, capacity, planner};
 pub use workers_tool::WorkersTool;
 pub use workspace::WorkspaceDelta;
 
+type DurableModelCallClaim = Arc<dyn Fn(u32) -> Result<u32, String> + Send + Sync>;
+
+/// Aggregate provider-dispatch accounting for one admitted root run. Clones
+/// share the same counter so delegated workers consume the request's budget.
+pub struct ModelCallBudget {
+    root_run: vak_session::ids::RunId,
+    limit: u32,
+    used: std::sync::atomic::AtomicU32,
+    durable_claim: Option<DurableModelCallClaim>,
+}
+
+impl std::fmt::Debug for ModelCallBudget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelCallBudget")
+            .field("root_run", &self.root_run)
+            .field("limit", &self.limit)
+            .field("used", &self.used())
+            .field("durable", &self.durable_claim.is_some())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("aggregate model-call limit of {limit} exhausted for root run {root_run}")]
+pub struct ModelCallLimitExceeded {
+    pub root_run: vak_session::ids::RunId,
+    pub limit: u32,
+}
+
+impl ModelCallBudget {
+    pub fn new(root_run: vak_session::ids::RunId, limit: u32) -> Self {
+        Self {
+            root_run,
+            limit,
+            used: std::sync::atomic::AtomicU32::new(0),
+            durable_claim: None,
+        }
+    }
+
+    /// Construct a budget whose host persists every claim and supplies the
+    /// verified count already consumed for this RunId.
+    pub fn with_durable_claim(
+        root_run: vak_session::ids::RunId,
+        limit: u32,
+        used: u32,
+        claim: DurableModelCallClaim,
+    ) -> Self {
+        Self {
+            root_run,
+            limit,
+            used: std::sync::atomic::AtomicU32::new(used),
+            durable_claim: Some(claim),
+        }
+    }
+
+    pub fn root_run(&self) -> vak_session::ids::RunId {
+        self.root_run
+    }
+
+    pub fn limit(&self) -> u32 {
+        self.limit
+    }
+
+    pub fn used(&self) -> u32 {
+        self.used.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn exhausted(&self) -> bool {
+        self.used() >= self.limit
+    }
+
+    /// Atomically claim one provider dispatch, refusing zero and overflow.
+    pub fn claim(&self) -> Result<u32, ModelCallLimitExceeded> {
+        let mut current = self.used.load(std::sync::atomic::Ordering::Acquire);
+        loop {
+            let Some(next) = current.checked_add(1) else {
+                return Err(ModelCallLimitExceeded {
+                    root_run: self.root_run,
+                    limit: self.limit,
+                });
+            };
+            if current >= self.limit || next > self.limit {
+                return Err(ModelCallLimitExceeded {
+                    root_run: self.root_run,
+                    limit: self.limit,
+                });
+            }
+            match self.used.compare_exchange_weak(
+                current,
+                next,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    if let Some(claim) = &self.durable_claim {
+                        match claim(self.limit) {
+                            Ok(used) if used <= self.limit => {
+                                self.used
+                                    .fetch_max(used, std::sync::atomic::Ordering::AcqRel);
+                                return Ok(used);
+                            }
+                            _ => {
+                                return Err(ModelCallLimitExceeded {
+                                    root_run: self.root_run,
+                                    limit: self.limit,
+                                });
+                            }
+                        }
+                    }
+                    return Ok(next);
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WorkMode {
     #[default]
@@ -559,6 +676,9 @@ pub struct AgentConfig {
     /// `(max_retries + 1) * (run_retry_attempts + 1)`; the frozen ladder
     /// (Phase B) tightens this to `ladder + repair allowance`.
     pub dispatch_ceiling: u32,
+    /// Optional request-wide provider-call budget shared with every child
+    /// worker; `None` leaves the operator's dispatch behavior unchanged.
+    pub model_call_budget: Option<Arc<ModelCallBudget>>,
     /// Reserve for the completion (`max_tokens`), subtracted from the
     /// horizon by `CapacityProfile::budget` (docs/design/68-context-engine.md
     /// §4). 0 means no cap: nothing published one and the operator set none,
@@ -712,6 +832,7 @@ impl AgentConfig {
             run_retry_attempts: 6,
             run_retry_base_backoff_ms: 2_000,
             dispatch_ceiling: (3 + 1) * (6 + 1),
+            model_call_budget: None,
             max_output: 0,
             declared_window: None,
             stop_policy: Some(StopPolicy::default()),
@@ -1525,14 +1646,14 @@ impl Agent {
         definitions
     }
 
-    async fn record_ending(&self, outcome: &TurnOutcome) {
+    async fn record_ending(&self, outcome: &TurnOutcome) -> Result<(), vak_session::SessionError> {
         use vak_control::{AnswerVerdict, Choice, Decision, End, Ending};
         let end = match outcome {
             TurnOutcome::Completed { .. } => {
                 self.record_decision(Decision::by_runtime(Choice::AcceptAnswer(
                     AnswerVerdict::Accepted,
                 )))
-                .await;
+                .await?;
                 End::Answered
             }
             TurnOutcome::Aborted { .. } => End::Aborted,
@@ -1540,21 +1661,26 @@ impl Agent {
             TurnOutcome::MaxTurnsReached => End::StepLimit,
         };
         self.record_decision(Decision::by_runtime(Choice::EndTurn(Ending { end })))
-            .await;
+            .await
     }
 
-    async fn record_decision(&self, decision: vak_control::Decision) {
-        self.record_decisions([decision]).await;
+    async fn record_decision(
+        &self,
+        decision: vak_control::Decision,
+    ) -> Result<(), vak_session::SessionError> {
+        self.record_decisions([decision]).await
     }
 
     /// Records decisions in order under one hold of the session.
-    async fn record_decisions(&self, decisions: impl IntoIterator<Item = vak_control::Decision>) {
+    async fn record_decisions(
+        &self,
+        decisions: impl IntoIterator<Item = vak_control::Decision>,
+    ) -> Result<(), vak_session::SessionError> {
         let mut session = self.session.lock().await;
         for decision in decisions {
-            if let Err(error) = session.append_decision(decision) {
-                tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a decision was not recorded");
-            }
+            session.append_decision(decision)?;
         }
+        Ok(())
     }
 
     /// What the next step is for (docs/design/88 §3): a step that follows
@@ -1581,7 +1707,7 @@ impl Agent {
         step: usize,
         purpose: vak_control::Purpose,
         request: &ChatRequest,
-    ) {
+    ) -> Result<(), vak_session::SessionError> {
         let mut asked = vak_control::frame(
             purpose,
             &self.config.steps,
@@ -1602,7 +1728,7 @@ impl Agent {
                 asked,
             }),
         ))
-        .await;
+        .await
     }
 
     fn tool_definitions(&self) -> Vec<vak_llm::ToolDefinition> {
@@ -1646,18 +1772,24 @@ impl Agent {
         cancel: CancellationToken,
         events: mpsc::Sender<AgentEvent>,
     ) -> TurnOutcome {
-        self.record_decision(vak_control::Decision::by_runtime(
-            vak_control::Choice::AdmitTurn(vak_control::Admission {
-                agent: self
-                    .config
-                    .trace
-                    .as_ref()
-                    .map(|trace| trace.agent.to_string()),
-                model: self.config.model.clone(),
-                max_steps: u32::try_from(self.config.max_turns).unwrap_or(u32::MAX),
-            }),
-        ))
-        .await;
+        if let Err(error) = self
+            .record_decision(vak_control::Decision::by_runtime(
+                vak_control::Choice::AdmitTurn(vak_control::Admission {
+                    agent: self
+                        .config
+                        .trace
+                        .as_ref()
+                        .map(|trace| trace.agent.to_string()),
+                    model: self.config.model.clone(),
+                    max_steps: u32::try_from(self.config.max_turns).unwrap_or(u32::MAX),
+                }),
+            ))
+            .await
+        {
+            return TurnOutcome::Failed {
+                error: LlmError::Network(format!("turn admission write failed: {error}")),
+            };
+        }
         let mut outcome = self
             .run_message_inner(prompt, steering, cancel.clone(), events.clone())
             .await;
@@ -1693,7 +1825,18 @@ impl Agent {
         // does close.
         // The ending is recorded first: a turn that ended on its cards is
         // closed by that record (docs/design/87-composed-answers.md §2a).
-        self.record_ending(&outcome).await;
+        if let Err(error) = self.record_ending(&outcome).await {
+            if matches!(&outcome, TurnOutcome::Completed { .. }) {
+                outcome = TurnOutcome::Failed {
+                    error: LlmError::Network(format!("turn ending write failed: {error}")),
+                };
+            } else {
+                tracing::warn!(
+                    error_kind = %vak_telemetry::error_kind(&error),
+                    "turn ending was not recorded"
+                );
+            }
+        }
         self.close_turn(&outcome).await;
         if let Some(refresh) = &self.config.history_refresh {
             refresh();
@@ -2410,7 +2553,11 @@ impl Agent {
                     ),
                 );
                 let mut request = base_request.clone();
-                self.record_framing(turn, purpose, &request).await;
+                if let Err(error) = self.record_framing(turn, purpose, &request).await {
+                    return TurnOutcome::Failed {
+                        error: LlmError::Network(format!("step framing write failed: {error}")),
+                    };
+                }
                 ledger.receipt.asked = Some(request.settings);
 
                 let mut response = {
@@ -2721,7 +2868,11 @@ impl Agent {
                                 Some(usage.prompt_tokens().saturating_sub(messages_tokens));
                         }
                     }
-                    let _ = session.append_receipt(receipt);
+                    if let Err(error) = session.append_receipt(receipt) {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(format!("work receipt write failed: {error}")),
+                        };
+                    }
                 };
                 let (settled_provider, settled_model) = (
                     ledger.receipt.provider.clone(),
@@ -5559,6 +5710,14 @@ impl Agent {
                 if cancel.is_cancelled() {
                     return Err(LlmError::Aborted { partial: None });
                 }
+                if let Some(budget) = &self.config.model_call_budget
+                    && budget.exhausted()
+                {
+                    return Err(LlmError::InvalidRequest(format!(
+                        "aggregate model-call limit of {} exhausted",
+                        budget.limit()
+                    )));
+                }
                 // Rate-limit waits are shared by adapters using the same
                 // provider account. Wait before reserving spend or consuming
                 // a dispatch, so a cooldown is not charged as model work.
@@ -5736,6 +5895,23 @@ impl Agent {
                         permit.release();
                     }
                     return Err(LlmError::Network(c.to_string()));
+                }
+                if let Some(budget) = &self.config.model_call_budget
+                    && budget.claim().is_err()
+                {
+                    quota_permit.release();
+                    if let (Some(gate), Some(id)) =
+                        (&self.config.spend_gate, spend_reservation.take())
+                    {
+                        gate.release_dispatch(id);
+                    }
+                    if let Some(permit) = provider_daily_permit.as_mut() {
+                        permit.release();
+                    }
+                    return Err(LlmError::InvalidRequest(format!(
+                        "aggregate model-call limit of {} exhausted",
+                        budget.limit()
+                    )));
                 }
                 let reason = if li > 0 && attempt == 0 {
                     AttemptReason::RouteFallback
@@ -6129,11 +6305,12 @@ impl Agent {
             // Also tells a surface the call is no longer being written
             // (docs/design/96, Q2).
             loop_call_ended(events, &call, &output).await;
-            self.record_decisions(vec![
-                vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(verdict))
-                    .with(vak_control::Evidence::Call(call.id.clone())),
-            ])
-            .await;
+            let _ = self
+                .record_decisions(vec![
+                    vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(verdict))
+                        .with(vak_control::Evidence::Call(call.id.clone())),
+                ])
+                .await;
             results.push((call.id, output));
         }
         let mut history_misses = HashSet::new();
@@ -7338,7 +7515,20 @@ impl Agent {
             }
             authz.push(verdict.map_err(|(by, message)| (vak_judge::call::fault_of(by), message)));
         }
-        self.record_decisions(verdicts).await;
+        if let Err(error) = self.record_decisions(verdicts).await {
+            return calls
+                .into_iter()
+                .map(|call| {
+                    (
+                        call.id,
+                        ToolRunOutput::Err(
+                            Fault::Tool,
+                            format!("call authorization could not be recorded: {error}"),
+                        ),
+                    )
+                })
+                .collect();
+        }
         let changes = calls.iter().zip(&authz).any(|(call, verdict)| {
             verdict.is_ok()
                 && self
@@ -10225,6 +10415,49 @@ mod tool_recovery_tests {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
+mod model_call_budget_tests {
+    use super::{AgentConfig, ModelCallBudget};
+    use std::sync::Arc;
+
+    #[test]
+    fn zero_limit_and_checked_concurrent_sibling_claims() {
+        assert!(AgentConfig::new("sys").model_call_budget.is_none());
+        let zero = ModelCallBudget::new(vak_session::ids::RunId::new(), 0);
+        assert!(zero.claim().is_err());
+        assert_eq!(zero.used(), 0);
+
+        let budget = Arc::new(ModelCallBudget::new(vak_session::ids::RunId::new(), 3));
+        let sibling_a = budget.clone();
+        let sibling_b = budget.clone();
+        let mut workers = Vec::new();
+        for worker in 0..12 {
+            let budget = if worker % 2 == 0 {
+                sibling_a.clone()
+            } else {
+                sibling_b.clone()
+            };
+            workers.push(std::thread::spawn(move || budget.claim().is_ok()));
+        }
+        let claimed = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .filter(|claimed| *claimed)
+            .count();
+        assert_eq!(claimed, 3);
+        assert_eq!(budget.used(), 3);
+        assert!(budget.claim().is_err());
+
+        let overflow = ModelCallBudget::new(vak_session::ids::RunId::new(), u32::MAX);
+        overflow
+            .used
+            .store(u32::MAX, std::sync::atomic::Ordering::Release);
+        assert!(overflow.claim().is_err());
+        assert_eq!(overflow.used(), u32::MAX);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod compaction_error_tests {
     use super::{Agent, AgentConfig, apply_recorded_outcome};
     use std::sync::Arc;
@@ -10338,6 +10571,41 @@ mod compaction_error_tests {
                 .activities()
                 .iter()
                 .any(|(_, _, activity)| activity.label == "compaction-failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_step_frame_append_is_propagated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session");
+        drop(
+            vak_session::SessionLog::create(
+                path.clone(),
+                test_header(dir.path(), "frame-write-error"),
+            )
+            .unwrap(),
+        );
+        let log = vak_session::SessionLog::open_read_only(path).unwrap();
+        let agent = Agent::new(Arc::new(UnusedProvider), log, AgentConfig::new("sys"));
+        let request = vak_llm::types::ChatRequest {
+            output_schema: None,
+            must_call: None,
+            model: "test".into(),
+            system: None,
+            messages: Vec::new(),
+            tools: Vec::new(),
+            max_tokens: None,
+            context_need: None,
+            cache: None,
+            previous_response_id: None,
+            settings: vak_control::StepSettings::default(),
+        };
+
+        assert!(
+            agent
+                .record_framing(0, vak_control::Purpose::Act, &request)
+                .await
+                .is_err()
         );
     }
 

@@ -207,6 +207,7 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
         run_retry_attempts: 0,
         run_retry_base_backoff_ms: 0,
         dispatch_ceiling: 2,
+        model_call_budget: None,
         steps: vak_control::StepDefaults::shipped().with(&std::collections::BTreeMap::from([(
             vak_control::Purpose::Act,
             vak_control::StepOverride {

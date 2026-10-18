@@ -178,6 +178,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         run_retry_attempts: 0,
         run_retry_base_backoff_ms: 0,
         dispatch_ceiling: 1,
+        model_call_budget: None,
         steps: vak_control::StepDefaults::shipped(),
         protected_paths: Vec::new(),
         stop_policy: Some(vak_agent::StopPolicy::default()),

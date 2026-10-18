@@ -13,6 +13,36 @@ use vak_core::artifacts::{ArtifactStep, NewVersion, VersionSource};
 
 use crate::AppState;
 
+fn proposed_versions(
+    artifacts: &vak_core::artifacts::Artifacts,
+    candidate: &str,
+    paths: Option<&[String]>,
+) -> Result<
+    Vec<(
+        vak_session::ids::ArtifactId,
+        vak_session::ids::VersionId,
+        bool,
+    )>,
+    vak_core::artifacts::ArtifactError,
+> {
+    let mut found = Vec::new();
+    for artifact in artifacts.try_list()? {
+        if let Some(paths) = paths
+            && !paths
+                .iter()
+                .any(|path| vak_core::artifacts::normalize(path) == artifact.path)
+        {
+            continue;
+        }
+        for version in &artifact.versions {
+            if version.proposed_by(candidate) {
+                found.push((artifact.id, version.id, version.promoted));
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// Records what a Review record means for the artifacts it touches. Each
 /// file of a candidate is an artifact (declared here when nothing declared
 /// it before) and gets the candidate's bytes as a version, made from the version its parent
@@ -26,24 +56,6 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
         tracing::warn!(kind = "artifact", error_kind = %vak_telemetry::error_kind(&error), "a review record was not recorded on its artifact");
     };
     // The versions `candidate` proposes, limited to `paths` when given.
-    let proposed_by = |candidate: &str, paths: Option<&[String]>| {
-        let mut found = Vec::new();
-        for artifact in artifacts.list() {
-            if let Some(paths) = paths
-                && !paths
-                    .iter()
-                    .any(|path| vak_core::artifacts::normalize(path) == artifact.path)
-            {
-                continue;
-            }
-            for version in &artifact.versions {
-                if version.proposed_by(candidate) {
-                    found.push((artifact.id, version.id, version.promoted));
-                }
-            }
-        }
-        found
-    };
     match record {
         vak_sandbox::DurableRecord::Candidate(candidate) => {
             let manifest = &candidate.candidate;
@@ -62,7 +74,14 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
                 // Putting a file up for Review declares it: a person is
                 // asked to decide it, and its thread and versions need an
                 // artifact to belong to (plan M8.4c-b).
-                if artifacts.get(&id.to_string()).is_none()
+                let known = match artifacts.try_get(&id.to_string()) {
+                    Ok(known) => known,
+                    Err(error) => {
+                        warn(error);
+                        continue;
+                    }
+                };
+                if known.is_none()
                     && let Err(error) = artifacts.declare(
                         &space,
                         &crate::session_agent_name(state, &candidate.session_id),
@@ -81,8 +100,13 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
                     warn(error);
                     continue;
                 }
-                let Some(artifact) = artifacts.get(&id.to_string()) else {
-                    continue;
+                let artifact = match artifacts.try_get(&id.to_string()) {
+                    Ok(Some(artifact)) => artifact,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        warn(error);
+                        continue;
+                    }
                 };
                 let parent = candidate.parent_candidate_id.as_ref().and_then(|parent| {
                     artifact
@@ -172,9 +196,18 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
             }
         }
         vak_sandbox::DurableRecord::Promotion(promotion) => {
-            for (artifact, version, promoted) in
-                proposed_by(&promotion.candidate_id, Some(&promotion.receipt.applied))
-            {
+            let proposed = match proposed_versions(
+                &artifacts,
+                &promotion.candidate_id,
+                Some(&promotion.receipt.applied),
+            ) {
+                Ok(proposed) => proposed,
+                Err(error) => {
+                    warn(error);
+                    return;
+                }
+            };
+            for (artifact, version, promoted) in proposed {
                 if !promoted
                     && let Err(error) = artifacts.record(
                         artifact,
@@ -188,7 +221,14 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
             }
         }
         vak_sandbox::DurableRecord::PromotionUndo(undo) => {
-            for (artifact, version, promoted) in proposed_by(&undo.candidate_id, None) {
+            let proposed = match proposed_versions(&artifacts, &undo.candidate_id, None) {
+                Ok(proposed) => proposed,
+                Err(error) => {
+                    warn(error);
+                    return;
+                }
+            };
+            for (artifact, version, promoted) in proposed {
                 if promoted
                     && let Err(error) = artifacts.record(
                         artifact,
@@ -211,9 +251,11 @@ pub(crate) fn bindings(
     state: &AppState,
     session: &str,
     principal: &crate::AuthenticatedPrincipal,
-) -> Vec<serde_json::Value> {
+) -> Result<Vec<serde_json::Value>, vak_core::artifacts::ArtifactError> {
     let mut found = Vec::new();
-    for artifact in state.core.artifacts().list() {
+    let artifacts = state.core.artifacts();
+    let all = artifacts.try_list()?;
+    for artifact in all {
         for version in &artifact.versions {
             // A guest is told only of versions their grant reaches.
             if discusser(
@@ -252,7 +294,7 @@ pub(crate) fn bindings(
             }
         }
     }
-    found
+    Ok(found)
 }
 
 /// The Review candidate a version is, and the file in it.
@@ -2732,6 +2774,40 @@ mod tests {
             .append(&serde_json::json!({"invalid_artifact_row": true}))
             .unwrap();
         assert!(observed(&artifacts, dir.path(), &artifact).is_err());
+    }
+
+    #[test]
+    fn promotion_lookup_refuses_to_skip_an_unreadable_artifact_row() {
+        vak_config::paths::isolate_home_for_tests();
+        let data = tempfile::tempdir().unwrap();
+        let shared = vak_config::scope::SharedScope::new(data.path());
+        let artifacts = vak_core::artifacts::Artifacts::at(
+            &shared,
+            vak_config::paths::tenant_home_at(data.path(), vak_config::paths::LOCAL_TENANT),
+        );
+        let id = artifacts
+            .declare(
+                "space",
+                "vak",
+                "report.txt",
+                ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(artifacts.try_get(&id.to_string()).unwrap().is_some());
+        vak_session::chain::RecordChain::at(artifacts.path())
+            .append(&serde_json::json!({"invalid_artifact_row": true}))
+            .unwrap();
+
+        let error = proposed_versions(&artifacts, "candidate-1", None)
+            .expect_err("promotion bookkeeping cannot infer that no version was proposed from a partial artifact list");
+        assert!(matches!(
+            error,
+            vak_core::artifacts::ArtifactError::Store(_)
+        ));
     }
 
     #[tokio::test]

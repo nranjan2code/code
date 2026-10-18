@@ -221,7 +221,7 @@ async fn single_turn_no_tools_completes() {
 }
 
 #[tokio::test]
-async fn assistant_journal_failure_stops_tool_dispatch() {
+async fn required_session_record_failure_stops_tool_dispatch() {
     let probe = Arc::new(DispatchProbe(std::sync::atomic::AtomicUsize::new(0)));
     let mut h = harness(
         vec![ScriptedResponse::Message(tool_call_msg(
@@ -245,8 +245,8 @@ async fn assistant_journal_failure_stops_tool_dispatch() {
         .await;
 
     assert!(
-        matches!(&outcome, TurnOutcome::Failed { error } if error.to_string().contains("assistant message write failed")),
-        "assistant journaling failure must fail the turn: {outcome:?}"
+        matches!(&outcome, TurnOutcome::Failed { error } if error.to_string().contains("write failed")),
+        "a required session-record failure must fail the turn: {outcome:?}"
     );
     assert_eq!(probe.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert_eq!(h.requests.lock().unwrap().len(), 1);
@@ -894,6 +894,75 @@ async fn abort_partial_survives_an_unwritable_history_with_a_visible_marker() {
             .any(|message| message.text_content().contains("partial work")),
         "failed history append must not claim the partial was persisted"
     );
+}
+
+#[tokio::test]
+async fn successful_step_receipt_failure_withholds_assistant_success() {
+    let mut h = harness(
+        vec![ScriptedResponse::Message(assistant_text(
+            "answer not recorded",
+        ))],
+        vec![],
+    );
+    let session_path = h.agent.session.lock().await.path().to_path_buf();
+    *h.provider.readonly_on_stream.lock().unwrap() = Some((session_path, h.agent.session.clone()));
+
+    let outcome = h
+        .agent
+        .run(
+            "answer this",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+
+    assert!(
+        matches!(&outcome, TurnOutcome::Failed { error } if error.to_string().contains("work receipt write failed")),
+        "a step without its work receipt must not complete: {outcome:?}"
+    );
+    assert!(
+        !h.agent
+            .session
+            .lock()
+            .await
+            .message_chain()
+            .iter()
+            .any(|(_, message)| message.text_content().contains("answer not recorded")),
+        "the assistant success must not be appended after its receipt failed"
+    );
+}
+
+#[tokio::test]
+async fn aggregate_model_call_limit_stops_retries_without_endurance_spinning() {
+    let h = harness(
+        vec![ScriptedResponse::Error(LlmError::Network(
+            "temporary".into(),
+        ))],
+        vec![],
+    );
+    let mut agent = h.agent;
+    agent.config.max_retries = 3;
+    agent.config.run_retry_attempts = 5;
+    agent.config.model_call_budget = Some(Arc::new(vak_agent::ModelCallBudget::new(
+        vak_session::ids::RunId::new(),
+        1,
+    )));
+
+    let outcome = agent
+        .run(
+            "make one call",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+
+    assert!(
+        matches!(&outcome, TurnOutcome::Failed { error } if error.to_string().contains("aggregate model-call limit of 1 exhausted")),
+        "budget exhaustion is permanent and stops retries: {outcome:?}"
+    );
+    assert_eq!(h.requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

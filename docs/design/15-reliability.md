@@ -531,3 +531,24 @@ turn 3 even if the user switched providers between turn 2 and turn 3.
 - `vak-server/src/agent_chats.rs` — candidate sessions no longer filtered by initial route
 - `vak-session/src/types.rs` — `FrozenContract` doc comments updated
 - `AGENTS.md` — invariant 7 updated
+
+## Verified charge recovery and required causal records
+
+Admission decisions, framing, authorization and successful WorkReceipts must
+persist before dependent work; successful ending/acceptance persistence is
+required before reporting a successful turn. Original abort/failure outcomes
+remain authoritative if their diagnostic ending append also fails. Card
+acceptance decisions written after a card append remain a separate audit gap.
+
+FinOps retains uncertain reservations across restart and UTC rollover. Exact
+priced settlements allow interrupted pending-marker cleanup on admission.
+The owner-only reservation API and admin panel accept a finite nonnegative
+actual USD charge only with explicit provider verification. Corrections use
+the original reservation identity and budget owner, append owner-attributed
+evidence, and support identical retries; conflicts refuse. An unknown ledger
+row with a reservation ID can be corrected even without its pending marker.
+Older unknown rows without that ID are reported separately and remain blocked.
+The server refuses active local work and durably live traced runs before
+recovery. It invalidates known local cached gates after correction; another
+process can remain conservatively blocked until its gate is recreated.
+No unknown charge expires or is silently dismissed.

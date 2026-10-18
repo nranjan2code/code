@@ -148,6 +148,7 @@ fn deps_with_outcome(
         run_retry_attempts: 0,
         run_retry_base_backoff_ms: 1000,
         dispatch_ceiling: 1,
+        model_call_budget: None,
         spend_gate: None,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode,

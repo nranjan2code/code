@@ -301,6 +301,17 @@ async fn complete_text(
             Ok(admission) => admission,
             Err(error) => return Err(error.to_string()),
         };
+        // Planning is a paid provider dispatch too; share the request's
+        // aggregate cap with the Agent nodes that execute the resulting DAG.
+        if let Some(budget) = &deps.model_call_budget
+            && budget.claim().is_err()
+        {
+            admission.release_before_dispatch();
+            return Err(format!(
+                "aggregate model-call limit of {} exhausted",
+                budget.limit()
+            ));
+        }
         let provider_cancel = admission.cancellation_token();
         let stream = match tokio::time::timeout(
             deps.request_timeout

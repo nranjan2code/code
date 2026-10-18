@@ -626,3 +626,11 @@ design) as recommended: only declared deliverables enter the Library, and
 - Git projects and large codebases. They stay in their repositories; a
   changeset is an artifact only as doc 73 §10 describes.
 - Listing every card. Cards are moments unless saved.
+
+## Unreadable review projections
+
+Candidate/version bindings and proposed-version selection use strict artifact
+history readers. An unreadable projection returns an error from the sandbox
+records route, rather than an empty artifact list. Review-note bookkeeping
+stops and reports a diagnostic if it cannot verify its version; it does not
+turn optional note persistence into transactional promotion rollback.

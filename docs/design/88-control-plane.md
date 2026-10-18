@@ -470,3 +470,17 @@ from the ledger.
    for each purpose live in configuration; the Shared and project layers
    and a route-keyed table may override them. Measured capabilities still
    degrade what a model cannot honour.
+
+## Optional request-wide call cap
+
+`[control].max_model_calls` is an optional unsigned count, absent by default;
+zero refuses every provider dispatch. Core creates a fenced Document under
+`SharedScope::model_call_budgets`, keyed by the admitted root RunId. All
+request-caused Agent dispatches (including retries and auxiliary calls),
+child workers, flow nodes and the direct flow planner claim that same budget
+before dispatch. A claim is never refunded after an uncertain outcome.
+Recreating a budget for the same RunId preserves its count and cannot raise
+its recorded cap. Lowering below usage leaves an exhausted budget. Detached
+capacity probes and standalone session compaction are outside this request
+scope. Documents have no automatic expiry; lifecycle treatment remains open.
+This limit is separate from dollar admission and per-step retry limits.

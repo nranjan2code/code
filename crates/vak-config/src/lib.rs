@@ -599,6 +599,11 @@ pub struct ControlSettings {
     /// `[control.limits]`: the operator's time limits (doc 88 §5a).
     #[serde(skip_serializing_if = "is_default_limits")]
     pub limits: vak_control::ControlLimitsOverride,
+    /// Optional aggregate provider dispatches for one admitted root run,
+    /// including retries, route fallbacks and delegated workers. Zero denies
+    /// the first dispatch; absent means no additional cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_model_calls: Option<u32>,
 }
 
 fn is_default_limits(limits: &vak_control::ControlLimitsOverride) -> bool {
@@ -633,6 +638,9 @@ impl ControlSettings {
         }
         layer(&mut self.steps, over.steps);
         self.limits = over.limits.over(self.limits);
+        if over.max_model_calls.is_some() {
+            self.max_model_calls = over.max_model_calls;
+        }
         for (route, steps) in over.routes {
             layer(self.routes.entry(route).or_default(), steps);
         }
@@ -2981,7 +2989,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, bedrock_region, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.enabled=false, intent.posture=false, control.limits, plugins.network_allow, server.bus";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, bedrock_region, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.enabled=false, intent.posture=false, control.limits, control.max_model_calls, plugins.network_allow, server.bus";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -3070,6 +3078,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             // Time limits are the operator's: how long an approval waits or
             // a scheduled script may run is not a cloned repository's call.
             fc.control.limits = vak_control::ControlLimitsOverride::default();
+            fc.control.max_model_calls = None;
             fc.plugins.network_allow = None;
             fc.plugins.allow = None;
             warnings.push(format!(
@@ -3754,6 +3763,7 @@ const KNOWN_THEME_COLORS: &[&str] = &[
 ];
 const KNOWN_ACCESSIBILITY_KEYS: &[&str] = &["plain", "reduced_motion", "screen_reader"];
 const KNOWN_STOP_POLICY_KEYS: &[&str] = &["enabled", "marker_gate", "verify_gate"];
+const KNOWN_CONTROL_KEYS: &[&str] = &["steps", "routes", "limits", "max_model_calls"];
 const KNOWN_GATEWAY_KEYS: &[&str] = &[
     "enabled",
     "approvals",
@@ -3900,6 +3910,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
             if !KNOWN_STOP_POLICY_KEYS.contains(&key.as_str()) {
                 out.push(format!(
                     "{}: unknown stop_policy key 'stop_policy.{key}' (ignored)",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(control) = top.get("control").and_then(toml::Value::as_table) {
+        for key in control.keys() {
+            if !KNOWN_CONTROL_KEYS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{}: unknown control key 'control.{key}' (ignored)",
                     path.display()
                 ));
             }
@@ -5506,10 +5526,14 @@ mod tests {
     #[test]
     fn control_limits_override_the_shipped_time_limits() {
         let dir = tempfile::tempdir().unwrap();
-        write_project_config(dir.path(), "[control.limits]\ncommand_secs = 45\n");
+        write_project_config(
+            dir.path(),
+            "[control]\nmax_model_calls = 0\n[control.limits]\ncommand_secs = 45\n",
+        );
         let cfg = load_with_trust(dir.path(), true).unwrap();
         let limits = cfg.control.control_limits();
         assert_eq!(limits.command_secs, 45);
+        assert_eq!(cfg.control.max_model_calls, Some(0));
         assert_eq!(
             limits.approval_secs,
             vak_control::ControlLimits::shipped().approval_secs
@@ -5520,12 +5544,14 @@ mod tests {
             vak_control::ControlLimits::shipped(),
             "an untrusted project sets no time limit"
         );
+        assert_eq!(untrusted.control.max_model_calls, None);
         persist_control(&project_path(dir.path()), &ControlSettings::default()).unwrap();
         let cfg = load_with_trust(dir.path(), true).unwrap();
         assert_eq!(
             cfg.control.control_limits(),
             vak_control::ControlLimits::shipped()
         );
+        assert_eq!(cfg.control.max_model_calls, None);
     }
 
     #[test]

@@ -316,6 +316,15 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
+        path: "model-call-budgets/{run}",
+        root: Root::Data,
+        owner: "vak-core",
+        schema: Some(1),
+        // Durable per-root-run dispatch counts; no expiry is inferred.
+        class: Class::Desired,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
         path: "tenants/{tenant}/keys",
         root: Root::Data,
         owner: "vak-session",

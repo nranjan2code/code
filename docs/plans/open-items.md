@@ -56,8 +56,9 @@ overlapping fixes should close their original entries as well.
   gate/restart/release/settlement tests. Session-lifetime cap accounting now
   persists through the verified cost Rollup, with immutable child budget
   ownership and exact reservation reconciliation (43 FinOps and nine Core
-  tests). An explicit RunId-tree/aggregate-call policy and owner reconciliation
-  of unmatched abandoned reservations remain open.
+  tests). Owner-verified recovery and the optional durable root-RunId call cap are now
+  implemented. Historical unknown charges without reservation IDs remain
+  unresolved; other-process cached gates may need recreation after correction.
   Commitment decisions now use verified reads and propagate failures; the
   full repository gate passes. Credential presence updates serialize and fail
   conservatively on detected read errors. Crash-safe presence publication
@@ -91,9 +92,10 @@ overlapping fixes should close their original entries as well.
   policy, readonly narrowing and 30 FinOps cases. The full gate passes;
   child-bound artifact/history/file-note/
   checkpoint services now bind through a child-context factory; a production
-  factory regression verifies artifact agent/session attribution. Aggregate
-  dispatch ceilings remain open; the per-step retry ceiling is not a run-tree
-  budget and must not be repurposed as one.
+  factory regression verifies artifact agent/session attribution. The optional aggregate dispatch cap is now shared and durable; the per-step
+  retry ceiling remains separate. Required framing, authorization, receipts
+  and successful endings now propagate append failures; post-card acceptance
+  writes and the wider auxiliary audit remain open.
 - [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
   actual outline attribution and typed cleanup (P01–P03, P13, P14).
   P01 chart categories retain lexical text and ambiguous y strings are
@@ -186,7 +188,9 @@ overlapping fixes should close their original entries as well.
   (A08, A09), retaining the earlier guarantees. Effects now use a verified
   incremental Rollup, indexed lookup/order, cursor pages, and blocking-pool
   reads in server list/detail. The whole Document snapshot still decodes on
-  a read; fully bounded storage decoding and growth measurements remain.
+  a read; growth measurements confirm warm 10,000-row reads around 308 ms. Fully
+  bounded storage decoding remains open. Shared history/presentation service
+  construction is extracted, with further Core ownership separation open.
 
 Catalog encryption is implemented and passes focused acceptance; platform
 packaging remains unverified. Other choices/limits
@@ -1129,3 +1133,13 @@ A model sometimes invents a folder or writes after the work is done; a
 table's header and row joined by a newline in one string, or a one-row
 table with no header, are told and fixed on the next call; prose can claim
 what no call did (the "not verified" banner warns).
+
+## Follow-up evidence from the final hardening continuation
+
+- [ ] Assign lifecycle treatment for retained model-call budget Documents.
+- [ ] Complete the answer-quality corpus on the current built application.
+  Three older installed-baseline smoke cases are scored in
+  [the evidence](../audits/answer-quality-smoke-2026-10-18.md); multipart cost
+  wording lost a source qualifier. Browser, export and speech remain unchecked.
+- [ ] Visually accept the new owner charge-recovery panel in the running app
+  at the required viewports/themes. Build and route tests do not close this.

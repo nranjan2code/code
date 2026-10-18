@@ -54,6 +54,7 @@ struct ScriptedPlanner {
     /// Responses consumed in order across ALL requests (planner + children).
     responses: Mutex<VecDeque<ScriptedResponse>>,
     capacity_key: crate::support::CapacityKey,
+    calls: std::sync::atomic::AtomicUsize,
 }
 
 impl ScriptedPlanner {
@@ -61,6 +62,7 @@ impl ScriptedPlanner {
         Self {
             responses: Mutex::new(responses.into_iter().collect()),
             capacity_key: crate::support::CapacityKey::default(),
+            calls: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }
@@ -85,6 +87,8 @@ impl Provider for ScriptedPlanner {
         _request: ChatRequest,
         _cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let next = self.responses.lock().unwrap().pop_front();
         let (mut sink, rx) = stream::channel(64);
         match next {
@@ -154,6 +158,7 @@ fn make_deps(provider: Arc<ScriptedPlanner>) -> Arc<ExecutorDeps> {
         run_retry_attempts: 0,
         run_retry_base_backoff_ms: 1000,
         dispatch_ceiling: 1,
+        model_call_budget: None,
         spend_gate: None,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode: Mode::FullAccess,
@@ -453,4 +458,26 @@ async fn transient_planner_failure_is_retried() {
         PlanOutcome::Completed { attempts, .. } => assert_eq!(attempts, 1),
         other => panic!("expected completed after retry, got {other:?}"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn aggregate_call_limit_covers_direct_planner_dispatch() {
+    let provider = Arc::new(ScriptedPlanner::new([ScriptedResponse::Text(fenced(
+        GOOD_PLAN,
+    ))]));
+    let mut deps = make_deps(provider.clone());
+    Arc::get_mut(&mut deps).unwrap().model_call_budget = Some(Arc::new(
+        vak_agent::ModelCallBudget::new(vak_session::ids::RunId::new(), 0),
+    ));
+
+    let outcome = drain(plan_and_run(
+        deps,
+        "run the planned probe",
+        CancellationToken::new(),
+        mpsc::channel(64).0,
+    ))
+    .await;
+
+    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert!(matches!(outcome, PlanOutcome::PlanningFailed { .. }));
 }

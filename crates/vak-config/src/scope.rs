@@ -451,6 +451,11 @@ impl SharedScope {
         self.root.join("runs")
     }
 
+    /// Per-root-run aggregate provider-call accounting Documents.
+    pub fn model_call_budgets(&self) -> PathBuf {
+        self.root.join("model-call-budgets")
+    }
+
     /// The effect records (plan M4.5): one chain of effect events for
     /// every action taken outside Vak, deliveries first.
     pub fn effects(&self) -> PathBuf {

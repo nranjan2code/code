@@ -1,7 +1,9 @@
 # Answer quality acceptance corpus
 
 Status: reference — runnable task prompts and review criteria for hardening
-P12. No live model score or browser acceptance is claimed by this corpus.
+P12. A limited installed-build CLI smoke is recorded in
+[the live baseline](answer-quality-smoke-2026-10-18.md); current-source and
+full-surface acceptance remain unrun.
 
 Run these against the same admitted route, settings and source fixtures before
 and after a change. Retain the actual ledger answer, call/result evidence,

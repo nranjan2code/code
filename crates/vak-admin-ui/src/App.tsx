@@ -1,3 +1,4 @@
+import BudgetRecovery from "./BudgetRecovery";
 import { StepSettingsPanel, LimitsPanel } from "./StepSettings";
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import Projects from "./Projects";
@@ -2669,6 +2670,8 @@ function FinOpsView() {
               byModel={data()?.by_model ?? []}
             />
           </div>
+
+          <BudgetRecovery onReconciled={() => { void refetch(); }} />
 
           {/* Governance: Budget Caps & Alert History */}
           <div class="two-col" style="margin-bottom:14px">

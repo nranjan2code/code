@@ -1,5 +1,15 @@
 # Decisions
 
+## 2026-10-18 — uncertain charges and shared call limits
+
+The maintainer chose provider-verified actual cost for crash reservations;
+unresolved liabilities stay reserved, with no dismissal action. The owner
+records the correction as append-only evidence through FinOps. The maintainer
+also approved optional request-wide model-call limits, disabled by default,
+shared by the request and all child workers. See the hardening plan and
+`docs/design/88-control-plane.md` for scope and retained limitations.
+
+
 Status: the log of the maintainer's product and architecture decisions,
 newest first. Each line says what was decided and where it is recorded in
 full; the recording document is the authority. Add a line whenever the
