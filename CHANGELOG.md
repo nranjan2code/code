@@ -1,5 +1,16 @@
 ## Unreleased
 
+- Delegated workers inherit configured model-step defaults, protected paths
+  and completion policy. Dispatches through the shared budget keep each
+  child's own trace and actor without resetting aggregate spending limits.
+- Worker cards keep their live bindings when copied into the parent
+  conversation, including when duplicate cards reuse existing IDs.
+  Background result/wait calls retain each worker's cards and provenance;
+  multi-worker waits preserve separate source identities. Failed transfers
+  are reported and do not count as emitted cards.
+- Opening another Canvas tab no longer evicts a tab with an unsent note.
+  If all eight tabs contain notes, Canvas explains why a new tab cannot open.
+
 - Composed answers retain leading, interleaved and closing prose around
   cards, including multipart text-only answers. Adjacent result material
   shares its author header and actions without discarding earlier paragraphs

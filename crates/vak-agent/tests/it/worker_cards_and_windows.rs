@@ -149,11 +149,12 @@ fn big_output() -> String {
 fn fake_rebuild() -> vak_agent::PresentationRebuild {
     Arc::new(|_name, input| {
         let mut card = input.as_object()?.clone();
-        card.remove("semantic_type");
+        let semantic_type = card.remove("semantic_type")?.as_str()?.to_string();
         let payload = vak_session::types::canonicalize_json(&serde_json::Value::Object(card));
         Some(PresentationCard {
-            block: None,
-            semantic_type: "chart".into(),
+            presentation_id: None,
+            block: Some(semantic_type.clone()),
+            semantic_type,
             skill_id: "test".into(),
             skill_version: "1".into(),
             schema_version: 1,
@@ -162,6 +163,41 @@ fn fake_rebuild() -> vak_agent::PresentationRebuild {
             identity_digest: "digest".into(),
         })
     })
+}
+
+struct FakeFormCard(&'static str);
+
+#[async_trait]
+impl Tool for FakeFormCard {
+    fn name(&self) -> &str {
+        match self.0 {
+            "controls" => "emit_controls_card",
+            "stats" => "emit_stats_card",
+            _ => "emit_table_card",
+        }
+    }
+    fn description(&self) -> &str {
+        "test stand-in"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    fn card_kinds(&self) -> Vec<String> {
+        vec![self.0.into()]
+    }
+    fn followable_fields(&self) -> Vec<Vec<String>> {
+        match self.0 {
+            "stats" => vec![vec!["readings".into(), "*".into(), "value".into()]],
+            "table" => vec![vec!["rows".into(), "*".into(), "*".into()]],
+            _ => Vec::new(),
+        }
+    }
+    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("shown")
+    }
 }
 
 fn header(dir: &tempfile::TempDir, session_id: &str) -> SessionHeader {
@@ -227,7 +263,12 @@ fn task_tool(dir: &tempfile::TempDir, provider: Arc<Scripted>, parent: &str) -> 
         trust_project: false,
         tail: Default::default(),
         model: "test-model".into(),
-        tools: vec![Arc::new(FakeEmitChartCard)],
+        tools: vec![
+            Arc::new(FakeEmitChartCard),
+            Arc::new(FakeFormCard("controls")),
+            Arc::new(FakeFormCard("stats")),
+            Arc::new(FakeFormCard("table")),
+        ],
         tool_definitions: Vec::new(),
         capabilities: Vec::new(),
         hooks: None,
@@ -254,6 +295,9 @@ fn task_tool(dir: &tempfile::TempDir, provider: Arc<Scripted>, parent: &str) -> 
         run_retry_attempts: 0,
         run_retry_base_backoff_ms: 0,
         dispatch_ceiling: 1,
+        steps: vak_control::StepDefaults::shipped(),
+        protected_paths: Vec::new(),
+        stop_policy: Some(vak_agent::StopPolicy::default()),
         spend_gate: None,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode: Mode::FullAccess,
@@ -293,6 +337,22 @@ fn tool_result(session: &SessionLog, id: &str) -> String {
                 content,
                 ..
             } if tool_use_id == id => Some(content.clone()),
+            _ => None,
+        })
+        .expect("tool result recorded")
+}
+
+fn tool_result_is_error(session: &SessionLog, id: &str) -> bool {
+    session
+        .message_chain()
+        .iter()
+        .flat_map(|(_, message)| message.content.iter())
+        .find_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                is_error,
+                ..
+            } if tool_use_id == id => Some(*is_error),
             _ => None,
         })
         .expect("tool result recorded")
@@ -376,6 +436,139 @@ async fn a_workers_card_is_shown_and_recallable_in_the_delegating_conversation()
             .is_some_and(|line| line.contains("asked:")),
         "with the record of the turn that showed it: {reopened}"
     );
+}
+
+#[tokio::test]
+async fn a_workers_control_bindings_are_rebased_and_duplicate_imports_reuse_parent_ids() {
+    let dir = tempdir().unwrap();
+    let controls = serde_json::json!({
+        "semantic_type": "controls", "title": "Inputs",
+        "inputs": [{"label": "Base", "name": "base", "kind": "number", "value": 4}],
+        "outputs": []
+    });
+    let stats = serde_json::json!({
+        "semantic_type": "stats", "title": "Totals",
+        "readings": [{"label": "Doubled", "value": "= base"}]
+    });
+    let mut responses = vec![
+        call(
+            "t1",
+            "task",
+            serde_json::json!({"prompt": "make the cards"}),
+        ),
+        call("c1", "emit_controls_card", controls.clone()),
+        call("s1", "emit_stats_card", stats.clone()),
+        text_msg("finished first child"),
+        call(
+            "t2",
+            "task",
+            serde_json::json!({"prompt": "make the cards again"}),
+        ),
+        call("c1", "emit_controls_card", controls),
+        call("s1", "emit_stats_card", stats),
+        text_msg("finished second child"),
+        text_msg("Both workers finished."),
+    ];
+    let provider = scripted(std::mem::take(&mut responses));
+    let task = task_tool(&dir, provider.clone(), "parent-bindings");
+    let mut parent = agent(&dir, "parent-bindings", provider, vec![task]);
+    let outcome = run(&mut parent, "make the cards twice").await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+
+    let session = parent.session.lock().await;
+    let delegated: Vec<_> = session
+        .presentations()
+        .into_iter()
+        .filter(|(_, record)| matches!(record.source, PresentationSource::Delegated { .. }))
+        .collect();
+    assert_eq!(delegated.len(), 2, "the repeated cards are deduplicated");
+    let control = delegated
+        .iter()
+        .find(|(_, record)| record.block.as_deref() == Some("controls"))
+        .unwrap();
+    let stats = delegated
+        .iter()
+        .find(|(_, record)| record.block.as_deref() == Some("stats"))
+        .unwrap();
+    assert_eq!(stats.1.payload["readings"][0]["value"], 4);
+    assert_eq!(
+        stats.1.payload["bound"][0]["from"],
+        serde_json::json!([control.0])
+    );
+    assert_eq!(
+        stats.1.identity_digest, "digest",
+        "identity excludes rebased bindings"
+    );
+    assert!(stats.1.payload["bound"][0]["from"][0] != "c1");
+
+    let first_result = tool_result(&session, "t1");
+    let second_result = tool_result(&session, "t2");
+    assert!(first_result.contains(&format!("pres:{} controls \"Inputs\"", control.0)));
+    assert!(first_result.contains(&format!("pres:{} stats \"Totals\"", stats.0)));
+    assert!(second_result.contains(&format!("pres:{} controls \"Inputs\"", control.0)));
+    assert!(second_result.contains(&format!("pres:{} stats \"Totals\"", stats.0)));
+}
+
+#[tokio::test]
+async fn a_delegated_card_with_an_unmapped_source_is_reported_as_a_transfer_error() {
+    let dir = tempdir().unwrap();
+    let provider = scripted(vec![
+        call(
+            "t1",
+            "task",
+            serde_json::json!({"prompt": "make the cards"}),
+        ),
+        call(
+            "c1",
+            "emit_controls_card",
+            serde_json::json!({
+                "semantic_type": "controls", "title": "Inputs",
+                "inputs": [{"label": "Base", "name": "base", "kind": "number", "value": 4}],
+                "outputs": []
+            }),
+        ),
+        call(
+            "s1",
+            "emit_stats_card",
+            serde_json::json!({
+                "semantic_type": "stats", "title": "Broken totals",
+                "readings": [{"label": "Total", "value": 4}],
+                "bound": [{"path": ["readings", 0, "value"], "expression": "base", "from": ["child-card-not-transferred"]}]
+            }),
+        ),
+        text_msg("finished child"),
+        text_msg("Done."),
+    ]);
+    let task = task_tool(&dir, provider.clone(), "parent-unmapped");
+    let mut parent = agent(&dir, "parent-unmapped", provider, vec![task]);
+    let outcome = run(&mut parent, "make those cards").await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+
+    let session = parent.session.lock().await;
+    let delegated: Vec<_> = session
+        .presentations()
+        .into_iter()
+        .filter(|(_, record)| matches!(record.source, PresentationSource::Delegated { .. }))
+        .collect();
+    assert_eq!(
+        delegated.len(),
+        1,
+        "only the mapped controls card transfers"
+    );
+    let result = tool_result(&session, "t1");
+    assert!(tool_result_is_error(&session, "t1"));
+    assert!(
+        result.contains("some cards were not transferred"),
+        "{result}"
+    );
+    assert!(result.contains("child-card-not-transferred"), "{result}");
+    assert!(!result.contains("stats \"Broken totals\""), "{result}");
 }
 
 #[tokio::test]

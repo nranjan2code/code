@@ -27,7 +27,10 @@ appends retain the unresolved liability, including across UTC rollover.
 Active reservations and known run spend are tracked even before a cap is
 enabled. Successfully recorded unpriced calls retain an unknown run total;
 their daily ledger row protects that day without retaining a per-call marker
-forever. Reservations capture their trace and actor at admission.
+forever. Reservations capture their trace and actor at admission. Each dispatch
+supplies its own trace, including child dispatches through a parent's shared
+gate, so concurrent workers do not inherit a mutable later gate trace.
+The shared budget counters and pending reservations remain shared.
 
 Approving a run-cap increase still requires a successful second admission;
 a remaining day-cap or history error stops before provider dispatch.

@@ -54,6 +54,9 @@ pub use vak_control::Fault;
 /// schema-driven title and identity digest, and the skill that owns its type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PresentationCard {
+    /// The source entry id in the child session. Present only while a
+    /// foreground worker's cards are being transferred to its parent.
+    pub presentation_id: Option<String>,
     pub semantic_type: String,
     pub skill_id: String,
     pub skill_version: String,
@@ -80,7 +83,7 @@ pub struct ToolOutput {
     /// The calling loop records each as a presentation of this call, so the
     /// user sees it and the delegating agent can recall it. In-process only:
     /// a brokered worker's reply cannot fill it.
-    pub delegated: Option<DelegatedCards>,
+    pub delegated: Vec<DelegatedCards>,
     /// The MCP server that answered this call, when one did. In-process
     /// only, like `delegated`; the calling loop records it as a
     /// `CallEffect` (docs/design/85-turn-graph.md, G0).
@@ -136,7 +139,7 @@ impl ToolOutput {
         ToolOutput {
             content: content.into(),
             fault: None,
-            delegated: None,
+            delegated: Vec::new(),
             mcp_source: None,
             account: None,
             provenance: vak_control::Provenance::NONE,
@@ -160,7 +163,7 @@ impl ToolOutput {
         ToolOutput {
             content: content.into(),
             fault: Some(fault),
-            delegated: None,
+            delegated: Vec::new(),
             mcp_source: None,
             account: None,
             provenance: vak_control::Provenance::NONE,

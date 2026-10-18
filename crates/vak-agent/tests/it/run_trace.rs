@@ -219,6 +219,9 @@ async fn one_run_one_trace_id() {
             run_retry_attempts: 0,
             run_retry_base_backoff_ms: 0,
             dispatch_ceiling: 1,
+            steps: vak_control::StepDefaults::shipped(),
+            protected_paths: Vec::new(),
+            stop_policy: Some(vak_agent::StopPolicy::default()),
             spend_gate: None,
             permission: Some(Arc::new(
                 PermissionEngine::from_rule_strings(&["+probe".to_string()]).unwrap(),

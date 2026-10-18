@@ -24,6 +24,7 @@ use vak_permission::{Mode, PermissionEngine};
 use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
 use vak_tools::read::ReadTool;
+use vak_tools::write::WriteTool;
 
 /// Records every request it sees and replays a scripted queue of
 /// responses — shared between the parent agent and its spawned child, so
@@ -139,7 +140,19 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
         capacity_key: crate::support::capacity_key(),
         responses: Mutex::new(VecDeque::from(vec![
             task_call("t1", "find the answer"),
-            text_msg("child final answer"),
+            AssistantMessage {
+                content: vec![ContentBlock::ToolUse {
+                    id: "write-protected".into(),
+                    name: "write".into(),
+                    input: serde_json::json!({"path": "protected.txt", "content": "changed"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                usage: Usage::default(),
+                model: "test-model".into(),
+                response_id: None,
+                applied: None,
+            },
+            text_msg("child final answer ```"),
             text_msg("parent done"),
         ])),
         requests: requests.clone(),
@@ -166,7 +179,7 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
         // than leaving the child with an empty `TailInput::default()`.
         tail: parent_tail.clone(),
         model: "test-model".into(),
-        tools: vec![Arc::new(ReadTool)],
+        tools: vec![Arc::new(ReadTool), Arc::new(WriteTool)],
         tool_definitions: Vec::new(),
         capabilities: Vec::new(),
         hooks: None,
@@ -192,12 +205,25 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
         circuit_breaker: None,
         run_retry_attempts: 0,
         run_retry_base_backoff_ms: 0,
-        dispatch_ceiling: 1,
+        dispatch_ceiling: 2,
+        steps: vak_control::StepDefaults::shipped().with(&std::collections::BTreeMap::from([(
+            vak_control::Purpose::Act,
+            vak_control::StepOverride {
+                reasoning: Some(vak_control::ReasoningSetting::High),
+                temperature: Some(0.17),
+                ..Default::default()
+            },
+        )])),
+        protected_paths: vec!["protected.txt".into()],
+        stop_policy: Some(vak_agent::StopPolicy {
+            marker_gate: false,
+            verify_gate: false,
+        }),
         spend_gate: None,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode: Mode::WorkspaceWrite,
         approval_mode: vak_agent::ApprovalMode::Ask,
-        approver: None,
+        approver: Some(Arc::new(AutoApprove)),
         sandbox: None,
         cwd: dir.path().to_path_buf(),
         sessions_home: home.clone(),
@@ -235,6 +261,48 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
         child_request.system.as_deref(),
         Some("child-sys"),
         "reqs[1] must be the child's own request"
+    );
+    assert_eq!(
+        child_request.settings.reasoning,
+        vak_control::Reasoning::Depth(vak_control::Depth::High),
+        "the child receives the parent's nondefault Act reasoning setting"
+    );
+    assert_eq!(
+        child_request.settings.sampling.temperature,
+        Some(0.17),
+        "the child receives the parent's nondefault Act sampling setting"
+    );
+    assert!(
+        !dir.path().join("protected.txt").exists(),
+        "the child cannot write a protected path inherited from the parent"
+    );
+    assert!(
+        reqs.iter()
+            .filter(|request| request.system.as_deref() == Some("child-sys"))
+            .flat_map(|request| request.messages.iter())
+            .any(|message| message.content.iter().any(|block| matches!(block,
+                ContentBlock::ToolResult { content, is_error: true, .. }
+                    if content.contains("Not changed") && content.contains("protected.txt")))),
+        "protected-path refusal is delivered without writing the file"
+    );
+    let child_requests = reqs
+        .iter()
+        .filter(|request| request.system.as_deref() == Some("child-sys"))
+        .count();
+    assert_eq!(
+        child_requests, 2,
+        "the inherited marker_gate=false settles the unclosed-fence answer without a repair dispatch"
+    );
+    assert!(
+        reqs.iter()
+            .any(|request| request.system.as_deref() != Some("child-sys")
+                && request
+                    .messages
+                    .iter()
+                    .any(|message| message.content.iter().any(|block| matches!(block,
+                ContentBlock::ToolResult { content, .. }
+                    if content.contains("child final answer ```"))))),
+        "the child's unmodified partial answer reaches the parent"
     );
 
     let last = child_request

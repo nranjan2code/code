@@ -1,5 +1,6 @@
 import { render } from "solid-js/web";
 import ArtifactCanvas from "../src/components/ArtifactCanvas";
+import Toast from "../src/components/Toast";
 import * as store from "../src/store";
 import { fileSubject } from "../src/canvasSubject";
 import { VIEWERS } from "../src/components/canvas/viewers";
@@ -68,7 +69,7 @@ window.fetch = async (input, init) => {
 };
 
 store.setActiveId(sid);
-render(() => <ArtifactCanvas />, document.getElementById("root")!);
+render(() => <><ArtifactCanvas /><Toast /></>, document.getElementById("root")!);
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 250));
 const frame = () => document.querySelector<HTMLIFrameElement>(".artifact-canvas iframe.artifact-canvas-frame");
@@ -250,4 +251,27 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
 
   clear();
   return passed;
+};
+
+// Scoped acceptance for automatic tab eviction; explicit close and remote
+// conflict recovery remain separate contracts.
+(window as any).runDraftLimitChecks = async () => {
+  store.setCanvasStacks({});
+  store.setNotice(null);
+  for (let i = 0; i < 8; i++) {
+    store.openArtifactCanvas(fileSubject(`note${i}.html`, { sessionId: sid }));
+    store.updateCanvasEntry({ draft: `Unsent note ${i}` });
+  }
+  const before = store.canvasStacks();
+  store.openArtifactCanvas(fileSubject("overflow.html", { sessionId: sid }));
+  await settle();
+  if (store.canvasStacks() !== before) throw new Error("Opening a ninth tab discarded unsent work");
+  if (store.canvasEntry()?.draft !== "Unsent note 7") throw new Error("The active note changed");
+  if (!document.querySelector(".toast")?.textContent?.includes("unsent notes")) throw new Error("The tab-limit explanation is missing");
+  store.updateCanvasEntry({ draft: "" });
+  store.openArtifactCanvas(fileSubject("overflow.html", { sessionId: sid }));
+  await settle();
+  if (store.canvasEntry()?.subject.kind !== "file" || (store.canvasEntry()?.subject as any).path !== "overflow.html") throw new Error("A clean tab did not make room");
+  if (store.canvasEntries().filter(entry => entry.draft.length > 0).length !== 7) throw new Error("A protected note was evicted");
+  return ["A full Canvas preserves all eight unsent notes", "The limit has a visible explanation", "Only a clean tab makes room"];
 };

@@ -9,6 +9,29 @@ terminal prompt and the admin console's read-only view. It extends `docs/design/
 tool of `docs/design/03-agent-loop.md`. Where this document and AGENTS.md
 disagree, AGENTS.md wins until the change is made to both.
 
+## Current inheritance and card transfer
+
+Children inherit the admitted parent's per-purpose model-step settings,
+protected paths and configured completion policy, alongside the existing
+admitted-tool and read-only narrowing. A child dispatch supplies its own
+trace/actor when reserving budget; the shared gate still enforces aggregate
+parent-run and process-shared day spending. No fresh child gate resets them.
+Session-bound artifact, file-note, history and checkpoint callbacks still
+need child-scoped factories under hardening A04; inheriting these values
+is not full production-service parity.
+
+Task results carry child presentation IDs in process. Background worker
+records retain their card groups and provenance, and result/wait return
+those groups through the same in-process transfer path. Multi-worker waits
+retain a separate source session for each group. Existing conservative
+provenance on worker text remains in force. Import
+maps them to newly recorded or deduplicated parent IDs, then rewrites only
+binding source IDs. Expressions, field paths, series and initial values stay
+as the child recorded them. The pre-binding identity digest is preserved.
+Missing/forward sources or failed appends are errors in the task result;
+only recorded or reused cards are listed and counted as emitted. Parent evidence references remain
+parent-scoped. Durable child-card provenance remains open under hardening P03.
+
 ## 1. What is missing today
 
 Facts, read from the tree at 5.3.2:

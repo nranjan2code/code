@@ -59,7 +59,13 @@ overlapping fixes should close their original entries as well.
   placement (A07). The full repository gate passes. A04 and the audit of other
   mandatory causal writes remain open. Live outcome publication and steering
   now require successful recording; budget approval requires successful
-  re-admission. The full repository gate passes.
+  re-admission. The full repository gate passes. The next A04 slice inherits
+  step defaults, protected paths and completion policy, and captures each
+  child dispatch's budget attribution without resetting shared limits.
+  Focused tests cover settings, path refusal, disabled completion marker
+  policy, readonly narrowing and 30 FinOps cases. The full gate passes;
+  child-bound artifact/history/file-note/
+  checkpoint services and aggregate dispatch ceilings remain open.
 - [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
   actual outline attribution and typed cleanup (P01–P03, P13, P14).
   P01 chart categories retain lexical text and ambiguous y strings are
@@ -74,7 +80,11 @@ overlapping fixes should close their original entries as well.
   unchanged; helper tests, all 48 server projection tests, both bundles and
   the full repository gate pass. Live browser acceptance
   is pending because local browser access is disabled. Other S3 work remains
-  open.
+  open. Delegated bindings now remap child presentation IDs onto
+  imported/deduplicated parent IDs and report transfer errors. Background
+  result/wait retain card groups and provenance per worker; only successful
+  imports count as emitted. Focused foreground/background/multiworker tests
+  and the full gate pass. Durable child-card provenance remains open.
 - [ ] S4: interaction ownership/invalidation, replacement, graph scope and
   invocation/freshness provenance (P04, D01–D04).
 - [ ] S5: subject persistence, protected drafts, encrypted fenced canvas
@@ -83,6 +93,10 @@ overlapping fixes should close their original entries as well.
   including answers and pages, with production-state round-trip tests.
   Both client bundles and the full repository gate pass. Running-app reload
   acceptance remains open; this does not close the wider Canvas stage.
+  P06 automatic eviction now skips unsent notes and refuses a ninth tab if
+  every tab has one; pure-state regressions, both bundles and the full gate
+  pass. Sync failures, conflict
+  rebasing and reload durability remain open. New UI acceptance is pending.
 - [ ] S6: adaptive coverage/fallback, truthful charts, streaming, task-level
   quality and checked wire outcomes (P09–P12, A11, D04).
   P10 numerical ranges, compact precise labels and overflow-safe y

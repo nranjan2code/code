@@ -33,6 +33,9 @@ pub struct SpendCheck<'a> {
     pub est_input_tokens: u64,
     /// Reserved completion size (context policy max output).
     pub planned_output_tokens: u64,
+    /// Trace for this dispatch. Core-owned gates prefer this immutable
+    /// attribution over their legacy turn-level trace fallback.
+    pub trace: Option<&'a vak_session::trace::TraceKey>,
 }
 
 #[async_trait::async_trait]

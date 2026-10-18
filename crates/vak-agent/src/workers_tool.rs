@@ -159,11 +159,14 @@ impl WorkersTool {
 
     fn result(&self, id: &str) -> ToolOutput {
         if let Some(worker) = self.registry.finished_child(&self.parent_session_id, id) {
-            return if worker.is_error {
+            let mut output = if worker.is_error {
                 ToolOutput::error(Fault::Tool, worker.text)
             } else {
                 ToolOutput::ok(worker.text)
             };
+            output.delegated = worker.delegated;
+            output.provenance = worker.provenance;
+            return output;
         }
         if self
             .registry
@@ -257,26 +260,32 @@ impl WorkersTool {
             }
         }
         let mut sections = Vec::new();
+        let mut delegated = Vec::new();
         for id in &ids {
             match self.registry.finished_child(&self.parent_session_id, id) {
-                Some(worker) => sections.push(format!(
-                    "{} ({}): {}\n{}",
-                    worker.id,
-                    worker.label,
-                    if worker.is_error {
-                        "failed"
-                    } else {
-                        "finished"
-                    },
-                    worker.text
-                )),
+                Some(worker) => {
+                    sections.push(format!(
+                        "{} ({}): {}\n{}",
+                        worker.id,
+                        worker.label,
+                        if worker.is_error {
+                            "failed"
+                        } else {
+                            "finished"
+                        },
+                        worker.text
+                    ));
+                    delegated.extend(worker.delegated);
+                }
                 None => match self.registry.live_child(&self.parent_session_id, id) {
                     Some(worker) => sections.push(self.describe_live(&worker)),
                     None => sections.push(format!("{id}: no longer running")),
                 },
             }
         }
-        ToolOutput::ok(sections.join("\n\n"))
+        let mut output = ToolOutput::ok(sections.join("\n\n"));
+        output.delegated = delegated;
+        output
     }
 }
 

@@ -1182,7 +1182,7 @@ const RESULT_PREVIEW_LIMIT: usize = 2000;
 #[derive(Debug, Default)]
 struct CallYield {
     body: Option<String>,
-    delegated: Option<vak_tools::DelegatedCards>,
+    delegated: Vec<vak_tools::DelegatedCards>,
     /// Files the call read or wrote and the MCP server that answered it,
     /// recorded as `CallEffect` entries (docs/design/85-turn-graph.md, G0).
     effects: Vec<vak_session::types::CallEffect>,
@@ -3249,17 +3249,13 @@ impl Agent {
                     .filter_map(|id| pending.remove_entry(id))
                     .collect()
             };
-            self.record_delegated_cards(&call_issue_order, &mut yields, &mut results)
+            let imported_cards = self
+                .record_delegated_cards(&call_issue_order, &mut yields, &mut results)
                 .await;
             self.record_call_effects(&call_issue_order, &mut yields)
                 .await;
-            cards_emitted_this_run |= yields.values().any(|y| y.delegated.is_some());
-            card_answers.extend(
-                yields
-                    .values()
-                    .filter_map(|y| y.delegated.as_ref())
-                    .flat_map(|delegated| delegated.cards.iter().map(|_| None)),
-            );
+            cards_emitted_this_run |= !imported_cards.is_empty();
+            card_answers.extend(imported_cards.into_iter().map(|_| None));
             let shown = std::mem::take(
                 &mut *self
                     .shown_cards
@@ -3605,59 +3601,113 @@ impl Agent {
         call_issue_order: &[String],
         yields: &mut HashMap<String, CallYield>,
         results: &mut [(String, ToolRunOutput)],
-    ) {
+    ) -> Vec<String> {
+        if !yields.values().any(|yielded| !yielded.delegated.is_empty()) {
+            return Vec::new();
+        }
         let mut session = self.session.lock().await;
         let Some(turn_id) = session.latest_directive_entry_id() else {
-            return;
+            return Vec::new();
         };
+        let mut parent_by_digest = std::collections::BTreeMap::new();
+        for (parent_id, record) in session.presentations() {
+            if record.turn_id == turn_id {
+                parent_by_digest
+                    .entry(record.payload_digest.clone())
+                    .or_insert(parent_id);
+            }
+        }
+        let mut imported_parent_ids = std::collections::BTreeSet::new();
         for id in call_issue_order {
-            let Some(delegated) = yields.get(id).and_then(|y| y.delegated.clone()) else {
+            let Some(groups) = yields.get(id).map(|y| y.delegated.clone()) else {
                 continue;
             };
+            if groups.is_empty() {
+                continue;
+            }
             let mut derived_from =
                 session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
             derived_from.push(id.clone());
             let mut listed = Vec::new();
-            for card in delegated.cards {
-                let digest = vak_session::types::payload_digest(&card.payload);
-                if session.has_presentation(&turn_id, &digest) {
-                    continue;
-                }
-                let label = format!("{} \"{}\"", card.semantic_type, card.title);
-                let record = vak_session::types::PresentationRecord {
-                    turn_id: turn_id.clone(),
-                    source: vak_session::types::PresentationSource::Delegated {
-                        tool_use_id: id.clone(),
-                        worker_session_id: delegated.session_id.clone(),
-                    },
-                    semantic_type: card.semantic_type,
-                    skill_id: card.skill_id,
-                    skill_version: card.skill_version,
-                    schema_version: card.schema_version,
-                    payload: card.payload,
-                    payload_digest: digest,
-                    derived_from: derived_from.clone(),
-                    title: card.title,
-                    identity_digest: card.identity_digest,
-                    block: card.block,
-                };
-                if let Ok(entry) = session.append_presentation(record) {
-                    listed.push(format!("- pres:{} {label}", entry.id));
+            let mut transfer_errors = Vec::new();
+            for delegated in groups {
+                let mut child_to_parent = std::collections::BTreeMap::new();
+                for card in delegated.cards {
+                    let mut payload = card.payload;
+                    if let Err(error) = remap_delegated_bindings(&mut payload, &child_to_parent) {
+                        transfer_errors.push(format!("{}: {error}", card.title));
+                        continue;
+                    }
+                    let digest = vak_session::types::payload_digest(&payload);
+                    let card_title = card.title.clone();
+                    let label = format!("{} \"{}\"", card.semantic_type, card_title);
+                    if let Some(parent_id) = parent_by_digest.get(&digest).cloned() {
+                        if let Some(child_id) = card.presentation_id {
+                            child_to_parent.insert(child_id, parent_id.clone());
+                        }
+                        imported_parent_ids.insert(parent_id.clone());
+                        listed.push(format!("- pres:{parent_id} {label}"));
+                        continue;
+                    }
+                    let record = vak_session::types::PresentationRecord {
+                        turn_id: turn_id.clone(),
+                        source: vak_session::types::PresentationSource::Delegated {
+                            tool_use_id: id.clone(),
+                            worker_session_id: delegated.session_id.clone(),
+                        },
+                        semantic_type: card.semantic_type,
+                        skill_id: card.skill_id,
+                        skill_version: card.skill_version,
+                        schema_version: card.schema_version,
+                        payload,
+                        payload_digest: digest.clone(),
+                        derived_from: derived_from.clone(),
+                        title: card.title,
+                        identity_digest: card.identity_digest,
+                        block: card.block,
+                    };
+                    match session.append_presentation(record) {
+                        Ok(entry) => {
+                            if let Some(child_id) = card.presentation_id {
+                                child_to_parent.insert(child_id, entry.id.clone());
+                            }
+                            parent_by_digest.insert(digest, entry.id.clone());
+                            imported_parent_ids.insert(entry.id.clone());
+                            listed.push(format!("- pres:{} {label}", entry.id));
+                        }
+                        Err(error) => transfer_errors.push(format!(
+                            "{}: the parent could not record this card ({error})",
+                            card_title
+                        )),
+                    }
                 }
             }
-            if listed.is_empty() {
+            if listed.is_empty() && transfer_errors.is_empty() {
                 continue;
             }
-            if let Some((_, ToolRunOutput::Ok(content) | ToolRunOutput::Err(_, content))) =
-                results.iter_mut().find(|(rid, _)| rid == id)
-            {
-                content.push_str(&format!(
-                    "\n\nThe worker showed the user these cards; they are on screen already. \
-                     recall {{\"presentation\": \"<id>\"}} opens one to review or fix it.\n{}",
-                    listed.join("\n")
-                ));
+            if let Some(at) = results.iter().position(|(rid, _)| rid == id) {
+                let content = match &mut results[at].1 {
+                    ToolRunOutput::Ok(content) | ToolRunOutput::Err(_, content) => content,
+                };
+                if !listed.is_empty() {
+                    content.push_str(&format!(
+                        "\n\nThe worker showed the user these cards; they are on screen already. \
+                         recall {{\"presentation\": \"<id>\"}} opens one to review or fix it.\n{}",
+                        listed.join("\n")
+                    ));
+                }
+                if !transfer_errors.is_empty() {
+                    let detail = format!(
+                        "The worker finished, but some cards were not transferred to this conversation:\n{}",
+                        transfer_errors.join("\n")
+                    );
+                    let original = content.clone();
+                    results[at].1 =
+                        ToolRunOutput::Err(Fault::Tool, format!("{original}\n\n{detail}"));
+                }
             }
         }
+        imported_parent_ids.into_iter().collect()
     }
 
     /// Detects ```` ```vak ```` fences in the accepted final answer and
@@ -5436,6 +5486,7 @@ impl Agent {
                         session_id: &spend_session_id,
                         est_input_tokens: est_input,
                         planned_output_tokens: self.config.max_output,
+                        trace: self.config.trace.as_ref(),
                     };
                     match gate.reserve_dispatch(&check).await {
                         Ok(reservation) => spend_reservation = reservation,
@@ -8327,13 +8378,13 @@ async fn execute_one(
                         yielded.effects = effects;
                         yielded.tool = hook_name.clone();
                     }
-                    if let Some(delegated) = out.delegated {
+                    if !out.delegated.is_empty() {
                         yields
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .entry(call.id.clone())
                             .or_default()
-                            .delegated = Some(delegated);
+                            .delegated = out.delegated;
                     }
                     let fault = out.fault;
                     let content = windowed_result(&call.id, out.content, yields);
@@ -9283,6 +9334,41 @@ enum ToolRunOutput {
     Ok(String),
     /// A failed call: where its fault lies, and what the model is told.
     Err(Fault, String),
+}
+
+/// Rebase a worker card's binding references onto the presentation ids the
+/// parent assigned while importing earlier cards from that worker.
+fn remap_delegated_bindings(
+    payload: &mut Value,
+    child_to_parent: &std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    let Some(bindings) = payload.get_mut("bound") else {
+        return Ok(());
+    };
+    let Some(bindings) = bindings.as_array_mut() else {
+        return Err("`bound` must be a list".into());
+    };
+    for (binding_index, binding) in bindings.iter_mut().enumerate() {
+        let Some(from) = binding.get_mut("from").and_then(Value::as_array_mut) else {
+            return Err(format!("binding {} has no source list", binding_index + 1));
+        };
+        for source in from {
+            let Some(child_id) = source.as_str() else {
+                return Err(format!(
+                    "binding {} has a non-text source id",
+                    binding_index + 1
+                ));
+            };
+            let Some(parent_id) = child_to_parent.get(child_id) else {
+                return Err(format!(
+                    "binding {} refers to child presentation `{child_id}` that was not transferred earlier",
+                    binding_index + 1
+                ));
+            };
+            *source = Value::String(parent_id.clone());
+        }
+    }
+    Ok(())
 }
 
 /// Why a `recall` call returned nothing, decided where it is answered rather

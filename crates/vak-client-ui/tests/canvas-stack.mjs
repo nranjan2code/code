@@ -56,6 +56,29 @@ assert.equal(entriesOf(crowded, "a").length, MAX_ENTRIES);
 assert.equal(entriesOf(crowded, "a")[0].subject.path, "f3.txt");
 assert.equal(activeEntry(crowded, "a").subject.path, `f${MAX_ENTRIES + 2}.txt`);
 
+// Automatic eviction skips unsent notes, including whitespace the person has
+// typed. The server's limit is respected by refusing a new tab if all are dirty.
+{
+  let protectedTabs = {};
+  for (let i = 0; i < MAX_ENTRIES; i++) {
+    protectedTabs = open(protectedTabs, "a", file(`note${i}.txt`));
+    protectedTabs = updateEntry(protectedTabs, "a", subjectKey(file(`note${i}.txt`)), { draft: i === 0 ? " " : `Unsent ${i}` });
+  }
+  const before = protectedTabs;
+  assert.equal(open(protectedTabs, "a", file("new.txt")), before, "a full dirty Canvas refuses the new open without changing its active tab");
+  assert.equal(entriesOf(protectedTabs, "a").length, MAX_ENTRIES);
+  assert.equal(activeEntry(protectedTabs, "a").subject.path, "note7.txt");
+  protectedTabs = open(protectedTabs, "a", file("note0.txt"));
+  assert.equal(activeEntry(protectedTabs, "a").draft, " ", "reopening a dirty tab keeps its note");
+  protectedTabs = updateEntry(protectedTabs, "a", subjectKey(file("note3.txt")), { draft: "" });
+  protectedTabs = open(protectedTabs, "a", file("new.txt"));
+  assert.equal(entriesOf(protectedTabs, "a").length, MAX_ENTRIES);
+  assert.ok(!entriesOf(protectedTabs, "a").some(entry => entry.subject.path === "note3.txt"), "only the clean tab is evicted");
+  assert.equal(entriesOf(protectedTabs, "a").find(entry => entry.subject.path === "note0.txt").draft, " ");
+  const restored = fromStored(JSON.parse(JSON.stringify(toStored(protectedTabs.a))), undefined, subject => freshEntry(subject, false));
+  assert.equal(restored.entries.filter(entry => entry.draft.length > 0).length, MAX_ENTRIES - 1, "protected notes round-trip through stored Canvas state");
+}
+
 // What a viewer can do is data: documents open focused, a phone always does, a phone reads a PDF's text.
 assert.equal(freshEntry(file("a.docx"), false).mode, "focused");
 assert.equal(freshEntry(file("a.html"), false).mode, "split");

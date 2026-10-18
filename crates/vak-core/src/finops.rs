@@ -554,11 +554,7 @@ impl CoreSpendGate {
             }
         }
         let id = SpendReservationId::new();
-        let trace = self
-            .trace
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
+        let trace = check.trace.cloned().or_else(|| self.current_trace().0);
         let actor = trace.as_ref().and_then(|trace| trace.actor);
         self.reservations
             .lock()
@@ -1043,6 +1039,7 @@ mod tests {
             session_id: "s1",
             est_input_tokens: 1_000_000,
             planned_output_tokens: 100_000,
+            trace: None,
         }
     }
 
@@ -1351,6 +1348,7 @@ mod tests {
             session_id: "s1",
             est_input_tokens: input,
             planned_output_tokens: 0,
+            trace: None,
         };
         gate.authorize(&make_check(2_000)).await.unwrap();
         gate.authorize(&make_check(1_000)).await.unwrap();
@@ -1537,6 +1535,87 @@ mod tests {
         assert!(gate.reserve_dispatch(&check("claude-sonnet")).await.is_ok());
         assert_eq!(gate.ledger.all_rows().len(), 1);
         assert_eq!(gate.ledger.all_rows()[0].trace, Some(trace));
+    }
+
+    #[tokio::test]
+    async fn reservations_keep_dispatch_trace_across_gate_trace_changes() {
+        use vak_session::ids::{AgentId, PrincipalId, SpaceId, TenantId};
+        use vak_session::trace::{Cause, TraceKey};
+
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_run_usd: Some(10.0),
+            ..Default::default()
+        };
+        let gate = CoreSpendGate::new(dir.path(), &finops);
+        let trace = || {
+            TraceKey::root(
+                TenantId::new(),
+                SpaceId::new(),
+                AgentId::new(),
+                Cause::Heartbeat,
+            )
+        };
+        let first_trace = trace().acting(PrincipalId::new(), None);
+        let second_trace = trace().acting(PrincipalId::new(), None);
+        fn check_for_trace<'a>(trace: &'a vak_session::trace::TraceKey) -> SpendCheck<'a> {
+            SpendCheck {
+                model: "claude-sonnet",
+                provider: "anthropic",
+                session_id: "s1",
+                est_input_tokens: 1_000_000,
+                planned_output_tokens: 100_000,
+                trace: Some(trace),
+            }
+        }
+
+        let first = gate
+            .reserve_dispatch(&check_for_trace(&first_trace))
+            .await
+            .unwrap()
+            .unwrap();
+        let second = gate
+            .reserve_dispatch(&check_for_trace(&second_trace))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            gate.reserve_dispatch(&check_for_trace(&first_trace))
+                .await
+                .is_err()
+        );
+
+        // Simulate the mutable legacy turn trace changing before the calls
+        // settle in the opposite order from admission.
+        gate.set_trace(Some(trace()));
+        gate.settle_dispatch(
+            second,
+            "anthropic",
+            "claude-sonnet",
+            "s1",
+            &Usage::default(),
+            0,
+        );
+        gate.settle_dispatch(
+            first,
+            "anthropic",
+            "claude-sonnet",
+            "s1",
+            &Usage::default(),
+            0,
+        );
+
+        let rows = gate.ledger.all_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].trace, Some(second_trace.clone()));
+        assert_eq!(rows[1].trace, Some(first_trace.clone()));
+        assert_eq!(rows[0].actor, second_trace.actor);
+        assert_eq!(rows[1].actor, first_trace.actor);
+        assert!(
+            gate.reserve_dispatch(&check_for_trace(&first_trace))
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]

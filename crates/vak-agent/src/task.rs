@@ -104,6 +104,14 @@ pub struct TaskDeps {
     pub run_retry_attempts: u32,
     pub run_retry_base_backoff_ms: u64,
     pub dispatch_ceiling: u32,
+    /// Parent turn's per-purpose model settings; workers must not fall back
+    /// to shipped defaults when the operator configured these.
+    pub steps: vak_control::StepDefaults,
+    /// Paths protected by the parent's admitted request (for example the
+    /// source of a "Make another" request).
+    pub protected_paths: Vec<String>,
+    /// Parent's configured completion gate, preserved for children.
+    pub stop_policy: Option<crate::StopPolicy>,
     pub spend_gate: Option<Arc<dyn crate::SpendGate>>,
     pub permission: Option<Arc<PermissionEngine>>,
     pub mode: Mode,
@@ -345,6 +353,8 @@ pub struct FinishedWorker {
     pub is_error: bool,
     pub text: String,
     pub elapsed_secs: u64,
+    pub delegated: Vec<vak_tools::DelegatedCards>,
+    pub provenance: vak_control::Provenance,
 }
 
 /// Registry of currently-running workers, keyed by unique child session
@@ -1053,6 +1063,9 @@ impl TaskTool {
         cfg.run_retry_attempts = self.deps.run_retry_attempts;
         cfg.run_retry_base_backoff_ms = self.deps.run_retry_base_backoff_ms;
         cfg.dispatch_ceiling = self.deps.dispatch_ceiling;
+        cfg.steps = self.deps.steps.clone();
+        cfg.protected_paths = self.deps.protected_paths.clone();
+        cfg.stop_policy = self.deps.stop_policy.clone();
         cfg.ladder = self.deps.ladder.clone();
         cfg.ladder_provider_names = self.deps.ladder_provider_names.clone();
         cfg.provider_name = self.deps.provider_name.clone();
@@ -1262,7 +1275,8 @@ impl DriveChild {
             .await
             .presentations()
             .into_iter()
-            .map(|(_, record)| vak_tools::PresentationCard {
+            .map(|(presentation_id, record)| vak_tools::PresentationCard {
+                presentation_id: Some(presentation_id),
                 semantic_type: record.semantic_type.clone(),
                 skill_id: record.skill_id.clone(),
                 skill_version: record.skill_version.clone(),
@@ -1277,7 +1291,7 @@ impl DriveChild {
         // What the worker wrote can hold anything its turn held.
         output.provenance = agent.held();
         if !cards.is_empty() {
-            output.delegated = Some(vak_tools::DelegatedCards {
+            output.delegated.push(vak_tools::DelegatedCards {
                 session_id: session_id.clone(),
                 cards,
             });
@@ -1293,6 +1307,8 @@ impl DriveChild {
                 is_error: output.is_error(),
                 text: output.content.clone(),
                 elapsed_secs: started.elapsed().as_secs(),
+                delegated: output.delegated.clone(),
+                provenance: output.provenance,
             });
         }
         output
@@ -1668,5 +1684,94 @@ mod child_id_tests {
             .collect();
         let unique: std::collections::HashSet<_> = all.iter().collect();
         assert_eq!(unique.len(), all.len());
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod finished_worker_transfer_tests {
+    use super::{FinishedWorker, WorkerRegistry};
+    use crate::workers_tool::WorkersTool;
+    use vak_tools::{DelegatedCards, PresentationCard, Tool};
+
+    fn worker(id: &str, parent: &str, payload: serde_json::Value) -> FinishedWorker {
+        FinishedWorker {
+            id: id.into(),
+            label: id.into(),
+            parent_session_id: parent.into(),
+            is_error: false,
+            text: format!("result from {id}"),
+            elapsed_secs: 1,
+            delegated: vec![DelegatedCards {
+                session_id: id.into(),
+                cards: vec![PresentationCard {
+                    presentation_id: Some(format!("{id}-card")),
+                    semantic_type: "chart".into(),
+                    skill_id: "test".into(),
+                    skill_version: "1".into(),
+                    schema_version: 1,
+                    title: id.into(),
+                    payload,
+                    identity_digest: "digest".into(),
+                    block: Some("chart".into()),
+                }],
+            }],
+            provenance: vak_control::Provenance::PRIVATE,
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_returns_each_workers_cards_with_its_own_session_and_result_keeps_them() {
+        let registry = std::sync::Arc::new(WorkerRegistry::new());
+        registry.finish(worker("child-a", "parent", serde_json::json!({"v": 1})));
+        registry.finish(worker("child-b", "parent", serde_json::json!({"v": 2})));
+        registry.finish(worker("other-parent", "other", serde_json::json!({"v": 3})));
+        let tool = WorkersTool::new(registry.clone(), "parent".into());
+        let ctx = vak_tools::ToolContext::new(std::env::temp_dir());
+
+        let waited = tool
+            .execute(
+                &serde_json::json!({"action": "wait", "ids": ["child-a", "child-b"]}),
+                &ctx,
+            )
+            .await;
+        assert_eq!(waited.delegated.len(), 2);
+        assert_eq!(
+            waited
+                .delegated
+                .iter()
+                .map(|group| group.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child-a", "child-b"]
+        );
+        assert_eq!(waited.provenance, vak_control::Provenance::BOTH);
+
+        let result = tool
+            .execute(
+                &serde_json::json!({"action": "result", "id": "child-a"}),
+                &ctx,
+            )
+            .await;
+        assert_eq!(result.delegated.len(), 1);
+        assert_eq!(result.delegated[0].session_id, "child-a");
+        assert_eq!(result.provenance, vak_control::Provenance::BOTH);
+        assert_eq!(
+            registry
+                .finished_child("parent", "child-a")
+                .expect("child result is retained")
+                .provenance,
+            vak_control::Provenance::PRIVATE,
+            "each result keeps its worker's typed provenance"
+        );
+
+        let stranger = WorkersTool::new(registry, "other".into());
+        let hidden = stranger
+            .execute(
+                &serde_json::json!({"action": "result", "id": "child-a"}),
+                &ctx,
+            )
+            .await;
+        assert!(hidden.is_error());
+        assert!(hidden.delegated.is_empty());
     }
 }

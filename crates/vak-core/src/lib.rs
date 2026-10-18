@@ -7001,6 +7001,7 @@ impl Core {
             cfg.presentation_rebuild = Some(Arc::new(move |name, input| {
                 presentation_tools::presentation_info_with(name, input, &skills, &packs).map(
                     |info| vak_tools::PresentationCard {
+                        presentation_id: None,
                         semantic_type: info.semantic_type,
                         skill_id: info.skill_id,
                         skill_version: info.skill_version,
@@ -7553,6 +7554,9 @@ impl Core {
                 run_retry_attempts: cfg.run_retry_attempts,
                 run_retry_base_backoff_ms: cfg.run_retry_base_backoff_ms,
                 dispatch_ceiling: cfg.dispatch_ceiling,
+                steps: cfg.steps.clone(),
+                protected_paths: cfg.protected_paths.clone(),
+                stop_policy: cfg.stop_policy.clone(),
                 spend_gate: cfg.spend_gate.clone(),
                 permission: Some(engine.clone()),
                 mode: cfg.mode,
@@ -11490,6 +11494,7 @@ mod spend_gate_persistence_tests {
             session_id,
             est_input_tokens: 1_000_000,
             planned_output_tokens: 100_000,
+            trace: None,
         }
     }
 

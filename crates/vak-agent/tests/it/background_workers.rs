@@ -22,7 +22,7 @@ use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
 use vak_tools::read::ReadTool;
 use vak_tools::write::WriteTool;
-use vak_tools::{Tool, ToolContext};
+use vak_tools::{PresentationCard, Tool, ToolContext, ToolOutput};
 
 /// What a worker's model does.
 enum Child {
@@ -129,6 +129,30 @@ impl vak_agent::Approver for Watched {
     }
 }
 
+struct EmitCard;
+
+#[async_trait::async_trait]
+impl Tool for EmitCard {
+    fn name(&self) -> &str {
+        "emit_card"
+    }
+    fn description(&self) -> &str {
+        "test card emitter"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    fn card_kinds(&self) -> Vec<String> {
+        vec!["chart".into()]
+    }
+    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("shown")
+    }
+}
+
 struct Harness {
     task: Arc<TaskTool>,
     agent: Agent,
@@ -191,15 +215,32 @@ fn harness(parent_script: Vec<AssistantMessage>, child: Child) -> Harness {
         trust_project: false,
         tail: Default::default(),
         model: "test-model".into(),
-        tools: vec![Arc::new(ReadTool), Arc::new(WriteTool)],
+        tools: vec![Arc::new(ReadTool), Arc::new(WriteTool), Arc::new(EmitCard)],
         tool_definitions: Vec::new(),
         capabilities: Vec::new(),
         hooks: None,
         revocation_check: None,
-        presentation_rebuild: None,
+        presentation_rebuild: Some(Arc::new(|name, input| {
+            if name != "emit_card" {
+                return None;
+            }
+            let title = input.get("title")?.as_str()?.to_string();
+            let payload = vak_session::types::canonicalize_json(input);
+            Some(PresentationCard {
+                presentation_id: None,
+                semantic_type: "chart".into(),
+                skill_id: "test".into(),
+                skill_version: "1".into(),
+                schema_version: 1,
+                payload,
+                title,
+                identity_digest: "test-digest".into(),
+                block: Some("chart".into()),
+            })
+        })),
         mcp_tool_index: None,
         input_normalizer: None,
-        read_only_tools: vec![Arc::new(ReadTool)],
+        read_only_tools: vec![Arc::new(ReadTool), Arc::new(EmitCard)],
         max_turns: 5,
         capacity: None,
         capacity_key: None,
@@ -218,6 +259,9 @@ fn harness(parent_script: Vec<AssistantMessage>, child: Child) -> Harness {
         run_retry_attempts: 0,
         run_retry_base_backoff_ms: 0,
         dispatch_ceiling: 1,
+        steps: vak_control::StepDefaults::shipped(),
+        protected_paths: Vec::new(),
+        stop_policy: Some(vak_agent::StopPolicy::default()),
         spend_gate: None,
         permission: Some(Arc::new(PermissionEngine::default())),
         mode: vak_permission::Mode::WorkspaceWrite,
@@ -322,6 +366,110 @@ async fn a_parent_starts_lists_waits_for_and_reads_a_background_worker() {
         results.iter().any(|r| r.contains("the child's findings")),
         "wait returns the result: {results:?}"
     );
+    let requests = h.requests.lock().unwrap();
+    let child_request = requests
+        .iter()
+        .find(|request| request.system.as_deref() == Some("child-sys"))
+        .expect("background child made a model request");
+    let child_tools: Vec<_> = child_request
+        .tools
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .collect();
+    assert!(
+        !child_tools.contains(&"write"),
+        "read-only child does not regain the parent's write tool: {child_tools:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn background_card_survives_result_and_repeated_wait_imports_dedupe() {
+    let mut h = harness(
+        vec![
+            background_task("scout"),
+            call("w1", "workers", serde_json::json!({"action": "wait"})),
+            call("w2", "workers", serde_json::json!({"action": "wait"})),
+            text("parent done"),
+        ],
+        Child::Script(VecDeque::from(vec![
+            call(
+                "c1",
+                "emit_card",
+                serde_json::json!({"title": "Child chart", "points": [1, 2]}),
+            ),
+            text("the child's findings"),
+        ])),
+    );
+    let outcome = run(&mut h.agent).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+
+    let session = h.agent.session.lock().await;
+    let cards: Vec<_> = session
+        .presentations()
+        .into_iter()
+        .filter(|(_, record)| {
+            matches!(
+                record.source,
+                vak_session::types::PresentationSource::Delegated { .. }
+            )
+        })
+        .collect();
+    assert_eq!(
+        cards.len(),
+        1,
+        "the second retrieval reuses the parent card; results={:?}; worker={:?}",
+        tool_results(&h.requests.lock().unwrap()),
+        h.registry.finished_for("parent-bg")
+    );
+    let (parent_card_id, card) = &cards[0];
+    assert_eq!(card.title, "Child chart");
+    let results = tool_results(&h.requests.lock().unwrap());
+    for action_id in ["w1", "w2"] {
+        let result = session
+            .message_chain()
+            .iter()
+            .flat_map(|(_, message)| message.content.iter())
+            .find_map(|block| match block {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } if tool_use_id == action_id => Some(content.clone()),
+                _ => None,
+            })
+            .expect("wait result recorded");
+        assert!(
+            result.contains(&format!("pres:{parent_card_id} chart \"Child chart\"")),
+            "wait {action_id} carries the imported card: {result}"
+        );
+    }
+    assert!(
+        results
+            .iter()
+            .any(|result| result.contains("the child's findings"))
+    );
+    drop(session);
+
+    let worker = h
+        .registry
+        .finished_for("parent-bg")
+        .into_iter()
+        .next()
+        .expect("finished worker stays available to result");
+    assert_eq!(worker.delegated.len(), 1);
+    assert_eq!(worker.delegated[0].session_id, worker.id);
+    let result = workers_tool(&h)
+        .execute(
+            &serde_json::json!({"action": "result", "id": worker.id}),
+            &ToolContext::new(std::env::temp_dir()),
+        )
+        .await;
+    assert_eq!(result.delegated.len(), 1);
+    assert_eq!(result.delegated[0].session_id, worker.id);
+    assert_eq!(result.provenance, vak_control::Provenance::BOTH);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -619,6 +619,65 @@ These bounded inspections do not close P01/P02:
   is pending because local browser use is disabled in Work settings; no
   visual result is claimed for this slice. P02/S3 remain partial.
 
+### Continuation — child policy, scoped spending, delegated bindings and notes
+
+- A04 immutable inheritance: TaskDeps carries configured per-purpose steps,
+  protected paths and stop policy from the admitted parent; child config
+  preserves them. Existing admitted-tool/read-only narrowing remains.
+- Budget attribution: SpendCheck supplies a dispatch trace, snapshotted by
+  the existing shared gate into each reservation. Child actors/traces stay
+  distinct while aggregate run/day counters remain shared. Legacy callers
+  without a dispatch trace retain the existing turn-trace fallback.
+- P03 transfer carries child presentation IDs in process. Background worker
+  records preserve cards and provenance; result/wait return separate groups
+  per source worker. Foreground and background use the same importer. A
+  per-turn digest index and child-to-parent map resolve newly recorded and
+  deduplicated cards; only bound source IDs change. Unknown/malformed/forward
+  references and append failures are reported in the tool result. The
+  original identity digest predates binding metadata, so stays unchanged.
+  Evidence references remain parent-scoped. Only successfully appended or
+  reused parent IDs contribute card-emission receipts. Ordinary tool batches
+  with no delegated cards skip the index entirely. Durable child presentation
+  provenance is still open.
+- P06 automatic eviction skips tabs with any unsent note (including typed
+  whitespace). When every tab has one, opening a new subject leaves state
+  unchanged, queues no rejected open, and gives a visible notice; an existing
+  tab can still reopen. Clearing a note makes that tab evictable. The server's
+  eight-tab limit stays unchanged. Pure-state round-trip regressions pass;
+  a scoped Canvas browser fixture is ready but not run while access is denied.
+- Both client bundles pass. Focused validation passes: child-step/path/stop
+  policy and readonly regressions; 30 FinOps cases with separate actors/traces,
+  shared-cap denial and out-of-order settlement; foreground binding/dedupe and
+  rejected-source tests; background result/repeated-wait imports and multiworker
+  grouping, parent isolation and conservative provenance. Agent/core Clippy
+  passes. The full repository gate passes: formatting, workspace Clippy,
+  all workspace tests (740 seconds), version, doc paths, records and
+  advisories. Source was frozen throughout the completed gate.
+  No new live UI acceptance is claimed. No stage or whole A04/P03/P06 finding
+  is closed: child-scoped services, durable child-card provenance, replacement state,
+  durable reservations and safe sync/conflict/reload handling remain open.
+
+### Prepared interaction ownership scope
+
+Read-only follow-up for P04/D01: `answerValues.ts` has one module-global
+publication map keyed only by presentation ID, and each Controls mount owns
+settings and republishes them independently. PageView's empty session disables
+durable interactions but still reuses source presentation IDs. This can mix
+page-local inputs with conversation values or reset values on another mount.
+
+The bounded next design is an in-memory answer-values scope/context holding
+both publications and current control settings. Conversation views share the
+same session/turn scope; page views share an immutable page-version scope
+within this viewer, separate from source conversations and other versions.
+Reference-count scopes, reconcile source IDs as content changes, and release
+only after the last view unmounts. Use the existing immutable version IDs
+available to Library/SharedArtifact/Canvas page loaders; do not key by title
+or path. Keep durable conversation actions and page-local unsaved edits as
+they are. Verify source-set reconciliation does not let one partial mount
+prune sources another live mount owns. Tests must cover multiple mounts,
+page isolation, version changes, removed sources, recorded fallback and final
+cleanup. This is prepared scope, not implemented or new cross-user sharing.
+
 ### Reporting contract
 
 For each slice record finding IDs, exact baseline, reproduction, chosen

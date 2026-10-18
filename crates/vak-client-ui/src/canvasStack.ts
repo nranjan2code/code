@@ -43,7 +43,7 @@ export interface ConversationCanvas {
 
 export type CanvasStacks = Readonly<Record<string, ConversationCanvas>>;
 
-/** More than this and the strip stops being a strip; the oldest unused one goes. */
+/** The server's tab limit. Automatic eviction may remove only a clean tab. */
 export const MAX_ENTRIES = 8;
 
 export function activeEntry(stacks: CanvasStacks, conversation: string): CanvasEntry | null {
@@ -76,7 +76,11 @@ export function openEntry(
   } else {
     entries = [...current, { key, subject, ...fresh(subject) }];
     while (entries.length > MAX_ENTRIES) {
-      const oldest = entries.findIndex((entry) => entry.key !== key);
+      const oldest = entries.findIndex((entry) => entry.key !== key && entry.draft.length === 0);
+      // Opening something else is never permission to discard an unsent note.
+      // Refuse the open when every existing tab has one; keep the current
+      // Canvas unchanged so callers can explain the limit without syncing it.
+      if (oldest < 0) return stacks;
       entries = entries.filter((_, index) => index !== oldest);
     }
   }

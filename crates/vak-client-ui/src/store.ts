@@ -347,7 +347,13 @@ export function onCanvasChange(share: (conversation: string, op: CanvasOp) => vo
 
 /** The one way a Canvas changes: here at once, then for every other surface. */
 export function changeCanvas(conversation: string, op: CanvasOp) {
-  setCanvasStacks((stacks) => applyOp(stacks, conversation, op, freshCanvasEntry));
+  const before = canvasStacks();
+  const next = applyOp(before, conversation, op, freshCanvasEntry);
+  if (next === before) {
+    if (op.op === "open") setNotice({ kind: "info", text: "All eight Canvas tabs contain unsent notes. Finish a note before opening another tab." });
+    return;
+  }
+  setCanvasStacks(next);
   if (conversation && isShared(op)) shareCanvasChange(conversation, op);
 }
 
