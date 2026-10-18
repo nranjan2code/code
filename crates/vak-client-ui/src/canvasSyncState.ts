@@ -1,6 +1,6 @@
 /** Queue and retry policy for conversation Canvas writes. Kept independent of
  * Solid and the browser so failures and races can be exercised in Node. */
-export type CanvasSaveReason = "auth" | "too_large" | "missing" | "throttled" | "server" | "invalid" | "newer_schema";
+export type CanvasSaveReason = "auth" | "too_large" | "missing" | "throttled" | "server" | "invalid" | "newer_schema" | "conflict";
 export type CanvasSaveState = "saved" | "saving" | "pending" | "error";
 export interface CanvasSaveStatus { state: CanvasSaveState; reason?: CanvasSaveReason }
 export interface CanvasWriteError { status?: number; kind?: string }
@@ -11,16 +11,16 @@ interface Options<Op, Snapshot, Stored> {
   get(conversation: string): Promise<Stored>;
   snapshot(conversation: string): Snapshot;
   revision(stored: Stored): number;
-  applyStored(conversation: string, stored: Stored, pending: readonly Op[]): void;
+  applyStored(conversation: string, stored: Stored, pending: readonly Op[], baseline?: Stored): boolean | void;
   retryMs?: number;
   schedule?(fn: () => void, delay: number): unknown;
   cancel?(timer: unknown): void;
   onStatus?(conversation: string, status: CanvasSaveStatus): void;
 }
 
-interface Queue<Op> {
+interface Queue<Op, Stored> {
   base: number; pending: Op[]; writing: boolean; read: boolean;
-  timer?: unknown; state: CanvasSaveStatus;
+  timer?: unknown; state: CanvasSaveStatus; baseline?: Stored;
 }
 
 function reasonOf(error: unknown): CanvasSaveReason | undefined {
@@ -40,7 +40,7 @@ function reasonOf(error: unknown): CanvasSaveReason | undefined {
 
 /** Owns only this process's pending operation queue; it writes no durable state. */
 export function createCanvasSyncCoordinator<Op, Snapshot, Stored>(options: Options<Op, Snapshot, Stored>) {
-  const queues = new Map<string, Queue<Op>>();
+  const queues = new Map<string, Queue<Op, Stored>>();
   const schedule = options.schedule ?? ((fn, ms) => setTimeout(fn, ms));
   const cancel = options.cancel ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>));
   const retryMs = options.retryMs ?? 5000;
@@ -49,7 +49,7 @@ export function createCanvasSyncCoordinator<Op, Snapshot, Stored>(options: Optio
     if (!q) { q = { base: 0, pending: [], writing: false, read: false, state: { state: "saved" } }; queues.set(id, q); }
     return q;
   };
-  const publish = (id: string, q: Queue<Op>, status: CanvasSaveStatus) => {
+  const publish = (id: string, q: Queue<Op, Stored>, status: CanvasSaveStatus) => {
     q.state = status;
     options.onStatus?.(id, status);
   };
@@ -67,11 +67,16 @@ export function createCanvasSyncCoordinator<Op, Snapshot, Stored>(options: Optio
     try {
       const answer = await options.put(id, q.base, options.snapshot(id));
       if ("saved" in answer) {
-        q.base = options.revision(answer.saved); q.read = true;
+        q.base = options.revision(answer.saved); q.read = true; q.baseline = answer.saved;
         q.pending.splice(0, sent);
       } else {
-        q.base = options.revision(answer.stale); q.read = true;
-        options.applyStored(id, answer.stale, q.pending);
+        if (options.applyStored(id, answer.stale, q.pending, q.baseline) === false) {
+          q.writing = false;
+          if (q.timer !== undefined) { cancel(q.timer); q.timer = undefined; }
+          publish(id, q, { state: "error", reason: "conflict" });
+          return;
+        }
+        q.base = options.revision(answer.stale); q.read = true; q.baseline = answer.stale;
       }
       q.writing = false;
       if (q.pending.length) { publish(id, q, { state: "pending" }); scheduleWrite(id, 0); }
@@ -92,8 +97,8 @@ export function createCanvasSyncCoordinator<Op, Snapshot, Stored>(options: Optio
       const stored = await options.get(id);
       if (q.writing || q.pending.length) return;
       if (q.read && options.revision(stored) <= q.base) return;
-      q.base = options.revision(stored); q.read = true;
-      options.applyStored(id, stored, []);
+      if (options.applyStored(id, stored, [], q.baseline) === false) return;
+      q.base = options.revision(stored); q.read = true; q.baseline = stored;
     } catch { /* A later level-triggered read can try again. */ }
   }
   return {

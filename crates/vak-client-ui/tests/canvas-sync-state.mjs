@@ -129,4 +129,34 @@ for (const failure of [Object.assign(new Error("offline")), Object.assign(new Er
   assert.deepEqual(applied, [3]);
 }
 
+// A declined stale rebase must preserve the original CAS revision. Retrying
+// may ask again, but must never send an unreviewed snapshot at the remote head.
+{
+  const timers = [], bases = [], baselines = [];
+  let accept = false;
+  const coordinator = createCanvasSyncCoordinator({
+    get: async () => ({ revision: 1, note: "original" }),
+    put: async (_id, base) => { bases.push(base); return { stale: { revision: 2, note: "remote" } }; },
+    snapshot: () => ({ note: "local" }), revision: (stored) => stored.revision,
+    applyStored: (_id, _stored, pending, baseline) => {
+      if (!pending.length) return true;
+      baselines.push(baseline);
+      return accept;
+    },
+    schedule: (fn) => { const timer = { fn, cancelled: false }; timers.push(timer); return timer; },
+    cancel: (timer) => { timer.cancelled = true; },
+  });
+  await coordinator.read("c");
+  coordinator.enqueue("c", "local edit");
+  const timer = timers[0]; timer.cancelled = true; timer.fn(); await tick();
+  assert.deepEqual(coordinator.status("c"), { state: "error", reason: "conflict" });
+  assert.equal(timers.some((entry) => !entry.cancelled), false);
+  coordinator.retry("c"); await tick();
+  assert.deepEqual(bases, [1, 1], "conflict must not advance the write revision");
+  assert.deepEqual(baselines.map((baseline) => baseline.note), ["original", "original"]);
+  accept = true;
+  coordinator.retry("c"); await tick();
+  assert.equal(coordinator.status("c").state, "pending", "safe replay remains pending until a real write receipt");
+}
+
 console.log("canvas sync failure preservation passed");

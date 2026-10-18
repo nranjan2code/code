@@ -45,9 +45,18 @@ hints only read and cannot overwrite pending work. An in-flight write only
 acknowledges the prefix it sent. A delayed read cannot lower the observed
 revision. While any conversation has pending work, the client requests the
 standard before-unload warning. This queue is not durable: forced reload or
-process loss can still lose it. Safe conflict rebase and encrypted Document
-persistence remain separate open work; the new status is not evidence that
-a failed write was saved.
+process loss can still lose it. Stale writes replay only when local pending notes can be preserved. A
+remotely closed tab with a pending local note is restored through the same
+eight-tab rules, which may evict only clean tabs. Competing edits to the
+same note (including a remote clear), or insufficient safe room, leave the
+entire local Canvas unchanged and pause saving with a conflict notice and
+Copy unsent notes. The base revision advances only after a safe rebase;
+retry cannot bypass the conflict by writing directly at the remote head.
+Unrelated remote notes and ordinary reads continue to update normally.
+Conflicts currently require copying/reconciling notes or making room in the
+other window before retrying; an in-app choice between note versions and
+encrypted Document persistence remain open. The status never claims that
+a failed or conflicted write was saved.
 
 ### 0b. Pointing, discussion and new versions
 

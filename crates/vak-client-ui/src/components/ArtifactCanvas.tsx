@@ -16,6 +16,7 @@ import {
   consumeCanvasArrival,
   openCandidateReview,
   setCanvasDevice,
+  setNotice,
   technicalDetails,
   toggleCanvasMode,
   updateCanvasEntry,
@@ -272,7 +273,16 @@ export default function ArtifactCanvas() {
           </div>
         </Show>
 
-        <CanvasSaveNotice status={canvasSaveState(canvasConversation())} onRetry={() => retryCanvas(canvasConversation())} />
+        <CanvasSaveNotice status={canvasSaveState(canvasConversation())} onRetry={() => retryCanvas(canvasConversation())} onCopy={async () => {
+          const notes = canvasEntries().filter((entry) => entry.draft.length > 0)
+            .map((entry) => `${entry.subject.title}\n${entry.draft}`).join("\n\n");
+          try {
+            await navigator.clipboard.writeText(notes);
+            setNotice({ kind: "info", text: "Unsent Canvas notes copied." });
+          } catch {
+            setNotice({ kind: "error", text: "Could not copy. Select and copy each unsent note before closing." });
+          }
+        }} />
 
         <Show when={draft()}>{(version) =>
           <Show when={canvasEntry()}>{(entry) =>

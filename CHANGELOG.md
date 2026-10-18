@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Canvas conflict replay restores a remotely closed tab when it holds a
+  pending local note and there is safe room. Competing note edits or a full
+  Canvas pause saving with the local state intact and a Copy unsent notes
+  action. Retry retains the original revision until a safe merge succeeds,
+  so it cannot silently overwrite the other window’s work.
+
 - Canvas keeps unacknowledged changes after failed saves and shows a recovery
   message with Retry saving. Authentication, unavailable-conversation and
   oversized-write failures pause retries; temporary failures retry later.

@@ -739,6 +739,32 @@ This does not settle replacement identity or the wider lifecycle matrix.
   reload/process loss, conflict rebase losses and encrypted Document
   persistence are still open. Do not close P06/P07 or S5 from this slice.
 
+### Continuation — guard Canvas stale replay
+
+- Track the last accepted server Canvas beside its revision in the existing
+  in-memory coordinator. Rebase compares pending local draft changes with
+  that baseline and the stale-write response; ordinary reads and view-only
+  changes accept remote note updates normally.
+- Restore a remotely closed tab containing a pending local note using the
+  existing open/eviction rules. Preserve final local input across queued
+  keystroke snapshots, device mode, and unrelated remote notes. A pending
+  explicit close supersedes its earlier typing; a final cleared draft is
+  not revived by intermediate edits.
+- Competing changes (including remote clears) or an unavailable safe slot
+  pause saving without publishing a partial merge, clearing pending work or
+  advancing the CAS revision. Retry therefore cannot overwrite the remote
+  head after a rejected merge. The frame explains the conflict and offers
+  Copy unsent notes; a clipboard failure has a manual-copy explanation.
+- Pure rebase, coordinator and integrated tests pass, including conflict
+  retry from the original base and successful saving after manual remote
+  reconciliation. Both client bundles and the full gate pass: formatting,
+  workspace Clippy, all workspace tests (658 seconds), version, doc paths,
+  records and advisories. Canvas source was frozen during the completed
+  gate. Concurrent blueprint subsystem-map changes were preserved and the
+  record checks rerun after they landed. Browser UI acceptance remains blocked. This is conservative conflict protection,
+  not an in-app note-version chooser. That recovery UI, forced-reload and
+  process-loss durability, and encrypted Document persistence remain open.
+
 ### Reporting contract
 
 For each slice record finding IDs, exact baseline, reproduction, chosen

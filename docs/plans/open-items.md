@@ -111,8 +111,12 @@ overlapping fixes should close their original entries as well.
   delayed-read races have focused coverage. Before-unload warns while
   pending work remains. Both client bundles and the full repository gate
   pass for this slice; the new UI fixture is typechecked but not browser-run.
-  Conflict rebasing, forced-reload/process-loss durability and encrypted
-  Documents remain open. New UI acceptance is pending.
+  Stale replay now restores missing dirty tabs when safe, retains unrelated
+  remote notes, and blocks competing note edits/capacity failures without
+  changing the local Canvas or advancing the write revision. Copy unsent
+  notes supports manual recovery. Focused tests, both client bundles and
+  the full repository gate pass for this slice. In-app conflict choices,
+  forced-reload/process-loss durability and encrypted Documents remain open. UI acceptance pending.
 - [ ] S6: adaptive coverage/fallback, truthful charts, streaming, task-level
   quality and checked wire outcomes (P09–P12, A11, D04).
   P10 numerical ranges, compact precise labels and overflow-safe y
