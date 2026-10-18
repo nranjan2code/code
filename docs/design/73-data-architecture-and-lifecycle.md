@@ -769,10 +769,18 @@ demands it). The query API is identical, so every surface calls one
   Strict reads never repair/truncate a seal manifest; a failed rollup save
   may cost a later refold but does not change a verified read's result.
   The older infallible APIs remain for best-effort views and unmigrated
-  consumers; artifact, commitment, routing and accounting decision readers
+  consumers; artifact read-only views, commitment, routing and accounting decision readers
   still need the A01 audit/rollout in
   `docs/plans/architecture-and-presentation-hardening-plan.md`. The presence
   of a strict API alone does not close that finding.
+- **Strict caches identify their provenance.** A rollup saved by a strict
+  reader carries a verified marker. Older or best-effort caches are rebuilt
+  from the verified chain before a strict decision; a tolerant cache at the
+  same position cannot suppress this verified replacement. Artifact
+  transactions use a strict snapshot and restore sealed content fallibly
+  before invoking their decision closure. Explicitly erased content remains
+  erased; an unavailable content object is an error. Artifact list/get views
+  still use the older best-effort projection and need further caller audit.
 - **Catalog grants use the same records.** The grant wire types live in
   `vak-session/src/grants.rs`, re-exported by `vak-core::grants`; the
   catalog decodes them rather than tolerantly interpreting a second JSON

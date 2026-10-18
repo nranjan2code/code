@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Artifact changes stop before deciding or writing when their history is
+  unreadable. Strict readers rebuild projection caches created by tolerant
+  readers instead of trusting records those readers may have skipped.
+
 - Search, lists and tool-history queries refresh sharing permissions before
   returning results, and report unreadable sharing records instead of
   trusting stale grants. The derived search index rebuilds once to discard

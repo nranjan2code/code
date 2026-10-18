@@ -489,6 +489,23 @@ fn fold(state: &mut State, bytes: &[u8]) {
     apply(state, event);
 }
 
+fn strict_fold(state: &mut State, bytes: &[u8]) -> Result<(), vak_session::types::SessionError> {
+    let decode_error = |error: serde_json::Error| vak_session::types::SessionError::Corrupt {
+        line: 0,
+        message: error.to_string(),
+    };
+    let mut row = serde_json::from_slice::<serde_json::Value>(bytes).map_err(decode_error)?;
+    match vak_session::content::restore(&mut row)? {
+        vak_session::content::Restored::Whole => {
+            let event = serde_json::from_value::<ArtifactEvent>(row).map_err(decode_error)?;
+            apply(state, event);
+        }
+        // Erasure is an explicit recorded state, not a failed read.
+        vak_session::content::Restored::Erased => {}
+    }
+    Ok(())
+}
+
 /// What one event does to the state, read from the chain or pushed by a
 /// [`Tx`] that has not committed yet.
 fn apply(state: &mut State, event: ArtifactEvent) {
@@ -1018,6 +1035,17 @@ impl Artifacts {
     /// after.
     fn snapshot(&self) -> (State, vak_session::tail::Position) {
         let (mut state, at): (State, _) = self.rollup.read_at(fold);
+        self.remove_erased(&mut state);
+        (state, at)
+    }
+
+    fn strict_snapshot(&self) -> Result<(State, vak_session::tail::Position), ArtifactError> {
+        let (mut state, at) = self.rollup.try_read_at(strict_fold).map_err(store_error)?;
+        self.remove_erased(&mut state);
+        Ok((state, at))
+    }
+
+    fn remove_erased(&self, state: &mut State) {
         state
             .artifacts
             .retain(|id, _| !vak_session::content::scope_destroyed(&format!("artifact:{id}")));
@@ -1031,7 +1059,6 @@ impl Artifacts {
                     .or_insert_with_key(|scope| vak_session::content::scope_destroyed(scope))
             });
         }
-        (state, at)
     }
 
     /// Decides and records in one step (docs/design/90-file-state.md §3.5):
@@ -1049,7 +1076,7 @@ impl Artifacts {
         mut decide: impl FnMut(&mut Tx<'_>) -> Result<T, ArtifactError>,
     ) -> Result<T, ArtifactError> {
         loop {
-            let (state, at) = self.snapshot();
+            let (state, at) = self.strict_snapshot()?;
             let mut tx = Tx {
                 artifacts: self,
                 state,

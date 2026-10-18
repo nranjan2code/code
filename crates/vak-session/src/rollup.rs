@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 struct Stored<S> {
     position: Position,
     state: S,
+    /// Only strict readers may reuse this cache as authoritative state.
+    #[serde(default)]
+    verified: bool,
 }
 
 /// A chain and the Document that rolls it up.
@@ -81,7 +84,7 @@ impl Rollup {
             folded = true;
             true
         });
-        if folded && let Err(error) = self.save(to, &state) {
+        if folded && let Err(error) = self.save(to, &state, false) {
             tracing::warn!(
                 kind = "rollup",
                 error_kind = %vak_telemetry::error_kind(&error),
@@ -117,7 +120,8 @@ impl Rollup {
         let stored = crate::documents::read(&self.document)
             .ok()
             .flatten()
-            .and_then(|text| serde_json::from_str::<Stored<S>>(&text).ok());
+            .and_then(|text| serde_json::from_str::<Stored<S>>(&text).ok())
+            .filter(|stored| stored.verified);
         let (from, mut state) = stored.map_or_else(
             || (Position::default(), S::default()),
             |stored| (stored.position, stored.state),
@@ -129,7 +133,7 @@ impl Rollup {
             Ok(true)
         })?;
         // A failed cache save cannot invalidate a successfully verified read.
-        if folded && let Err(error) = self.save(to, &state) {
+        if folded && let Err(error) = self.save(to, &state, true) {
             tracing::warn!(
                 kind = "rollup",
                 error_kind = %vak_telemetry::error_kind(&error),
@@ -145,13 +149,27 @@ impl Rollup {
         &self,
         position: Position,
         state: &S,
+        verified: bool,
     ) -> Result<(), SessionError> {
-        let text = serde_json::to_string(&Stored { position, state })
-            .map_err(|error| SessionError::Objects(error.to_string()))?;
+        let text = serde_json::to_string(&Stored {
+            position,
+            state,
+            verified,
+        })
+        .map_err(|error| SessionError::Objects(error.to_string()))?;
         crate::documents::update(&self.document, |current| {
             let later = current
                 .and_then(|text| serde_json::from_str::<Stored<serde_json::Value>>(text).ok())
-                .is_some_and(|stored| stored.position >= position);
+                .is_some_and(|stored| {
+                    // An unverified cache cannot block its verified rebuild,
+                    // even if a tolerant reader skipped past unreadable rows.
+                    if verified && !stored.verified {
+                        false
+                    } else {
+                        stored.position > position
+                            || (stored.position == position && (stored.verified || !verified))
+                    }
+                });
             Ok(if later {
                 None
             } else {
@@ -241,5 +259,33 @@ mod tests {
             .unwrap();
         assert_eq!(folded, 2);
         assert_eq!((recovered.rows, recovered.total), (3, 6));
+    }
+
+    #[test]
+    fn strict_reads_rebuild_tolerant_caches_and_save_the_verified_position() {
+        vak_config::paths::isolate_home_for_tests();
+        let home = vak_config::paths::data_home().join(uuid::Uuid::now_v7().to_string());
+        let chain = crate::chain::RecordChain::at(home.join("rows"));
+        let rollup = Rollup::new(chain.path(), home.join("rollup"));
+        chain.append(&serde_json::json!({"n": 1})).unwrap();
+        let tolerant: Sum = rollup.read(|_, _| {});
+        assert_eq!(tolerant.rows, 0);
+        let mut visited = 0;
+        let strict: Sum = rollup
+            .try_read(|sum, bytes| {
+                visited += 1;
+                fold(sum, bytes);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(visited, 1);
+        assert_eq!(strict.rows, 1);
+        let cached: Sum = rollup
+            .try_read(|_, _| Err(SessionError::InvalidSelection))
+            .unwrap();
+        assert_eq!(
+            cached.rows, 1,
+            "a verified rebuild replaces an equal-position tolerant cache"
+        );
     }
 }

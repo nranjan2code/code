@@ -38,7 +38,10 @@ overlapping fixes should close their original entries as well.
   conditional-append checks plus transactional epoch/ref/commit updates.
   The full repository gate passed, including the new regressions.
   Continuation implements strict transactional catalog grant queries and
-  canonical grant records, with the full repository gate passing. A01's other consumers, catalog policy and blob ownership remain open;
+  canonical grant records, with the full repository gate passing.
+  Artifact transactions and verified-cache provenance pass the full
+  repository gate. Read-only
+  artifact callers, commitment/routing/accounting, catalog policy and blob ownership remain open;
   the stage is not complete.
 - [ ] S2: causal recording, consistent run services/policy, cancellation,
   compaction locks and conservative tool claims (A03–A07).

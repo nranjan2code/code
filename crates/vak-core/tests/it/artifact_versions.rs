@@ -818,3 +818,89 @@ fn a_version_keeps_its_name_and_what_its_turn_read_first() {
         assert!(!stored.contains(content), "{content} is in the chain");
     }
 }
+
+#[test]
+fn artifact_transactions_reject_rows_a_tolerant_projection_skipped() {
+    vak_config::paths::isolate_home_for_tests();
+    let data = tempfile::tempdir().unwrap();
+    let shared = vak_config::scope::SharedScope::new(data.path());
+    let tenant = vak_config::paths::tenant_home_at(data.path(), vak_config::paths::LOCAL_TENANT);
+    let artifacts = Artifacts::at(&shared, tenant);
+    let id = artifacts
+        .declare(
+            "spc_strict",
+            "vak",
+            "strict.md",
+            ArtifactKind::File,
+            Some("Strict".into()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let chain = vak_session::chain::RecordChain::at(artifacts.path());
+    chain
+        .append(&serde_json::json!({"unrecognized": true}))
+        .unwrap();
+    // The old view API may ignore that row, but its cache must not authorize
+    // a new transaction or allow the decision closure's side effects to run.
+    assert!(artifacts.get(&id.to_string()).is_some());
+    let before = std::fs::read(artifacts.path().join("seg-00000001.log")).unwrap();
+    let mut decided = false;
+    assert!(
+        artifacts
+            .transaction(|_| {
+                decided = true;
+                Ok(())
+            })
+            .is_err()
+    );
+    assert!(!decided);
+    assert_eq!(
+        std::fs::read(artifacts.path().join("seg-00000001.log")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn unreadable_artifact_suffix_prevents_a_transaction_decision() {
+    vak_config::paths::isolate_home_for_tests();
+    let data = tempfile::tempdir().unwrap();
+    let shared = vak_config::scope::SharedScope::new(data.path());
+    let tenant = vak_config::paths::tenant_home_at(data.path(), vak_config::paths::LOCAL_TENANT);
+    let artifacts = Artifacts::at(&shared, tenant);
+    let id = artifacts
+        .declare(
+            "spc_strict",
+            "vak",
+            "strict.md",
+            ArtifactKind::File,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let segments = vak_storage::segments::SegmentSet::open(artifacts.path()).unwrap();
+    segments.seal(1, &segments.lock().unwrap()).unwrap();
+    artifacts
+        .version(id, by_person(b"new bytes", None), None, None)
+        .unwrap();
+    let path = segments.log_path(2);
+    let bytes = std::fs::read(&path).unwrap();
+    for invalid in [b"broken".to_vec(), bytes[..bytes.len() - 1].to_vec()] {
+        std::fs::write(&path, invalid).unwrap();
+        let mut decided = false;
+        assert!(
+            artifacts
+                .transaction(|_| {
+                    decided = true;
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert!(!decided);
+    }
+    std::fs::write(path, bytes).unwrap();
+    artifacts.transaction(|_| Ok(())).unwrap();
+}

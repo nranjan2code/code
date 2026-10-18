@@ -5,7 +5,8 @@ the session's architecture, answer/projection, surface and dynamic-card
 reviews. The first S1 slice implements strict grant/effect/connection reads
 and atomic ref fencing; its full repository gate passed. Catalog grant
 authorization (S1) and owned circuit probes (S2/A05) are now implemented,
-with the full repository gate passing. Other work remains open.
+with the full repository gate passing. Verified-cache provenance and strict
+artifact transaction reads also pass the full gate. Other work remains open.
 Unresolved product choices are not maintainer decisions.
 
 ## Outcome and scope
@@ -358,6 +359,35 @@ presentation conformance checks through each refactor.
   and generated dictionary are corrected and the completed gate includes
   that check. Circuit tests: 8 unit and 7 integration cases. No UI acceptance
   or deployment is claimed.
+
+### Continuation — verified rollup provenance and artifact transactions
+
+- Catalog authorization and owned probes passed the full gate (622-second
+  workspace test phase) and are committed as `dd0cc34bb`. The first slice
+  remains `e469dc976`.
+- A01: strict rollup reads now reject unverified caches and rebuild from
+  the chain. Only a strict fold saves a verified cache; an equal-position
+  tolerant cache cannot block the verified replacement. This closes the
+  migration gap where a previously skipped malformed row lay behind the
+  cache cursor. A focused test checks rebuild and subsequent cached reads.
+- Artifact transactions now use strict snapshots and fallible content
+  restoration before invoking a decision closure. Explicit erasure remains
+  an intentional omission; missing/unreadable content is an error. Tests
+  prove malformed rows hidden by a tolerant view cannot authorize a
+  transaction and corrupt/truncated suffixes cannot invoke its closure.
+  All 14 artifact integration tests pass. Read-only artifact get/list and
+  their decision-making callers still need audit; A01 stays open.
+- Luna investigated accounting but its partial patch was withdrawn. The
+  same-day cached baseline bypasses a first-use-only strict read. The next
+  accounting slice must refresh verified cost state on every admission,
+  avoid double-counting settlement rows and retain conservative reservations
+  on append/read failure. Design it on the existing rollup/ref primitives
+  with a registered scoped Document if a new projection is necessary;
+  replaying the entire chain per dispatch is not an acceptable final fix.
+- Verification: the full `bash scripts/gate.sh` passed: formatting, workspace
+  Clippy, workspace tests (737 seconds), version stamps, document paths and
+  records. The artifact transaction, strict-cache rebuild and erasure suites
+  passed. No other architectural or presentation stage is closed by this work.
 
 ### Reporting contract
 
