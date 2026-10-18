@@ -1,4 +1,4 @@
-## Unreleased
+## 8.9.0 — 2026-10-18
 
 - A turn can be asked again: Retry on your message answers it afresh, and
   that turn and everything after it leave the conversation the Agent sees.
