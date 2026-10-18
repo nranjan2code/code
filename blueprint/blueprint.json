@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "4df880c65",
+  "revision": "689c7a1ba",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 332383,
-   "rust_tests": 85646,
+   "rust_src": 332415,
+   "rust_tests": 85731,
    "ts_src": 62404,
    "routes": 394,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 75,
    "lock_crates": 764,
-   "total_commits": 2371,
+   "total_commits": 2372,
    "days": 59,
    "peak_day": 174,
    "design_docs": 96,
@@ -239,19 +239,19 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 519,
+  "commits": 520,
   "areas": [
    [
     "docs",
-    441
+    442
    ],
    [
     "(root)",
-    271
+    272
    ],
    [
     "vak-core",
-    227
+    228
    ],
    [
     "vak-server",
@@ -359,7 +359,7 @@
    [
     "lifecycle",
     "Lifecycle and erasure",
-    33
+    34
    ],
    [
     "automations",
@@ -402,14 +402,14 @@
     24
    ],
    [
-    "gateway",
-    "Gateway and channels",
+    "mail",
+    "Mail and calendar",
     24
    ],
    [
-    "mail",
-    "Mail and calendar",
-    23
+    "gateway",
+    "Gateway and channels",
+    24
    ],
    [
     "memory",
@@ -614,6 +614,17 @@
   ],
   "recent": [
    {
+    "hash": "689c7a1ba",
+    "date": "2026-10-18",
+    "subject": "Verify account-erasure preconditions and disclose historical limits",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-core",
+     "vak-mail-calendar"
+    ]
+   },
+   {
     "hash": "4df880c65",
     "date": "2026-10-18",
     "subject": "Persist session budget enforcement and seal account results causally",
@@ -769,19 +780,10 @@
      "blueprint",
      "docs"
     ]
-   },
-   {
-    "hash": "9212df52e",
-    "date": "2026-10-18",
-    "subject": "Preserve pending Canvas notes during stale replay",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-client-ui"
-    ]
    }
   ],
   "unreleased": [
+   "Account erasure refuses unreadable connection state and checks the active install’s Agent ledgers.",
    "Session spend limits survive gate recreation and restart, include delegated calls, and coordinate concurrent admissions.",
    "Connected-account tool results, including provider errors, keep both their displayed text and full evidence under the account scope.",
    "Library lists, file cards and version comparisons report unreadable history or workspace files instead of silently showing missing or incomplete state.",
@@ -1295,7 +1297,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 63746,
+   "lines": 63767,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1332,7 +1334,7 @@
   {
    "id": "L2",
    "name": "Domain engines",
-   "lines": 59125,
+   "lines": 59136,
    "crates": [
     "vak-mail-calendar",
     "vak-ooxml",
@@ -12395,9 +12397,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 4697,
+   "lines": 4718,
    "largest": [
-    1948,
+    1969,
     "crates/vak-core/src/erasure.rs"
    ],
    "routes": [
@@ -12437,9 +12439,9 @@
     "crates/vak-lifecycle/src/lib.rs",
     "crates/vak-session/src/conversation_state.rs"
    ],
-   "commits": 36,
+   "commits": 37,
    "fixes": 1,
-   "recent": 33,
+   "recent": 34,
    "fix_density": 0.2,
    "out": [
     {
@@ -16068,7 +16070,7 @@
    ],
    "modules": 24,
    "parts": [],
-   "lines": 28425,
+   "lines": 28436,
    "largest": [
     7839,
     "crates/vak-mail-calendar/src/provider.rs"
@@ -16132,9 +16134,9 @@
     "crates/vak-server/src/mail_calendar.rs",
     "crates/vak-tools/src/mail_calendar.rs"
    ],
-   "commits": 163,
+   "commits": 164,
    "fixes": 13,
-   "recent": 23,
+   "recent": 24,
    "fix_density": 0.5,
    "out": [
     {
@@ -29786,6 +29788,15 @@
  ],
  "replay": [
   {
+   "hash": "689c7a1ba",
+   "date": "2026-10-18",
+   "subject": "Verify account-erasure preconditions and disclose historical limits",
+   "subsystems": [
+    "lifecycle",
+    "mail"
+   ]
+  },
+  {
    "hash": "4df880c65",
    "date": "2026-10-18",
    "subject": "Persist session budget enforcement and seal account results causally",
@@ -35418,10 +35429,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 59210,
-   "tests": 9964,
+   "src": 59231,
+   "tests": 10049,
    "files": 70,
-   "commits": 635,
+   "commits": 636,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35919,10 +35930,10 @@
    "layer": "L2",
    "kind": "rust",
    "role": "Mail and calendar accounts, OAuth, IMAP, vault, effects",
-   "src": 18903,
+   "src": 18914,
    "tests": 117,
    "files": 7,
-   "commits": 96,
+   "commits": 97,
    "deps": [
     "vak-config",
     "vak-session"
@@ -36822,8 +36833,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1346,
-  "hot": 635
+  "docs_commits": 1347,
+  "hot": 636
  },
  "findings": [
   {
