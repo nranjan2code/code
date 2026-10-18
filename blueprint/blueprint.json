@@ -11,7 +11,7 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 331781,
+   "rust_src": 331676,
    "rust_tests": 85438,
    "ts_src": 62404,
    "routes": 394,
@@ -1278,7 +1278,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 78103,
+   "lines": 77998,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -15323,9 +15323,9 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 7820,
+   "lines": 7715,
    "largest": [
-    3041,
+    2936,
     "crates/vak-server/src/library.rs"
    ],
    "routes": [
@@ -20317,9 +20317,9 @@
    ],
    "modules": 3,
    "parts": [],
-   "lines": 2392,
+   "lines": 2303,
    "largest": [
-    2199,
+    2110,
     "crates/vak-core/src/finops.rs"
    ],
    "routes": [
@@ -36226,7 +36226,7 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 73934,
+   "src": 73829,
    "tests": 23792,
    "files": 51,
    "commits": 834,

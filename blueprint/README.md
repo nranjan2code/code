@@ -11,7 +11,7 @@ The lower layers (storage, permission, the pure deciders, the document engines) 
 | | |
 |---|---|
 | Crates | 35 Rust, 2 TypeScript |
-| Rust source / tests | 331,781 / 85,438 lines |
+| Rust source / tests | 331,676 / 85,438 lines |
 | TypeScript source | 62,404 lines |
 | HTTP routes | 394 |
 | Subsystems / connections / flows | 64 / 807 / 11 |
@@ -303,7 +303,7 @@ Design docs and plans by status ([docs/design/INDEX.md](../docs/design/INDEX.md)
 | Layer | Lines | Crates (largest first) |
 |---|---|---|
 | L7 Surfaces | 83,642 | vak-client-ui, vak-admin-ui, vak, vak-terminal, vak-desktop |
-| L6 Service | 78,103 | vak-server, vak-ops, vak-bus |
+| L6 Service | 77,998 | vak-server, vak-ops, vak-bus |
 | L5 Orchestration facade | 63,144 | vak-core, vak-eval, vak-flow |
 | L4 Agent runtime | 54,136 | vak-agent, vak-tools, vak-llm, vak-context, vak-plugin, vak-mcp, vak-hooks |
 | L3 Decision and policy | 20,956 | vak-intent, vak-sandbox, vak-judge, vak-control, vak-commit, vak-permission |
@@ -388,7 +388,7 @@ What the system does, cut across crates: 64 subsystems. Every one of 697 units (
 | **Cards and presentation** | `vak-server`, `vak-core`, `vak-client-ui`, `vak-presentation`, `vak-agent`, `vak-session` | 26 | 18,819 | 21 | 295 (95) | 20 / 18 | — | [30](../docs/design/30-render-architecture.md), [57](../docs/design/57-adaptive-presentation-runtime.md), [67](../docs/design/67-presentation-renderer-guide.md), [87](../docs/design/87-composed-answers.md), [91](../docs/design/91-presentation-capabilities.md), [92](../docs/design/92-card-forms.md), [97](../docs/design/97-cards-end-the-answer.md), [98](../docs/design/98-answers-beyond-one-card.md), [96](../docs/design/96-answer-projection-gaps.md) | Card forms and tools, packs, the closed primitives, projection to clients |
 | **Delivery** | `vak-delivery`, `vak-server` | 14 | 10,217 | 0 | 131 (28) | 8 / 10 | — | [30](../docs/design/30-output-engineering.md) | The semantic output contract, Markdown fallback and channel markup |
 | **Canvas and previews** | `vak-client-ui`, `vak-server` | 35 | 4,823 | 11 | 67 (21) | 11 / 6 | — | [66](../docs/design/66-immersive-artifact-canvas.md) | The artifact canvas, its viewers, live previews and the preview origin |
-| **Library and file state** | `vak-core`, `vak-server`, `vak-client-ui`, `vak-tools` | 12 | 7,820 | 24 | 47 (42) | 20 / 14 | — | [82](../docs/design/82-library.md), [90](../docs/design/90-file-state.md) | Versioned artifacts, review, sharing, and what a file is now |
+| **Library and file state** | `vak-core`, `vak-server`, `vak-client-ui`, `vak-tools` | 12 | 7,715 | 24 | 47 (42) | 20 / 14 | — | [82](../docs/design/82-library.md), [90](../docs/design/90-file-state.md) | Versioned artifacts, review, sharing, and what a file is now |
 
 ### Apps
 
@@ -414,7 +414,7 @@ What the system does, cut across crates: 64 subsystems. Every one of 697 units (
 | **Distributed bus** | `vak-bus`, `vak-server` | 7 | 2,091 | 1 | 7 (2) | 5 / 3 | — | [53](../docs/design/53-distributed-bus.md) | NATS JetStream fabric with causal lineage and encrypted envelopes |
 | **Operations** | `vak-ops`, `vak-admin-ui`, `vak-server`, `vak-client-ui` | 6 | 3,963 | 7 | 75 (12) | 10 / 10 | — | [28](../docs/design/28-operations.md) | Service control, the Operations Center, incidents and action receipts |
 | **Doctor and health** | `vak-core`, `vak`, `vak-admin-ui` | 3 | 1,699 | 2 | 46 (7) | 12 / 9 | doctor | — | The health report: `vak doctor`, `--repair`, /health, /doctor, diagnostics screens |
-| **Cost and budgets** | `vak-core`, `vak-agent`, `vak-client-ui` | 3 | 2,392 | 1 | 31 (4) | 5 / 10 | — | — | The cost ledger, budget admission, alerts |
+| **Cost and budgets** | `vak-core`, `vak-agent`, `vak-client-ui` | 3 | 2,303 | 1 | 31 (4) | 5 / 10 | — | — | The cost ledger, budget admission, alerts |
 | **Setup and onboarding** | `vak-core`, `vak`, `vak-client-ui` | 6 | 2,356 | 5 | 51 (5) | 12 / 7 | setup | [36](../docs/design/36-first-run-onboarding.md), [46](../docs/design/46-stabilization-install-and-onboarding.md) | First run, workspace trust, seeding, the setup wizard |
 | **Install and update** | `vak`, `vak-core`, `docker`, `scripts` | 10 + 6 parts | 3,431 | 0 | 60 (5) | 6 / 2 | self | [37](../docs/design/37-distribution.md) | Self install, the update feed, manifests, transactional upgrades |
 | **Evaluation** | `vak-eval`, `vak`, `vak-admin-ui`, `scripts` | 10 + 10 parts | 3,163 | 2 | 73 (18) | 11 / 3 | eval | [12](../docs/design/12-evals.md), [40](../docs/design/40-harness-engineering.md) | The deterministic suite, live mode, context and banned-token gates, replays |
@@ -606,7 +606,7 @@ Outside the repository (declared in `subsystems.EXTERNAL`): You ← Workspace cl
 | `vak` | L7 | 14,389 | 1,517 | 211 | 24 | 0 | 17 | The CLI binary and every subcommand |
 | `vak-terminal` | L7 | 5,110 | 750 | 11 | 0 | 1 | 1 | ratatui client of a running server (vak term) |
 | `vak-desktop` | L7 | 1,739 | 0 | 130 | 8 | 0 | 1 | Tauri 2 shell around an embedded server router |
-| `vak-server` | L6 | 73,934 | 23,792 | 834 | 25 | 2 | 26 | HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes |
+| `vak-server` | L6 | 73,829 | 23,792 | 834 | 25 | 2 | 26 | HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes |
 | `vak-ops` | L6 | 2,716 | 0 | 39 | 2 | 3 | 1 | launchd/systemd control and service logs |
 | `vak-bus` | L6 | 1,453 | 591 | 5 | 0 | 1 | 1 | NATS JetStream fabric, causal lineage, encrypted envelopes |
 | `vak-core` | L5 | 58,608 | 9,964 | 634 | 25 | 4 | 36 | SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure |
