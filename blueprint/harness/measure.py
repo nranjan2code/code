@@ -1,6 +1,7 @@
 """Measurements of the tree: crates, their graph and sizes, commits per path,
-the longest files and functions, and a few named shapes (routes, the Tool
-trait, the state registry, worker tasks, card forms).
+the longest files and functions, and a few named shapes (routes, `vak`
+subcommands, the Tool trait, card tools, the state registry, worker tasks,
+card forms). The subsystems over them are subsystems.py.
 
 A library for model.py; the entry point is blueprint/harness/run.py. Every
 count depends only on the working tree and on history up to the last commit
@@ -220,7 +221,7 @@ def measure():
     fns.sort(reverse=True)
 
     m = {}
-    m["routes"] = sum(len(re.findall(r"\.route\(\s*\"", open(p, encoding="utf-8").read())) for p in files_under("crates/vak-server/src", (".rs",)))
+    m["routes"] = len(routes())
     tool_src = open(os.path.join(ROOT, "crates/vak-tools/src/lib.rs"), encoding="utf-8").read().split("\n")
     m["tool_methods"] = count_block(tool_src, r"^pub trait Tool\b", r"^    (?:async )?fn ")
     m["core_pub_fns"] = sum(len(re.findall(r"^\s+pub (?:async )?fn ", "\n".join(production_lines(p)), re.MULTILINE)) for p in files_under("crates/vak-core/src", (".rs",)))
@@ -232,6 +233,7 @@ def measure():
     fm = re.search(r"pub const FORMS: &\[&str\] = &\[(.*?)\];", forms, re.S)
     m["forms"] = len(re.findall(r'"[^"]+"', fm.group(1))) if fm else 0
     m["tools"] = builtin_tools()
+    m["card_tools"] = card_tools()
     m["lock_crates"] = open(os.path.join(ROOT, "Cargo.lock"), encoding="utf-8").read().count("\n[[package]]")
     m["design_docs"] = len([f for f in os.listdir(os.path.join(ROOT, "docs/design")) if f.endswith(".md") and f != "INDEX.md"])
     m["agents_words"] = len(open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read().split())
@@ -254,7 +256,7 @@ def measure():
 
 def builtin_tools():
     found = set()
-    for d in ("crates/vak-tools/src", "crates/vak-core/src", "crates/vak-agent/src"):
+    for d in ("crates/vak-tools/src", "crates/vak-core/src", "crates/vak-agent/src", "crates/vak-mcp/src"):
         for p in files_under(d, (".rs",)):
             lines = production_lines(p)
             for i, line in enumerate(lines):
@@ -264,6 +266,37 @@ def builtin_tools():
                     if hit:
                         found.add(hit.group(1))
     return sorted(found)
+
+
+def card_tools():
+    """The card tools, one per card form and pack kind, named in one table."""
+    lines = production_lines(os.path.join(ROOT, "crates/vak-core/src/presentation_tools.rs"))
+    return sorted(set(re.findall(r'"(emit_[a-z_]+_card)"', "\n".join(lines))))
+
+
+def routes():
+    """Every route path the server registers outside test modules."""
+    out = []
+    for p in files_under("crates/vak-server/src", (".rs",)):
+        out += re.findall(r'\.route\(\s*"([^"]+)"', "\n".join(production_lines(p)))
+    return sorted(set(out))
+
+
+def cli_verbs():
+    """The `vak` subcommands, from the variants of the CLI's Command enum."""
+    lines = open(os.path.join(ROOT, "crates/vak/src/cli.rs"), encoding="utf-8").read().split("\n")
+    out, inside = [], False
+    for line in lines:
+        if not inside and re.match(r"^(?:pub(?:\([^)]*\))? )?enum Command\b", line):
+            inside = True
+            continue
+        if inside:
+            if line.startswith("}"):
+                break
+            hit = re.match(r"^    ([A-Z][A-Za-z0-9_]*)\s*(?:\{|\(|,|$)", line)
+            if hit:
+                out.append(hit.group(1).rstrip("_").lower())
+    return out
 
 
 def count_block(lines, start_re, item_re):

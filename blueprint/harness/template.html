@@ -108,6 +108,8 @@ td.n { text-align: right; font-variant-numeric: tabular-nums; font-family: var(-
 td.note { color: var(--ink-soft) }
 .warn { color: var(--warn); font-weight: 600 }
 table.bom { min-width: 1150px }
+table.subs { min-width: 980px }
+table.subs details summary { cursor: pointer }
 .mx { width: auto; font-family: var(--font-mono) }
 .mx th, .mx td { text-align: center; padding: 6px 10px; border: 1px solid var(--line-faint) }
 .mx td.up { color: var(--warn); font-weight: 600; background: rgba(179,38,30,.08) }
@@ -213,7 +215,8 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
     <div class="stat"><b>{{k:rust_tests}}</b><span>Rust lines in tests/</span></div>
     <div class="stat"><b>{{k:ts_src}}</b><span>TypeScript lines in the clients</span></div>
     <div class="stat"><b>{{m:routes}}</b><span>HTTP routes in one server</span></div>
-    <div class="stat"><b>{{m:tools}}</b><span>built-in tools, plus {{m:forms}} card forms</span></div>
+    <div class="stat"><b>{{m:subsystems}}</b><span>subsystems, covering every module, route and subcommand</span></div>
+    <div class="stat"><b>{{m:tools}}</b><span>built-in tools, plus {{m:card_tools}} card tools over {{m:forms}} card forms</span></div>
     <div class="stat"><b>{{m:worker_tasks}}</b><span>worker task kinds across the process boundary</span></div>
     <div class="stat"><b>{{m:state_paths}}</b><span>registered durable paths</span></div>
     <div class="stat"><b>{{m:lock_crates}}</b><span>crates in Cargo.lock</span></div>
@@ -222,7 +225,7 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
     <div class="stat"><b>1</b><span>user</span></div>
   </div>
   %%SUMMARY%%
-  <p class="muted">Built-in tools found: %%TOOLS%%.</p>
+  <p class="muted">Built-in tools found: %%TOOLS%%. Card tools: %%CARD_TOOLS%%.</p>
 </section>
 
 <section class="sheet" id="attention">
@@ -258,6 +261,11 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
       <p>The top is inverted as well. <code>vak-core</code> uses {{deps:vak-core}} crates, including the agent loop, so there is no small core a program could link against without pulling in nearly everything.</p>
     </div>
   </div>
+</section>
+
+<section class="sheet" id="subsystems">
+  <header><span class="sno">Sheet</span><h2>Subsystems</h2><span class="muted">%%SUBSYSTEMS_INTRO%% Open a name for its modules and parts, a route count for its routes.</span></header>
+%%SUBSYSTEMS%%
 </section>
 
 <section class="sheet" id="processes">

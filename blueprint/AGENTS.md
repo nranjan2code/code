@@ -14,7 +14,7 @@ applies in full; this file adds what is specific here.
 | [measures.json](measures.json) | The slow measures (complexity, advisories), cached by `run.py deep` | generated |
 | [content.toml](content.toml) | The hand-written judgement: the summary, the findings, what to keep, the target shape | by hand |
 | [methods/](methods/) | How to work here, one method per file, with name and description front matter | by hand |
-| `harness/` | The code: `run.py` (the entry point), `measure.py`, `evidence.py`, `record.py`, `model.py`, `render.py`, `template.html` | by hand |
+| `harness/` | The code: `run.py` (the entry point), `measure.py`, `subsystems.py`, `evidence.py`, `record.py`, `model.py`, `render.py`, `template.html` | by hand |
 
 Never edit a generated file. Change its source and run the harness.
 
@@ -46,6 +46,7 @@ last release tag; run `deep` before a release.
 | Health: the record, doc-path and version checks, and the stale-name count | `evidence.health`, running the gate's own scripts |
 | Open work, decisions, specs, unreleased changes, recent commits | `record.py`, reading `docs/plans/open-items.md`, `docs/decisions.md`, every design doc's `Status:` line, `CHANGELOG.md` and git |
 | Each crate's layer and role | `CRATES` in `measure.py` |
+| The subsystems: what each is for, its modules, routes, `vak` subcommands and design docs | `SUBSYSTEMS` and `GROUPS` in `harness/subsystems.py` |
 | The summary, findings, what to keep, the target shape | `content.toml` |
 | The process topology, the turn sequence and the data tree | drawn by hand in `harness/template.html` |
 
@@ -81,9 +82,30 @@ the same change that caused it:
 | `fn …`, `file …`, `crate …` | Something the content quotes was renamed or removed. Fix the placeholder and its sentence. |
 | `… (crates/…)` from `ANCHORS` | A function or type a drawing names moved. Retrace that step in the code, fix the drawing and the step list, then `ANCHORS`. |
 | `crate … has no layer` | A new crate: add it to `CRATES` with its layer and a one-line role. |
+| `module … has no subsystem` | A new source file, script, package or part: add it to the subsystem it serves in `harness/subsystems.py`, or a new subsystem (and its group) when it serves none. |
+| `module …`, `route …` `is claimed equally by …` | Two subsystems claim it at the same specificity: name the file exactly in the one that owns it. |
+| `route … has no subsystem` | A new route: add its prefix to the subsystem that serves it. |
+| `vak … has no subsystem` | A new subcommand: add it to the subsystem's verbs. |
+| `subsystem …: pattern, route prefix, vak or doc … matches nothing` | Something a subsystem names was renamed or removed: fix the entry. |
 | `crate … is gone` | Remove it from `CRATES` and any content that names it. |
 | `evidence …`, `measure …`, `list …` | A check no longer produces that value. Fix the check or the placeholder. |
 | `complexity of … (run deep)` | Run `run.py deep`, or the function was renamed. |
+
+## Subsystems
+
+A crate says where code lives; a subsystem says what it is for. Doctor, for
+example, spans `crates/vak/src/doctor.rs`, `vak-core`'s health report, the
+`/health` and `/doctor` routes, `vak doctor` and the admin Diagnostics
+screen, and no crate is named after it. `harness/subsystems.py` maps every
+unit to exactly one subsystem: each source file under `crates/*/src`
+(Rust and TypeScript, tests left out), the public site, each plugin
+package, each entry of `scripts/`, and `docker/`; every route the server
+registers, by its longest claiming prefix; and every `vak` subcommand. The
+most specific module pattern wins (an exact path over a glob, then the
+longer literal prefix), so a feature claims its files out of a crate
+another subsystem holds. Anything left out, claimed twice or naming
+nothing is a `needs review` line, so a new part of the system cannot go
+unmapped.
 
 ## Findings
 
@@ -109,7 +131,7 @@ did) may be quoted as written.
 
 | Placeholder | Value |
 |---|---|
-| `{{m:key}}`, `{{k:key}}` | a measure (`version`, `revision`, `routes`, `cc_median`, …); `k` abbreviates thousands |
+| `{{m:key}}`, `{{k:key}}` | a measure (`version`, `revision`, `routes`, `subsystems`, `card_tools`, `cc_median`, …); `k` abbreviates thousands |
 | `{{e:key}}` | an evidence value (`hot.median`, `tool.wrappers`, …) |
 | `{{list:key}}` | an evidence list, as Markdown items (`wrappers`) |
 | `{{fn:name}}`, `{{file:path}}` | a function's or file's length in lines |
@@ -125,6 +147,10 @@ did) may be quoted as written.
 - Function lengths run from the header to the closing brace at the same
   indentation (rustfmt layout); inline `#[cfg(test)] mod … { }` blocks are
   left out.
+- Routes are those registered outside inline test modules. Built-in tools
+  are the `Tool` impls with a literal name in `vak-tools`, `vak-core`,
+  `vak-agent` and `vak-mcp`; card tools are counted from their one table
+  in `presentation_tools.rs`.
 - Dependencies are normal (non-dev) ones from `cargo metadata --no-deps
   --offline`.
 - Recent activity is the fortnight before the last measured commit, never

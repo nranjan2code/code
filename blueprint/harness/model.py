@@ -17,6 +17,7 @@ import tomllib
 import evidence
 import measure as ms
 import record
+import subsystems as subs
 
 ACTIVITY_DAYS = 14  # the "what's happening" window, before the last measured commit
 DECISIONS_SHOWN = 12
@@ -142,6 +143,9 @@ def build(deep=False):
         spec_counts[s["status"]] = spec_counts.get(s["status"], 0) + 1
     act = record.activity(ms, m["last_date"], ACTIVITY_DAYS)
 
+    subsystem_list, coverage, sub_review = subs.build(ms, {c["name"]: c["layer"] for c in crates})
+    misses.extend(sub_review)
+    m["subsystems"] = len(subsystem_list)
     unassigned = [c["name"] for c in crates if c["layer"] == "L?"]
     stale = [n for n in ms.CRATES if n not in by]
     misses.extend([f"crate {n} has no layer" for n in unassigned] + [f"crate {n} is gone" for n in stale])
@@ -151,8 +155,9 @@ def build(deep=False):
             "text": resolve(content.get("summary", "")),
             "stats": {k: m[k] for k in ("rust_crates", "ts_crates", "rust_src", "rust_tests", "ts_src", "routes",
                                         "forms", "worker_tasks", "state_paths", "lock_crates", "total_commits",
-                                        "days", "peak_day", "design_docs", "agents_words") if k in m},
+                                        "days", "peak_day", "design_docs", "agents_words", "subsystems") if k in m},
             "tools": m["tools"],
+            "card_tools": m["card_tools"],
         },
         "attention": {
             "findings": [{k: f[k] for k in ("id", "verdict", "title")} for f in findings],
@@ -172,6 +177,8 @@ def build(deep=False):
         "layers": [{"id": lid, "name": name, "lines": sum(c["src"] for c in crates if c["layer"] == lid),
                     "crates": [c["name"] for c in sorted(crates, key=lambda c: -c["src"]) if c["layer"] == lid]}
                    for lid, name in ms.LAYERS + ([("L?", "Unassigned")] if unassigned else [])],
+        "subsystems": subsystem_list,
+        "coverage": coverage,
         "crates": [{k: c[k] for k in ("name", "layer", "kind", "role", "src", "tests", "files", "commits",
                                       "deps", "used_by", "upward", "ext", "largest")} for c in crates],
         "size": {"files": [{"file": p, "lines": n} for n, p in file_sizes[:12]],

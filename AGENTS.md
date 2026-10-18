@@ -129,7 +129,10 @@ word, and a past section is marked `> **Historical record**`.
 from one model by `python3 blueprint/harness/run.py` on every build. It
 measures the code and its history, reads the record where it is written
 (decisions, open work, specs, unreleased changes) and lists only the
-findings that cost something today. Its rules are
+findings that cost something today. It maps the system twice: crates on
+layers, and subsystems (what each part is for, across crates), where every
+source file, script, package, route and `vak` subcommand belongs to exactly
+one subsystem (`blueprint/harness/subsystems.py`). Its rules are
 [blueprint/AGENTS.md](blueprint/AGENTS.md) and its methods are in
 `blueprint/methods/`: reviewing the architecture with evidence
 (`architecture-review.md`), keeping the record true (`record-drift.md`),
@@ -137,7 +140,8 @@ and adding a check (`adding-a-check.md`).
 
 Keep it current: commit the regenerated views in a commit of their own
 right after a change that moves them (`scripts/release.sh` refuses stale
-views), resolve every `needs review` line in the same change, and when a
+views), resolve every `needs review` line in the same change (a new
+module, route or subcommand gets its subsystem then), and when a
 change fixes, invalidates or adds a finding, edit `blueprint/content.toml`.
 Start a session by reading its "Needs attention" section.
 

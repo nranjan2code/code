@@ -83,7 +83,8 @@ def markdown(model):
             f"| Rust source / tests | {st['rust_src']:,} / {st['rust_tests']:,} lines |",
             f"| TypeScript source | {st['ts_src']:,} lines |",
             f"| HTTP routes | {st['routes']:,} |",
-            f"| Built-in tools / card forms | {len(model['summary']['tools'])} / {st['forms']} |",
+            f"| Subsystems | {st['subsystems']} |",
+            f"| Built-in tools / card tools / card forms | {len(model['summary']['tools'])} / {len(model['summary']['card_tools'])} / {st['forms']} |",
             f"| Worker task kinds | {st['worker_tasks']} |",
             f"| Registered durable paths | {st['state_paths']} |",
             f"| Crates in Cargo.lock | {st['lock_crates']:,} |",
@@ -139,7 +140,20 @@ def markdown(model):
     up = [c for c in model["crates"] if c["upward"]]
     if up:
         out += ["", "Dependencies that point up a layer: " + "; ".join(f"`{c['name']}` uses " + ", ".join(f"`{d}`" for d in c["upward"]) for c in up) + "."]
-    out += ["", "### Bill of materials", "", "| Crate | Layer | Src | Tests | Commits | Deps | Used by | Role |", "|---|---|---|---|---|---|---|---|"]
+    out += ["", "## Subsystems", "", subsystems_intro(model), ""]
+    for group, items in subsystem_groups(model):
+        out += [f"### {group}", "", "| Subsystem | Lives in | Modules | Lines | Routes | `vak` | Design docs | What it does |",
+                "|---|---|---|---|---|---|---|---|"]
+        for x in items:
+            mods = f"{x['modules']}" + (f" + {len(x['parts'])} parts" if x["parts"] else "")
+            out.append(f"| **{x['name']}** | {', '.join(f'`{h}`' for h in x['homes'])} | {mods} | {x['lines']:,} | "
+                       f"{len(x['routes'])} | {', '.join(x['cli']) or '—'} | "
+                       f"{', '.join(f'[{d[:2]}](../docs/design/{d})' for d in x['docs']) or '—'} | {cell(x['role'])} |")
+        out.append("")
+    cov = model["coverage"]
+    if cov["docs_uncited"]:
+        out += ["Design docs no subsystem cites: " + ", ".join(f"`{d}`" for d in cov["docs_uncited"]) + ".", ""]
+    out += ["### Bill of materials", "", "| Crate | Layer | Src | Tests | Commits | Deps | Used by | Role |", "|---|---|---|---|---|---|---|---|"]
     for c in sorted(model["crates"], key=lambda c: (-ms.lnum(c["layer"]), -c["src"])):
         out.append(f"| `{c['name']}` | {c['layer']} | {c['src']:,} | {c['tests']:,} | {c['commits']} | "
                    f"{len(c['deps']) if c['kind'] == 'rust' else '—'} | {len(c['used_by'])} | {cell(c['role'])} |")
@@ -165,6 +179,24 @@ def markdown(model):
             "threshold 1. Fix commits are found by words in commit messages, so they compare files with each other rather "
             "than count bugs. Details: [AGENTS.md](AGENTS.md).", ""]
     return "\n".join(out)
+
+
+def subsystem_groups(model):
+    groups = []
+    for x in model["subsystems"]:
+        if not groups or groups[-1][0] != x["group"]:
+            groups.append((x["group"], []))
+        groups[-1][1].append(x)
+    return groups
+
+
+def subsystems_intro(model):
+    cov = model["coverage"]
+    return (f"What the system does, cut across crates: {len(model['subsystems'])} subsystems. Every one of "
+            f"{cov['units']:,} units (each source file under `crates/*/src`, the public site, each plugin package, "
+            f"each entry of `scripts/`, and `docker/`) belongs to exactly one, as do all {cov['routes']} HTTP routes "
+            f"and {cov['verbs']} `vak` subcommands; the harness reports anything left out "
+            "([harness/subsystems.py](harness/subsystems.py)).")
 
 
 # ---- blueprint.html -----------------------------------------------------------
@@ -231,6 +263,30 @@ def upward_list(model):
     if not items:
         return "<p>No crate depends on a crate in a higher layer.</p>"
     return '<ul class="plain">' + "".join(f'<li><code>{esc(c["name"])}</code> ({c["layer"]}) uses ' + ", ".join(f"<code>{esc(d)}</code>" for d in c["upward"]) + "</li>" for c in items) + "</ul>"
+
+
+def subsystems_html(model):
+    out = []
+    for group, items in subsystem_groups(model):
+        out.append(f'<h3>{esc(group)}</h3><div class="scroll"><table class="subs"><thead><tr><th>Subsystem</th><th>Lives in</th>'
+                   '<th class="n">Modules</th><th class="n">Lines</th><th class="n">Routes</th><th><code>vak</code></th><th>Design docs</th>'
+                   '<th>What it does</th></tr></thead><tbody>')
+        for x in items:
+            mods = f"{x['modules']}" + (f" + {len(x['parts'])} parts" if x["parts"] else "")
+            routes = (f'<details><summary>{len(x["routes"])}</summary><ul class="plain">'
+                      + "".join(f"<li><code>{esc(r)}</code></li>" for r in x["routes"]) + "</ul></details>") if x["routes"] else "0"
+            units = '<ul class="plain">' + "".join(f"<li><code>{esc(u)}</code></li>" for u in x["units"]) + "</ul>"
+            out.append(f'<tr><td><details><summary><b>{esc(x["name"])}</b></summary>{units}</details></td>'
+                       f'<td>{", ".join(f"<code>{esc(h)}</code>" for h in x["homes"])}</td>'
+                       f'<td class="n">{mods}</td><td class="n">{x["lines"]:,}</td><td class="n">{routes}</td>'
+                       f'<td>{", ".join(f"<code>{esc(c)}</code>" for c in x["cli"]) or "—"}</td>'
+                       f'<td>{", ".join(f"<code>{esc(d[:2])}</code>" for d in x["docs"]) or "—"}</td>'
+                       f'<td>{md_inline_to_html(x["role"])}</td></tr>')
+        out.append("</tbody></table></div>")
+    cov = model["coverage"]
+    if cov["docs_uncited"]:
+        out.append('<p class="muted">Design docs no subsystem cites: ' + ", ".join(f"<code>{esc(d)}</code>" for d in cov["docs_uncited"]) + ".</p>")
+    return "\n".join(out)
 
 
 def bom(model):
@@ -340,7 +396,7 @@ def size_tables(model):
 # The HTML's tabs, in order, and the sheets (section ids) each holds.
 TABS = [
     ("overview", "Overview", ["summary", "attention", "happening", "record"]),
-    ("system", "System", ["layers", "processes", "turn", "data"]),
+    ("system", "System", ["layers", "subsystems", "processes", "turn", "data"]),
     ("inventory", "Inventory", ["bom", "size", "work"]),
     ("findings", "Findings", ["findings", "target"]),
 ]
@@ -389,6 +445,8 @@ def page(model, resolve):
         "TOP_FILES": files, "TOP_FNS": fns, "TOP_CC": cc,
         "FINDINGS": findings_html(model), "KEEP": keep_html(model), "TARGET": md_to_html(model["target"]),
         "TOOLS": ", ".join(f"<code>{esc(t)}</code>" for t in model["summary"]["tools"]),
+        "CARD_TOOLS": ", ".join(f"<code>{esc(t)}</code>" for t in model["summary"]["card_tools"]),
+        "SUBSYSTEMS": subsystems_html(model), "SUBSYSTEMS_INTRO": md_inline_to_html(subsystems_intro(model)),
     }
     for key, val in blocks.items():
         template = template.replace("%%" + key + "%%", val)

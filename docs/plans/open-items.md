@@ -302,6 +302,12 @@ unless it says so.
 - [ ] `vak-intent` still derives an epistemic stance for every strand
   (`derive_epistemic_stance`), but no prompt has carried it since
   `d0875af47`. Remove it, or record what reads it.
+- [x] The blueprint mapped crates only, so whole subsystems (doctor,
+  install and update, FinOps, checkpoints, the trash) appeared nowhere,
+  and its route and tool counts were off (test routes counted, the MCP
+  and card tools missed). Done 2026-10-18: `blueprint/harness/subsystems.py`
+  maps every module, route and subcommand to one of 64 subsystems, and the
+  harness reports anything unmapped.
 - [ ] Blueprint F2: a test that fails when a wrapping `Tool` leaves a
   defaulted method unforwarded (or a delegation macro).
 - [ ] Blueprint F1: the turn's state as one type, each decision a pure
