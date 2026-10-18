@@ -144,12 +144,14 @@ mod tests {
 
     #[test]
     fn a_directory_with_no_privileged_files_asks_for_nothing() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         assert!(!requests_privilege(dir.path()));
     }
 
     #[test]
     fn a_project_config_or_env_makes_the_workspace_privileged() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".vak")).unwrap();
         std::fs::write(dir.path().join(".vak/config.toml"), "").unwrap();
@@ -162,6 +164,7 @@ mod tests {
 
     #[test]
     fn a_review_names_what_a_project_asks_for_without_loading_it() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".vak")).unwrap();
         std::fs::write(

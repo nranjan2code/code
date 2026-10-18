@@ -121,6 +121,16 @@ index (`credential_index.json`, scope+var names only, never values) answers
 trust decisions that used to check literal file existence, since the
 OS-native backend can't answer that by enumeration either.
 
+The presence index serializes readers and updates on its existing file
+inode. Setting a secret persists its presence marker before the backend
+write while holding that lock; removal clears a marker only after backend
+removal. Index failures propagate from set/remove. Trust treats unreadable
+or malformed metadata as privileged rather than absent. Variable names
+that cannot fit the existing line format are refused before writing, and
+bulk removal retains markers for backend removals that fail. This repairs
+concurrent lost updates; the current in-place format is not crash-safe and
+its durable publication remains an A01 follow-up in the hardening plan.
+
 ## Permission Mode Composition
 
 `PermissionMode::capped_by` (rule 17) returns the least-privileged mode

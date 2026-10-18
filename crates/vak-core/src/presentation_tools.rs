@@ -144,12 +144,11 @@ fn text<'a>(record: &'a Value, key: &str) -> &'a str {
         .unwrap_or_default()
 }
 
-/// A value asked for as text: a number written as text becomes a JSON
-/// number, a number stays one, anything else is text.
+/// A chart scalar keeps text as text. Numeric-looking category labels are
+/// identities, and a numeric field must already have passed argument reading.
 fn scalar(value: &Value) -> Value {
     match value {
-        Value::Number(_) => value.clone(),
-        Value::String(text) => number_or_text(text),
+        Value::Number(_) | Value::String(_) => value.clone(),
         Value::Null => Value::String(String::new()),
         other => Value::String(other.to_string()),
     }
@@ -3331,12 +3330,12 @@ mod tests {
     #[test]
     fn a_chart_groups_points_into_series_and_summarises_itself() {
         let payload = built("emit_chart_card", json!({"chart_type": "line", "data": [
-            {"series": "A", "x": "2024", "y": "1,000"}, {"series": "B", "x": "2024", "y": 2}, {"series": "A", "x": "2025", "y": 3}
+            {"series": "A", "x": "2024", "y": 1000}, {"series": "B", "x": "2024", "y": 2}, {"series": "A", "x": "2025", "y": 3}
         ]}))
         .unwrap();
         assert_eq!(
             payload["series"][0]["points"],
-            json!([{"x": 2024, "y": 1000}, {"x": 2025, "y": 3}])
+            json!([{"x": "2024", "y": 1000}, {"x": "2025", "y": 3}])
         );
         assert!(
             payload["accessible_summary"]
@@ -3350,6 +3349,39 @@ mod tests {
         )
         .unwrap_err();
         assert!(refused.contains("must be a number"), "{refused}");
+    }
+
+    #[test]
+    fn chart_categories_keep_their_lexical_identity_and_values_require_numbers() {
+        let categories = ["00123", "1,5", "1,234.50", "9007199254740993"];
+        let data: Vec<Value> = categories
+            .iter()
+            .map(|category| json!({"series": "A", "x": category, "y": 1}))
+            .collect();
+        let payload = built(
+            "emit_chart_card",
+            json!({"chart_type": "bar", "data": data}),
+        )
+        .unwrap();
+        let points = payload["series"][0]["points"].as_array().unwrap();
+        for (point, category) in points.iter().zip(categories) {
+            assert_eq!(point["x"], category);
+        }
+        for value in ["1,5", "1,000"] {
+            let error = built(
+                "emit_chart_card",
+                json!({"chart_type": "bar", "data": [{"series": "A", "x": "A", "y": value}]}),
+            )
+            .unwrap_err();
+            assert!(error.contains("must be a number"), "{error}");
+        }
+
+        let mut ability = json!({"from": "source", "chart_type": "bar", "x": "id", "y": "amount"});
+        tool("emit_ability_chart_card")
+            .fill_from_data(&mut ability, &[json!({"id": "00123", "amount": 2})])
+            .unwrap();
+        let payload = built("emit_ability_chart_card", ability).unwrap();
+        assert_eq!(payload["series"][0]["points"][0]["x"], "00123");
     }
 
     #[test]

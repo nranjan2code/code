@@ -433,7 +433,7 @@ fn supersession_records_lineage_rather_than_orphaning_work() {
     assert_eq!(superseded.superseded_by.as_deref(), Some(new.as_str()));
     // The replacement is still open and independently trackable.
     assert!(!ledger.get(&new).unwrap().unwrap().phase.is_terminal());
-    assert_eq!(ledger.open().len(), 1);
+    assert_eq!(ledger.open().unwrap().len(), 1);
 }
 
 /// A truncated or corrupt ledger must decline to invent state rather than
@@ -442,30 +442,22 @@ fn supersession_records_lineage_rather_than_orphaning_work() {
 fn a_ledger_without_an_opening_event_projects_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = CommitmentLedger::new(dir.path());
-    let path = ledger.path().to_path_buf();
-    std::fs::write(
-        &path,
-        format!(
-            "{}\nnot json at all\n",
-            serde_json::to_string(&Event::new(
-                "orphan",
-                EventKind::Resumed {
-                    reason: "no opening event".into()
-                },
-            ))
-            .unwrap()
-        ),
-    )
-    .unwrap();
+    vak_session::chain::RecordChain::at(ledger.path())
+        .append(&Event::new(
+            "orphan",
+            EventKind::Resumed {
+                reason: "no opening event".into(),
+            },
+        ))
+        .unwrap();
     assert!(ledger.get("orphan").unwrap().is_none());
-    assert!(ledger.all().is_empty());
+    assert!(ledger.all().unwrap().is_empty());
 }
 
-/// A torn or non-UTF-8 line in the middle of the ledger is skipped, and every
-/// event written after it still counts. Stopping at the first bad line would
-/// silently roll every later commitment back to an older state.
+/// A malformed event cannot be silently skipped when the state determines a
+/// new append or a closure decision.
 #[test]
-fn a_row_that_is_not_an_event_hides_nothing_written_after_it() {
+fn a_malformed_event_fails_reads_and_check_and_append() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = CommitmentLedger::new(dir.path());
     let id = ledger
@@ -474,19 +466,97 @@ fn a_row_that_is_not_an_event_hides_nothing_written_after_it() {
     vak_session::chain::RecordChain::at(ledger.path())
         .append(&serde_json::json!({ "torn": true }))
         .unwrap();
-    ledger
-        .append(&Event::new(
-            &id,
-            EventKind::Blocked {
-                blocker: "waiting on credentials".into(),
-            },
-        ))
+    assert!(ledger.get(&id).is_err());
+    assert!(ledger.all().is_err());
+    assert!(ledger.open().is_err());
+    assert!(
+        ledger
+            .open_commitment(spec(Evidence::None, Vec::new()))
+            .is_err()
+    );
+    assert!(
+        ledger
+            .append(&Event::new(
+                &id,
+                EventKind::Closed {
+                    verdict: Verdict::Fulfilled,
+                    strength: Satisfaction::Attested,
+                    evidence: Vec::new(),
+                    note: "done".into(),
+                },
+            ))
+            .is_err()
+    );
+}
+
+/// A best-effort inspection cache must never authorize a decision. The
+/// tolerant reader can save an unverified cache, but strict reads rebuild it
+/// from the chain and surface the malformed history.
+#[test]
+fn an_unverified_historical_cache_cannot_hide_corrupt_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = CommitmentLedger::new(dir.path());
+    let id = ledger
+        .open_commitment(spec(Evidence::None, Vec::new()))
         .unwrap();
     let commitment = ledger.get(&id).unwrap().unwrap();
-    assert_eq!(commitment.phase, Phase::Blocked);
-    assert_eq!(
-        commitment.blocker.as_deref(),
-        Some("waiting on credentials")
+    vak_session::chain::RecordChain::at(ledger.path())
+        .append(&serde_json::json!({ "not": "an event" }))
+        .unwrap();
+
+    let rollup = vak_session::rollup::Rollup::new(
+        ledger.path(),
+        vak_config::scope::AgentScope::new(dir.path()).commitments_rollup(),
+    );
+    let _: serde_json::Value = rollup.read(|state, _| {
+        // This is a valid Projection-shaped cache at the tail, containing the
+        // plausible state the former tolerant fold would have selected.
+        *state = serde_json::json!({
+            "commitments": { (id.clone()): commitment.clone() },
+            "refused": [],
+        });
+    });
+    assert!(ledger.get(&id).is_err());
+    assert!(
+        ledger
+            .append(&Event::new(
+                &id,
+                EventKind::Blocked {
+                    blocker: "must not be based on a skipped row".into(),
+                },
+            ))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_torn_chain_tail_is_not_replaced_by_the_verified_prefix() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = CommitmentLedger::new(dir.path());
+    let id = ledger
+        .open_commitment(spec(Evidence::None, Vec::new()))
+        .unwrap();
+    ledger.get(&id).unwrap(); // cache the verified prefix before the tear
+    let segment = ledger.path().join("seg-00000001.log");
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(segment)
+        .unwrap()
+        .write_all(b"\0\0")
+        .unwrap();
+
+    assert!(ledger.get(&id).is_err());
+    assert!(
+        ledger
+            .append(&Event::new(
+                &id,
+                EventKind::Blocked {
+                    blocker: "must not act from a verified prefix".into(),
+                },
+            ))
+            .is_err()
     );
 }
 
@@ -698,7 +768,7 @@ fn a_commitment_goes_with_the_conversation_that_made_it() {
     let stored = vak_session::chain::RecordChain::at(ledger.path()).text();
     assert!(!stored.contains("billing schema"), "{stored}");
     assert!(stored.contains(&gone) && stored.contains("\"kind\":\"opened\""));
-    assert_eq!(ledger.all().len(), 2);
+    assert_eq!(ledger.all().unwrap().len(), 2);
     assert_eq!(
         ledger.get(&gone).unwrap().unwrap().spec.objective,
         "migrate the billing schema"
@@ -711,10 +781,16 @@ fn a_commitment_goes_with_the_conversation_that_made_it() {
         ))
         .unwrap();
 
+    // Core's erasure path forgets the cache after destroying these keys, so
+    // the next strict read re-folds and omits the now-erased content.
+    vak_session::documents::forget(
+        &vak_config::scope::AgentScope::new(dir.path()).commitments_rollup(),
+    )
+    .unwrap();
+
     assert_eq!(ledger.events().len(), 1);
     assert_eq!(ledger.events_for(&gone).len(), 0);
     assert_eq!(ledger.events_for(&kept).len(), 1);
-    // A rollup written before the erasure still holds what it folded; a
-    // fresh fold of the chain does not.
-    std::fs::remove_dir_all(dir.path()).ok();
+    assert_eq!(ledger.get(&gone).unwrap(), None);
+    assert_eq!(ledger.all().unwrap().len(), 1);
 }

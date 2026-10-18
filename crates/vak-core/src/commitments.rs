@@ -162,11 +162,11 @@ pub fn plan_episodes(
     intent: &Intent,
     durable: bool,
     now: chrono::DateTime<chrono::Utc>,
-) -> EpisodePlan {
+) -> Result<EpisodePlan, vak_commit::LedgerError> {
     if !config.commitment.enabled || intent.strands.is_empty() {
-        return EpisodePlan::default();
+        return Ok(EpisodePlan::default());
     }
-    let open = CommitmentLedger::new(sessions_home).open();
+    let open = CommitmentLedger::new(sessions_home).open()?;
     let on_thread = |thread: &str| {
         open.iter()
             .find(|commitment| commitment.spec.thread_id.as_deref() == Some(thread))
@@ -195,7 +195,7 @@ pub fn plan_episodes(
             target,
         });
     }
-    plan
+    Ok(plan)
 }
 
 /// Carry out an [`EpisodePlan`]: open what it opens, supersede what it
@@ -330,7 +330,14 @@ fn open_for_strand(
 /// EpisodeEnded. Close that exact orphan as blocked before opening the new
 /// episode; never replay its effects implicitly.
 fn close_orphan_episode(ledger: &CommitmentLedger, commitment_id: &str, session_id: &str) {
-    if let Ok(Some(commitment)) = ledger.get(commitment_id)
+    let commitment = match ledger.get(commitment_id) {
+        Ok(commitment) => commitment,
+        Err(error) => {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "an interrupted commitment episode could not be recovered");
+            return;
+        }
+    };
+    if let Some(commitment) = commitment
         && let Some(episode) = commitment
             .episodes
             .iter()
@@ -356,14 +363,17 @@ fn close_orphan_episode(ledger: &CommitmentLedger, commitment_id: &str, session_
 /// their standing, an open question if the work is suspended on one. Terse
 /// and factual, like the intent note it is appended to; the model reads the
 /// state of its obligations instead of reconstructing them from history.
-pub fn prompt_projection(sessions_home: &Path, episodes: &[EpisodeHandle]) -> Option<String> {
+pub fn prompt_projection(
+    sessions_home: &Path,
+    episodes: &[EpisodeHandle],
+) -> Result<Option<String>, vak_commit::LedgerError> {
     if episodes.is_empty() {
-        return None;
+        return Ok(None);
     }
     let ledger = CommitmentLedger::new(sessions_home);
     let mut lines = Vec::new();
     for episode in episodes {
-        let Ok(Some(commitment)) = ledger.get(&episode.commitment_id) else {
+        let Some(commitment) = ledger.get(&episode.commitment_id)? else {
             continue;
         };
         let met = commitment
@@ -408,7 +418,7 @@ pub fn prompt_projection(sessions_home: &Path, episodes: &[EpisodeHandle]) -> Op
             lines.push(format!("  blocked: {blocker}"));
         }
     }
-    (!lines.is_empty()).then(|| lines.join("\n"))
+    Ok((!lines.is_empty()).then(|| lines.join("\n")))
 }
 
 /// What a finished turn did for its commitment.
@@ -535,11 +545,11 @@ pub fn record_evaluation(
 /// Budget exhaustion deliberately does **not** close anything: a human can
 /// raise the ceiling, and everything the commitment established is still
 /// good, so the scheduler simply stops offering it.
-pub fn sweep_expired(sessions_home: &Path) -> Vec<String> {
+pub fn sweep_expired(sessions_home: &Path) -> Result<Vec<String>, vak_commit::LedgerError> {
     let ledger = CommitmentLedger::new(sessions_home);
     let now = chrono::Utc::now();
     let mut closed = Vec::new();
-    for commitment in ledger.open() {
+    for commitment in ledger.open()? {
         if !commitment.is_expired(now) {
             continue;
         }
@@ -559,7 +569,7 @@ pub fn sweep_expired(sessions_home: &Path) -> Vec<String> {
             closed.push(commitment.commitment_id);
         }
     }
-    closed
+    Ok(closed)
 }
 
 /// One maintenance pass over the portfolio.
@@ -608,7 +618,7 @@ impl Maintenance {
 /// so a pass over one home would leave every other Agent's scheduled wakes
 /// and deadlines unkept. The data home's own ledger is included for work
 /// admitted without an Agent.
-pub async fn maintain_all(shared_data_home: &Path) -> Maintenance {
+pub async fn maintain_all(shared_data_home: &Path) -> Result<Maintenance, vak_commit::LedgerError> {
     let mut homes = vec![shared_data_home.to_path_buf()];
     if let Ok(entries) =
         std::fs::read_dir(vak_config::scope::SharedScope::new(shared_data_home).agents_dir())
@@ -628,23 +638,23 @@ pub async fn maintain_all(shared_data_home: &Path) -> Maintenance {
     }
     let mut report = Maintenance::default();
     for home in homes {
-        report.extend(maintain(&home).await);
+        report.extend(maintain(&home).await?);
     }
-    report
+    Ok(report)
 }
 
 /// Advance whatever the clock and the workspace now permit, for the
 /// portfolio in one home. A predicate is checked against the workspace its
 /// commitment belongs to, never the caller's.
-pub async fn maintain(sessions_home: &Path) -> Maintenance {
+pub async fn maintain(sessions_home: &Path) -> Result<Maintenance, vak_commit::LedgerError> {
     let ledger = CommitmentLedger::new(sessions_home);
     let now = chrono::Utc::now();
     let mut report = Maintenance {
-        expired: sweep_expired(sessions_home),
+        expired: sweep_expired(sessions_home)?,
         ..Maintenance::default()
     };
 
-    for commitment in ledger.open() {
+    for commitment in ledger.open()? {
         let Some(suspension) = commitment.suspension.clone() else {
             continue;
         };
@@ -723,7 +733,7 @@ pub async fn maintain(sessions_home: &Path) -> Maintenance {
             _ => {}
         }
     }
-    report
+    Ok(report)
 }
 
 /// Apply a deferred question's escalation policy once its deadline passes.
@@ -956,7 +966,8 @@ mod tests {
             vak_intent::parse_command(prompt),
             Some(vak_intent::Command::UntilDone { .. } | vak_intent::Command::GoalReplace { .. })
         );
-        let plan = plan_episodes(sessions_home, config, intent, durable, chrono::Utc::now());
+        let plan =
+            plan_episodes(sessions_home, config, intent, durable, chrono::Utc::now()).unwrap();
         begin_episodes(
             sessions_home,
             config,
@@ -988,7 +999,7 @@ mod tests {
             dir.path(),
         );
         assert!(handle.is_none());
-        assert!(CommitmentLedger::new(dir.path()).all().is_empty());
+        assert!(CommitmentLedger::new(dir.path()).all().unwrap().is_empty());
     }
 
     #[test]
@@ -1099,7 +1110,7 @@ mod tests {
         )
         .expect("the continuation joins the open commitment");
         assert_eq!(handle.commitment_id, id);
-        assert_eq!(ledger.all().len(), 1, "no twin was opened");
+        assert_eq!(ledger.all().unwrap().len(), 1, "no twin was opened");
     }
 
     /// `/goal replace` on durable work opens its successor and supersedes the
@@ -1157,7 +1168,7 @@ mod tests {
             );
             begin_episode(dir.path(), &config(), &intent, prompt, "s1", dir.path()).unwrap();
         }
-        assert_eq!(CommitmentLedger::new(dir.path()).open().len(), 2);
+        assert_eq!(CommitmentLedger::new(dir.path()).open().unwrap().len(), 2);
     }
 
     /// Only an existing commitment can carry a grant, and only a live one is
@@ -1198,7 +1209,7 @@ mod tests {
                 merges: Vec::new(),
             },
         );
-        let plan = plan_episodes(dir.path(), &config(), &intent, true, now);
+        let plan = plan_episodes(dir.path(), &config(), &intent, true, now).unwrap();
         assert!(plan.envelopes().contains_key("t1.0"));
         assert_eq!(plan.enveloped_commitments(), vec![id.clone()]);
 
@@ -1211,7 +1222,7 @@ mod tests {
                 },
             ))
             .unwrap();
-        let plan = plan_episodes(dir.path(), &config(), &intent, true, now);
+        let plan = plan_episodes(dir.path(), &config(), &intent, true, now).unwrap();
         assert!(
             plan.envelopes().is_empty(),
             "a revoked grant is not offered"
@@ -1275,7 +1286,7 @@ mod tests {
                 },
             ))
             .unwrap();
-        assert_eq!(maintain_all(data.path()).await.resumed, vec![id]);
+        assert_eq!(maintain_all(data.path()).await.unwrap().resumed, vec![id]);
     }
 
     /// A recurrence word alone opens nothing: durable work is asked for
@@ -1292,6 +1303,28 @@ mod tests {
             dir.path(),
         );
         assert!(handle.is_none());
+    }
+
+    #[tokio::test]
+    async fn admission_and_upkeep_fail_on_unreadable_commitment_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = CommitmentLedger::new(dir.path());
+        ledger
+            .open_commitment(vak_commit::spec_from_reading(
+                "existing work",
+                Reading::general(),
+                Vec::new(),
+                dir.path().to_path_buf(),
+                Economics::default(),
+            ))
+            .unwrap();
+        vak_session::chain::RecordChain::at(ledger.path())
+            .append(&serde_json::json!({ "corrupt": true }))
+            .unwrap();
+
+        let intent = intent_with(Evidence::None, Horizon::Durable, 0.9);
+        assert!(plan_episodes(dir.path(), &config(), &intent, false, chrono::Utc::now(),).is_err());
+        assert!(maintain(dir.path()).await.is_err());
     }
 
     #[test]
@@ -1477,7 +1510,7 @@ mod tests {
 
         // While the condition is false the pass costs nothing and changes
         // nothing — this is the zero-token watch path.
-        let report = maintain(dir.path()).await;
+        let report = maintain(dir.path()).await.unwrap();
         assert!(report.satisfied.is_empty());
         assert_eq!(
             ledger.get(&handle.commitment_id).unwrap().unwrap().phase,
@@ -1485,7 +1518,7 @@ mod tests {
         );
 
         std::fs::write(dir.path().join("report.csv"), "done").unwrap();
-        let report = maintain(dir.path()).await;
+        let report = maintain(dir.path()).await.unwrap();
         assert_eq!(report.satisfied, vec![handle.commitment_id.clone()]);
         assert_ne!(
             ledger.get(&handle.commitment_id).unwrap().unwrap().phase,
@@ -1536,7 +1569,7 @@ mod tests {
                 },
             ))
             .unwrap();
-        let report = maintain(dir.path()).await;
+        let report = maintain(dir.path()).await.unwrap();
         assert_eq!(report.resumed, vec![waiting]);
     }
 
@@ -1564,7 +1597,7 @@ mod tests {
                 },
             ))
             .unwrap();
-        assert!(maintain(dir.path()).await.resumed.is_empty());
+        assert!(maintain(dir.path()).await.unwrap().resumed.is_empty());
 
         ledger
             .append(&Event::new(
@@ -1578,7 +1611,7 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(
-            maintain(dir.path()).await.resumed,
+            maintain(dir.path()).await.unwrap().resumed,
             vec![handle.commitment_id]
         );
     }
@@ -1606,7 +1639,7 @@ mod tests {
             vak_intent::Escalation::WaitIndefinitely,
         )
         .unwrap();
-        assert!(maintain(dir.path()).await.escalated.is_empty());
+        assert!(maintain(dir.path()).await.unwrap().escalated.is_empty());
         assert_eq!(
             ledger.get(&handle.commitment_id).unwrap().unwrap().phase,
             vak_commit::Phase::Suspended
@@ -1631,7 +1664,7 @@ mod tests {
         .unwrap();
 
         // Not yet expired.
-        assert!(sweep_expired(dir.path()).is_empty());
+        assert!(sweep_expired(dir.path()).unwrap().is_empty());
 
         // An over-budget commitment is held by the scheduler, never closed.
         ledger
@@ -1644,7 +1677,7 @@ mod tests {
                 },
             ))
             .unwrap();
-        assert!(sweep_expired(dir.path()).is_empty());
+        assert!(sweep_expired(dir.path()).unwrap().is_empty());
         let commitment = ledger.get(&handle.commitment_id).unwrap().unwrap();
         assert!(
             commitment.is_over_budget() || commitment.spec.economics.lifetime_budget_usd.is_none()

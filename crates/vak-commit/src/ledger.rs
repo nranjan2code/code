@@ -156,6 +156,8 @@ pub enum LedgerError {
     AlreadyClosed(String),
     #[error(transparent)]
     Closure(#[from] ClosureRefusal),
+    #[error("commitment history: {0}")]
+    History(#[from] vak_session::types::SessionError),
 }
 
 /// Held while one check-and-append runs. The OS releases the lock when the
@@ -296,10 +298,11 @@ impl CommitmentLedger {
             .collect()
     }
 
-    /// Every commitment's state, read from the rollup with only the events
-    /// appended since folded in: a turn's read never replays the chain.
-    fn projection(&self) -> Projection {
-        self.rollup().read(Projection::fold)
+    /// Every commitment's state, read from the verified rollup with only the
+    /// events appended since folded in. Unreadable rows fail the decision;
+    /// an erased conversation's content is intentionally absent.
+    fn projection(&self) -> Result<Projection, LedgerError> {
+        Ok(self.rollup().try_read(Projection::try_fold)?)
     }
 
     fn rollup(&self) -> vak_session::rollup::Rollup {
@@ -308,26 +311,32 @@ impl CommitmentLedger {
 
     /// One commitment's current state.
     pub fn get(&self, commitment_id: &str) -> Result<Option<Commitment>, LedgerError> {
-        Ok(self.projection().commitments.remove(commitment_id))
+        Ok(self.projection()?.commitments.remove(commitment_id))
     }
 
     /// Every commitment, most recently updated first.
-    pub fn all(&self) -> Vec<Commitment> {
-        let mut out: Vec<Commitment> = self.projection().commitments.into_values().collect();
+    pub fn all(&self) -> Result<Vec<Commitment>, LedgerError> {
+        let mut out: Vec<Commitment> = self.projection()?.commitments.into_values().collect();
         out.sort_by_key(|commitment| std::cmp::Reverse(commitment.updated_at));
-        out
+        Ok(out)
     }
 
     /// Commitments the portfolio scheduler could act on now.
-    pub fn open(&self) -> Vec<Commitment> {
-        self.all()
+    pub fn open(&self) -> Result<Vec<Commitment>, LedgerError> {
+        Ok(self
+            .all()?
             .into_iter()
             .filter(|commitment| !commitment.phase.is_terminal())
-            .collect()
+            .collect())
     }
 
     /// Open a new commitment and return its id.
     pub fn open_commitment(&self, spec: CommitmentSpec) -> Result<String, LedgerError> {
+        // Opening also changes the portfolio and must not make a fresh
+        // commitment decision from unreadable history. Keep the check and
+        // append under the same cross-process lock as every other writer.
+        let _guard = self.lock()?;
+        self.projection()?;
         let commitment_id = uuid::Uuid::now_v7().to_string();
         self.append_unchecked(&Event::new(
             commitment_id.clone(),
@@ -544,23 +553,20 @@ struct Projection {
 }
 
 impl Projection {
-    /// Folds one row; a row that is not an event is skipped rather than
-    /// trusted, as `events` does.
-    fn fold(&mut self, bytes: &[u8]) {
-        let Ok(mut row) = serde_json::from_slice::<serde_json::Value>(bytes) else {
-            return;
-        };
-        if !matches!(
-            vak_session::content::restore(&mut row),
-            Ok(vak_session::content::Restored::Whole)
-        ) {
-            return;
+    /// Folds one verified row. Erased content carries no readable state and
+    /// is deliberately omitted; every other restore or decode failure stops
+    /// the decision.
+    fn try_fold(&mut self, bytes: &[u8]) -> Result<(), vak_session::types::SessionError> {
+        let mut row = serde_json::from_slice::<serde_json::Value>(bytes)
+            .map_err(|error| vak_session::types::SessionError::Objects(error.to_string()))?;
+        match vak_session::content::restore(&mut row)? {
+            vak_session::content::Restored::Erased => return Ok(()),
+            vak_session::content::Restored::Whole => {}
         }
-        let Ok(event) = serde_json::from_value::<Event>(row) else {
-            return;
-        };
+        let event = serde_json::from_value::<Event>(row)
+            .map_err(|error| vak_session::types::SessionError::Objects(error.to_string()))?;
         if self.refused.contains(&event.commitment_id) {
-            return;
+            return Ok(());
         }
         match self.commitments.get_mut(&event.commitment_id) {
             Some(commitment) => apply(commitment, &event),
@@ -574,6 +580,7 @@ impl Projection {
                 }
             },
         }
+        Ok(())
     }
 }
 

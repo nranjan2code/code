@@ -7,6 +7,17 @@
   zip advisories, which concern extraction Vak never performs, are recorded
   exceptions in `.cargo/audit.toml`.
 
+- Concurrent credential updates preserve every presence marker, and trust
+  checks treat unreadable presence metadata conservatively. Failed secret
+  removals retain their markers instead of appearing absent.
+- Commitment admission and portfolio reads report unreadable history instead
+  of treating it as an empty portfolio. Maintenance stops on that error.
+- Chart category labels retain their original text, including leading zeroes
+  and punctuation. Ambiguous formatted y values are refused instead of
+  silently stripping commas.
+- Charts retain tiny ranges, distinguish nearby values and position extreme
+  finite values without overflowing. Axis labels use compact, precise text.
+
 - Tools stop before execution if their assistant message cannot be saved.
   A failed compaction write releases the session lock before recording its
   diagnostic, avoiding a stalled turn.

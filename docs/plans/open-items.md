@@ -41,8 +41,11 @@ overlapping fixes should close their original entries as well.
   canonical grant records, with the full repository gate passing.
   Artifact transactions and verified-cache provenance pass the full
   repository gate. Read-only
-  artifact callers, commitment/routing/accounting, catalog policy and blob ownership remain open;
-  the stage is not complete.
+  artifact callers, routing/accounting, catalog policy and blob ownership remain open.
+  Commitment decisions now use verified reads and propagate failures; the
+  full repository gate passes. Credential presence updates serialize and fail
+  conservatively on detected read errors. Crash-safe presence publication
+  and cleanup error receipts remain open. The stage is not complete.
 - [ ] S2: causal recording, consistent run services/policy, cancellation,
   compaction locks and conservative tool claims (A03–A07).
   A05 owned circuit permits and stale-reservation protection are implemented;
@@ -53,6 +56,9 @@ overlapping fixes should close their original entries as well.
   mandatory causal writes remain open.
 - [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
   actual outline attribution and typed cleanup (P01–P03, P13, P14).
+  P01 chart categories retain lexical text and ambiguous y strings are
+  refused; the full repository gate passes. Table fidelity and exact numeric
+  transport remain open.
 - [ ] S4: interaction ownership/invalidation, replacement, graph scope and
   invocation/freshness provenance (P04, D01–D04).
 - [ ] S5: subject persistence, protected drafts, encrypted fenced canvas
@@ -63,6 +69,9 @@ overlapping fixes should close their original entries as well.
   acceptance remains open; this does not close the wider Canvas stage.
 - [ ] S6: adaptive coverage/fallback, truthful charts, streaming, task-level
   quality and checked wire outcomes (P09–P12, A11, D04).
+  P10 numerical ranges, compact precise labels and overflow-safe y
+  positioning pass source tests, both bundle builds and the full gate.
+  Running-app acceptance remains open. Geometry and gaps remain open.
 - [ ] S7: narrow Core ownership and bounded history-dependent work
   (A08, A09), retaining the earlier guarantees.
 

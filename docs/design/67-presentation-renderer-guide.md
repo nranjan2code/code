@@ -7,6 +7,26 @@ history of this file.
 
 Read this before touching anything that decides how a result looks.
 
+## Numeric chart scales
+
+Chart category labels remain text; numeric-looking identifiers are never
+reparsed as numbers. Chart y values must be numbers after the common
+argument reader; a formatted string such as `1,5` is refused rather than
+guessing its locale. Ability-backed chart categories follow the same rule.
+
+The shared chart uses bounded decimal-grid ticks. Ticks remain finite and
+strictly increasing and span the input domain; where a nice grid cannot
+preserve representable endpoints, those endpoints are the scale. Equal
+finite endpoints expand to a representable interval. Reversed endpoints
+are normalized and nonfinite endpoints produce no scale. Tick generation
+has a fixed iteration bound and never rounds all tiny values to zero.
+
+Labels use shortest round-trip number text, including compact exponential
+notation for extremes. Positioning normalizes opposite-sign extremes to
+avoid overflowing their span. Source tests cover tiny, adjacent, subnormal,
+equal and extreme values. Numeric/temporal x geometry, missing-data gaps
+and running-app visual acceptance remain open under hardening P10.
+
 ## 1. The model
 
 A card is a **form**: a shape of information, never a topic. One list names

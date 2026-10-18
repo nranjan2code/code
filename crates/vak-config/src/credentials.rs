@@ -22,6 +22,7 @@
 //! degraded one.
 
 use std::io;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -208,17 +209,21 @@ pub fn get(scope_hint: &Path, var: &str) -> Option<String> {
 }
 
 pub fn set(scope_hint: &Path, var: &str, value: &str) -> io::Result<()> {
+    validate_index_component(var)?;
     let scope = bound_scope_key_for(scope_hint)?;
-    store().set(&scope, var, value)?;
-    index_mark_present(&scope, var);
-    Ok(())
+    with_index_lock(|index| {
+        index_mark_present(index, &scope, var)?;
+        store().set(&scope, var, value)
+    })
 }
 
 pub fn remove(scope_hint: &Path, var: &str) -> io::Result<()> {
+    validate_index_component(var)?;
     let scope = bound_scope_key_for(scope_hint)?;
-    store().remove(&scope, var)?;
-    index_mark_absent(&scope, var);
-    Ok(())
+    with_index_lock(|index| {
+        store().remove(&scope, var)?;
+        index_mark_absent(index, &scope, var)
+    })
 }
 
 /// Which store holds the secrets on this machine: `keychain` (the OS
@@ -235,16 +240,46 @@ pub fn backend() -> &'static str {
 /// install (data-architecture plan M7b-f). The presence index names them,
 /// because the OS store cannot be listed. Returns how many it removed.
 pub fn forget_all() -> usize {
+    with_index_lock(|index| {
+        let entries = index_entries(index)?;
+        let (removed, retained) =
+            remove_indexed_entries(&entries, |scope, var| store().remove(scope, var).is_ok());
+        index_write(index, &retained)?;
+        Ok(removed)
+    })
+    .unwrap_or(0)
+}
+
+fn remove_indexed_entries(
+    entries: &[String],
+    mut remove: impl FnMut(&str, &str) -> bool,
+) -> (usize, Vec<String>) {
     let mut removed = 0;
-    for entry in index_entries() {
-        if let Some((scope, var)) = entry.split_once('\0')
-            && store().remove(scope, var).is_ok()
-        {
+    let mut retained = Vec::new();
+    for entry in entries {
+        let Some((scope, var)) = entry.split_once('\0') else {
+            // `index_entries` already rejects malformed rows. Keep this
+            // defensive branch conservative if this helper gains a caller.
+            retained.push(entry.clone());
+            continue;
+        };
+        if remove(scope, var) {
             removed += 1;
+        } else {
+            retained.push(entry.clone());
         }
     }
-    index_write(&[]);
-    removed
+    (removed, retained)
+}
+
+fn validate_index_component(value: &str) -> io::Result<()> {
+    if value.is_empty() || value.chars().any(|ch| matches!(ch, '\0' | '\r' | '\n')) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "credential variable name cannot be represented in the presence index",
+        ));
+    }
+    Ok(())
 }
 
 pub fn list(scope_hint: &Path) -> Vec<(String, String)> {
@@ -262,49 +297,104 @@ pub fn list(scope_hint: &Path) -> Vec<(String, String)> {
 /// values, so it carries none of the sensitivity a secret-listing API
 /// would.
 pub fn scope_has_any(scope_hint: &Path) -> bool {
+    scope_has_any_conservative(try_scope_has_any(scope_hint))
+}
+
+/// Fallible form used by callers that need to distinguish an empty scope
+/// from an unreadable or corrupt presence index. Trust decisions should
+/// treat errors conservatively as privileged.
+pub fn try_scope_has_any(scope_hint: &Path) -> io::Result<bool> {
     let scope = scope_key_for(scope_hint);
-    let prefix = format!("{scope}\0");
-    index_entries()
-        .iter()
-        .any(|entry| entry.starts_with(&prefix))
+    with_index_lock(|index| scope_has_any_in(index, &scope))
 }
 
 fn index_path() -> PathBuf {
     crate::paths::data_home().join("credential_index.json")
 }
 
-fn index_entries() -> Vec<String> {
-    std::fs::read_to_string(index_path())
-        .ok()
-        .map(|text| text.lines().map(str::to_string).collect())
-        .unwrap_or_default()
-}
-
-fn index_write(entries: &[String]) {
+/// Lock the index inode itself. It is a small metadata file, and keeping
+/// that inode stable lets readers and writers coordinate across processes
+/// without a second lock path. All accesses to its contents go through this
+/// helper, including backend writes whose presence marker must be visible
+/// before the secret can become visible.
+fn with_index_lock<T>(f: impl FnOnce(&mut std::fs::File) -> io::Result<T>) -> io::Result<T> {
     let path = index_path();
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)?;
     }
-    let _ = std::fs::write(&path, entries.join("\n"));
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    file.lock()?;
+    f(&mut file)
 }
 
-fn index_mark_present(scope: &str, var: &str) {
+fn index_entries(file: &mut std::fs::File) -> io::Result<Vec<String>> {
+    file.seek(SeekFrom::Start(0))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)?;
+    if text.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    for entry in text.lines() {
+        let Some((scope, var)) = entry.split_once('\0') else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "credential presence index is malformed",
+            ));
+        };
+        if scope.is_empty() || var.is_empty() || var.contains('\0') {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "credential presence index is malformed",
+            ));
+        }
+        entries.push(entry.to_string());
+    }
+    Ok(entries)
+}
+
+fn scope_has_any_in(file: &mut std::fs::File, scope: &str) -> io::Result<bool> {
+    let prefix = format!("{scope}\0");
+    Ok(index_entries(file)?
+        .iter()
+        .any(|entry| entry.starts_with(&prefix)))
+}
+
+fn scope_has_any_conservative(result: io::Result<bool>) -> bool {
+    result.unwrap_or(true)
+}
+
+fn index_write(file: &mut std::fs::File, entries: &[String]) -> io::Result<()> {
+    file.set_len(0)?;
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(entries.join("\n").as_bytes())?;
+    file.sync_all()
+}
+
+fn index_mark_present(file: &mut std::fs::File, scope: &str, var: &str) -> io::Result<()> {
     let key = format!("{scope}\0{var}");
-    let mut entries = index_entries();
+    let mut entries = index_entries(file)?;
     if !entries.contains(&key) {
         entries.push(key);
-        index_write(&entries);
+        index_write(file, &entries)?;
     }
+    Ok(())
 }
 
-fn index_mark_absent(scope: &str, var: &str) {
+fn index_mark_absent(file: &mut std::fs::File, scope: &str, var: &str) -> io::Result<()> {
     let key = format!("{scope}\0{var}");
-    let mut entries = index_entries();
+    let mut entries = index_entries(file)?;
     let before = entries.len();
     entries.retain(|e| e != &key);
     if entries.len() != before {
-        index_write(&entries);
+        index_write(file, &entries)?;
     }
+    Ok(())
 }
 
 // ---- OS-native backend -----------------------------------------------
@@ -683,5 +773,99 @@ mod tests {
                 .all(|space| space.folder.as_deref() != vault.parent()),
             "the key vault's folder is never bound as a project"
         );
+    }
+
+    #[test]
+    fn presence_index_updates_and_readers_share_one_lock() {
+        crate::paths::isolate_home_for_tests();
+        let writers = 8;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(writers + 4));
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut threads = Vec::new();
+        for writer in 0..writers {
+            let barrier = barrier.clone();
+            threads.push(std::thread::spawn(move || {
+                barrier.wait();
+                for item in 0..12 {
+                    with_index_lock(|index| {
+                        index_mark_present(index, "index-contention", &format!("{writer}-{item}"))
+                    })
+                    .unwrap();
+                }
+            }));
+        }
+        for _ in 0..4 {
+            let barrier = barrier.clone();
+            let done = done.clone();
+            threads.push(std::thread::spawn(move || {
+                barrier.wait();
+                while !done.load(std::sync::atomic::Ordering::Acquire) {
+                    with_index_lock(index_entries).unwrap();
+                }
+            }));
+        }
+        // Writers and readers start together; only signal completion after
+        // every writer has finished its last read-modify-write.
+        let readers = threads.split_off(writers);
+        for writer in threads {
+            writer.join().unwrap();
+        }
+        done.store(true, std::sync::atomic::Ordering::Release);
+        for reader in readers {
+            reader.join().unwrap();
+        }
+
+        with_index_lock(|index| {
+            let entries = index_entries(index)?;
+            for writer in 0..writers {
+                for item in 0..12 {
+                    assert!(entries.contains(&format!("index-contention\0{writer}-{item}")));
+                }
+            }
+            for writer in 0..writers {
+                for item in 0..12 {
+                    index_mark_absent(index, "index-contention", &format!("{writer}-{item}"))?;
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn corrupt_presence_index_is_conservative_for_trust() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credential_index.json");
+        std::fs::write(&path, "not-a-scope-var-pair").unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+        assert!(scope_has_any_conservative(scope_has_any_in(
+            &mut file,
+            "some-scope"
+        )));
+    }
+
+    #[test]
+    fn invalid_variable_names_are_rejected_before_persistence() {
+        crate::paths::isolate_home_for_tests();
+        let scope_hint = tempfile::tempdir().unwrap().path().join(".env");
+        for var in ["", "HAS\0NUL", "HAS\rRETURN", "HAS\nNEWLINE"] {
+            assert_eq!(
+                set(&scope_hint, var, "value").unwrap_err().kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
+        assert!(!scope_has_any(&scope_hint));
+    }
+
+    #[test]
+    fn forget_all_retains_entries_when_removal_fails() {
+        let entries = vec!["scope\0removed".to_string(), "scope\0retained".to_string()];
+        let (removed, retained) = remove_indexed_entries(&entries, |_, var| var == "removed");
+        assert_eq!(removed, 1);
+        assert_eq!(retained, vec!["scope\0retained"]);
     }
 }

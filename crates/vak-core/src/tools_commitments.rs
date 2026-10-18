@@ -97,7 +97,10 @@ impl vak_tools::Tool for CommitmentsTool {
             .unwrap_or(false);
 
         if let Some(id) = args.get("id").and_then(Value::as_str) {
-            let all = ledger.all();
+            let all = match ledger.all() {
+                Ok(all) => all,
+                Err(error) => return vak_tools::ToolOutput::error(Fault::Tool, error.to_string()),
+            };
             let matches: Vec<_> = all
                 .iter()
                 .filter(|c| self.visible(c))
@@ -121,10 +124,14 @@ impl vak_tools::Tool for CommitmentsTool {
             };
         }
 
-        let commitments: Vec<_> = if include_closed {
+        let commitments = if include_closed {
             ledger.all()
         } else {
             ledger.open()
+        };
+        let commitments: Vec<_> = match commitments {
+            Ok(commitments) => commitments,
+            Err(error) => return vak_tools::ToolOutput::error(Fault::Tool, error.to_string()),
         }
         .into_iter()
         .filter(|commitment| self.visible(commitment))

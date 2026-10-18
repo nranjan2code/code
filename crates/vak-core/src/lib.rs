@@ -394,6 +394,8 @@ pub enum CoreError {
     Config(#[from] vak_config::ConfigError),
     #[error("session error: {0}")]
     Session(#[from] vak_session::SessionError),
+    #[error("commitment history: {0}")]
+    Commitment(#[from] vak_commit::LedgerError),
     #[error("provider error: {0}")]
     Llm(#[from] vak_llm::LlmError),
     #[error("permission rule error: {0}")]
@@ -6909,7 +6911,7 @@ impl Core {
             &resolved_intent,
             durable,
             chrono::Utc::now(),
-        );
+        )?;
         let serving: std::collections::BTreeSet<String> = episode_plan
             .strands
             .iter()
@@ -7898,7 +7900,7 @@ impl Core {
             // note so the ledger row carries exactly what the model saw.
             let model_visible = match (
                 engagement.posture.context,
-                commitments::prompt_projection(self.scope().root(), &episodes),
+                commitments::prompt_projection(self.scope().root(), &episodes)?,
             ) {
                 (vak_intent::ContextProfile::Full, Some(projection)) => {
                     Some(match resolved_intent.model_visible() {

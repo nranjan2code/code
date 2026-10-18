@@ -25,6 +25,21 @@ Every part is switchable off with `[intent] enabled = false` and
 `[commitment] enabled = false`, which together reproduce the runtime's
 pre-kernel behaviour exactly.
 
+## Verified commitment state
+
+Commitment get/all/open reads use a strict verified rollup. Unreadable
+frames, undecodable events and failed content restoration return errors;
+explicitly erased content is omitted after the erasure service invalidates
+its derived rollup. An old tolerant projection is rebuilt before use.
+Opening a commitment checks this state under the ledger's existing writer
+lock, as check-and-append already does for subsequent mutations.
+
+Episode planning and prompt projection propagate that error through turn
+admission. Maintenance returns an error instead of reporting an empty
+successful pass; the scheduler records an error kind and skips the pass.
+The tool, server and CLI surface unreadable history as a failure, distinct
+from a commitment that does not exist (hardening A01).
+
 ## Runtime map
 
 ```mermaid

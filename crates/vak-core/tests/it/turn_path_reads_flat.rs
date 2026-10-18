@@ -78,7 +78,7 @@ fn turn_path_reads_flat() {
         spec.objective = noise(16384);
         ids.push(ledger.open_commitment(spec).unwrap());
     }
-    assert_eq!(ledger.all().len(), 80);
+    assert_eq!(ledger.all().unwrap().len(), 80);
     assert!(
         ruin_sealed(ledger.path()) > 0,
         "the commitments crossed a seal"

@@ -10003,7 +10003,16 @@ async fn list_commitments(
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, q.agent.as_deref());
     let ledger = vak_commit::CommitmentLedger::new(&core.scope().into_root());
-    let commitments = if q.all { ledger.all() } else { ledger.open() };
+    let commitments = match if q.all { ledger.all() } else { ledger.open() } {
+        Ok(commitments) => commitments,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
+    };
     let ranked = vak_commit::rank(&commitments, &vak_commit::SchedulerContext::default());
     Json(serde_json::json!({
         "commitments": commitments,
@@ -10057,12 +10066,22 @@ async fn close_commitment(
 ) -> axum::response::Response {
     let core = scoped_core!(&state, None, body.agent.as_deref());
     let ledger = vak_commit::CommitmentLedger::new(&core.scope().into_root());
-    let Ok(Some(commitment)) = ledger.get(&id) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "no such commitment" })),
-        )
-            .into_response();
+    let commitment = match ledger.get(&id) {
+        Ok(Some(commitment)) => commitment,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "no such commitment" })),
+            )
+                .into_response();
+        }
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
     };
     let verdict = match body.verdict.as_str() {
         "fulfilled" => vak_commit::Verdict::Fulfilled,
@@ -20861,8 +20880,17 @@ pub fn start_scheduler(state: &AppState) {
                 if vak_session::fence::is_fenced() {
                     continue;
                 }
-                let report =
-                    vak_core::commitments::maintain_all(&st.core.shared_scope().into_root()).await;
+                let report = match vak_core::commitments::maintain_all(
+                    &st.core.shared_scope().into_root(),
+                )
+                .await
+                {
+                    Ok(report) => report,
+                    Err(error) => {
+                        tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "commitment upkeep could not read its history");
+                        continue;
+                    }
+                };
                 if report.is_empty() {
                     continue;
                 }

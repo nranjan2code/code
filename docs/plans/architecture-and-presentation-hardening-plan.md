@@ -419,6 +419,96 @@ presentation conformance checks through each refactor.
   preservation, encrypted Canvas storage and saved-page resource context
   remain open.
 
+### Continuation — commitment decisions and numerical chart ranges
+
+- The required-journal, compaction, unknown-claim and Canvas restoration
+  slice is committed as `c6b65b579`, after the full gate passed.
+- A01: commitment projections use strict fallible folds and verified caches.
+  get/all/open expose errors, and new commitment creation verifies history
+  under the existing writer lock. Episode planning and model-visible prompt
+  projection propagate failures; maintenance/tool/server/CLI callers no
+  longer turn unreadable history into empty successful state. Erasure
+  already invalidates the derived commitment rollups before rebuilding.
+- P10 numerical slice: tiny ticks no longer collapse to zero; clean decimal
+  grids avoid repeated-addition drift. Grid generation is bounded and falls
+  back to exact endpoints when a grid cannot represent the domain safely.
+  Labels retain nearby values while keeping extremes compact. Chart y
+  coordinates avoid opposite-sign span overflow. Existing percentage scales
+  remain unchanged. Source tests and 10,000 deterministic finite-domain
+  probes pass; both client bundles build.
+- P01 chart slice: chart scalars retain category strings instead of parsing
+  them as numbers, and y values require a number after argument reading.
+  Tests cover lexical categories and an ability-backed category, and reject
+  comma-formatted numeric strings instead of guessing a locale. Tables,
+  large numeric values across JSON and explicit numeric/locale contracts
+  remain open; this does not close P01.
+- The completed full gate passes for this continuation. P10 is not closed: x-axis
+  semantics, missing-data gaps, units/empty states and running-app acceptance
+  remain. A01 still includes routing/accounting and other decision readers.
+- A bounded read-only P01 consultation confirmed that a coherent fix must
+  preserve lexical strings, give numeric columns explicit semantics, avoid
+  stringify/reparse of ability records, keep large numbers exact across the
+  JSON/client boundary and retain old recorded payloads. No scalar payload
+  or schema change for tables is included in this continuation.
+
+### Verification-discovered credential presence race
+
+- The commitment/chart gate passed formatting and Clippy, then the Core
+  suite failed `trust::tests::a_project_config_or_env_makes_the_workspace_privileged`
+  (498 passed, one failed). It passed alone. The test also lacked home
+  isolation; trust fixtures now isolate before touching credential state.
+- Code inspection confirmed an independent concurrency defect: presence
+  writers read/overwrite the shared index without coordination and readers
+  can observe an in-progress write. A present secret can lose its marker.
+  The fix serializes index reads and secret/presence updates using the
+  existing index inode, with presence published before setting a secret.
+  Metadata I/O/format errors no longer become an absent scope, and failed
+  backend removals retain presence. No secret value enters the index.
+- Seven focused credential tests pass, including concurrent readers/writers,
+  malformed metadata, failed-removal retention and invalid variable names.
+  The focused trust regression passes. This fixes concurrency and detected
+  read errors; in-place publication can still leave an empty/corrupt index
+  after a crash. Durable publication and erasure receipt propagation on
+  credential cleanup errors remain A01 follow-ups; no crash guarantee is
+  claimed. The completed full gate passes after integration.
+- Parallel dependency/advisory/record-drift work is committed through
+  `1ac94fe55` (including `825b18564`). The final gate ran with that baseline:
+  formatting, workspace Clippy, workspace tests (788 seconds), versions,
+  paths, records/drift and advisories all pass. Earlier attempts caught a
+  missed fallible-API test caller, a CLI lint and the trust fixture/index
+  issue; each was repaired before this completed run. No source changed
+  during the completed gate. Both client bundles also pass; no live UI
+  acceptance is claimed.
+
+### Prepared next implementation scopes
+
+These are implementation proposals from bounded code inspection, not
+maintainer approval of a new product model:
+
+- Accounting (A01): add a registered scoped cost rollup with per-UTC-day
+  totals, validate finite/nonnegative USD, and read it strictly on every
+  admission. Keep unresolved reservations across day rollover. Hold the
+  existing shared day mutex across settlement append and reservation
+  disposition; release only after successful append, otherwise retain at
+  least the estimate or larger known actual in day/run state. Do not count
+  a settled row both in a cached baseline and the rollup. Preserve the
+  reserving `authorize` contract or replace all callers explicitly; no
+  whole-chain replay per dispatch. Trace belongs to the reservation, not a
+  mutable later gate trace. Recovery of in-memory reservations after process
+  restart remains separate durable-accounting work.
+- Child construction (A04): share a production run-service contract through
+  TaskDeps, with child context and factories for session/run-bound services.
+  Inherit protected paths and narrowed policy/capacity. Rebind artifacts,
+  file notes, history and checkpoint services to the correct child context
+  where their current closures capture the parent. Reuse the common day
+  budget; do not mint an independent budget when making a child gate.
+  Preserve child role, admitted tools, trace/run, provenance and read-only
+  narrowing. The parent's aggregate run budget must also remain shared:
+  giving each child a fresh gate with the same ceiling would widen it.
+  Pass dispatch attribution separately from the shared budget state (the
+  current SpendCheck has a session id but no trace). Verify each captured
+  service against code before copying it.
+
 ### Reporting contract
 
 For each slice record finding IDs, exact baseline, reproduction, chosen
@@ -431,5 +521,6 @@ stays open with the reason; do not substitute a pure-state probe for it.
 Update the tracker, relevant design Status/records and user-visible
 CHANGELOG in the same implementation commit. Keep exactly one current
 handover. Close a stage only when every listed exit holds or an explicit
-maintainer decision removes a scoped item. This planning change itself
-does not ship fixes, change a data baseline, release, install or deploy.
+maintainer decision removes a scoped item. The original planning-only
+commit changed no runtime behavior. Implementation slices do not change
+the data baseline, release, install or deploy unless separately recorded.

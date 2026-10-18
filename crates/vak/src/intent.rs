@@ -318,7 +318,13 @@ fn dispatch_commit(core: &Core, action: CommitAction) -> i32 {
 }
 
 fn list(ledger: &CommitmentLedger, all: bool, json: bool) -> i32 {
-    let commitments = if all { ledger.all() } else { ledger.open() };
+    let commitments = match if all { ledger.all() } else { ledger.open() } {
+        Ok(commitments) => commitments,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
+        }
+    };
     if json {
         println!(
             "{}",
@@ -536,7 +542,13 @@ fn attest(ledger: &CommitmentLedger, id: &str, criterion: &str, note: &str) -> i
 
 /// Resolve a full id or an unambiguous prefix.
 fn resolve_id(ledger: &CommitmentLedger, id: &str) -> Option<vak_commit::Commitment> {
-    let all = ledger.all();
+    let all = match ledger.all() {
+        Ok(all) => all,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return None;
+        }
+    };
     if let Some(exact) = all.iter().find(|c| c.commitment_id == id) {
         return Some(exact.clone());
     }

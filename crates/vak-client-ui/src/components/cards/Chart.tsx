@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { niceTicks } from "./chartScale";
+import { formatChartNumber, niceTicks, scalePosition } from "./chartScale";
 import { Card, downloadCsv, exportName, num, records, text, type Payload } from "./shared";
 
 interface Point { x: string | number; y: number | null }
@@ -36,8 +36,7 @@ export default function ChartCard(props: { payload: Payload }) {
   );
   const keys = createMemo(() => [...new Set(series().flatMap((s) => s.points.map((point) => point.x)))]);
   const valueAt = (s: Series, key: string | number) => s.points.find((point) => point.x === key)?.y ?? null;
-  const format = (value: number) =>
-    new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+  const format = formatChartNumber;
 
   let host: HTMLDivElement | undefined;
   const [width, setWidth] = createSignal(640);
@@ -63,7 +62,7 @@ export default function ChartCard(props: { payload: Payload }) {
     const labels = keys().map((key) => wrap(String(key), chars));
     const labelLines = Math.max(1, ...labels.map((lines) => lines.length));
     const height = PAD.top + PLOT_HEIGHT + 10 + labelLines * LINE + PAD.bottom;
-    const y = (value: number) => PAD.top + PLOT_HEIGHT - ((value - yMin) / (yMax - yMin)) * PLOT_HEIGHT;
+    const y = (value: number) => PAD.top + PLOT_HEIGHT - scalePosition(value, yMin, yMax) * PLOT_HEIGHT;
     const x = (index: number) => plotLeft + band * (index + 0.5);
     return { ticks, plotLeft, plotRight, band, labels, height, x, y };
   });
