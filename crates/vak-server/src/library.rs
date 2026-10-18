@@ -273,7 +273,17 @@ fn refuse(status: StatusCode, message: &str) -> Response {
 fn in_review(state: &AppState, id: &str, version: &str) -> Result<InReview, Box<Response>> {
     let missing = || Box::new(refuse(StatusCode::NOT_FOUND, "no such version"));
     let version = vak_session::ids::VersionId::parse(version).map_err(|_| missing())?;
-    let artifact = state.core.artifacts().get(id).ok_or_else(missing)?;
+    let artifact = state
+        .core
+        .artifacts()
+        .try_get(id)
+        .map_err(|_| {
+            Box::new(refuse(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "artifact history unavailable",
+            ))
+        })?
+        .ok_or_else(missing)?;
     let found = artifact
         .versions
         .iter()
@@ -319,7 +329,8 @@ async fn readable(
     let artifact = state
         .core
         .artifacts()
-        .get(&id)
+        .try_get(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     let found = version_of(&artifact, version)
         .cloned()
@@ -402,7 +413,17 @@ fn may_review(
     version: &str,
 ) -> Result<(), Box<Response>> {
     let missing = || Box::new(refuse(StatusCode::NOT_FOUND, "no such version"));
-    let artifact = state.core.artifacts().get(id).ok_or_else(missing)?;
+    let artifact = state
+        .core
+        .artifacts()
+        .try_get(id)
+        .map_err(|_| {
+            Box::new(refuse(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "artifact history unavailable",
+            ))
+        })?
+        .ok_or_else(missing)?;
     let found = version_of(&artifact, version).ok_or_else(missing)?;
     discusser(
         state,
@@ -556,32 +577,33 @@ pub(crate) struct Accept {
 /// and is not part of it (doc 90 §3.4): accepting one replaces work the
 /// draft never saw. Reads each file once, which records an edit made
 /// outside Vak as a version (D2), so it is kept whatever the person chooses.
-fn behind(state: &AppState, versions: &[(String, String)]) -> Vec<String> {
+fn behind(
+    state: &AppState,
+    versions: &[(String, String)],
+) -> Result<Vec<String>, vak_core::artifacts::ArtifactError> {
     let artifacts = state.core.artifacts();
     let mut found = Vec::new();
     for (id, version) in versions {
-        let Some(artifact) = artifacts.get(id) else {
-            continue;
-        };
-        let Ok(version) = vak_session::ids::VersionId::parse(version) else {
-            continue;
-        };
-        let Some(observed) = vak_core::file_state::observe(
+        let artifact = artifacts
+            .try_get(id)?
+            .ok_or_else(|| vak_core::artifacts::ArtifactError::NotFound(id.clone()))?;
+        let version = vak_session::ids::VersionId::parse(version)
+            .map_err(|_| vak_core::artifacts::ArtifactError::NotFound(version.clone()))?;
+        let observed = vak_core::file_state::try_observe(
             &artifacts,
             &artifact.space,
             state.core.cwd(),
             &artifact.path,
-        ) else {
-            continue;
-        };
-        // Read again: the observation may have recorded a version.
-        if let Some(artifact) = artifacts.get(id)
-            && vak_core::file_state::behind(&artifact, &observed, version)
-        {
+        )?
+        .ok_or_else(|| vak_core::artifacts::ArtifactError::NotFound(id.clone()))?;
+        let artifact = artifacts
+            .try_get(id)?
+            .ok_or_else(|| vak_core::artifacts::ArtifactError::NotFound(id.clone()))?;
+        if vak_core::file_state::behind(&artifact, &observed, version) {
             found.push(artifact.path.clone());
         }
     }
-    found
+    Ok(found)
 }
 
 #[derive(serde::Deserialize)]
@@ -623,7 +645,15 @@ pub(crate) async fn version_accept(
         }
     }
     if !body.replace_newer {
-        let behind = behind(&state, &versions);
+        let behind = match behind(&state, &versions) {
+            Ok(behind) => behind,
+            Err(_) => {
+                return refuse(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "the file history could not be verified; review cannot be accepted",
+                );
+            }
+        };
         if !behind.is_empty() {
             return (
                 StatusCode::CONFLICT,
@@ -1023,8 +1053,10 @@ async fn version_origin(
     State(state): State<AppState>,
     Path((id, version)): Path<(String, String)>,
 ) -> Response {
-    let Some(artifact) = state.core.artifacts().get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let artifact = match state.core.artifacts().try_get(&id) {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let Some(found) = artifact
         .versions
@@ -1494,11 +1526,11 @@ async fn save(
     let Ok(version) = vak_session::ids::VersionId::parse(&version) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let known = state
-        .core
-        .artifacts()
-        .get(&id)
-        .is_some_and(|artifact| artifact.versions.iter().any(|known| known.id == version));
+    let known = match state.core.artifacts().try_get(&id) {
+        Ok(artifact) => artifact
+            .is_some_and(|artifact| artifact.versions.iter().any(|known| known.id == version)),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
     if !known {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -1590,8 +1622,10 @@ async fn person_version(
     Json(body): Json<PersonVersion>,
 ) -> Response {
     use base64::Engine as _;
-    let Some(artifact) = state.core.artifacts().get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let artifact = match state.core.artifacts().try_get(&id) {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let mut bytes = match (body.text, body.data) {
         (Some(text), None) => text.into_bytes(),
@@ -1962,8 +1996,10 @@ async fn share(
     Path(id): Path<String>,
     Json(draft): Json<ShareDraft>,
 ) -> Response {
-    let Some(artifact) = state.core.artifacts().get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let artifact = match state.core.artifacts().try_get(&id) {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let name = draft.name.trim();
     if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
@@ -2276,8 +2312,10 @@ pub(crate) async fn thread(
     Path((id, version)): Path<(String, String)>,
     axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
 ) -> Response {
-    let Some(artifact) = state.core.artifacts().get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let artifact = match state.core.artifacts().try_get(&id) {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let Some(found) = version_of(&artifact, &version) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -2309,8 +2347,10 @@ pub(crate) async fn add_comment(
     axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
     Json(draft): Json<NewComment>,
 ) -> Response {
-    let Some(artifact) = state.core.artifacts().get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let artifact = match state.core.artifacts().try_get(&id) {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let Some(found) = version_of(&artifact, &version) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -2350,8 +2390,10 @@ pub(crate) async fn revise(
     if !matches!(principal, crate::AuthenticatedPrincipal::Operator) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let Some(artifact) = state.core.artifacts().get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let artifact = match state.core.artifacts().try_get(&id) {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let Some(found) = artifact
         .comments
@@ -2630,6 +2672,54 @@ mod tests {
         );
     }
     use vak_core::artifacts::ArtifactKind;
+
+    #[test]
+    fn accepting_review_refuses_unverifiable_file_history() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::spaces::bind(dir.path()).unwrap();
+        let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+        let state = AppState::new(core.clone());
+        let space = vak_session::trace::local::space(core.cwd()).to_string();
+        let id = core
+            .artifacts()
+            .declare(
+                &space,
+                "vak",
+                "unknown.txt",
+                ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        // A missing artifact in a multi-file review used to be skipped and
+        // incorrectly treated as proof that nothing was behind.
+        assert!(
+            behind(
+                &state,
+                &[(
+                    "missing".into(),
+                    vak_session::ids::VersionId::new().to_string()
+                )]
+            )
+            .is_err()
+        );
+        // A recorded file whose workspace path cannot be read is unknown,
+        // rather than an absent newer version that permits promotion.
+        std::fs::create_dir(dir.path().join("unknown.txt")).unwrap();
+        assert!(
+            behind(
+                &state,
+                &[(
+                    id.to_string(),
+                    vak_session::ids::VersionId::new().to_string()
+                )]
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn a_saved_page_does_not_replace_a_missing_exact_resource_version_with_head() {

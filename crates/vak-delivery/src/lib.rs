@@ -1046,7 +1046,9 @@ fn render_answer(
     } else {
         answer.source_markdown.clone()
     };
-    let source = clean_scaffolding(&raw_source);
+    // Runtime authorship/control records are filtered before AnswerDraft.
+    // Literal marker examples and lifecycle words remain authored content.
+    let source = raw_source.trim();
     match markup {
         Markup::Plain => format!(
             "{}{}",

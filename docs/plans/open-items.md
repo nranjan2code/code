@@ -131,7 +131,9 @@ overlapping fixes should close their original entries as well.
   changing the local Canvas or advancing the write revision. Copy unsent
   notes supports manual recovery. Focused tests, both client bundles and
   the full repository gate pass for this slice. In-app conflict choices,
-  full crash/new-tab recovery remain open. Same-tab reload now has encrypted
+  full crash/new-tab recovery remain open. The in-app note conflict chooser
+  is now implemented with explicit previews, durable resolution and late-edit
+  protection; its browser acceptance is still open. Same-tab reload now has encrypted
   checkpoints and owner-authenticated key retrieval; final browser matrix
   acceptance is blocked by disabled local browser access. No offline-unlock
   or storage-eviction guarantee is claimed. Focused queue/crypto, middleware

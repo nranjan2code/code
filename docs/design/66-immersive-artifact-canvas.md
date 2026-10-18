@@ -53,8 +53,15 @@ entire local Canvas unchanged and pause saving with a conflict notice and
 Copy unsent notes. The base revision advances only after a safe rebase;
 retry cannot bypass the conflict by writing directly at the remote head.
 Unrelated remote notes and ordinary reads continue to update normally.
-Conflicts currently require copying/reconciling notes or making room in the
-other window before retrying; an in-app choice between note versions remains open. Saved state uses encrypted, fenced Documents; pending
+For competing note edits, the notice previews both exact versions and offers
+Keep my changes or Use saved copy for each note, then Save these choices.
+Choices are scoped to a preview token and exact local snapshot; a later edit
+invalidates the preview. The resolved snapshot is checkpointed before CAS
+advances. A new server conflict pauses again; acknowledgment retains edits
+made while a choice was saving. Structural/capacity conflicts retain the
+Copy unsent notes and retry path. Note previews wrap at narrow widths and
+stay outside live screen-reader announcements. Browser acceptance remains
+open; source queue/rebase/recovery regressions are not a visual claim. Saved state uses encrypted, fenced Documents; pending
 client operations are checkpointed locally when recovery is available. The status never claims that
 a failed or conflicted write was saved.
 

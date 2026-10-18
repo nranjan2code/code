@@ -108,3 +108,24 @@ export const wireExamples = [
   }
 ] as const satisfies readonly ClientEvent[];
 
+type Variant<T> = T extends string ? T : keyof T;
+export const variantNames = {
+  "StreamOpened": true,
+  "TurnStart": true,
+  "TextDelta": true,
+  "ThinkingDelta": true,
+  "ToolCallStart": true,
+  "CardDrafting": true,
+  "ToolCallEnd": true,
+  "ApprovalRequested": true,
+  "WorkerStarted": true,
+  "WorkerToolCall": true,
+  "WorkerFinished": true,
+  "WorkerQuestion": true,
+  "WorkerQuestionAnswered": true,
+  "WorkerQuestionClosed": true,
+  "Retrying": true,
+  "Sandbox": true,
+  "DraftDiscarded": true,
+  "RunFinished": true
+} as const satisfies Record<Variant<ClientEvent>, true>;

@@ -19,10 +19,13 @@ Children inherit the admitted parent's per-purpose model-step settings,
 protected paths and configured completion policy, alongside the existing
 admitted-tool and read-only narrowing. A child dispatch supplies its own
 trace/actor when reserving budget; the shared gate still enforces aggregate
-parent-run and process-shared day spending. No fresh child gate resets them.
-Session-bound artifact, file-note, history and checkpoint callbacks still
-need child-scoped factories under hardening A04; inheriting these values
-is not full production-service parity.
+parent-run spending and durable cross-process day reservations. No fresh child gate resets them.
+Session-bound artifact, file-note, history, presentation rebuild and
+checkpoint callbacks bind through a host factory after the child's own
+session/workspace/identity exist. Factory failure refuses child setup. The
+production factory regression verifies artifact agent and session attribution.
+The inherited retry dispatch ceiling remains per-step, not a new aggregate
+run-tree call-count limit; that separate configuration remains open.
 
 Task results carry child presentation IDs in process. Background worker
 records retain their card groups and provenance, and result/wait return

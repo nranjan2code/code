@@ -8,12 +8,13 @@ import { isCanvasSubject, subjectKey } from "./canvasSubject";
 import { createCanvasRecovery } from "./canvasRecovery";
 import { activeId, canvasStacks, freshCanvasEntry, onCanvasChange, setCanvasStacks } from "./store";
 import { watchSession } from "./streamHub";
-import { createCanvasSyncCoordinator, type CanvasCheckpoint, type CanvasSaveStatus } from "./canvasSyncState";
+import { createCanvasSyncCoordinator, type CanvasCheckpoint, type CanvasConflict, type CanvasSaveStatus } from "./canvasSyncState";
 
 /** Typing a note writes once it pauses, not on every key. */
 const WRITE_AFTER_MS = 300;
 const RETRY_MS = 5000;
 const [statuses, setStatuses] = createSignal<Record<string, CanvasSaveStatus>>({});
+const [conflicts, setConflicts] = createSignal<Record<string, CanvasConflict<CanvasOp, StoredCanvasShape, api.StoredCanvas> | undefined>>({});
 
 function show(conversation: string, stored: api.StoredCanvas, pending: readonly CanvasOp[], baseline?: api.StoredCanvas) {
   const stacks = canvasStacks();
@@ -51,7 +52,7 @@ function validShape(value: unknown): value is StoredCanvasShape {
   return keys.size === 0 ? value.active === null : typeof value.active === "string" && keys.has(value.active);
 }
 function validCheckpoint(value: unknown): value is Checkpoint {
-  if (!object(value) || !Number.isSafeInteger(value.base) || (value.base as number) < 0 || !validShape(value.snapshot) || !Array.isArray(value.pending) || !value.pending.length) return false;
+  if (!object(value) || !Number.isSafeInteger(value.base) || (value.base as number) < 0 || !validShape(value.snapshot) || !Array.isArray(value.pending) || (!value.pending.length && value.conflict !== true) || (value.conflict !== undefined && typeof value.conflict !== "boolean")) return false;
   if (value.baseline !== undefined && (!validShape(value.baseline) || !object(value.baseline) || value.baseline.schema !== 1 || value.baseline.revision !== value.base)) return false;
   return value.pending.every((op) => {
     if (!object(op)) return false;
@@ -100,6 +101,13 @@ const coordinator = createCanvasSyncCoordinator<CanvasOp, ReturnType<typeof toSt
   applyStored: show,
   recovery: recoverySupported ? { ...journal, restore } : undefined,
   retryMs: RETRY_MS,
+  equalSnapshot: (left, right) => JSON.stringify(left) === JSON.stringify(right),
+  onConflict(conversation, conflict) { setConflicts((current) => ({ ...current, [conversation]: conflict })); },
+  applyResolution(conversation, snapshot) {
+    const current = canvasStacks();
+    const canvas = fromStored(snapshot, current[conversation], freshCanvasEntry);
+    setCanvasStacks(withCanvas(current, conversation, canvas));
+  },
   onStatus(conversation, status) {
     setStatuses((current) => ({ ...current, [conversation]: !recoverySupported && status.state !== "saved" ? { ...status, recovery: "unavailable" } : status }));
   },
@@ -108,6 +116,63 @@ const coordinator = createCanvasSyncCoordinator<CanvasOp, ReturnType<typeof toSt
 /** Reactive status for the header in this conversation's Canvas. */
 export function canvasSaveState(conversation: string): CanvasSaveStatus {
   return statuses()[conversation] ?? { state: "saved" };
+}
+
+export interface CanvasConflictNote { key: string; title: string; local: string; saved: string }
+export function canvasConflictReview(conversation: string) {
+  const conflict = conflicts()[conversation];
+  if (!conflict) return undefined;
+  const local = new Map(conflict.local.entries.map((entry) => [String(entry.key), entry]));
+  const remote = new Map(conflict.remote.entries.map((entry) => [String(entry.key), entry]));
+  const baseline = new Map((conflict.baseline?.entries ?? []).map((entry) => [String(entry.key), entry]));
+  const keys = new Set(conflict.pending.flatMap((op) => op.op === "update" && op.patch.draft !== undefined ? [op.key] : []));
+  const notes: CanvasConflictNote[] = [];
+  for (const key of keys) {
+    const mine = local.get(key);
+    if (!mine) continue;
+    const saved = remote.get(key);
+    const oldDraft = typeof baseline.get(key)?.draft === "string" ? String(baseline.get(key)?.draft) : "";
+    const savedDraft = typeof saved?.draft === "string" ? String(saved.draft) : "";
+    if (String(mine.draft ?? "") === savedDraft || (saved && savedDraft === oldDraft)) continue;
+    const subject = mine.subject as Record<string, unknown> | undefined;
+    notes.push({ key, title: typeof subject?.title === "string" ? subject.title : "Canvas note", local: String(mine.draft ?? ""), saved: saved ? savedDraft : "This note was removed from the saved Canvas." });
+  }
+  return { token: conflict.token, notes, remote: conflict.remote, baseline: conflict.baseline, local: conflict.local, pending: conflict.pending };
+}
+
+export async function resolveCanvasConflict(conversation: string, token: number, choices: Readonly<Record<string, "mine" | "saved">>): Promise<boolean> {
+  const conflict = conflicts()[conversation];
+  if (!conflict || conflict.token !== token) return false;
+  const localCanvas = fromStored(conflict.local, canvasStacks()[conversation], freshCanvasEntry) ?? undefined;
+  const rebased = rebaseCanvas(localCanvas, conflict.remote, conflict.baseline, conflict.pending, freshCanvasEntry, choices);
+  if ("conflict" in rebased) return false;
+  const target = toStored(rebased.canvas ?? undefined);
+  const remoteCanvas = fromStored(conflict.remote, localCanvas, freshCanvasEntry);
+  const pending = diffCanvas(remoteCanvas, rebased.canvas);
+  const accepted = await coordinator.resolve(conversation, token, target, pending);
+  if (accepted) setConflicts((current) => ({ ...current, [conversation]: undefined }));
+  return accepted;
+}
+
+function diffCanvas(remote: ReturnType<typeof fromStored>, target: ReturnType<typeof fromStored>): CanvasOp[] {
+  const before = remote?.entries ?? [];
+  const after = target?.entries ?? [];
+  const ops: CanvasOp[] = [];
+  const beforeByKey = new Map(before.map((entry) => [entry.key, entry]));
+  const afterByKey = new Map(after.map((entry) => [entry.key, entry]));
+  for (const entry of after) if (!beforeByKey.has(entry.key)) ops.push({ op: "open", subject: entry.subject });
+  for (const entry of before) if (!afterByKey.has(entry.key)) ops.push({ op: "close", key: entry.key });
+  for (const entry of after) {
+    const old = beforeByKey.get(entry.key);
+    if (!old) continue;
+    const patch: Partial<typeof entry> = {};
+    for (const field of ["view", "selection", "draft", "feedbackOpen", "panel", "dismissedVersion"] as const) {
+      if (JSON.stringify(entry[field]) !== JSON.stringify(old[field])) Object.assign(patch, { [field]: entry[field] });
+    }
+    if (Object.keys(patch).length) ops.push({ op: "update", key: entry.key, patch });
+  }
+  if (target && target.active !== remote?.active) ops.push({ op: "activate", key: target.active });
+  return ops;
 }
 
 /** True while any operation has not yet received a successful write receipt. */

@@ -8,12 +8,14 @@ export function rebaseCanvas(
   baseline: StoredCanvasShape | undefined,
   pending: readonly CanvasOp[],
   fresh: FreshEntry,
+  choices: Readonly<Record<string, "mine" | "saved">> = {},
 ): { canvas: ConversationCanvas | null } | { conflict: true } {
   const remote = fromStored(stored, local, fresh);
   const localEntries = local?.entries ?? [];
   const remoteEntries = remote?.entries ?? [];
   const draftKeys = new Set(pending.flatMap((op) => op.op === "update" && op.patch.draft !== undefined
     && localEntries.some((entry) => entry.key === op.key) ? [op.key] : []));
+  const actualConflicts = new Set<string>();
 
   // Only a queued draft edit protects local text. A read with no draft edit
   // accepts the latest server value, even when this tab has an old note.
@@ -21,14 +23,28 @@ export function rebaseCanvas(
     const mine = localEntries.find((entry) => entry.key === key);
     if (!mine) return { conflict: true };
     const current = remoteEntries.find((entry) => entry.key === key);
+    // A remotely closed tab is not a competing edit. The queued local draft
+    // is restored below, subject to the existing capacity check.
     if (!current) continue;
-    const old = baseline?.entries.find((entry) => entry.key === current.key);
+    const old = baseline?.entries.find((entry) => entry.key === key);
     const baselineDraft = typeof old?.draft === "string" ? old.draft : "";
-    if (mine.draft !== current.draft && current.draft !== baselineDraft) return { conflict: true };
+    if (mine.draft !== (current.draft ?? "") && current.draft !== baselineDraft) {
+      actualConflicts.add(key);
+      if (!choices[key]) return { conflict: true };
+    }
   }
+  if (Object.keys(choices).some((key) => !actualConflicts.has(key))
+    || [...actualConflicts].some((key) => !choices[key])) return { conflict: true };
+
+  const replay = pending.flatMap((op): CanvasOp[] => {
+    if (op.op !== "update" || choices[op.key] !== "saved" || op.patch.draft === undefined) return [op];
+    const { draft: _discardedDraft, ...patch } = op.patch;
+    return Object.keys(patch).length ? [{ ...op, patch }] : [];
+  });
+  for (const key of actualConflicts) if (choices[key] === "saved") draftKeys.delete(key);
 
   let stacks: CanvasStacks = withCanvas({}, "canvas", remote);
-  for (const op of pending) {
+  for (const op of replay) {
     const finalMine = op.op === "update" ? localEntries.find((entry) => entry.key === op.key) : undefined;
     if (op.op === "update" && op.patch.draft !== undefined && finalMine?.draft && !stacks.canvas?.entries.some((entry) => entry.key === op.key)) {
       const restored = openEntry(stacks, "canvas", finalMine.subject, fresh);
@@ -59,7 +75,7 @@ export function rebaseCanvas(
       const remoteEntry = remoteEntries.find((entry) => entry.key === mine.key);
       const old = baseline?.entries.find((entry) => entry.key === mine.key);
       const remoteChanged = remoteEntry && remoteEntry.draft !== (typeof old?.draft === "string" ? old.draft : "");
-      if (remoteChanged && remoteEntry.draft !== mine.draft) return { conflict: true };
+      if (choices[key] !== "mine" && remoteChanged && remoteEntry.draft !== mine.draft) return { conflict: true };
       stacks = updateEntry(stacks, "canvas", mine.key, { draft: mine.draft });
     }
   }

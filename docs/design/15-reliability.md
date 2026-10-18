@@ -11,8 +11,11 @@ reporting success. Diagnostics remain separate best-effort records.
 Steering messages must be recorded before reaching the model or releasing
 user-controlled completion. Live outcome revisions are recorded before the
 runtime publishes their changed contract; an append failure preserves the
-previous runtime contract. Abort partial recording and other causal writes
-remain under the hardening plan's A03 audit.
+previous runtime contract. Abort preserves partial output even when its
+append fails and adds a visible persistence-failure marker. Failed fence-card
+appends refuse successful delivery. A failed child terminal record returns an
+error with partial output and withholds its cards. Other causal writes remain
+under the hardening plan's A03 audit.
 
 Incremental compaction drops its session lock before recording a failed
 write diagnostic, since activity recording takes that same lock. A write

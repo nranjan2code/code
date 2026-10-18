@@ -1,7 +1,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
-pub(crate) use vak_intent::control::{clean_scaffolding, is_scaffolding_line};
+/// Authored text is content. Runtime controls are filtered by their typed
+/// ledger metadata before projection, never by matching words in prose.
+pub(crate) fn clean_scaffolding(text: &str) -> String {
+    text.trim().to_string()
+}
 
 use vak_agent::AgentEvent;
 use vak_delivery::{
@@ -1074,11 +1078,6 @@ fn snapshot_inner(
                                 continue;
                             }
                             let assistant = record.message.role == Role::Assistant;
-                            // A short presentation envelope is ledger metadata, not prose.
-                            // Projecting it creates a duplicate, empty-looking Answer card.
-                            if assistant && is_presentation_envelope(text) {
-                                continue;
-                            }
                             // A delivered answer whose cards are drawn above
                             // shows its narration, not their text again.
                             let text = scheduled
@@ -2022,15 +2021,6 @@ fn media_type_for_path(path: &str) -> Option<String> {
         }
         .into(),
     )
-}
-
-fn is_presentation_envelope(text: &str) -> bool {
-    let lines = text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
-    !lines.is_empty() && lines.iter().all(|line| is_scaffolding_line(line))
 }
 
 /// Whether an activity is something a person did or would recognise as
@@ -3937,16 +3927,6 @@ mod tests {
     }
 
     #[test]
-    fn presentation_envelope_is_not_an_answer() {
-        assert!(super::is_presentation_envelope(
-            "Outcome: produced\nSurface: desktop app."
-        ));
-        assert!(!super::is_presentation_envelope(
-            "Outcome: produced\n\nHere is the detailed answer."
-        ));
-    }
-
-    #[test]
     fn snapshot_is_outcome_first_and_deduplicates_activity_transitions() {
         let dir = tempfile::tempdir().expect("temporary directory");
         let mut log = SessionLog::create(
@@ -4231,15 +4211,33 @@ mod tests {
     }
 
     #[test]
-    fn clean_scaffolding_strips_inline_hints_and_scaffolding() {
-        let text = "Answer body.\n[recovery] retry the failing call";
-        assert_eq!(super::clean_scaffolding(text), "Answer body.");
-
-        let text2 = "Surface: desktop app\nDone.";
-        assert_eq!(super::clean_scaffolding(text2), "Done.");
-
-        let text3 = "<intent>select</intent><context_packet>data</context_packet>Final result.";
-        assert_eq!(super::clean_scaffolding(text3), "Final result.");
+    fn authored_marker_examples_survive_the_actual_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "literal-content");
+        let literal = "Outcome: completed\nSurface: desktop app\n[recovery] is a literal marker\n<intent>example</intent>\ncompleted";
+        log.append_message(MessageRecord {
+            message: Message::user_text(literal),
+            meta: None,
+        })
+        .expect("request");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(literal)]),
+            meta: None,
+        })
+        .expect("reply");
+        let timeline = snapshot("literal-content", &log);
+        let documents: Vec<_> = timeline
+            .items
+            .iter()
+            .filter_map(|item| match &item.content {
+                OutputContent::Document { document } => Some(document.source_markdown.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            documents.iter().filter(|text| **text == literal).count() >= 2,
+            "{documents:?}"
+        );
     }
 
     #[test]

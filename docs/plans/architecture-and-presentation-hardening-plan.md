@@ -1069,3 +1069,35 @@ config, session, storage, presentation, delivery, tools, agent, core and server
 libraries with warnings denied. Repository formatting, records, document
 paths, version consistency and whitespace checks pass. The full workspace
 gate was not run, as requested. No manual browser acceptance is claimed.
+
+### Follow-up: explicit Canvas choices and remaining fidelity consumers
+
+Competing Canvas notes now present both versions and per-note Keep my
+changes / Use saved copy choices. Every competing note needs a choice;
+unrelated notes/operations stay intact. Writes pause during review; preview
+identity and exact local snapshot checks refuse stale choices. Encrypted
+checkpoints retain the conflict marker across reload. Resolution checkpoints
+before advancing CAS and acknowledges only what was sent, including the
+all-saved case with a late edit. Safe restoration of remotely closed dirty
+tabs remains unchanged. Structural/capacity conflicts require copy/retry;
+there is no duplicate subject identity or automatic Keep both invention.
+Focused sync/rebase/encrypted-recovery tests pass; browser acceptance remains
+open under the existing local-browser restriction.
+
+Ability tables now infer fields from all recorded rows, not just the first.
+A later-only field regression passes with exact identifier strings retained.
+Library review readability, save and acceptance checks use strict artifact
+reads; the behind-file check refuses missing/unreadable history rather than
+skipping it and treating it as safe promotion. Client-event fixture generation
+now checks a TypeScript exhaustive variant-name Record as well as shapes.
+The remaining server/channel lexical cleaner also preserves authored text;
+typed runtime controls continue to be excluded by their record metadata.
+All 82 delivery library tests pass; server projection/review checks and Clippy
+are recorded after the final integrated run. Full gate remains waived.
+
+Follow-up integrated verification passes: 59 server projection/Library/wire
+tests (one separately invoked performance test ignored), 82 delivery tests,
+the later-only ability-column regression, Canvas sync/rebase/encrypted-recovery
+checks, TypeScript wire consistency/typecheck, both client bundles, focused
+core/server/delivery Clippy, formatting, records and document-path checks.
+No manual browser check or full workspace gate ran for this follow-up.

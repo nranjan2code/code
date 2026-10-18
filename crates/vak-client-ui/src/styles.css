@@ -6208,6 +6208,11 @@ html[data-theme="frosted-light"] .artifact-canvas-body {
 .artifact-canvas-selection span { flex: 1; }
 .artifact-canvas-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border-soft); background: var(--surface-raised, var(--surface)); color: var(--text); font-size: var(--fs-meta); flex-shrink: 0; }
 .artifact-canvas-notice span { flex: 1 1 220px; }
+.canvas-conflict-review { flex: 1 0 100%; min-width: 0; }
+.canvas-conflict-note { min-width: 0; margin-block: var(--space-3); }
+.canvas-conflict-versions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: var(--space-3); }
+.canvas-conflict-versions > div { min-width: 0; }
+.canvas-conflict-versions pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .artifact-canvas-activity, .artifact-canvas-changes { display: grid; gap: var(--space-1); max-height: 180px; margin: 0; padding: 0; overflow: auto; list-style: none; font-size: var(--fs-meta); color: var(--text); }
 .artifact-canvas-activity li, .artifact-canvas-changes li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-1) 0; border-bottom: 1px solid var(--border-soft); }
 .artifact-canvas-activity time { color: var(--muted); }

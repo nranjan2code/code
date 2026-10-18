@@ -129,20 +129,21 @@ for (const failure of [Object.assign(new Error("offline")), Object.assign(new Er
   assert.deepEqual(applied, [3]);
 }
 
-// A declined stale rebase must preserve the original CAS revision. Retrying
-// may ask again, but must never send an unreviewed snapshot at the remote head.
+// A declined stale rebase stays paused at its original CAS revision. Retry
+// refreshes the comparison; only an explicit resolution advances the base.
 {
-  const timers = [], bases = [], baselines = [];
-  let accept = false;
+  const timers = [], bases = [], baselines = [], reads = [];
+  let view = { note: "local" };
   const coordinator = createCanvasSyncCoordinator({
-    get: async () => ({ revision: 1, note: "original" }),
-    put: async (_id, base) => { bases.push(base); return { stale: { revision: 2, note: "remote" } }; },
-    snapshot: () => ({ note: "local" }), revision: (stored) => stored.revision,
+    get: async () => { reads.push(1); return reads.length === 1 ? { revision: 1, note: "original" } : { revision: 2, note: "remote" }; },
+    put: async (_id, base, snapshot) => { bases.push([base, snapshot]); return { stale: { revision: 2, note: "remote" } }; },
+    snapshot: () => ({ ...view }), revision: (stored) => stored.revision,
     applyStored: (_id, _stored, pending, baseline) => {
       if (!pending.length) return true;
       baselines.push(baseline);
-      return accept;
+      return false;
     },
+    equalSnapshot: (a, b) => JSON.stringify(a) === JSON.stringify(b),
     schedule: (fn) => { const timer = { fn, cancelled: false }; timers.push(timer); return timer; },
     cancel: (timer) => { timer.cancelled = true; },
   });
@@ -151,12 +152,47 @@ for (const failure of [Object.assign(new Error("offline")), Object.assign(new Er
   const timer = timers[0]; timer.cancelled = true; timer.fn(); await tick();
   assert.deepEqual(coordinator.status("c"), { state: "error", reason: "conflict" });
   assert.equal(timers.some((entry) => !entry.cancelled), false);
-  coordinator.retry("c"); await tick();
-  assert.deepEqual(bases, [1, 1], "conflict must not advance the write revision");
-  assert.deepEqual(baselines.map((baseline) => baseline.note), ["original", "original"]);
-  accept = true;
-  coordinator.retry("c"); await tick();
-  assert.equal(coordinator.status("c").state, "pending", "safe replay remains pending until a real write receipt");
+  const stale = coordinator.conflict("c"); assert.ok(stale);
+  coordinator.enqueue("c", "late edit"); view = { note: "local plus late" }; await tick();
+  assert.equal(await coordinator.resolve("c", stale.token, { note: "resolved" }, ["resolved"]), false, "enqueue invalidates the preview token");
+  assert.deepEqual(bases, [[1, { note: "local" }]], "retry and choice review never send an unreviewed snapshot");
+  assert.deepEqual(baselines.map((baseline) => baseline.note), ["original"]);
+  assert.equal(coordinator.status("c").reason, "conflict");
+}
+
+// All-saved resolution is still a CAS write. A late edit during its request
+// survives the ACK checkpoint and is sent afterward.
+{
+  const putAck = deferred(), timers = [];
+  let view = { note: "mine" }, durable = null, puts = 0;
+  const coordinator = createCanvasSyncCoordinator({
+    recovery: { load: async () => null, save: async (_id, cp) => { durable = cp; }, restore: () => true },
+    get: async () => ({ revision: 1, note: "base" }),
+    put: async (_id, base, snapshot) => {
+      puts++;
+      if (base === 1) return { stale: { revision: 2, note: "remote" } };
+      return putAck.promise;
+    },
+    snapshot: () => ({ ...view }), revision: (x) => x.revision,
+    applyStored: (_id, _remote, pending) => pending.length === 0,
+    applyResolution: (_id, snapshot) => { view = { ...snapshot }; },
+    equalSnapshot: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+    schedule: (fn, delay) => { const t = { fn, delay, cancelled: false }; timers.push(t); return t; },
+    cancel: (t) => { t.cancelled = true; },
+  });
+  await coordinator.read("race");
+  coordinator.enqueue("race", "first"); await tick(); await tick();
+  coordinator.retry("race"); await tick(); await tick();
+  const preview = coordinator.conflict("race"); assert.ok(preview);
+  const resolving = coordinator.resolve("race", preview.token, { note: "remote" }, []);
+  await tick();
+  view = { note: "remote plus late edit" }; coordinator.enqueue("race", "late");
+  putAck.resolve({ saved: { revision: 3, note: "remote" } });
+  assert.equal(await resolving, true);
+  assert.equal(coordinator.status("race").state, "pending");
+  assert.deepEqual(durable.pending, ["late"], "ACK cleanup preserves edits made while the choice PUT was in flight");
+  assert.deepEqual(durable.snapshot, { note: "remote plus late edit" });
+  assert.equal(puts, 2);
 }
 
 // A recovered checkpoint restores the view and resumes the original CAS base.

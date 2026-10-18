@@ -1,4 +1,4 @@
-import { canvasSaveState, retryCanvas } from "../canvasSync";
+import { canvasConflictReview, canvasSaveState, resolveCanvasConflict, retryCanvas } from "../canvasSync";
 import CanvasSaveNotice from "./canvas/CanvasSaveNotice";
 import { createEffect, createMemo, createSignal, ErrorBoundary, For, on, onCleanup, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
@@ -273,7 +273,7 @@ export default function ArtifactCanvas() {
           </div>
         </Show>
 
-        <CanvasSaveNotice status={canvasSaveState(canvasConversation())} onRetry={() => retryCanvas(canvasConversation())} onCopy={async () => {
+        <CanvasSaveNotice status={canvasSaveState(canvasConversation())} conflict={canvasConflictReview(canvasConversation())} onResolve={(token, choices) => resolveCanvasConflict(canvasConversation(), token, choices)} onRetry={() => retryCanvas(canvasConversation())} onCopy={async () => {
           const notes = canvasEntries().filter((entry) => entry.draft.length > 0)
             .map((entry) => `${entry.subject.title}\n${entry.draft}`).join("\n\n");
           try {

@@ -1,5 +1,13 @@
 ## Unreleased
 
+- Canvas note conflicts show both versions and let you choose what to keep
+  for each note. Saving choices preserves unrelated notes and edits typed
+  while saving; stale choices require another review.
+
+- Ability tables infer columns from every recorded row, keeping later-only
+  fields. Library review acceptance refuses unknown or unreadable file history
+  instead of treating it as proof that a draft is safe to apply.
+
 - Ability-backed tables and charts use the exact recorded call selected by
   the answer. Failed or unavailable calls no longer substitute an older
   successful result. Saved pages read captured file versions through their

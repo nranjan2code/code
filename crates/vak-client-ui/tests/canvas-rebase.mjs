@@ -118,8 +118,8 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 console.log("canvas rebase ok");
 
-// Coordinator integration: a conflict keeps the original base and queue until
-// a later server revision safely agrees with the local draft.
+// Coordinator integration: a conflict keeps the original base and queue while
+// retry refreshes the preview; it never sends an unreviewed replay.
 {
   const subject = file("integrated.md");
   const key = subjectKey(subject);
@@ -136,9 +136,7 @@ console.log("canvas rebase ok");
     put: async (_id, base, snapshot) => {
       calls.push({ base, snapshot });
       if (calls.length === 1) return { stale: { revision: 2, ...stored(draft(open(undefined, subject), subject, "remote")) } };
-      if (calls.length === 2) return { stale: { revision: 2, ...stored(draft(open(undefined, subject), subject, "remote")) } };
-      if (calls.length === 3) return { stale: server };
-      return { saved: { revision: 4, ...snapshot } };
+      return { stale: { revision: 2, ...stored(draft(open(undefined, subject), subject, "remote")) } };
     },
     applyStored: (_id, value, pending, old) => {
       const result = rebaseCanvas(canvas, value, old, pending, fresh);
@@ -165,17 +163,14 @@ console.log("canvas rebase ok");
   assert.equal(canvas.entries[0].draft, "local", "failed rebase must not publish server state");
   coordinator.retry("c"); await tick();
   assert.deepEqual(coordinator.status("c"), { state: "error", reason: "conflict" });
-  assert.deepEqual(calls.slice(0, 2).map((call) => call.base), [1, 1], "conflict retries from the last accepted baseline");
+  assert.deepEqual(calls.map((call) => call.base), [1], "retry refreshes the preview without another PUT");
   assert.deepEqual(applied, [1], "conflicting snapshots are never published");
 
   server = { revision: 3, ...stored(draft(open(undefined, subject), subject, "local")) };
   coordinator.retry("c"); await tick();
-  assert.deepEqual(coordinator.status("c"), { state: "pending" });
-  assert.equal(calls[2].base, 1, "the stale response is still based on the original accepted revision");
-  assert.deepEqual(applied, [1, 3]);
-  await fire();
-  assert.deepEqual(coordinator.status("c"), { state: "saved" });
-  assert.equal(calls[3].base, 3, "safe rebase advances the next write to revision three");
+  assert.deepEqual(coordinator.status("c"), { state: "error", reason: "conflict" }, "even converged content is reviewed explicitly");
+  assert.equal(coordinator.conflict("c").remote.revision, 3, "retry refreshes the compared saved version");
+  assert.deepEqual(calls.map((call) => call.base), [1], "no conflict refresh sends a PUT");
 }
 
 // An empty remote note has no competing text, even without a known baseline.

@@ -1807,7 +1807,14 @@ fn fill_table_from(args: &mut Map<String, Value>, records: &[Value]) -> Result<(
         })
         .unwrap_or_default();
     let columns = if named.is_empty() {
-        objects[0].keys().cloned().collect()
+        // A result can be heterogeneous. Infer across all recorded rows so
+        // a later-only field cannot silently disappear from the answer.
+        objects
+            .iter()
+            .flat_map(|record| record.keys().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
     } else {
         named
     };
@@ -2944,6 +2951,22 @@ mod tests {
             assert!(vak_delivery::FORMS.contains(&shape.form));
             assert_eq!(shape.name, format!("emit_ability_{}_card", shape.form));
         }
+    }
+
+    #[test]
+    fn inferred_ability_columns_include_later_only_fields() {
+        let records = vec![
+            json!({"id":"00123"}),
+            json!({"id":"00007", "later_only":"retained"}),
+        ];
+        let mut args = json!({"from":"records", "call_id":"selected"});
+        tool("emit_ability_table_card")
+            .fill_from_data(&mut args, &records)
+            .unwrap();
+        let card = built("emit_ability_table_card", args).unwrap();
+        assert_eq!(card["columns"][0]["label"], "id");
+        assert_eq!(card["columns"][1]["label"], "later_only");
+        assert_eq!(card["rows"], json!([["00123", ""], ["00007", "retained"]]));
     }
 
     #[test]
