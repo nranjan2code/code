@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 3 proposal, 20 in progress, 57 implemented, 2 reference, 8 superseded, 5 historical.
+Counts: 3 proposal, 20 in progress, 57 implemented, 2 reference, 9 superseded, 5 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -19,6 +19,7 @@ Counts: 3 proposal, 20 in progress, 57 implemented, 2 reference, 8 superseded, 5
 | [08-permissions.md](08-permissions.md) | 08 — Permissions (vak-permission) | implemented | in 2.0.0 |
 | [09-extensibility.md](09-extensibility.md) | 09 — Extensibility (skills · workers · hooks · MCP · custom commands) | implemented | in 2.0.0 |
 | [10-flows.md](10-flows.md) | 10 — Flows (static DAGs) | implemented | in 2.0.0 |
+| [100-workers.md](100-workers.md) | 100 — Workers: work handed over, kept running | proposal | (2026-10-18) |
 | [11-planner.md](11-planner.md) | 11 — Dynamic planner | implemented | in 2.0.0 |
 | [12-evals.md](12-evals.md) | 12 — Eval harness | implemented | in 2.0.0 |
 | [13-server.md](13-server.md) | 13 — Server mode | implemented | in 2.0.0 |
@@ -85,7 +86,7 @@ Counts: 3 proposal, 20 in progress, 57 implemented, 2 reference, 8 superseded, 5
 | [78-headless-identity.md](78-headless-identity.md) | 78 — Headless identity | in progress | This document is the implementation contract for human sign-in on a network-exposed Vakyartha server |
 | [79-private-headless-fleet.md](79-private-headless-fleet.md) | 79 — Private headless fleet | proposal | 2026-09-28 |
 | [80-mail-and-calendar.md](80-mail-and-calendar.md) | 80 — Mail and calendar: governed account work | in progress | (on main |
-| [81-pieces-and-home.md](81-pieces-and-home.md) | 81 — Pieces and Home: kept, live and hosted work | proposal | 2026-10-01 |
+| [81-pieces-and-home.md](81-pieces-and-home.md) | 81 — Pieces and Home: kept, live and hosted work | superseded | (2026-10-18) by `100-workers.md`, never built |
 | [82-library.md](82-library.md) | 82 — Library: one place for everything Vak makes | implemented | (data-architecture M8, 2026-10-06 to 2026-10-08, acceptance in `docs/audits/acceptance-m8-library-2026-10-08.md`): artifacts and their versions as records (`Tool::artifact`, `ArtifactClaim`), the `/library` API, the Library page and artifact page, Continue working and Make another, edits and Put back as versions, sharing by link and through a conversation's grant, and Review, Canvas and Workbench on artifact versions |
 | [83-prompt-system.md](83-prompt-system.md) | 83 — The prompt system, end to end | historical | Described the prompt system as shipped at 5.3.2 (2026-10-01) |
 | [84-worker-questions-and-control.md](84-worker-questions-and-control.md) | 84 — Worker questions, live worker control, and pause-now | in progress | Built: M3 (pause and stop now, §7), M1 (a worker's question: the board, `ask_parent`, the HTTP list and answer endpoints and the events, §4) and M2 (background tasks, read-only or leased writers, the `workers` tool and the stop-gate join, §5) |

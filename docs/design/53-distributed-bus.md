@@ -10,7 +10,9 @@ references only (`crates/vak-server/src/bus.rs`), and nothing in Vak
 subscribes. The work queues, Agent inboxes, token, terminal and telemetry
 streams in the subject table have no producer or consumer in Vak yet, and
 the scale described under "Mission" is the library's aim, not a measured
-deployment.
+deployment. Workers (`100-workers.md`) start work through triggers and
+claims, not the bus's work queues; the bus is reconsidered only if workers
+are ever placed away from their home.
 
 ## Mission
 

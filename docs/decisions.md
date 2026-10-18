@@ -9,6 +9,19 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-18
 
+- A worker is a run of a well-defined pack that carries the engine,
+  handed over from something Vakyartha made and kept running; one owner may
+  have one or a thousand. Build only the narrow path: the pack, give it to a
+  worker, wake and work, keep it current, work through items, keep
+  building it and the caretaker, with workers running inside their home
+  and the home run wherever the owner chooses. Deferred, with reasons:
+  workers placed away from their home (AWS, GCP, Azure, Docker, VPS),
+  Vakyartha's own hosting and inbound gateway, requests from outside,
+  serving copies and autoscaling, enterprise identity. Each stage passes
+  its gate on the installed route before the next. Doc 81 is superseded.
+  Recorded in [docs/design/100-workers.md](design/100-workers.md) and
+  [the workers plan](plans/workers-plan.md).
+
 - Commit and push directly to `main`; do not create pull requests. This
   applies to future work unless the maintainer changes it. Recorded in
   [the current handover](plans/handover-2026-10-18.md#current-canvas-document-batch).

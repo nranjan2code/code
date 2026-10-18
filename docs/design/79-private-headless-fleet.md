@@ -4,6 +4,8 @@ Status: **proposal, 2026-09-28.** No customer fleet, operator-blind hosted
 runtime, attested key release, or fleet panel described here is shipped. The
 current single-owner EC2 installation remains a development baseline, not
 evidence that the privacy and disaster-recovery acceptance tests below pass.
+Workers placed on machines other than their home are deferred by
+`100-workers.md` §10, which places a worker where its home runs.
 This document extends the local-first data model in
 `73-data-architecture-and-lifecycle.md` and its milestone plan; it does not
 start or reorder any pending milestone. Plan revision 3 (2026-10-01) builds

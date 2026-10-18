@@ -821,6 +821,23 @@ live.
   300-row table from `powers-table`, every value equal to its answer,
   chosen by the model unasked.
 
+## Workers (docs/design/100, 2026-10-18)
+
+Proposal only; the stages, gates and "done when" are
+`docs/plans/workers-plan.md`. No stage has started.
+
+- [ ] W0: the pack contract, the worker record and its catalog source.
+- [ ] W1: give it to a worker (approval sheet, `worker` tool, conversation,
+  card, Workers page), runs that survive a restart.
+- [ ] W2: wake and work, keep it current; replace `task { background }`,
+  the in-memory registry as a record and doc 84 §5's lifetime, depth and
+  cap.
+- [ ] W3: work through items (fan-out, grouped Review).
+- [ ] W4: keep building it, and the caretaker.
+- [ ] W5: keep analysing, only after W2 to W4 pass their gates.
+- [ ] Maintainer decisions open in doc 100 §12: what `unasked` may hold,
+  whose conversation a worker has, the code-step runtime, budget defaults.
+
 ## Scheduled work (docs/design/94)
 
 Agreed 2026-10-15. Each stage's "done when" is in doc 94 §7.
@@ -1043,6 +1060,10 @@ An S3 or Postgres remote, hosted key escrow, retention labels on single
 items, data roles, an erasure-request queue, audit export, merging two
 machines that both wrote; `recall` opening another conversation except
 through an attached artifact (2026-10-14).
+Workers on machines other than their home, our own hosting and inbound
+gateway, requests from outside to a worker, serving copies and
+autoscaling, moving workers, enterprise identity, doc 81's tiles and micro
+apps, and the bus as a work queue (doc 100 §10, 2026-10-18).
 
 ## Recorded model choices (no work unless asked)
 

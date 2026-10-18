@@ -90,7 +90,8 @@ Read before changing behaviour in these areas:
 - **Mail and calendar** — `80-mail-and-calendar.md`, with the provider
   matrix and stages in `docs/plans/mail-calendar-implementation-plan.md`.
 - **Workers** — `84-worker-questions-and-control.md` (questions, the
-  `workers` tool, pause and stop now).
+  `workers` tool, pause and stop now); the direction for workers that
+  outlive a turn is `100-workers.md` (proposal).
 - **Turn graph** — `85-turn-graph.md` (turn ids, turn and recall links).
 - **Experience** — `64-agent-owned-platform.md` (the product model; see
   below), `61-adaptive-assistant-experience.md`,
@@ -100,9 +101,10 @@ Read before changing behaviour in these areas:
   `58-admin-ia-and-ui-goal.md`, `59-reference-ui-acceptance.md`.
 - **Install and onboarding** — `46-stabilization-install-and-onboarding.md`,
   `36-first-run-onboarding.md`, `37-distribution.md`, `35-tavily.md`.
-- **Proposals** — `56-personal-multi-machine-system.md`,
-  `79-private-headless-fleet.md`, `81-pieces-and-home.md`: designs not
-  built; they use the data architecture's shared primitives (triggers,
+- **Proposals** — `100-workers.md` (work handed to a worker and kept
+  running; its stages and gates are `docs/plans/workers-plan.md`, and it
+  supersedes `81-pieces-and-home.md`), `79-private-headless-fleet.md`:
+  designs not built; they use the data architecture's shared primitives (triggers,
   cursors, effects, fencing, connections, principals) rather than their own.
 
 ### Keeping the record current
