@@ -11,11 +11,17 @@ topology, one turn end to end, the data map, a bill of materials for every
 crate, where the size and the work are, a critic's findings and a target
 shape.
 
-It is **generated**. Never edit `blueprint.html` by hand.
+It is **generated**. Never edit `blueprint.html` or `measures.json` by hand.
+
+To review the architecture, check a finding or add one, follow
+[review-method.md](review-method.md): every finding is a claim tested by a
+measurement and given a verdict.
 
 | Part | Where it comes from |
 |---|---|
 | Every number (lines, files, tests, commits, dependencies, routes, tools, worker tasks, card forms, durable paths, longest files and functions) | measured by `scripts/blueprint.py` from the tree, `cargo metadata` and `git log` |
+| The evidence behind each finding (fix density, rebuild fan-out, unforwarded declarations, blocking calls, test density, completion vocabularies, the intent word tables, ledger coupling) | the checks in `scripts/blueprint/evidence.py`, run on every generation |
+| Cognitive complexity and dependency advisories | `python3 scripts/blueprint.py --deep` (clippy and `cargo audit`), cached in `measures.json` |
 | The layer stack, the dependency matrix, the upward-dependency list, the bill of materials, the size and work tables | drawn by `scripts/blueprint.py` from those measurements |
 | Each crate's layer and one-line role | the `CRATES` table in `scripts/blueprint.py` |
 | The process topology, the turn sequence, the data tree, the findings, what to keep and the target shape | written by hand in `scripts/blueprint/template.html`, with live numbers through `{{…}}` placeholders |
@@ -26,14 +32,17 @@ It is **generated**. Never edit `blueprint.html` by hand.
 - `scripts/release.sh` regenerates it and refuses to release while the
   committed page differs from the tree. Commit the regenerated page before
   releasing.
-- By hand: `python3 scripts/blueprint.py`.
+- By hand: `python3 scripts/blueprint.py`, or with `--deep` to refresh
+  complexity and advisories (a few minutes; `cargo audit` needs the
+  network). Refresh `--deep` before a release; `scripts/release.sh` warns
+  when `measures.json` predates the last release tag.
 
 Commit the regenerated page in a commit of its own, right after the
 change that moved its numbers, so the page's history in git is the
-architecture's history. Commits that touch only `blueprint.html` are left
-out of every count, and the page names the last commit that touched
-anything else. So after a page-only commit, generating again changes
-nothing. A page committed together with other files is always one commit
+architecture's history. Commits that touch only `blueprint.html` and
+`measures.json` are left out of every count, and the page names the last commit that touched
+anything else. So after a commit of only those two files, generating again
+changes nothing. A page committed together with other files is always one commit
 behind, and `scripts/release.sh` would refuse it.
 
 ### When it prints "needs review"
@@ -50,6 +59,8 @@ change that caused it:
 | `… (crates/…)` from `ANCHORS` | A function or type that the process or turn drawing names has moved or gone. Retrace that step in the code, fix the drawing and the step list, then fix `ANCHORS`. |
 | `crate … has no layer` | A new crate. Add it to `CRATES` with its layer and a one-line role. |
 | `crate … is gone` | Remove it from `CRATES`, and from any prose that names it. |
+| `evidence … (template)`, `measure … (template)` or `completion model …` | A check no longer produces that value, or a type it reads moved. Fix the check in `evidence.py` or the placeholder. |
+| `complexity of … (template; run --deep)` | Run `python3 scripts/blueprint.py --deep`, or the function was renamed. |
 
 ### Keeping the prose true
 
@@ -65,8 +76,12 @@ the change. Rules for the prose:
   embedded SQLite; [decisions.md](../decisions.md), 2026-10-18). Describe
   its cost, not its replacement.
 - Write the numbers as placeholders (`{{fn:name}}`, `{{file:path}}`,
-  `{{src:crate}}`, `{{tests:crate}}`, `{{deps:crate}}`, `{{m:key}}`), never
-  as literals, so they cannot go stale.
+  `{{src:crate}}`, `{{tests:crate}}`, `{{deps:crate}}`, `{{m:key}}`,
+  `{{e:key}}` for an evidence check, `{{cc:fn}}` and `{{ccrank:fn}}` for
+  complexity, `{{hist:fn}}` for a function's commits), never as literals, so
+  they cannot go stale. Dated history (a commit id, what one run did) may be
+  quoted as written.
+- Give every finding a verdict chip and the parts review-method.md lists.
 - Remove a finding once it no longer holds. Git keeps the old text.
 
 ### Measuring
@@ -78,8 +93,11 @@ the change. Rules for the prose:
   `#[cfg(test)] mod … { }` blocks are left out.
 - Dependencies are normal (non-dev) dependencies from
   `cargo metadata --no-deps --offline`.
-- The generator writes nothing but `blueprint.html`, reads no network and
-  no data home, and is deterministic for a given tree and history.
+- The generator writes `blueprint.html` (and, with `--deep`,
+  `measures.json`), plus a cache of per-commit file lists in the git
+  directory. It reads no data home. Only `--deep` reaches the network. The
+  page measures the working tree, so uncommitted work in the checkout is
+  counted until it is committed or discarded.
 
 ## The other pages
 

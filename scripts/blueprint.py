@@ -12,7 +12,11 @@ The output depends only on the tree and on history up to the last commit
 that touched something other than the blueprint itself, so committing a
 freshly generated page and generating again changes nothing.
 
-Usage: python3 scripts/blueprint.py [--quiet]
+Usage: python3 scripts/blueprint.py [--deep] [--quiet]
+
+--deep also runs the slow checks in scripts/blueprint/evidence.py (clippy's
+cognitive_complexity over every workspace library, and cargo audit) and
+rewrites docs/architecture/measures.json, which every other run reads.
 """
 
 import html
@@ -22,11 +26,17 @@ import re
 import subprocess
 import sys
 from collections import Counter
+from functools import lru_cache
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "blueprint"))
+import evidence  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = "docs/architecture/blueprint.html"
 TEMPLATE = os.path.join(ROOT, "scripts", "blueprint", "template.html")
-SELF = ":(exclude)" + OUT
+CC = "docs/architecture/measures.json"
+# Commits that touch only the generated files are left out of every count.
+SELF = (":(exclude)" + OUT, ":(exclude)" + CC)
 
 # Where each crate sits and what it is for. A crate missing here is drawn in
 # an "Unassigned" band and reported; add it (docs/architecture/AGENTS.md).
@@ -128,7 +138,8 @@ def rel(p):
     return os.path.relpath(p, ROOT)
 
 
-def production_lines(path):
+@lru_cache(maxsize=None)
+def _production_lines(path):
     """The file's lines with every top-level inline test module blanked."""
     with open(path, encoding="utf-8", errors="replace") as fh:
         lines = fh.read().split("\n")
@@ -145,7 +156,8 @@ def production_lines(path):
     return out
 
 
-def functions(path):
+@lru_cache(maxsize=None)
+def _functions(path):
     """(name, start line, length) for every rustfmt-formatted fn outside tests."""
     lines = production_lines(path)
     out = []
@@ -161,8 +173,16 @@ def functions(path):
     return out
 
 
+def production_lines(path):
+    return list(_production_lines(path))
+
+
+def functions(path):
+    return list(_functions(path))
+
+
 def commits(path):
-    return int(run("git", "rev-list", "--count", "HEAD", "--", path, SELF).strip() or 0)
+    return int(run("git", "rev-list", "--count", "HEAD", "--", path, *SELF).strip() or 0)
 
 
 def measure():
@@ -226,13 +246,13 @@ def measure():
     m["lock_crates"] = open(os.path.join(ROOT, "Cargo.lock"), encoding="utf-8").read().count("\n[[package]]")
     m["design_docs"] = len([f for f in os.listdir(os.path.join(ROOT, "docs/design")) if f.endswith(".md") and f != "INDEX.md"])
     m["agents_words"] = len(open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read().split())
-    m["total_commits"] = int(run("git", "rev-list", "--count", "HEAD", "--", ".", SELF).strip())
+    m["total_commits"] = int(run("git", "rev-list", "--count", "HEAD", "--", ".", *SELF).strip())
     m["docs_commits"] = commits("docs")
-    dates = run("git", "log", "--format=%ad", "--date=short", "--", ".", SELF).split()
+    dates = run("git", "log", "--format=%ad", "--date=short", "--", ".", *SELF).split()
     m["first_date"], m["last_date"] = (min(dates), max(dates)) if dates else ("", "")
     m["peak_day"] = Counter(dates).most_common(1)[0][1] if dates else 0
     m["days"] = days_between(m["first_date"], m["last_date"]) + 1 if dates else 0
-    m["revision"] = run("git", "log", "-1", "--format=%h", "--", ".", SELF).strip()
+    m["revision"] = run("git", "log", "-1", "--format=%h", "--", ".", *SELF).strip()
     cargo = open(os.path.join(ROOT, "Cargo.toml"), encoding="utf-8").read()
     m["version"] = re.search(r'^version = "([^"]+)"', cargo, re.MULTILINE).group(1)
     m["rust_src"] = sum(c["src"] for c in crates if c["kind"] == "rust")
@@ -412,6 +432,84 @@ def top_fns(fns, n=12):
     return "\n".join(f'<tr><td><code>{esc(name)}</code></td><td><code>{esc(p)}:{s}</code></td><td class="n">{l:,}</td></tr>' for l, name, p, s in fns[:n])
 
 
+CLIPPY_DEFAULT = 25  # clippy's own cognitive-complexity-threshold default
+
+
+def load_measures():
+    path = os.path.join(ROOT, CC)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def fn_history(path, start, length):
+    """Commits that changed a function's current lines, followed back."""
+    out = run("git", "log", "--format=%h", "--no-patch", "-L", f"{start},{start + length - 1}:{path}", check=False)
+    return len([x for x in out.split() if re.fullmatch(r"[0-9a-f]{7,40}", x)])
+
+
+def top_cc(cc, n=12):
+    if not cc:
+        return '<tr><td colspan="3">Not measured yet: run <code>python3 scripts/blueprint.py --deep</code>.</td></tr>'
+    return "\n".join(f'<tr><td><code>{esc(r["name"])}</code></td><td><code>{esc(r["file"])}:{r["line"]}</code></td><td class="n">{r["score"]}</td></tr>' for r in cc["complexity"][:n])
+
+
+def evidence_blocks(crates, m):
+    """Run the cheap evidence checks; return (values for {{e:…}}, %%blocks%%)."""
+    me = sys.modules[__name__]
+    hot = evidence.hotspots(me)
+    fan = evidence.fanout(crates)
+    wr = evidence.tool_wrappers(me)
+    blk = evidence.blocking(me)
+    tests, tmed = evidence.test_density(me, crates)
+    comp = evidence.completion_models(me)
+    lex = evidence.lexicon(me)
+    led = evidence.ledger_types(me)
+    by_fan = sorted(fan.items(), key=lambda kv: -kv[1])
+    e = {
+        "hot.files": hot["files"], "hot.commits": hot["commits"], "hot.fix_commits": hot["fix_commits"],
+        "hot.rho_density": f'{hot["rho_density"]:+.2f}', "hot.rho_count": f'{hot["rho_count"]:+.2f}',
+        "hot.top10_lines": f'{hot["top10_lines"]:.0f}%', "hot.top10_fixes": f'{hot["top10_fixes"]:.0f}%',
+        "hot.median": f'{hot["median_density"]:.1f}',
+        "fan.top": ", ".join(f"<code>{esc(n)}</code> {v}" for n, v in by_fan[:3]),
+        "fan.core": fan.get("vak-core", 0), "fan.session": fan.get("vak-session", 0), "fan.llm": fan.get("vak-llm", 0),
+        "fan.crates": len(fan),
+        "closure.session": len(evidence.closure(crates, "vak-session")),
+        "closure.session.list": ", ".join(f"<code>{esc(x)}</code>" for x in evidence.closure(crates, "vak-session")),
+        "tool.methods": wr["methods"], "tool.defaults": wr["defaults"], "tool.impls": wr["impls"],
+        "tool.median": wr["median_overrides"], "tool.wrappers": len(wr["wrappers"]),
+        "blk.async": blk["async_fns"], "blk.fs_fns": blk["fs_fns"], "blk.fs_calls": blk["fs_calls"],
+        "blk.proc_fns": blk["proc_fns"], "blk.offloads": blk["offloads"],
+        "blk.by_crate": ", ".join(f"<code>{esc(c)}</code> {n}" for c, n in list(blk["fs_by_crate"].items())[:4]),
+        "test.median": f"{tmed:.1f}",
+        "comp.count": sum(1 for r in comp["models"] if r["variants"]), "comp.translations": comp["translations"],
+        "comp.variants": ", ".join(f'{r["variants"]}' for r in comp["models"] if r["variants"]),
+        "lex.tables": lex["tables"], "lex.entries": lex["entries"], "lex.commits": lex["commits"],
+        "led.llm": led["uses"].get("vak_llm", 0), "led.intent": led["uses"].get("vak_intent", 0),
+        "led.control": led["uses"].get("vak_control", 0),
+        "led.types_commits": led["types_commits"], "led.co_changed": led["co_changed"],
+    }
+    for name, t in tests.items():
+        e[f"test.{name}"] = f'{t["per_kloc"]:.1f}'
+    rows_hot = "\n".join(f'<tr><td><code>{esc(r["file"])}</code></td><td class="n">{r["lines"]:,}</td><td class="n">{r["commits"]}</td><td class="n">{r["fixes"]}</td><td class="n">{r["density"]:.1f}</td></tr>' for r in hot["top"])
+    rows_wr = "\n".join(f'<li><code>{esc(w["type"])}</code> ({esc(w["file"])}:{w["line"]}): ' + (("does not forward " + ", ".join(f"<code>{esc(x)}</code>" for x in w["missing"])) if w["missing"] else "forwards every default") + "</li>" for w in wr["wrappers"]) or "<li>No wrapping tools found.</li>"
+    rows_comp = "\n".join(f'<tr><td><code>{esc(r["enum"])}</code></td><td>{esc(r["role"])}</td><td class="n">{r["variants"] if r["variants"] is not None else "gone"}</td><td><code>{esc(r["file"])}</code></td></tr>' for r in comp["models"])
+    thin = sorted(tests.items(), key=lambda kv: kv[1]["per_kloc"])
+    rows_tests = "\n".join(f'<tr><td><code>{esc(n)}</code></td><td class="n">{t["tests"]}</td><td class="n">{t["per_kloc"]:.1f}</td><td>{"yes" if t["fuzz"] else "—"}</td></tr>' for n, t in thin)
+    misses = [f"completion model {r['enum']} ({r['file']})" for r in comp["models"] if r["variants"] is None]
+    return e, {"HOTSPOTS": rows_hot, "WRAPPERS": rows_wr, "COMPLETION": rows_comp, "TESTS": rows_tests}, misses
+
+
+def audit_rows(cc):
+    if not cc or not cc.get("audit"):
+        return '<tr><td colspan="4">Not measured: run <code>python3 scripts/blueprint.py --deep</code> with network access.</td></tr>', 0, 0
+    a = cc["audit"]
+    rows = "\n".join(f'<tr><td><code>{esc(v["id"])}</code></td><td><code>{esc(v["package"])} {esc(v["version"])}</code></td><td>{esc(v["title"])}</td></tr>' for v in a["vulnerabilities"])
+    warn = sum(len(v) for v in a["warnings"].values())
+    return rows, len(a["vulnerabilities"]), warn
+
+
 HOT = 0
 
 
@@ -419,6 +517,24 @@ def main():
     global HOT
     quiet = "--quiet" in sys.argv
     crates, file_sizes, fns, m = measure()
+    if "--deep" in sys.argv:
+        with open(os.path.join(ROOT, CC), "w", encoding="utf-8") as fh:
+            json.dump(evidence.deep(sys.modules[__name__], m["revision"]), fh, indent=1)
+            fh.write("\n")
+    cc = load_measures()
+    if cc:
+        scores = sorted(r["score"] for r in cc["complexity"])
+        m["cc_count"] = len(scores)
+        m["cc_median"] = scores[len(scores) // 2]
+        m["cc_p99"] = scores[int(0.99 * (len(scores) - 1))]
+        m["cc_default"] = CLIPPY_DEFAULT
+        m["cc_over_default"] = sum(1 for x in scores if x > CLIPPY_DEFAULT)
+        m["cc_revision"] = cc["revision"]
+    ev, ev_blocks, ev_misses = evidence_blocks(crates, m)
+    audit_html, m["audit_vulns"], m["audit_warnings"] = audit_rows(cc)
+    cc_by_name = {}
+    for i, r in enumerate(cc["complexity"] if cc else []):
+        cc_by_name.setdefault(r["name"], (r["score"], i + 1))
     counts = sorted((c["commits"] for c in crates), reverse=True)
     # A hot spot is a crate in the busiest tenth by commits, at least one.
     HOT = counts[max(0, len(counts) // 10 - 1)] if counts else 0
@@ -428,16 +544,22 @@ def main():
         fn_len.setdefault(name, (l, p, s))
     file_len = {p: l for l, p in file_sizes}
     by = {c["name"]: c for c in crates}
-    misses = anchor_misses()
+    misses = anchor_misses() + ev_misses
     unassigned = [c["name"] for c in crates if c["layer"] == "L?"]
     stale = [n for n in CRATES if n not in by]
 
     def sub(match):
         kind, key = match.group(1), match.group(2)
         if kind == "m":
+            if key not in m:
+                misses.append(f"measure {key} (template)")
+                return "?"
             v = m[key]
             return esc(f"{v:,}" if isinstance(v, int) else (len(v) if isinstance(v, list) else v))
         if kind == "k":
+            if key not in m:
+                misses.append(f"measure {key} (template)")
+                return "?"
             return esc(k(m[key]))
         if kind == "fn":
             if key in fn_len:
@@ -456,6 +578,29 @@ def main():
                 return "?"
             v = {"deps": len(c["deps"]), "usedby": len(c["used_by"]), "src": c["src"], "tests": c["tests"], "commits": c["commits"]}[kind]
             return f"{v:,}"
+        if kind in ("cc", "ccrank", "ccx"):
+            if key not in cc_by_name:
+                misses.append(f"complexity of {key} (template; run --deep)")
+                return "?"
+            score, rank = cc_by_name[key]
+            if kind == "cc":
+                return str(score)
+            if kind == "ccrank":
+                return f"{rank:,}"
+            return f"{score / max(1, m['cc_median']):.0f}"
+        if kind in ("hist", "histpct"):
+            if key not in fn_len:
+                misses.append(f"fn {key} (template)")
+                return "?"
+            l, path, start = fn_len[key]
+            n = fn_history(path, start, l)
+            return f"{n:,}" if kind == "hist" else f"{100 * n / max(1, m['total_commits']):.0f}%"
+        if kind == "e":
+            if key not in ev:
+                misses.append(f"evidence {key} (template)")
+                return "?"
+            v = ev[key]
+            return f"{v:,}" if isinstance(v, int) else str(v)
         if kind == "pct":
             a, b = key.split("/")
             return f"{100*m[a]/max(1, m[b]):.0f}%"
@@ -465,13 +610,13 @@ def main():
     blocks = {
         "LAYER_SVG": layer_svg(crates), "MATRIX": matrix(crates), "UPWARD": upward_list(crates),
         "BOM": bom(crates), "FILTERS": filters(crates), "WORK": work_bars(crates, m),
-        "TOP_FILES": top_files(file_sizes), "TOP_FNS": top_fns(fns),
+        "TOP_FILES": top_files(file_sizes), "TOP_FNS": top_fns(fns), "TOP_CC": top_cc(cc), "AUDIT": audit_html, **ev_blocks,
         "TOOLS": ", ".join(f"<code>{esc(t)}</code>" for t in m["tools"]),
         "HOT": str(HOT),
     }
     for key, val in blocks.items():
         page = page.replace("%%" + key + "%%", val)
-    page = re.sub(r"\{\{(m|k|fn|file|deps|usedby|src|tests|commits|pct):([^}]+)\}\}", sub, page)
+    page = re.sub(r"\{\{(m|k|e|fn|file|deps|usedby|src|tests|commits|pct|cc|ccrank|ccx|hist|histpct):([^}]+)\}\}", sub, page)
     review = misses + [f"crate {n} has no layer" for n in unassigned] + [f"crate {n} is gone" for n in stale]
     banner = ""
     if review:

@@ -126,7 +126,9 @@ from the tree by `scripts/blueprint.py` on every build, and
 `scripts/release.sh` refuses a release while it is stale. Commit it in a
 commit of its own, right after the change that moved its numbers. When the generator prints
 `needs review`, or a change makes a finding wrong, follow
-`docs/architecture/AGENTS.md`.
+`docs/architecture/AGENTS.md`. To review the architecture or test a finding, follow
+`docs/architecture/review-method.md`: each finding is a claim, measured,
+with a verdict.
 
 ### What is authoritative
 

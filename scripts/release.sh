@@ -270,6 +270,14 @@ if [[ -n "$(git status --porcelain -- docs/architecture/blueprint.html)" ]]; the
     printf '"needs review" lines, and commit it before releasing.\n' >&2
     exit 1
 fi
+# Complexity and advisories are the slow measures (blueprint.py --deep).
+# They are not retaken here, but a release should not carry ones older
+# than the previous release.
+MEASURED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$ROOT_DIR/docs/architecture/measures.json" 2>/dev/null || true)"
+LAST_TAG="$(git -C "$ROOT_DIR" describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+if [[ -z "$MEASURED" ]] || { [[ -n "$LAST_TAG" ]] && ! git -C "$ROOT_DIR" merge-base --is-ancestor "$LAST_TAG" "$MEASURED" 2>/dev/null; }; then
+    printf 'warning: docs/architecture/measures.json predates %s; run python3 scripts/blueprint.py --deep and commit it.\n' "${LAST_TAG:-the last release}" >&2
+fi
 printf '  ✓ %-44s matches source\n' "vak-server/site/dist"
 
 for manifest in \

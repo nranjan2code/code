@@ -16,6 +16,7 @@ authoritative version.
 | Work with artwork and public identity | [Brand guide](brand/README.md) |
 | Understand how prompts are built and used | [The prompt system, end to end](design/83-prompt-system.md) |
 | See the whole system, measured | [System blueprint](architecture/blueprint.html), regenerated on every build ([its rules](architecture/AGENTS.md)) |
+| Review the architecture with evidence | [Architecture review method](architecture/review-method.md) |
 | Explore diagrams | [Architecture diagrams](architecture/README.md) and [tutor](tutor/README.md) |
 
 The architecture overview uses Mermaid and the tutor uses PNGs, so both render
