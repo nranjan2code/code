@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "3dab6e47b",
+  "revision": "ecdecd679",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -11,7 +11,7 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 331676,
+   "rust_src": 331781,
    "rust_tests": 85438,
    "ts_src": 62404,
    "routes": 394,
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 75,
    "lock_crates": 764,
-   "total_commits": 2368,
+   "total_commits": 2369,
    "days": 59,
    "peak_day": 174,
    "design_docs": 96,
@@ -239,7 +239,7 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 516,
+  "commits": 517,
   "areas": [
    [
     "docs",
@@ -374,7 +374,7 @@
    [
     "engineering",
     "Build, gate and release",
-    29
+    30
    ],
    [
     "workers",
@@ -614,6 +614,14 @@
   ],
   "recent": [
    {
+    "hash": "ecdecd679",
+    "date": "2026-10-18",
+    "subject": "Make the speed simulator readable and its model resource-by-resource",
+    "areas": [
+     "blueprint"
+    ]
+   },
+   {
     "hash": "3dab6e47b",
     "date": "2026-10-18",
     "subject": "Add a speed simulator to the blueprint",
@@ -766,19 +774,6 @@
      "docs",
      "vak-client-ui",
      "vak-server"
-    ]
-   },
-   {
-    "hash": "6c9ec71a8",
-    "date": "2026-10-18",
-    "subject": "Unify active card replacement and preserve bound sources",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-core",
-     "vak-server",
-     "vak-session"
     ]
    }
   ],
@@ -1283,7 +1278,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 77998,
+   "lines": 78103,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -15328,9 +15323,9 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 7715,
+   "lines": 7820,
    "largest": [
-    2936,
+    3041,
     "crates/vak-server/src/library.rs"
    ],
    "routes": [
@@ -20322,9 +20317,9 @@
    ],
    "modules": 3,
    "parts": [],
-   "lines": 2303,
+   "lines": 2392,
    "largest": [
-    2110,
+    2199,
     "crates/vak-core/src/finops.rs"
    ],
    "routes": [
@@ -21197,9 +21192,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 114,
+   "commits": 115,
    "fixes": 20,
-   "recent": 29,
+   "recent": 30,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -29784,6 +29779,14 @@
  ],
  "replay": [
   {
+   "hash": "ecdecd679",
+   "date": "2026-10-18",
+   "subject": "Make the speed simulator readable and its model resource-by-resource",
+   "subsystems": [
+    "engineering"
+   ]
+  },
+  {
    "hash": "3dab6e47b",
    "date": "2026-10-18",
    "subject": "Add a speed simulator to the blueprint",
@@ -36223,7 +36226,7 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 73829,
+   "src": 73934,
    "tests": 23792,
    "files": 51,
    "commits": 834,
@@ -36900,7 +36903,18 @@
     "p90": 13
    },
    "log_bytes_per_step": 1842,
-   "log_lines_per_step": 4.1
+   "log_lines_per_step": 4.1,
+   "turn_3to5_steps_p50_ms": 13324,
+   "turns_3to5_steps": 15,
+   "tool_mean_ms": 1771,
+   "share_vak": 0.07,
+   "screen_ms_per_render": 0.036,
+   "screen_ns_per_char": 182,
+   "request_bytes_p50": 30108,
+   "request_bytes_p90": 76253,
+   "requests": 130,
+   "tool_schema_bytes_p90": 43235,
+   "worker_spawn_ms": 10
   },
   "code": {
    "ring": {
@@ -36922,9 +36936,9 @@
     "value": null
    },
    "append": {
-    "file": "crates/vak-client-ui/src/store.ts",
-    "line": 1244,
-    "what": "The screen copies the item list and the whole text on every delta",
+    "file": "crates/vak-client-ui/src/components/MarkdownView.tsx",
+    "line": 64,
+    "what": "The screen renders the whole answer's markdown again on every delta",
     "value": null
    },
    "snapshot": {
@@ -36961,25 +36975,36 @@
   "subsystems": {
    "llm": {
     "driver": "token",
-    "why": "Parses every streamed token and copies the whole message into each delta; asks the provider's allowance",
+    "why": "Parses every streamed token, copies the whole message into each delta, and sends every request",
     "checks": [
      "snapshot",
      "allow"
+    ],
+    "uses": [
+     "tokens",
+     "cpu",
+     "network"
     ]
    },
    "server": {
     "driver": "token",
-    "why": "Numbers every delta into the event ring and sends one frame per delta",
+    "why": "Numbers every delta into the event ring and sends one frame per delta to each viewer",
     "checks": [
-     "ring",
-     "frames"
+     "ring"
+    ],
+    "uses": [
+     "cpu",
+     "network"
     ]
    },
    "client": {
     "driver": "token",
-    "why": "Applies every delta to its store and draws the text again",
+    "why": "Draws the whole answer again on every delta, on the viewer's device",
     "checks": [
      "append"
+    ],
+    "uses": [
+     "viewer"
     ]
    },
    "desktop": {
@@ -36987,25 +37012,33 @@
     "why": "Hosts the workspace client, so it draws every delta too",
     "checks": [
      "append"
+    ],
+    "uses": [
+     "viewer"
     ]
    },
    "terminal": {
     "driver": "token",
     "why": "Draws the same stream as a client of the server",
-    "checks": [
-     "frames"
+    "checks": [],
+    "uses": [
+     "viewer"
     ]
    },
    "cli": {
     "driver": "token",
     "why": "Prints the stream as it arrives",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "viewer"
+    ]
    },
    "admin": {
     "driver": "step",
     "why": "Its event hub carries every session's events",
-    "checks": [
-     "frames"
+    "checks": [],
+    "uses": [
+     "cpu"
     ]
    },
    "loop": {
@@ -37013,161 +37046,273 @@
     "why": "Runs every step: dispatch, repair, cards, stop gate; a blind failure opens the breaker",
     "checks": [
      "breaker"
+    ],
+    "uses": [
+     "cpu"
     ]
    },
    "context": {
     "driver": "step",
-    "why": "Plans and assembles every request",
-    "checks": []
+    "why": "Plans and assembles every request; what it carries is what each request costs",
+    "checks": [],
+    "uses": [
+     "cpu",
+     "tokens"
+    ]
+   },
+   "prompt": {
+    "driver": "turn",
+    "why": "Resolves the prompt layers every turn; the prefix is in every request",
+    "checks": [],
+    "uses": [
+     "tokens"
+    ]
+   },
+   "capabilities": {
+    "driver": "turn",
+    "why": "Decides which tool schemas every request carries",
+    "checks": [],
+    "uses": [
+     "tokens"
+    ]
+   },
+   "cards": {
+    "driver": "step",
+    "why": "Checks and records every card call; card schemas ride in the requests",
+    "checks": [],
+    "uses": [
+     "cpu",
+     "tokens"
+    ]
    },
    "control": {
     "driver": "step",
     "why": "Writes a decision at every decision point",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "cpu",
+     "disk"
+    ]
    },
    "permission": {
     "driver": "step",
     "why": "Decides every call; a provenance ask waits on a person",
     "checks": [
      "person"
+    ],
+    "uses": [
+     "cpu",
+     "person"
     ]
    },
    "sandbox": {
     "driver": "step",
-    "why": "Starts a sandboxed worker for every tool call",
-    "checks": []
+    "why": "Starts a sandboxed worker process for every tool call",
+    "checks": [],
+    "uses": [
+     "cpu"
+    ]
    },
    "tools": {
     "driver": "step",
-    "why": "Runs every built-in tool call in the worker",
-    "checks": []
-   },
-   "cards": {
-    "driver": "step",
-    "why": "Checks and records every card call",
-    "checks": []
+    "why": "Runs every built-in tool call in the worker; a web fetch goes out to the network",
+    "checks": [],
+    "uses": [
+     "cpu",
+     "network"
+    ]
    },
    "hooks": {
     "driver": "step",
     "why": "Runs around every tool call",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "cpu"
+    ]
    },
    "mcp": {
     "driver": "step",
-    "why": "Brokers every integration call",
-    "checks": []
+    "why": "Brokers every integration call to its server",
+    "checks": [],
+    "uses": [
+     "cpu",
+     "network"
+    ]
    },
    "recall": {
     "driver": "step",
-    "why": "Answers recall calls from the catalog",
-    "checks": []
+    "why": "Answers recall calls, and what it returns rides in the next request",
+    "checks": [],
+    "uses": [
+     "cpu",
+     "tokens"
+    ]
    },
    "flows": {
     "driver": "step",
     "why": "Walks a flow's nodes as steps",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "cpu"
+    ]
    },
    "ledger": {
     "driver": "step",
     "why": "Seals and syncs a frame for every entry",
     "checks": [
-     "fsync",
-     "disk"
+     "fsync"
+    ],
+    "uses": [
+     "disk",
+     "syncs",
+     "cpu"
     ]
    },
    "storage": {
     "driver": "step",
-    "why": "Stores every object and moves refs under the writer epoch",
+    "why": "Encrypts every object and moves refs under the writer epoch",
     "checks": [
      "fsync"
+    ],
+    "uses": [
+     "disk",
+     "syncs",
+     "cpu"
     ]
    },
    "catalog": {
     "driver": "step",
     "why": "Tails every ledger to index turns, calls and runs",
-    "checks": [
-     "disk"
+    "checks": [],
+    "uses": [
+     "disk",
+     "cpu"
     ]
    },
    "telemetry": {
     "driver": "step",
     "why": "Writes about four content-free lines a step",
-    "checks": [
-     "logs"
+    "checks": [],
+    "uses": [
+     "disk"
+    ]
+   },
+   "runs": {
+    "driver": "turn",
+    "why": "Opens and settles a run for every turn and records every effect",
+    "checks": [],
+    "uses": [
+     "disk",
+     "syncs"
     ]
    },
    "turn": {
     "driver": "turn",
     "why": "Admits every turn: agent, trace key, route ladder",
-    "checks": []
-   },
-   "runs": {
-    "driver": "turn",
-    "why": "Opens and settles a run for every turn and records every effect",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "cpu"
+    ]
    },
    "intent": {
     "driver": "turn",
     "why": "Reads every request into strands",
-    "checks": []
-   },
-   "prompt": {
-    "driver": "turn",
-    "why": "Resolves the prompt layers every turn",
-    "checks": []
-   },
-   "capabilities": {
-    "driver": "turn",
-    "why": "Binds a capability epoch every turn",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "cpu"
+    ]
    },
    "commitments": {
     "driver": "turn",
     "why": "Brackets an episode per strand",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "disk"
+    ]
    },
    "goal": {
     "driver": "turn",
     "why": "Keeps goal state across turns",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "disk"
+    ]
    },
    "memory": {
     "driver": "turn",
-    "why": "Recalls and writes notes as turns go",
-    "checks": []
+    "why": "Recalls notes into requests and writes new ones",
+    "checks": [],
+    "uses": [
+     "tokens",
+     "disk"
+    ]
    },
    "checkpoints": {
     "driver": "turn",
     "why": "Checkpoints the workspace around changes",
-    "checks": [
+    "checks": [],
+    "uses": [
      "disk"
     ]
    },
    "security": {
     "driver": "turn",
     "why": "Records every denial and escalation",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "disk"
+    ]
    },
    "operations": {
     "driver": "turn",
     "why": "Projects receipts and incidents from the record",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "cpu"
+    ]
    },
    "bus": {
     "driver": "turn",
     "why": "Carries events between agents",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "network"
+    ]
    },
    "delivery": {
     "driver": "turn",
     "why": "Renders each answer for its surface",
-    "checks": []
+    "checks": [],
+    "uses": [
+     "cpu",
+     "network"
+    ]
    },
    "gateway": {
     "driver": "turn",
-    "why": "Routes each channel message to a turn",
+    "why": "Routes each channel message to a turn and sends the reply",
     "checks": [
      "allow"
+    ],
+    "uses": [
+     "network",
+     "tokens"
+    ]
+   },
+   "backup": {
+    "driver": "turn",
+    "why": "A backup holds everything the record grew by",
+    "checks": [],
+    "uses": [
+     "disk"
+    ]
+   },
+   "lifecycle": {
+    "driver": "turn",
+    "why": "The only thing that removes on a rule: retention decides how far the record grows",
+    "checks": [],
+    "uses": [
+     "disk"
     ]
    },
    "workers": {
@@ -37175,6 +37320,10 @@
     "why": "A parent looks at a worker it waits on by a fixed tick",
     "checks": [
      "wait_tick"
+    ],
+    "uses": [
+     "cpu",
+     "tokens"
     ]
    },
    "finops": {
@@ -37182,6 +37331,9 @@
     "why": "Prices every receipt and stops admission when the day budget is spent",
     "checks": [
      "budget"
+    ],
+    "uses": [
+     "tokens"
     ]
    },
    "inbox": {
@@ -37189,19 +37341,29 @@
     "why": "Holds what waits for the owner",
     "checks": [
      "person"
+    ],
+    "uses": [
+     "person"
     ]
    },
    "library": {
     "driver": "person",
-    "why": "Review and promotion wait for the owner",
+    "why": "Review and promotion wait for the owner; every version is kept",
     "checks": [
      "person"
+    ],
+    "uses": [
+     "person",
+     "disk"
     ]
    },
    "coworking": {
     "driver": "person",
     "why": "Shared conversations move at the people's pace",
     "checks": [
+     "person"
+    ],
+    "uses": [
      "person"
     ]
    },
@@ -37210,6 +37372,10 @@
     "why": "Speech plays at speaking speed, whatever the model's",
     "checks": [
      "person"
+    ],
+    "uses": [
+     "person",
+     "tokens"
     ]
    }
   },
