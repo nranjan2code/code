@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "22a9886b3",
+  "revision": "7e718780c",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2358,
+   "total_commits": 2359,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
@@ -227,7 +227,7 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 506,
+  "commits": 507,
   "areas": [
    [
     "docs",
@@ -360,13 +360,13 @@
     30
    ],
    [
-    "workers",
-    "Workers and delegation",
-    27
-   ],
-   [
     "engineering",
     "Build, gate and release",
+    28
+   ],
+   [
+    "workers",
+    "Workers and delegation",
     27
    ],
    [
@@ -602,6 +602,14 @@
   ],
   "recent": [
    {
+    "hash": "7e718780c",
+    "date": "2026-10-18",
+    "subject": "Put the plant on the layer stack, add the outside world, and a connection explorer",
+    "areas": [
+     "blueprint"
+    ]
+   },
+   {
     "hash": "22a9886b3",
     "date": "2026-10-18",
     "subject": "Draw the blueprint's subsystems as an animated plant diagram",
@@ -744,15 +752,6 @@
     "areas": [
      "(root)",
      "blueprint",
-     "docs",
-     "scripts"
-    ]
-   },
-   {
-    "hash": "0aa091665",
-    "date": "2026-10-18",
-    "subject": "Keep the three blueprint findings the evidence supports",
-    "areas": [
      "docs",
      "scripts"
     ]
@@ -2372,7 +2371,8 @@
       "/commands"
      ]
     }
-   ]
+   ],
+   "layer": "L7"
   },
   {
    "id": "desktop",
@@ -2550,7 +2550,8 @@
       "crates/vak-client-ui/src/components/TerminalPane.tsx"
      ]
     }
-   ]
+   ],
+   "layer": "L7"
   },
   {
    "id": "terminal",
@@ -2772,7 +2773,8 @@
       "crates/vak-terminal/src/lib.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L7"
   },
   {
    "id": "admin",
@@ -3684,7 +3686,8 @@
       "crates/vak-server/src/embedded_ui.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L7"
   },
   {
    "id": "site",
@@ -3746,7 +3749,8 @@
      ]
     }
    ],
-   "in": []
+   "in": [],
+   "layer": "L6"
   },
   {
    "id": "cli",
@@ -4194,7 +4198,8 @@
       "crates/vak/src/cli.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L7"
   },
   {
    "id": "turn",
@@ -4998,7 +5003,8 @@
       "crates/vak-core/src/lib.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "loop",
@@ -5348,7 +5354,8 @@
       "crates/vak-agent/src/lib.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L4"
   },
   {
    "id": "workers",
@@ -5650,7 +5657,8 @@
       "crates/vak-agent/src/task.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L4"
   },
   {
    "id": "goal",
@@ -5758,7 +5766,8 @@
       "/sessions/{id}/plan-change"
      ]
     }
-   ]
+   ],
+   "layer": "L4"
   },
   {
    "id": "context",
@@ -5962,7 +5971,8 @@
       "crates/vak-context/src/capacity.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L4"
   },
   {
    "id": "prompt",
@@ -6149,7 +6159,8 @@
       "crates/vak-core/src/prompts.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "intent",
@@ -6497,7 +6508,8 @@
       "crates/vak-intent/src/control.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L3"
   },
   {
    "id": "control",
@@ -6738,7 +6750,8 @@
       "crates/vak-control/src/lib.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L3"
   },
   {
    "id": "commitments",
@@ -6928,7 +6941,8 @@
       "/commitments"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "llm",
@@ -7306,7 +7320,8 @@
       "crates/vak-llm/src/types.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L4"
   },
   {
    "id": "tools",
@@ -7834,7 +7849,8 @@
       "crates/vak-tools/src/context.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L4"
   },
   {
    "id": "recall",
@@ -7970,7 +7986,8 @@
       "crates/vak-tools/src/recall.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L4"
   },
   {
    "id": "capabilities",
@@ -8283,7 +8300,8 @@
       "/skills"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "abilities",
@@ -8623,7 +8641,8 @@
       "crates/vak-tools/src/capability.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "mcp",
@@ -8790,7 +8809,8 @@
       "/config/mcp"
      ]
     }
-   ]
+   ],
+   "layer": "L4"
   },
   {
    "id": "plugins",
@@ -8986,7 +9006,8 @@
       "crates/vak-plugin/src/lib.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L4"
   },
   {
    "id": "hooks",
@@ -9092,7 +9113,8 @@
       "crates/vak-hooks/src/lib.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L4"
   },
   {
    "id": "flows",
@@ -9290,7 +9312,8 @@
       "crates/vak-flow/src/graph.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "permission",
@@ -9660,7 +9683,8 @@
       "crates/vak-permission/src/reach.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L3"
   },
   {
    "id": "sandbox",
@@ -10007,7 +10031,8 @@
       "crates/vak-sandbox/src/copy.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L3"
   },
   {
    "id": "security",
@@ -10145,7 +10170,8 @@
       "crates/vak-core/src/security_events.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L7"
   },
   {
    "id": "identity",
@@ -10358,7 +10384,8 @@
       "crates/vak-core/src/gateway_token.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L6"
   },
   {
    "id": "grants",
@@ -10483,7 +10510,8 @@
       "crates/vak-core/src/grants.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "ledger",
@@ -11172,7 +11200,8 @@
       "crates/vak-session/src/log.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L1"
   },
   {
    "id": "storage",
@@ -11342,7 +11371,8 @@
       "crates/vak-core/src/keys.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L1"
   },
   {
    "id": "runs",
@@ -11697,7 +11727,8 @@
       "crates/vak-session/src/runs.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L1"
   },
   {
    "id": "catalog",
@@ -12002,7 +12033,8 @@
       "crates/vak-catalog/src/lib.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L1"
   },
   {
    "id": "state",
@@ -12258,7 +12290,8 @@
       "crates/vak-core/src/baseline.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "lifecycle",
@@ -12708,7 +12741,8 @@
       "crates/vak-core/src/erasure.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "backup",
@@ -12872,7 +12906,8 @@
       "crates/vak-core/src/backup.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "sync",
@@ -13059,7 +13094,8 @@
       "crates/vak-core/src/sync.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "checkpoints",
@@ -13208,7 +13244,8 @@
       "crates/vak-core/src/checkpoints.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "config",
@@ -13871,7 +13908,8 @@
       "/config"
      ]
     }
-   ]
+   ],
+   "layer": "L1"
   },
   {
    "id": "telemetry",
@@ -14201,7 +14239,8 @@
       "crates/vak-telemetry/src/lib.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L1"
   },
   {
    "id": "cards",
@@ -14681,7 +14720,8 @@
       "crates/vak-client-ui/src/structured.ts"
      ]
     }
-   ]
+   ],
+   "layer": "L6"
   },
   {
    "id": "delivery",
@@ -14911,7 +14951,8 @@
       "crates/vak-delivery/src/skills.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L2"
   },
   {
    "id": "canvas",
@@ -15152,7 +15193,8 @@
       "/sessions/{id}/launch"
      ]
     }
-   ]
+   ],
+   "layer": "L7"
   },
   {
    "id": "library",
@@ -15569,7 +15611,8 @@
       "crates/vak-core/src/file_state.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "office",
@@ -15885,7 +15928,8 @@
       "crates/vak-ooxml/src/package.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L2"
   },
   {
    "id": "mail",
@@ -16199,7 +16243,8 @@
       "crates/vak-tools/src/mail_calendar.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L2"
   },
   {
    "id": "intake",
@@ -16479,7 +16524,8 @@
       "crates/vak-core/src/intake.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L2"
   },
   {
    "id": "social",
@@ -16620,7 +16666,8 @@
       "crates/vak-core/src/social/mod.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L6"
   },
   {
    "id": "voice",
@@ -16865,7 +16912,8 @@
       "crates/vak-voice/src/provider.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L6"
   },
   {
    "id": "memory",
@@ -17085,7 +17133,8 @@
       "crates/vak-core/src/memory.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "automations",
@@ -17532,7 +17581,8 @@
       "crates/vak-core/src/triggers.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "inbox",
@@ -17809,7 +17859,8 @@
       "crates/vak-core/src/inbox.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "agents",
@@ -18146,7 +18197,8 @@
       "crates/vak-client-ui/src/components/AgentMark.tsx"
      ]
     }
-   ]
+   ],
+   "layer": "L7"
   },
   {
    "id": "coworking",
@@ -18315,7 +18367,8 @@
       "crates/vak-server/src/coworking.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L7"
   },
   {
    "id": "server",
@@ -19140,7 +19193,8 @@
       "crates/vak-server/src/lib.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L6"
   },
   {
    "id": "gateway",
@@ -19502,7 +19556,8 @@
       "crates/vak-server/src/gateway.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L6"
   },
   {
    "id": "bus",
@@ -19626,7 +19681,8 @@
       "/config/bus"
      ]
     }
-   ]
+   ],
+   "layer": "L6"
   },
   {
    "id": "operations",
@@ -19878,7 +19934,8 @@
       "crates/vak-client-ui/src/components/OperationsPanel.tsx"
      ]
     }
-   ]
+   ],
+   "layer": "L6"
   },
   {
    "id": "doctor",
@@ -20131,7 +20188,8 @@
       "crates/vak-core/src/health.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "finops",
@@ -20322,7 +20380,8 @@
       "crates/vak-agent/src/spend.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "onboarding",
@@ -20564,7 +20623,8 @@
       "crates/vak-core/src/seed.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "install",
@@ -20707,7 +20767,8 @@
       "crates/vak-core/src/install.rs"
      ]
     }
-   ]
+   ],
+   "layer": "L7"
   },
   {
    "id": "eval",
@@ -20922,7 +20983,8 @@
       "crates/vak-admin-ui/src/Measurements.tsx"
      ]
     }
-   ]
+   ],
+   "layer": "L5"
   },
   {
    "id": "engineering",
@@ -21021,12 +21083,13 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 112,
+   "commits": 113,
    "fixes": 20,
-   "recent": 27,
+   "recent": 28,
    "fix_density": null,
    "out": [],
-   "in": []
+   "in": [],
+   "layer": "L0"
   }
  ],
  "coverage": {
@@ -29097,6 +29160,11 @@
    "name": "A message becomes an answer",
    "steps": [
     {
+     "from": "owner",
+     "to": "client",
+     "what": "type a message"
+    },
+    {
      "from": "client",
      "to": "server",
      "what": "POST the message"
@@ -29137,6 +29205,11 @@
      "what": "stream the model"
     },
     {
+     "from": "llm",
+     "to": "models",
+     "what": "call the provider"
+    },
+    {
      "from": "loop",
      "to": "permission",
      "what": "authorize each call"
@@ -29175,6 +29248,11 @@
      "from": "server",
      "to": "client",
      "what": "stream events"
+    },
+    {
+     "from": "client",
+     "to": "owner",
+     "what": "the answer, card by card"
     }
    ]
   },
@@ -29182,6 +29260,11 @@
    "id": "channel",
    "name": "A chat message from a phone",
    "steps": [
+    {
+     "from": "chat",
+     "to": "gateway",
+     "what": "a message arrives"
+    },
     {
      "from": "gateway",
      "to": "permission",
@@ -29216,6 +29299,11 @@
      "from": "gateway",
      "to": "runs",
      "what": "send once as an effect"
+    },
+    {
+     "from": "gateway",
+     "to": "chat",
+     "what": "the reply"
     }
    ]
   },
@@ -29299,6 +29387,11 @@
      "from": "mail",
      "to": "runs",
      "what": "send once as an effect"
+    },
+    {
+     "from": "mail",
+     "to": "mailproviders",
+     "what": "the provider sends it"
     }
    ]
   },
@@ -29355,8 +29448,13 @@
     },
     {
      "from": "intake",
+     "to": "web",
+     "what": "fetch the source"
+    },
+    {
+     "from": "intake",
      "to": "tools",
-     "what": "fetch and parse in the worker"
+     "what": "parse in the worker"
     },
     {
      "from": "intake",
@@ -29417,9 +29515,14 @@
    "name": "The doctor checks the install",
    "steps": [
     {
+     "from": "owner",
+     "to": "cli",
+     "what": "run vak doctor"
+    },
+    {
      "from": "cli",
      "to": "doctor",
-     "what": "vak doctor"
+     "what": "collect the report"
     },
     {
      "from": "admin",
@@ -29444,7 +29547,105 @@
    ]
   }
  ],
+ "externals": [
+  {
+   "id": "owner",
+   "name": "You",
+   "role": "The owner, at the desktop app, a browser, a terminal or a phone",
+   "reach": [
+    "client",
+    "desktop",
+    "terminal",
+    "admin",
+    "cli"
+   ]
+  },
+  {
+   "id": "chat",
+   "name": "Chat platforms",
+   "role": "Telegram, Discord and Slack",
+   "reach": [
+    "gateway"
+   ]
+  },
+  {
+   "id": "models",
+   "name": "Model APIs and local models",
+   "role": "Hosted providers and local model servers",
+   "reach": [
+    "llm",
+    "voice"
+   ]
+  },
+  {
+   "id": "mailproviders",
+   "name": "Mail and calendar providers",
+   "role": "Google, Microsoft and Apple accounts",
+   "reach": [
+    "mail"
+   ]
+  },
+  {
+   "id": "web",
+   "name": "The web",
+   "role": "Pages, feeds and social sites a tool or connector fetches",
+   "reach": [
+    "tools",
+    "intake",
+    "social"
+   ]
+  },
+  {
+   "id": "mcpservers",
+   "name": "MCP servers",
+   "role": "Integration servers the owner configured",
+   "reach": [
+    "mcp"
+   ]
+  },
+  {
+   "id": "keychain",
+   "name": "Keychain",
+   "role": "The OS secret service, or the encrypted-file fallback",
+   "reach": [
+    "config"
+   ]
+  },
+  {
+   "id": "ossandbox",
+   "name": "OS sandbox and Docker",
+   "role": "Seatbelt, Landlock and seccomp, and the optional Docker backend",
+   "reach": [
+    "sandbox"
+   ]
+  },
+  {
+   "id": "services",
+   "name": "launchd and systemd",
+   "role": "The service managers that start and restart Vak",
+   "reach": [
+    "operations",
+    "install"
+   ]
+  },
+  {
+   "id": "nats",
+   "name": "NATS",
+   "role": "The optional distributed bus",
+   "reach": [
+    "bus"
+   ]
+  }
+ ],
  "replay": [
+  {
+   "hash": "7e718780c",
+   "date": "2026-10-18",
+   "subject": "Put the plant on the layer stack, add the outside world, and a connection explorer",
+   "subsystems": [
+    "engineering"
+   ]
+  },
   {
    "hash": "22a9886b3",
    "date": "2026-10-18",
