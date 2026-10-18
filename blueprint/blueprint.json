@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "530764e2e",
+  "revision": "3047f374d",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2347,
+   "total_commits": 2348,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
@@ -175,11 +175,20 @@
    },
    {
     "section": "Card forms (docs/design/92)",
-    "open": 2,
-    "closed": 4,
+    "open": 11,
+    "closed": 21,
     "items": [
      "Living pages (docs/design/98 §12):",
-     "A guest's shared view asks for `/app/fonts/InterVariable.woff2` and is refused (401), so it falls back to the system font;"
+     "A guest's shared view asks for `/app/fonts/InterVariable.woff2` and is refused (401), so it falls back to the system font;",
+     "A kilometres-to-miles converter has not drawn as controls on the dev route:",
+     "webfetch gets 403 from Google where curl with the same User-Agent gets 200 (also over HTTP/1.1):",
+     "A choice (\"Use this\") is verified through the HTTP test only:",
+     "Composition skills (`answer-layouts`) reach only a model that calls the skill loader;",
+     "Whether the plan should be the answer's outline (doc 97 §7).",
+     "A card refused in an earlier turn reads \"Used emit chart card\" in Activity:",
+     "Measure format choice:",
+     "The desktop shell drawing a media card is not seen in the running app (checked in a browser only).",
+     "A media card naming a file that is not in the workspace is recorded and then says the file could not be read;"
     ]
    },
    {
@@ -198,13 +207,13 @@
     "items": []
    }
   ],
-  "open_total": 43,
+  "open_total": 52,
   "measures_revision": "825b18564"
  },
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 495,
+  "commits": 496,
   "areas": [
    [
     "docs",
@@ -256,6 +265,14 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "3047f374d",
+    "date": "2026-10-18",
+    "subject": "Count nested tracker items in the blueprint",
+    "areas": [
+     "blueprint"
+    ]
+   },
    {
     "hash": "530764e2e",
     "date": "2026-10-18",
@@ -385,16 +402,6 @@
     "subject": "Regenerate the system blueprint and its deep measures",
     "areas": [
      "docs"
-    ]
-   },
-   {
-    "hash": "01a5b7393",
-    "date": "2026-10-18",
-    "subject": "Test every blueprint finding with evidence; add the review method",
-    "areas": [
-     "(root)",
-     "docs",
-     "scripts"
     ]
    }
   ],
