@@ -44,8 +44,8 @@ window, a new local edit or explicit retry can retry paused work; stream
 hints only read and cannot overwrite pending work. An in-flight write only
 acknowledges the prefix it sent. A delayed read cannot lower the observed
 revision. While any conversation has pending work, the client requests the
-standard before-unload warning. This queue is not durable: forced reload or
-process loss can still lose it. Stale writes replay only when local pending notes can be preserved. A
+standard before-unload warning. Supported browsers also keep encrypted
+checkpoints for reload in the same tab, as described below. Stale writes replay only when local pending notes can be preserved. A
 remotely closed tab with a pending local note is restored through the same
 eight-tab rules, which may evict only clean tabs. Competing edits to the
 same note (including a remote clear), or insufficient safe room, leave the
@@ -55,8 +55,50 @@ retry cannot bypass the conflict by writing directly at the remote head.
 Unrelated remote notes and ordinary reads continue to update normally.
 Conflicts currently require copying/reconciling notes or making room in the
 other window before retrying; an in-app choice between note versions remains open. Saved state uses encrypted, fenced Documents; pending
-client operations are still in memory until acknowledged. The status never claims that
+client operations are checkpointed locally when recovery is available. The status never claims that
 a failed or conflicted write was saved.
+
+Unacknowledged operations use `canvasRecovery.ts`: IndexedDB contains an
+AES-GCM envelope with fresh random IV and authenticated origin, conversation,
+writer and immutable server identity. The encrypted checkpoint holds the
+actual CAS base/baseline, pending operations and local snapshot. Neither note
+text nor keys are stored in browser local/session storage; session storage
+holds only a full UUIDv7 writer identifier. An origin Web Lock reserves that
+writer, so a duplicate live tab receives another identifier. A reload uses
+the original identifier after the previous document releases its lock.
+
+The owner-only `POST /sessions/{id}/canvas/recovery-key` returns a separate
+random key and immutable UUIDv7 identity with `Cache-Control: no-store`.
+The conversation storage key is never exported. Recovery material is an
+Agent-owned, conversation-sealed Document, named through
+`AgentScope::canvas_recovery_key`, registered at
+`agents/{agent}/canvas-recovery`. Its normal Document CAS, writer fence,
+retention and conversation-key erasure apply. Blocking storage work runs in
+a blocking task. Participant authentication passes through the real bearer
+and audience layers and cannot obtain this owner key.
+
+The browser imports the key as non-extractable and retains it only in this
+document's memory; an initial connected read warms it for later offline
+edits. Reload requires a successful authenticated key retrieval. Failed
+unlock, corrupt ciphertext, changed server identity or unsafe restoration
+preserves ciphertext and blocks canonical reads/writes. New edits made
+while unlocking cannot silently replace recovered notes. Queue checkpoints
+are serialized; writes capture their sent prefix and snapshot together,
+retain edits arriving in flight, and clear only the acknowledged writer's
+record. A failed acknowledgment cleanup stays visible until retry succeeds.
+
+Limits: the first offline edit before key provisioning is not durable;
+recovery depends on IndexedDB, Web Crypto, Web Locks and retained tab session
+identity. Closing a tab, losing its session identity, clearing browser data
+or browser storage eviction can prevent automatic recovery. Unsupported
+browsers retain the memory-only save path and show recovery unavailable.
+Storage quota/format failures remain explicit. The checkpoint limit is six
+MiB, allowing a Canvas and its baseline; larger pending history fails local
+checkpointing without preventing canonical saves. A live unlocked tab may
+still hold readable content, as the existing Canvas does; erasure blocks
+future retrieval and reload, not a claim to wipe a person's browser memory.
+This does not provide offline unlocking or recovery across arbitrary new
+tabs/machines, and does not close the wider S5 authorization/acceptance work.
 
 Existing plaintext Canvas files from the supported data baseline are
 converted once under their historical writer lock. The converter validates

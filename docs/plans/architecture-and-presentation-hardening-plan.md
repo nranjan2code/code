@@ -823,7 +823,10 @@ This does not settle replacement identity or the wider lifecycle matrix.
   server/auth, logout, erased conversation and concurrent windows. No local
   content cache or key export was introduced.
 
-### Next slice — reload recovery protocol (not implemented)
+### Reload recovery protocol — initial proposal
+
+> **Historical record** — proposed before the implementation below; its
+> full exit matrix is not yet complete.
 
 The safe candidate is a browser outbox containing ciphertext only. Use a
 separate random recovery key whose durable copy is conversation-sealed in
@@ -856,6 +859,39 @@ corrupt ciphertext/AAD; and explicit refusal to recreate an erased key.
 An unlocked tab still holds readable content in memory, like the existing
 Canvas; local recovery must not make a stronger erasure claim than the
 running client can enforce. The full S5 exit remains unchanged.
+
+### Continuation — encrypted Canvas reload checkpoints
+
+- Implement the proposed protocol as a bounded same-tab reload slice:
+  owner-only no-store recovery-key endpoint; separate random key held in a
+  conversation-sealed Agent Document; ciphertext-only IndexedDB checkpoints;
+  memory-only non-extractable browser key; full UUIDv7 writer reserved by a
+  Web Lock. The canonical conversation key is never exported.
+- Restore the real baseline/snapshot/operation prefix before network state
+  can replace pending work. Failed unlock/corruption/mismatched installation
+  refuses sync and keeps ciphertext. Storage failures never falsely claim
+  recovery ready. Canonical writes remain possible if checkpoint saving
+  fails; failed loading is refused because it may contain earlier work.
+- Serialize checkpoints and ACK cleanup. Capture the sent prefix and snapshot
+  at the same point, protect edits made during a PUT, and keep failed cleanup
+  visible with a retry that does not resend acknowledged operations.
+- Focused queue tests and real Web Crypto tests with deterministic storage
+  adapters pass: authenticated bytes/AAD, reload/key refusal, duplicate-writer
+  isolation, quota failure, delayed writes, operation prefixes and cleanup.
+  The initial browser sequence passed server refusal → encrypted checkpoint
+  → actual reload with expired auth → actual reload/reconnection → exact note
+  recovery → acknowledged cleanup. Browser access then became disabled in
+  Work settings; final-source corruption and visual matrix acceptance remain
+  open. Both final client bundles and combined fixture typecheck pass.
+  Focused server participant authorization and HTTP erasure tests pass,
+  including concurrent key creation, no-store, retained-key unreadability
+  and refusal after erasure. Focused Clippy and formatting pass.
+- Limits: same retained tab identity, supported browser APIs and successful
+  key provisioning before offline work. Offline unlock, arbitrary new-tab
+  recovery and browser eviction are not promised. Checkpoint size is bounded
+  at six MiB; errors keep the copy/unload path. S5 stays open.
+- The maintainer's current instruction is to skip the full gate; use focused
+  checks and record exactly what ran. Do not claim workspace-wide testing.
 
 ### Reporting contract
 

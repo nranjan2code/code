@@ -385,6 +385,11 @@ pub const REGISTRY: &[StateEntry] = &[
     // under that conversation inside each version; no plaintext Canvas file
     // is written (docs/design/66 §0a).
     agent_entry("agents/{agent}/canvas", "vak-server", Class::Document),
+    agent_entry(
+        "agents/{agent}/canvas-recovery",
+        "vak-server",
+        Class::Document,
+    ),
     // What a skill program's own tests found, one Document per program
     // digest (docs/design/93-self-evolving-capabilities.md, E2).
     agent_entry(

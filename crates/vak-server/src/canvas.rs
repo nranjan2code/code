@@ -17,7 +17,7 @@ use std::path::Path as FsPath;
 use axum::{
     Json,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
@@ -107,7 +107,7 @@ fn valid_session(id: &str) -> bool {
 
 /// Where a conversation's Canvas is kept: in the home of the Agent that owns
 /// it. A conversation that is unknown or in the trash has none.
-fn canvas_path(state: &AppState, session: &str) -> Option<std::path::PathBuf> {
+fn canvas_agent_scope(state: &AppState, session: &str) -> Option<vak_config::scope::AgentScope> {
     if !valid_session(session) {
         return None;
     }
@@ -120,7 +120,85 @@ fn canvas_path(state: &AppState, session: &str) -> Option<std::path::PathBuf> {
         .agent
         .map(|agent| agent.id)
         .unwrap_or_else(|| vak_core::vak_agent_identity().id);
-    Some(shared.agent(&agent).canvas(session))
+    Some(shared.agent(&agent))
+}
+
+fn canvas_path(state: &AppState, session: &str) -> Option<std::path::PathBuf> {
+    Some(canvas_agent_scope(state, session)?.canvas(session))
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryKeyRecord {
+    identity: String,
+    key: String,
+}
+
+fn validate_recovery_record(record: RecoveryKeyRecord) -> Result<RecoveryKeyRecord, String> {
+    let identity = uuid::Uuid::parse_str(&record.identity)
+        .map_err(|_| "invalid recovery record".to_owned())?;
+    if identity.get_version() != Some(uuid::Version::SortRand) {
+        return Err("invalid recovery record".to_owned());
+    }
+    let key = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &record.key)
+        .map_err(|_| "invalid recovery record".to_owned())?;
+    if key.len() != 32 {
+        return Err("invalid recovery record".to_owned());
+    }
+    Ok(record)
+}
+
+fn recovery_record(path: &FsPath, scope: &str) -> Result<RecoveryKeyRecord, String> {
+    if let Some(raw) = vak_session::documents::read_sealed(path, scope)? {
+        return validate_recovery_record(
+            serde_json::from_str(&raw).map_err(|_| "invalid recovery record".to_owned())?,
+        );
+    }
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|_| "key generation failed".to_owned())?;
+    let record = RecoveryKeyRecord {
+        identity: uuid::Uuid::now_v7().to_string(),
+        key: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes),
+    };
+    let raw = serde_json::to_string(&record).map_err(|_| "record encoding failed".to_owned())?;
+    match vak_session::documents::create_sealed(path, scope, &raw) {
+        Ok(()) => Ok(record),
+        Err(error) => match vak_session::documents::read_sealed(path, scope)? {
+            Some(raw) => validate_recovery_record(
+                serde_json::from_str(&raw).map_err(|_| "invalid recovery record".to_owned())?,
+            ),
+            None => Err(error),
+        },
+    }
+}
+
+/// Return the conversation's stable recovery key to its authenticated owner.
+pub(crate) async fn recovery_key(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
+) -> Response {
+    if !matches!(principal, crate::AuthenticatedPrincipal::Operator) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(agent_scope) = canvas_agent_scope(&state, &id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let path = agent_scope.canvas_recovery_key(&id);
+    let scope = conversation_scope(&id);
+    let result = tokio::task::spawn_blocking(move || recovery_record(&path, &scope)).await;
+    match result {
+        Ok(Ok(record)) => {
+            let mut response =
+                Json(serde_json::json!({"key": record.key, "identity": record.identity}))
+                    .into_response();
+            response
+                .headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            response
+        }
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 fn decode_canvas(raw: &str) -> Result<ConversationCanvas, Refusal> {

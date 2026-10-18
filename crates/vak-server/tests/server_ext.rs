@@ -2532,6 +2532,48 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
     // Canvas uses the same conversation erasure boundary as its ledger.
     let canvas_url = format!("{base}/sessions/{id}/canvas");
     assert_eq!(reqwest::get(&canvas_url).await.unwrap().status(), 401);
+    let recovery_url = format!("{base}/sessions/{id}/canvas/recovery-key");
+    assert_eq!(
+        reqwest::Client::new()
+            .post(&recovery_url)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let (recovery_response, concurrent_response) = tokio::join!(
+        client.post(&recovery_url).bearer_auth(&token).send(),
+        client.post(&recovery_url).bearer_auth(&token).send(),
+    );
+    let recovery_response = recovery_response.unwrap();
+    let concurrent: serde_json::Value = concurrent_response.unwrap().json().await.unwrap();
+    assert_eq!(recovery_response.status(), 200);
+    assert_eq!(
+        recovery_response.headers().get("cache-control").unwrap(),
+        "no-store"
+    );
+    let recovery: serde_json::Value = recovery_response.json().await.unwrap();
+    assert_eq!(recovery, concurrent);
+    assert_eq!(
+        base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            recovery["key"].as_str().unwrap()
+        )
+        .unwrap()
+        .len(),
+        32
+    );
+    let repeated: serde_json::Value = client
+        .post(&recovery_url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(recovery, repeated);
     let note = "CANVAS_PRIVATE_UNSENT_NOTE_743";
     let (status, saved) = send(client.put(&canvas_url).json(&serde_json::json!({
         "revision": 0,
@@ -2545,6 +2587,21 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
     assert_eq!(restored["entries"][0]["draft"], note);
     let agent = vak_core::vak_agent_identity();
     let canvas_path = core.shared_scope().agent(&agent.id).canvas(&id);
+    let recovery_path = core
+        .shared_scope()
+        .agent(&agent.id)
+        .canvas_recovery_key(&id);
+    let recovery_envelope = vak_session::documents::read(&recovery_path)
+        .unwrap()
+        .unwrap();
+    assert!(!recovery_envelope.contains(recovery["key"].as_str().unwrap()));
+    let recovery_scope = vak_session::objects::conversation_scope(&id);
+    assert!(
+        vak_session::documents::read_sealed(&recovery_path, &recovery_scope)
+            .unwrap()
+            .unwrap()
+            .contains(recovery["key"].as_str().unwrap())
+    );
     assert!(
         !canvas_path.exists(),
         "Canvas content is never a plaintext file"
@@ -2660,6 +2717,11 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
         "erasure destroys Canvas content even while its encrypted Document is retained"
     );
     assert_eq!(send(client.get(&canvas_url)).await.0, 404);
+    assert!(
+        vak_session::documents::read_sealed(&recovery_path, &recovery_scope).is_err(),
+        "the retained recovery-key Document is unreadable after conversation erasure"
+    );
+    assert_eq!(send(client.post(&recovery_url)).await.0, 404);
     assert_eq!(
         send(
             client

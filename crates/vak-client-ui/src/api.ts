@@ -1061,6 +1061,15 @@ export interface StoredCanvas {
   [field: string]: unknown;
 }
 
+/** Separate browser recovery key, never the conversation storage key. */
+export async function canvasRecoveryKey(session: string): Promise<{ key: string; identity: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    return await req(`/sessions/${encodeURIComponent(session)}/canvas/recovery-key`, { method: "POST", body: "{}", cache: "no-store", signal: controller.signal });
+  } finally { clearTimeout(timer); }
+}
+
 export function getCanvas(session: string): Promise<StoredCanvas> {
   return req(`/sessions/${encodeURIComponent(session)}/canvas`);
 }

@@ -164,6 +164,13 @@ impl AgentScope {
         self.root.join("canvas").join(format!("{session_id}.json"))
     }
 
+    /// Conversation recovery material, sealed as an Agent-owned Document.
+    pub fn canvas_recovery_key(&self, session_id: &str) -> PathBuf {
+        self.root
+            .join("canvas-recovery")
+            .join(format!("{session_id}.json"))
+    }
+
     /// `agents/`, which holds the homes of the Agents beneath this one.
     pub fn agents_dir(&self) -> PathBuf {
         self.root.join("agents")

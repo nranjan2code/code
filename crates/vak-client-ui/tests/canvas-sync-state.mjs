@@ -159,4 +159,129 @@ for (const failure of [Object.assign(new Error("offline")), Object.assign(new Er
   assert.equal(coordinator.status("c").state, "pending", "safe replay remains pending until a real write receipt");
 }
 
+// A recovered checkpoint restores the view and resumes the original CAS base.
+{
+  const timers = [], puts = [], restored = [];
+  let durable = { base: 4, pending: ["offline"], snapshot: ["offline-view"], baseline: { revision: 4 } };
+  const coordinator = createCanvasSyncCoordinator({
+    recovery: { load: async () => durable, save: async (_id, value) => { durable = value; }, restore: (_id, snapshot, pending) => { restored.push({ snapshot, pending: [...pending] }); return true; } },
+    get: async () => { throw new Error("checkpoint should avoid initial fetch"); },
+    put: async (_id, base, snapshot) => { puts.push({ base, snapshot }); return { saved: { revision: base + 1 } }; },
+    snapshot: () => ["offline-view"], revision: (stored) => stored.revision, applyStored: () => true,
+    schedule: (fn, delay) => { const timer = { fn, delay, cancelled: false }; timers.push(timer); return timer; }, cancel: (timer) => { timer.cancelled = true; },
+  });
+  await coordinator.read("c");
+  await tick();
+  assert.deepEqual(restored, [{ snapshot: ["offline-view"], pending: [] }]);
+  coordinator.retry("c"); await tick(); await tick();
+  assert.equal(puts.length, 1); assert.equal(puts[0].base, 4); assert.deepEqual(puts[0].snapshot, ["offline-view"]);
+  assert.equal(durable, null);
+}
+
+// A failed load blocks both network directions; an explicit retry can load again.
+{
+  let loads = 0, gets = 0, puts = 0;
+  const timers = [];
+  const coordinator = createCanvasSyncCoordinator({
+    recovery: { load: async () => { if (++loads === 1) throw new Error("storage unavailable"); return { base: 2, pending: ["old"], snapshot: ["restored"] }; }, save: async () => {}, restore: () => true },
+    get: async () => { gets++; return { revision: 3 }; }, put: async () => { puts++; return { saved: { revision: 3 } }; },
+    snapshot: () => ["restored"], revision: (x) => x.revision, applyStored: () => true,
+    schedule: (fn, delay) => { const t = { fn, delay }; timers.push(t); return t; },
+  });
+  await coordinator.read("c");
+  assert.deepEqual(coordinator.status("c"), { state: "error", reason: "recovery", recovery: "unavailable" });
+  coordinator.enqueue("c", "new"); await tick();
+  assert.equal(gets, 0); assert.equal(puts, 0);
+  coordinator.retry("c"); await tick();
+  assert.equal(loads, 2); assert.equal(puts, 1);
+}
+
+// New edits arriving during async recovery are included in restore and remain queued.
+{
+  const loading = deferred(), restored = [], timers = [];
+  const coordinator = createCanvasSyncCoordinator({
+    recovery: { load: () => loading.promise, save: async () => {}, restore: (_id, snapshot, pending) => { restored.push({ snapshot, pending: [...pending] }); return true; } },
+    get: async () => ({ revision: 0 }), put: async () => ({ saved: { revision: 1 } }),
+    snapshot: () => ["local"], revision: (x) => x.revision, applyStored: () => true,
+    schedule: (fn, delay) => { const t = { fn, delay, cancelled: false }; timers.push(t); return t; }, cancel: (t) => { t.cancelled = true; },
+  });
+  const reading = coordinator.read("c"); coordinator.enqueue("c", "new-edit");
+  loading.resolve({ base: 5, pending: ["recovered"], snapshot: ["old"] }); await reading; await tick();
+  assert.deepEqual(restored, [{ snapshot: ["old"], pending: ["new-edit"] }]);
+  assert.equal(coordinator.status("c").state, "pending");
+}
+
+// Checkpoint failures are visible but do not suppress canonical server writes.
+{
+  let puts = 0;
+  const timers = [];
+  const coordinator = createCanvasSyncCoordinator({
+    recovery: { load: async () => null, save: async () => { throw new Error("quota"); }, restore: () => true },
+    get: async () => ({ revision: 0 }), put: async () => { puts++; return { saved: { revision: 1 } }; },
+    snapshot: () => ["local"], revision: (x) => x.revision, applyStored: () => true,
+    schedule: (fn, delay) => { const t = { fn, delay, cancelled: false }; timers.push(t); return t; }, cancel: (t) => { t.cancelled = true; },
+  });
+  coordinator.enqueue("c", "op"); await tick(); coordinator.retry("c"); await tick();
+  assert.equal(puts, 1);
+  assert.equal(coordinator.status("c").recovery, "unavailable");
+}
+
+// Serialized checkpoint writes ensure an older delayed save cannot follow ACK clear.
+{
+  const firstSave = deferred(), saves = [], timers = [];
+  let saveCalls = 0, puts = 0;
+  const coordinator = createCanvasSyncCoordinator({
+    recovery: { load: async () => null, save: async (_id, cp) => { saves.push(cp); if (++saveCalls === 1) await firstSave.promise; }, restore: () => true },
+    get: async () => ({ revision: 0 }), put: async () => { puts++; return { saved: { revision: 1 } }; },
+    snapshot: () => ["local"], revision: (x) => x.revision, applyStored: () => true,
+    schedule: (fn, delay) => { const t = { fn, delay, cancelled: false }; timers.push(t); return t; }, cancel: (t) => { t.cancelled = true; },
+  });
+  coordinator.enqueue("c", "op"); await tick();
+  coordinator.retry("c"); await tick();
+  assert.equal(puts, 0, "PUT waits for the pending checkpoint operation");
+  firstSave.resolve(); await tick(); await tick();
+  assert.equal(puts, 1); assert.equal(saves.at(-1), null, "ACK clear is ordered after any earlier checkpoint save");
+}
+
+// The acknowledged prefix and snapshot are captured together after checkpoint
+// work; edits made while the request is in flight remain in the next checkpoint.
+{
+  const putFirst = deferred(), timers = [], saves = [];
+  let view = [], calls = 0;
+  const coordinator = createCanvasSyncCoordinator({
+    recovery: { load: async () => null, save: async (_id, cp) => { saves.push(cp); }, restore: () => true },
+    get: async () => ({ revision: 0 }),
+    put: async (_id, base, snapshot) => { calls++; if (calls === 1) return putFirst.promise; return { saved: { revision: base + 1 } }; },
+    snapshot: () => [...view], revision: (x) => x.revision, applyStored: () => true,
+    schedule: (fn, delay) => { const t = { fn, delay, cancelled: false }; timers.push(t); return t; }, cancel: (t) => { t.cancelled = true; },
+  });
+  view.push("one"); coordinator.enqueue("c", "one"); await tick(); await tick();
+  coordinator.retry("c"); await tick(); await tick();
+  assert.equal(calls, 1);
+  view.push("two"); coordinator.enqueue("c", "two");
+  putFirst.resolve({ saved: { revision: 1 } }); await tick(); await tick();
+  assert.equal(coordinator.status("c").state, "pending");
+  const durablePending = saves.filter(Boolean).at(-1);
+  assert.deepEqual(durablePending.pending, ["two"]);
+  assert.deepEqual(durablePending.snapshot, ["one", "two"]);
+}
+
 console.log("canvas sync failure preservation passed");
+
+// A failed ACK cleanup stays visible and retries cleanup without replaying PUT.
+{
+  let failClear = true, puts = 0;
+  const coordinator = createCanvasSyncCoordinator({
+    recovery: { load: async () => null, save: async (_id, cp) => { if (cp === null && failClear) throw new Error("quota"); }, restore: () => true },
+    get: async () => ({ revision: 1 }), put: async () => { puts++; return { saved: { revision: 1 } }; },
+    snapshot: () => ["note"], revision: (x) => x.revision, applyStored: () => true,
+    schedule: () => 1, cancel: () => {},
+  });
+  coordinator.enqueue("cleanup", "note"); await tick();
+  coordinator.retry("cleanup"); await tick(); await tick();
+  assert.equal(coordinator.status("cleanup").reason, "recovery_cleanup");
+  failClear = false;
+  coordinator.retry("cleanup"); await tick(); await tick();
+  assert.equal(coordinator.status("cleanup").state, "saved");
+  assert.equal(puts, 1, "cleanup retry never resends acknowledged operations");
+}

@@ -117,7 +117,13 @@ overlapping fixes should close their original entries as well.
   changing the local Canvas or advancing the write revision. Copy unsent
   notes supports manual recovery. Focused tests, both client bundles and
   the full repository gate pass for this slice. In-app conflict choices,
-  forced-reload/process-loss durability remain open. Saved Canvas content
+  full crash/new-tab recovery remain open. Same-tab reload now has encrypted
+  checkpoints and owner-authenticated key retrieval; final browser matrix
+  acceptance is blocked by disabled local browser access. No offline-unlock
+  or storage-eviction guarantee is claimed. Focused queue/crypto, middleware
+  authorization, erasure, typecheck/Clippy and both bundle builds pass for
+  this recovery slice; no full workspace gate ran at the maintainer's request.
+  Saved Canvas content
   now uses Agent-owned Documents with conversation-sealed payloads and CAS,
   including verified one-time plaintext conversion. Focused storage, fencing,
   real-router erasure and the full repository gate pass. Browser save-recovery

@@ -1491,6 +1491,10 @@ fn router_with_state(state: AppState) -> Router {
             "/sessions/{id}/canvas",
             get(canvas::get_canvas).put(canvas::put_canvas),
         )
+        .route(
+            "/sessions/{id}/canvas/recovery-key",
+            post(canvas::recovery_key),
+        )
         .route("/previews/{id}", delete(close_preview))
         .route("/intent/explain", get(intent_explain))
         .route("/intent/policy", get(intent_policy))
@@ -26876,6 +26880,10 @@ mod sandbox_promotion_tests {
         .unwrap();
         let app = Router::new()
             .route(
+                "/sessions/{id}/canvas/recovery-key",
+                post(canvas::recovery_key),
+            )
+            .route(
                 "/sessions/{id}/coworking/messages",
                 post(create_coworking_message),
             )
@@ -26895,6 +26903,21 @@ mod sandbox_promotion_tests {
                 },
                 require_bearer,
             ));
+        let recovery_request = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/sessions/session-message/canvas/recovery-key")
+            .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.clone()
+                .oneshot(recovery_request)
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN,
+            "an authenticated participant cannot obtain the owner's recovery key"
+        );
         let request = || {
             axum::http::Request::builder()
                 .method(axum::http::Method::POST)

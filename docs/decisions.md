@@ -9,6 +9,12 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-18
 
+- During the Canvas continuation the maintainer requested no full gate
+  ("we dont need gate right now"). This continuation uses focused tests,
+  browser checks where available, bundle builds and focused Clippy; no
+  complete workspace test result is claimed. Recorded in
+  [the handover](plans/handover-2026-10-18.md#current-encrypted-reload-recovery-batch).
+
 - The maintainer waived the full repository gate for the responsive
   chart/map and browser-fixture batch ("we dont need gate right now").
   Stop the active run; retain the passing browser, bundle, typecheck and

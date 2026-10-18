@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Unacknowledged Canvas edits can recover after a reload in the same browser
+  tab. The browser stores encrypted checkpoints only; unlocking after reload
+  requires connecting and signing in. Failed unlocks preserve the checkpoint
+  and pause sync. Storage failures remain visible, and cleanup happens only
+  after server acknowledgment. Browsers without the required storage/crypto
+  features retain the existing unsaved warning and copy/retry path.
+
 - Charts and maps size their plots to the space inside narrow cards, keeping
   the right edge visible on phones and in narrow panels.
 
