@@ -12,6 +12,28 @@ doc 30-render-architecture §30.1 (twelve `emit_*_card` tools over 109
 domain-labelled `semantic_type`s); the rendering contract of
 `vak-presentation` and doc 67 stays.
 
+## Projected prose and card boundaries
+
+The client composes adjacent projected answer parts with one author header
+and shared result actions. It preserves each assistant document and each
+prose/card boundary in timeline order; it never selects only the final
+assistant document or hides prose because a card exists. Adjacent cards may
+use the outline's sections/layout, but a prose document is a boundary that
+card layout cannot cross. Files remain in the result's file area.
+
+Known distinct result ids and non-result items split composition groups.
+The server's typed PlanCheck/rejected-draft filters remain the authority
+for removing runtime replies; the client's turn grouping does not classify
+prose by its wording. Existing lexical envelope/scaffolding filters are a
+separate remaining hardening concern. The legacy `card_followup` projection
+is kept for older consumers; the shared client draws source documents once
+rather than both the document and its redundant follow-up metadata.
+
+The implementation has pure composition-order tests, a server source-order
+regression and `tests/answer-composition.html` for live verification. Browser
+acceptance remains pending while local browser access is disabled; this
+is not completion of hardening P02 or the whole composed-answer design.
+
 ## 1. What is wrong
 
 Measured on 2026-10-11 against the live client and the original Agent

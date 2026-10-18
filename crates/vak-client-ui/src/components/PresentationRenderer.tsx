@@ -1,3 +1,4 @@
+import { answerDocument, answerSegments, groupAnswerEntries } from "../answerComposition";
 import { createContext, createEffect, createMemo, createResource, createSignal, ErrorBoundary, For, onCleanup, Show, useContext } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
@@ -61,7 +62,7 @@ import MermaidViewer from "./presentation/MermaidViewer";
 const showOperatorChrome = () => technicalDetails();
 import { CardIdContext, FormView, PackTree, PresentationInteractionContext, PresentationSessionContext, downloadCsv, formNames } from "./cards";
 import AgentMark from "./AgentMark";
-import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
+import { assistantParts, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
 import type { AssistantPart } from "../structured";
 import { themedPreview } from "../previewTheme";
 
@@ -1038,7 +1039,7 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
 
 /** A result's files as result cards, after its answer. Files from one run
  * share one draft, so only the first offers Review changes. */
-function ResultFiles(props: { files: OutputItem[]; answer?: OutputItem; sessionId: string }) {
+function ResultFiles(props: { files: OutputItem[]; answer?: OutputItem; sessionId: string; resultId?: string }) {
   const reviewed = new Set<string>();
   return <Show when={props.files.length > 0}>
     <div class="primary-result-files">
@@ -1046,7 +1047,7 @@ function ResultFiles(props: { files: OutputItem[]; answer?: OutputItem; sessionI
         const execution = item.actions.find((action) => action.verb === "review_draft")?.data.execution_id;
         const showReview = !execution || !reviewed.has(execution);
         if (execution) reviewed.add(execution);
-        return <ResultCard item={item} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? props.answer?.outcome?.result_id ?? undefined} showReview={showReview} askForChanges={props.files.length === 1} />;
+        return <ResultCard item={item} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? props.resultId ?? props.answer?.outcome?.result_id ?? undefined} showReview={showReview} askForChanges={props.files.length === 1} />;
       })}
     </div>
   </Show>;
@@ -1353,32 +1354,11 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       return true;
     });
 
-    const isFleetingAssistantItem = (item: OutputItem): boolean => {
-      if (item.role !== "assistant") return false;
-      if (item.content.type === "document") {
-        return isFleetingNarration(item.content.document.source_markdown);
-      }
-      if (item.content.type === "outcome") {
-        return !item.content.document || isFleetingNarration(item.content.document.source_markdown);
-      }
-      return false;
-    };
-
-    return filtered.filter((item, idx) => {
-      // In outcome density, suppress earlier assistant items in the same turn
-      // ONLY if they are fleeting narration and a subsequent real assistant answer exists.
-      // Substantive documents, answers, and structured cards must never be hidden.
-      if (isFleetingAssistantItem(item)) {
-        for (let j = idx + 1; j < filtered.length; j++) {
-          const next = filtered[j];
-          if (next.role === "assistant" && isRealAnswer(next.content) && !isFleetingAssistantItem(next)) {
-            return false;
-          }
-        }
-      }
-      return true;
-    });
+    // The server has already removed typed runtime replies and rejected
+    // drafts. Projected prose stays visible regardless of its wording.
+    return filtered;
   };
+
   const OrderedItem = (item: OutputItem): JSX.Element | null => {
     if (item.content.type === "ability") return <AbilityLine content={item.content} />;
     if (item.role === "user" && item.content.type === "document" && item.content.document.metadata.scheduled_name) {
@@ -1445,147 +1425,37 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
     return <div class="semantic-source">{cleanFallback}</div>;
   };
   const visible = createMemo(() => ordered().map((item) => ({ item, node: OrderedItem(item) })).filter((entry) => entry.node !== null));
-  // Cards, artifacts and the narration that follows them are one reply from
-  // one author: they share a single assistant header, cards first (the order
-  // the ledger recorded them). Without this a card rendered as an orphan row
-  // above the header of the sentence that introduced it.
+  // Keep one author header and one set of result actions, while preserving
+  // every projected prose/card boundary in source order.
   const blocks = createMemo(() => {
-    const out: JSX.Element[] = [];
-    let lead: Array<{ item: OutputItem; node: JSX.Element }> = [];
-    const flush = () => {
-      if (lead.length === 0) return;
-      const material = lead;
-      // A capped turn can produce a real file or card before the result
-      // evaluator assigns a result ID. Keep its observed file actions usable.
-      const anchor = material.find((entry) => entry.item.outcome?.result_id)?.item ?? material[0]?.item;
-      const cards = material.filter((entry) => entry.item.kind !== "artifact");
-      out.push(<AssistantMessage sessionId={props.sessionId}>
-        <article class="primary-result" data-result-id={anchor?.outcome?.result_id} aria-label="Agent result">
-          <Show when={anchor && anchor.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
-          <Show when={cards.length > 0}><div class="primary-result-material" aria-label="Result material">{composeAnswer(cards, props.outline)}</div></Show>
-          <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={anchor} sessionId={props.sessionId} />
-          <Show when={anchor}>{(item) => <><ResultEvidence item={item()} /><ResultActions turnId={props.id} answer={item()} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={item().outcome?.result_id ?? uniqueResultId() ?? item().id} /></>}</Show>
-        </article>
-      </AssistantMessage>);
-      lead = [];
-    };
-    const grouping = !showOperatorChrome();
-    // A card may stand in for the answer's prose only when the turn did what
-    // was asked: a tool that failed and was not recovered is something the
-    // person must read, and a bare link preview never answers anything.
-    const turnHadFailure = props.items.some((item) => item.role === "tool" && item.kind === "error");
-    const isPrimaryCard = (entry: { item: OutputItem }) => {
-      if (turnHadFailure) return false;
-      const content = entry.item.content;
-      if (content.type === "adaptive" && content.tree.root.primitive === "link_preview") return false;
-      const source = entry.item.provenance?.source ?? "";
-      return ((entry.item.content.type === "structured" || entry.item.content.type === "adaptive") && source.startsWith("emit_") && source.endsWith("_card")) ||
-        (entry.item.content.type === "adaptive" && source === "adaptive_library");
-    };
-    const cardCopyText = (entry: { item: OutputItem }) => {
-      const readable = entry.item.fallback_text.replace(/```json[\s\S]*?```/g, "").trim();
-      if (readable.split("\n").filter(Boolean).length > 1 || entry.item.content.type !== "structured") return readable;
-      const payload = entry.item.content.output.payload;
-      const values = Object.entries(payload).filter(([key]) => key !== "title").map(([key, value]) =>
-        `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
-      return [readable, ...values].filter(Boolean).join("\n");
-    };
-    const sameResult = (left: OutputItem, right: OutputItem) => {
-      const a = left.outcome?.result_id;
-      const b = right.outcome?.result_id;
-      return !a || !b || a === b;
-    };
     const entries = visible();
-    // Cards emitted before the final answer travel with it, every one in
-    // emit order. The server already supersedes a retried card and drops an
-    // identical repeat; keeping only the latest card of each type here hid
-    // the first of two distinct tables in one answer (found live 2026-10-11).
-    let finalAnswerIndex = -1;
-    for (let i = 0; i < entries.length; i += 1) {
-      const item = entries[i].item;
-      if (item.role === "assistant" && (
-        item.content.type === "document" ||
-        (item.content.type === "outcome" && Boolean(item.content.document))
-      )) finalAnswerIndex = i;
-    }
-    const carriedCards: { item: OutputItem; node: JSX.Element }[] = [];
-    for (let i = 0; i < finalAnswerIndex; i += 1) {
-      const content = entries[i].item.content;
-      if (content.type === "structured" || content.type === "adaptive") carriedCards.push(entries[i]);
-    }
-    for (let index = 0; index < entries.length; index += 1) {
-      const { item, node } = entries[index];
-      if (index < finalAnswerIndex && (item.content.type === "structured" || item.content.type === "adaptive")) continue;
-      if (grouping && index < finalAnswerIndex && item.role === "assistant" && (
-        item.content.type === "document" || (item.content.type === "outcome" && Boolean(item.content.document))
-      )) continue;
-      const cardLike =
-        item.role !== "user" &&
-        (item.content.type === "structured" || item.content.type === "adaptive" || item.kind === "artifact");
-      if (grouping && cardLike) {
-        if (lead.length > 0 && !sameResult(lead[0].item, item)) flush();
-        lead.push({ item, node });
-        continue;
-      }
-      const answer =
-        item.role === "assistant" && item.content.type === "document"
-          ? item.content.document
-          : item.role === "assistant" && item.content.type === "outcome"
-            ? item.content.document
-            : undefined;
-      if (grouping && answer) {
-        if (lead.length > 0 && !sameResult(lead[0].item, item)) flush();
-        const material = index === finalAnswerIndex ? [...carriedCards, ...lead] : [...lead];
-        // Structured material can arrive on either side of the answer in
-        // the ledger. Keep adjacent cards with their result in both cases.
-        while (index + 1 < entries.length) {
-          const next = entries[index + 1];
-          if (next.item.role === "user" || !(
-            next.item.content.type === "structured" ||
-            next.item.content.type === "adaptive" ||
-            next.item.kind === "artifact"
-          ) || !sameResult(item, next.item)) break;
-          material.push(next);
-          index += 1;
-        }
-        const hasCard = material.some(isPrimaryCard);
-        const displayText = hasCard
-          ? [
-              ...material.filter(isPrimaryCard).map(cardCopyText),
-              answer.metadata.card_followup,
-            ].filter(Boolean).join("\n\n")
-          : answer.source_markdown;
-        const result = <AssistantMessage sessionId={props.sessionId} text={displayText}>
-            <article
-              class="primary-result"
-              data-result-id={item.outcome?.result_id ?? item.id}
-              aria-label="Agent result"
-            >
-              <Show when={item.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
-              <Show when={material.some((entry) => entry.item.kind !== "artifact")}>
-                <div class="primary-result-material" aria-label="Result material">
-                  {composeAnswer(material.filter((entry) => entry.item.kind !== "artifact"), props.outline)}
-                </div>
-              </Show>
-              <Show when={hasCard}
-                fallback={<div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div>}>
-                <Show when={answer.metadata.card_followup}>{(note) => <div class="primary-result-followup"><MarkdownView text={note()} /></div>}</Show>
-              </Show>
-              <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={item} sessionId={props.sessionId} />
-              <ResultEvidence item={item} />
-              <ResultActions turnId={props.id} answer={item} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} />
-            </article>
-          </AssistantMessage>;
-        out.push(result);
-        lead = [];
-        continue;
-      }
-      flush();
-      out.push(node);
-    }
-    flush();
-    return out;
+    if (showOperatorChrome()) return entries.map((entry) => entry.node);
+    return groupAnswerEntries(entries).map((group) => {
+      if (group.kind === "item") return group.entry.node;
+      const material = group.entries;
+      const anchor = [...material].reverse().find((entry) => answerDocument(entry.item))?.item
+        ?? material.find((entry) => entry.item.outcome?.result_id)?.item ?? material[0].item;
+      const resultId = group.resultId ?? uniqueResultId();
+      const copyText = material.filter((entry) => entry.item.kind !== "artifact").map(({ item }) =>
+        answerDocument(item)?.source_markdown ?? item.fallback_text).filter(Boolean).join("\n\n");
+      return <AssistantMessage sessionId={props.sessionId} text={copyText}>
+        <article class="primary-result" data-result-id={resultId ?? anchor.id} aria-label="Agent result">
+          <Show when={anchor.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
+          {answerSegments(material).map((segment) => {
+            const entry = segment[0];
+            const document = answerDocument(entry.item);
+            return document
+              ? <div class="primary-result-answer"><PresentationDocumentView document={document} sessionId={props.sessionId} resultId={entry.item.outcome?.result_id ?? resultId ?? entry.item.id} presentationId={entry.item.provenance?.presentation_id ?? undefined} /></div>
+              : <div class="primary-result-material" aria-label="Result material">{composeAnswer(segment, props.outline)}</div>;
+          })}
+          <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={anchor} sessionId={props.sessionId} resultId={resultId} />
+          <ResultEvidence item={anchor} />
+          <ResultActions turnId={props.id} answer={anchor} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={resultId} />
+        </article>
+      </AssistantMessage>;
+    });
   });
+
   return (
     <section class="semantic-turn" data-turn={props.id}>
       <Show

@@ -5430,6 +5430,65 @@ mod tests {
     }
 
     #[test]
+    fn prose_and_distinct_cards_keep_their_projected_source_order() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "interleaved-card-context");
+        log.append_message(MessageRecord {
+            message: Message::user_text("compare both results"),
+            meta: None,
+        })
+        .expect("user");
+        for (index, text) in [
+            "Leading context survives.",
+            "Note: the second result uses a different scope.",
+            "The closing explanation survives too.",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            log.append_message(MessageRecord {
+                message: Message::assistant(vec![ContentBlock::text(text)]),
+                meta: None,
+            })
+            .expect("prose");
+            if index < 2 {
+                append_card_call(&mut log, &format!("c{index}"), &format!("result {index}"));
+            }
+        }
+        let timeline = super::snapshot("interleaved-card-context", &log);
+        let order: Vec<String> = timeline
+            .items
+            .iter()
+            .filter_map(|item| {
+                if item.kind == OutputKind::Card {
+                    return Some("card".into());
+                }
+                if item.role != vak_delivery::OutputRole::Assistant {
+                    return None;
+                }
+                match &item.content {
+                    OutputContent::Document { document } => Some(document.source_markdown.clone()),
+                    OutputContent::Outcome {
+                        document: Some(document),
+                        ..
+                    } => Some(document.source_markdown.clone()),
+                    _ => None,
+                }
+            })
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                "Leading context survives.",
+                "card",
+                "Note: the second result uses a different scope.",
+                "card",
+                "The closing explanation survives too.",
+            ]
+        );
+    }
+
+    #[test]
     fn card_result_projects_completion_text_as_written() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut log = channel_log(&dir, "card-completion-narration");

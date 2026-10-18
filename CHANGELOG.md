@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Composed answers retain leading, interleaved and closing prose around
+  cards, including multipart text-only answers. Adjacent result material
+  shares its author header and actions without discarding earlier paragraphs
+  or moving cards across prose. Technical view also retains earlier cards.
+
 - Tables preserve textual IDs, comma-containing values and large integers.
   Numeric columns are explicit for authored tables and follow source JSON
   types for ability tables. Decimal strings sort exactly without rounding;

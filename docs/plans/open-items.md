@@ -69,7 +69,12 @@ overlapping fixes should close their original entries as well.
   fixture passes sorting, CSV, bindings and overflow checks at 1440×900 and
   390×844 in light/dark. Both bundles and the full repository gate pass. This does
   not recover precision already lost in parsed source floats or dynamic
-  expression arithmetic. Other S3 work remains open.
+  expression arithmetic. P02 client composition now preserves projected
+  prose/card boundaries and multipart prose, with typed server exclusions
+  unchanged; helper tests, all 48 server projection tests, both bundles and
+  the full repository gate pass. Live browser acceptance
+  is pending because local browser access is disabled. Other S3 work remains
+  open.
 - [ ] S4: interaction ownership/invalidation, replacement, graph scope and
   invocation/freshness provenance (P04, D01–D04).
 - [ ] S5: subject persistence, protected drafts, encrypted fenced canvas

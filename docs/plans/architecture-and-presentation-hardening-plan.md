@@ -593,6 +593,32 @@ These bounded inspections do not close P01/P02:
   arbitrary-precision dynamic expression arithmetic and remaining S3–S6
   findings are not closed by this slice.
 
+### Continuation — ordered composed-answer prose
+
+- Removed the client's final-assistant-only grouping and independent
+  card-based prose suppression. Adjacent projected parts share a result
+  header/actions, while each prose document remains in source order.
+  Card layout runs only within adjacent card segments, never across prose.
+  Known distinct result ids and non-result entries split groups; files keep
+  their result file area. Technical mode draws all projected entries.
+- Removed the turn's phrase-based fleeting-narration classifier. Typed
+  runtime/rejected-draft exclusions remain on the server. Other lexical
+  scaffolding/envelope filters and actual outline attribution remain open.
+  Existing `card_followup` metadata stays compatible for older consumers;
+  the shared client no longer draws it as duplicate prose.
+- Added executable production-helper tests for leading/interleaved/closing
+  prose, text-only multipart answers, lexical prefixes, distinct result ids,
+  non-result boundaries, adaptive cards and files. Added a server projection
+  source-order regression and a production timeline browser fixture.
+- Both bundles and all 48 server projection tests pass. The full gate passes:
+  formatting, workspace Clippy, workspace tests (662 seconds), versions,
+  document paths, records and advisories. Review retained each group's known
+  result id for actions/files even when its last prose has no result id;
+  absent result ids are not invented. The gate was restarted after this
+  correction, with source frozen through its successful run. Browser acceptance
+  is pending because local browser use is disabled in Work settings; no
+  visual result is claimed for this slice. P02/S3 remain partial.
+
 ### Reporting contract
 
 For each slice record finding IDs, exact baseline, reproduction, chosen
