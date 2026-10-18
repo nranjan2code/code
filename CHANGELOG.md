@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Effect detail, filtered history and sendable-work reads use an encrypted
+  row index instead of decoding the whole history. Large journal batches
+  now rotate segments as they fill; verified reads open only new payloads.
+- Card calls fail the turn if their acceptance decision cannot be recorded,
+  and close their live call indicator with an error.
+
 - FinOps lets the owner record a provider-verified actual charge for an
   uncertain reservation. Unresolved charges remain reserved; live work and
   unverified histories refuse reconciliation.

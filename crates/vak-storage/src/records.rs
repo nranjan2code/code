@@ -247,6 +247,40 @@ pub fn located_entries(
     Ok(out)
 }
 
+/// Reads entries after skipping `skip` complete frames without opening their
+/// payloads. The caller must verify the segment's hash chain before using
+/// this helper: skipped frames are length-checked, not hash-checked. Unlike
+/// [`located_entries`], an incomplete frame inside the skipped prefix is an
+/// error because the requested position cannot be established safely.
+pub fn located_entries_after(
+    data: &[u8],
+    skip: u64,
+    key: Option<&ScopeKey>,
+) -> Result<Vec<LocatedEntry>> {
+    let mut pos = 0usize;
+    for _ in 0..skip {
+        let rest = data
+            .get(pos..)
+            .ok_or(StorageError::Malformed("skipped frame out of range"))?;
+        if rest.len() < 4 {
+            return Err(StorageError::Malformed("torn skipped frame prefix"));
+        }
+        let len = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
+        if len == 0 || len > MAX_FRAME {
+            return Err(StorageError::Malformed("skipped frame length"));
+        }
+        let total = 4usize
+            .checked_add(len)
+            .and_then(|size| size.checked_add(HASH))
+            .ok_or(StorageError::Malformed("skipped frame length"))?;
+        if rest.len() < total {
+            return Err(StorageError::Malformed("torn skipped frame"));
+        }
+        pos += total;
+    }
+    located_entries(data, pos as u64, key)
+}
+
 /// The plaintext entry of the one frame at `offset` (`len` bytes on disk).
 pub fn entry_at(data: &[u8], offset: u64, len: u64, key: Option<&ScopeKey>) -> Result<Vec<u8>> {
     let start = usize::try_from(offset).map_err(|_| StorageError::Malformed("offset"))?;
@@ -343,6 +377,11 @@ impl RecordWriter {
         self.seq
     }
 
+    /// Bytes of complete frames currently in this segment.
+    pub fn byte_len(&self) -> u64 {
+        self.at
+    }
+
     pub fn is_empty(&self) -> bool {
         self.seq == 0
     }
@@ -434,6 +473,26 @@ mod tests {
         assert_eq!(verify_chain(&p).unwrap().entries, 2);
         assert_eq!(fs::read(&p).unwrap(), before);
         assert!(!before.windows(5).any(|w| w == b"alpha"));
+    }
+
+    #[test]
+    fn located_entries_after_skips_sealed_prefix_without_opening_it() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("seg.log");
+        let mut writer = RecordWriter::open(&path).unwrap();
+        writer.append(b"sealed prefix", Some(&key())).unwrap();
+        writer.append(b"plaintext suffix", None).unwrap();
+        let bytes = fs::read(path).unwrap();
+        verify_bytes(&bytes, GENESIS).unwrap();
+
+        let suffix = located_entries_after(&bytes, 1, None).unwrap();
+        assert_eq!(suffix.len(), 1);
+        assert_eq!(suffix[0].entry, b"plaintext suffix");
+        assert!(!suffix[0].sealed);
+        assert!(matches!(
+            located_entries_after(&bytes, 3, None),
+            Err(StorageError::Malformed(_))
+        ));
     }
 
     #[test]

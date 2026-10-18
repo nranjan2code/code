@@ -94,8 +94,8 @@ overlapping fixes should close their original entries as well.
   checkpoint services now bind through a child-context factory; a production
   factory regression verifies artifact agent/session attribution. The optional aggregate dispatch cap is now shared and durable; the per-step
   retry ceiling remains separate. Required framing, authorization, receipts
-  and successful endings now propagate append failures; post-card acceptance
-  writes and the wider auxiliary audit remain open.
+  and successful endings now propagate append failures. Card acceptance
+  verdicts also require persistence; the wider auxiliary audit remains open.
 - [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
   actual outline attribution and typed cleanup (P01–P03, P13, P14).
   P01 chart categories retain lexical text and ambiguous y strings are
@@ -186,10 +186,11 @@ overlapping fixes should close their original entries as well.
   supplies acceptance prompts/rubrics, not unrun semantic scores.
 - [ ] S7: narrow Core ownership and bounded history-dependent work
   (A08, A09), retaining the earlier guarantees. Effects now use a verified
-  incremental Rollup, indexed lookup/order, cursor pages, and blocking-pool
-  reads in server list/detail. The whole Document snapshot still decodes on
-  a read; growth measurements confirm warm 10,000-row reads around 308 ms. Fully
-  bounded storage decoding remains open. Shared history/presentation service
+  encrypted transactional row projection, indexed detail/pages, run/sendable
+  filters, prepare counts and idempotency lookup. Warm 10,000-row pages now
+  measure about 3.8 ms, with a 1.5-second cold rebuild; see the dated evidence
+  in the hardening plan. Seal metadata and cold replay still grow, and other
+  history consumers remain to measure. Shared history/presentation service
   construction is extracted, with further Core ownership separation open.
 
 Catalog encryption is implemented and passes focused acceptance; platform

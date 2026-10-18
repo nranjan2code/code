@@ -5,8 +5,9 @@
 //!
 //! Appends from any process serialise on the directory's `LOCK`. Each
 //! append opens the active segment, verifies it and cuts a torn tail, so
-//! its cost is bounded by [`ROTATE_BYTES`], not by the ledger's history:
-//! a segment that reaches it is sealed and the next one starts.
+//! its data scan is bounded by [`ROTATE_BYTES`] plus one crossing frame,
+//! rather than the ledger's history: a segment that reaches the threshold
+//! is sealed and the next one starts, including inside a batch.
 
 use crate::types::SessionError;
 use serde::Serialize;
@@ -73,7 +74,7 @@ impl RecordChain {
         self.write(std::slice::from_ref(row), true)
     }
 
-    /// Appends `rows` in order with one sync.
+    /// Appends `rows` in order, syncing each segment the batch fills.
     pub fn append_all<T: Serialize>(&self, rows: &[T]) -> Result<(), SessionError> {
         self.write(rows, true)
     }
@@ -85,7 +86,7 @@ impl RecordChain {
         self.write(std::slice::from_ref(row), false)
     }
 
-    /// Appends `rows` with one sync only if nothing was appended after
+    /// Appends `rows` only if nothing was appended after
     /// `after`, the position the caller decided them from (a rollup's
     /// [`crate::rollup::Rollup::read_at`]): the check and the append are
     /// one step under the chain's writer lock, which every process takes,
@@ -169,7 +170,7 @@ impl RecordChain {
             (None, Some(scope)) if !self.exists() => Some(crate::keys::declare(&self.dir, scope)?),
             (None, Some(_)) => return Err(SessionError::Unencrypted(self.dir.clone())),
         };
-        let active = match crate::log::segment_numbers(&self.dir).last() {
+        let mut active = match crate::log::segment_numbers(&self.dir).last() {
             Some((number, true)) => *number,
             Some((number, false)) => number + 1,
             None => 1,
@@ -185,7 +186,7 @@ impl RecordChain {
             }
         }
         let mut writer = segments.writer(active, &lock).map_err(storage_error)?;
-        for row in rows {
+        for (index, row) in rows.iter().enumerate() {
             let bytes = serde_json::to_vec(row).map_err(|error| SessionError::Corrupt {
                 line: 0,
                 message: error.to_string(),
@@ -193,14 +194,25 @@ impl RecordChain {
             writer
                 .append_unsynced(&bytes, key.as_ref())
                 .map_err(storage_error)?;
+            if writer.byte_len() >= ROTATE_BYTES && index + 1 < rows.len() {
+                if sync {
+                    writer.sync().map_err(storage_error)?;
+                    drop(writer);
+                } else {
+                    writer.close_unsynced();
+                }
+                segments.seal(active, &lock).map_err(storage_error)?;
+                active += 1;
+                writer = segments.writer(active, &lock).map_err(storage_error)?;
+            }
         }
+        let full = writer.byte_len() >= ROTATE_BYTES;
         if sync {
             writer.sync().map_err(storage_error)?;
             drop(writer);
         } else {
             writer.close_unsynced();
         }
-        let full = std::fs::metadata(&log_path).map(|meta| meta.len())? >= ROTATE_BYTES;
         if full {
             segments.seal(active, &lock).map_err(storage_error)?;
         }
@@ -384,6 +396,46 @@ mod tests {
         assert!(chain.try_read::<serde_json::Value>().is_err());
         std::fs::remove_file(&original).unwrap();
         assert_eq!(chain.try_read::<serde_json::Value>().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn one_large_batch_rotates_before_it_exceeds_the_history_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let chain = RecordChain::at(dir.path().join("rows"));
+        let rows: Vec<_> = (0..200u32)
+            .map(|n| {
+                let pad: String = (0..128u32)
+                    .map(|i| {
+                        use sha2::{Digest, Sha256};
+                        Sha256::digest(format!("{n}-{i}"))
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<String>()
+                    })
+                    .collect();
+                serde_json::json!({ "n": n, "pad": pad })
+            })
+            .collect();
+        chain.append_all(&rows).unwrap();
+        let numbers = crate::log::try_segment_numbers(chain.path()).unwrap();
+        assert!(
+            numbers.len() > 1,
+            "one batch must not create one unbounded segment"
+        );
+        assert_eq!(chain.try_read::<serde_json::Value>().unwrap(), rows);
+        let segments = vak_storage::segments::SegmentSet::at(chain.path());
+        for (number, open) in numbers {
+            let path = if open {
+                segments.log_path(number)
+            } else {
+                segments.sealed_path(number)
+            };
+            let bytes = vak_storage::segments::frame_bytes(&path).unwrap();
+            assert!(
+                bytes.len() as u64 <= ROTATE_BYTES + 16_384,
+                "only the final frame can cross the segment limit"
+            );
+        }
     }
 
     #[test]

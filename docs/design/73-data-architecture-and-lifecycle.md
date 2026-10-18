@@ -18,6 +18,31 @@ atomic root-publication/release ownership model before a production caller
 may use it. A sequential shared-chunk regression is retained; it is not a
 concurrency guarantee. Ordinary tenant object storage remains in production.
 
+**Effects projection qualification (2026-10-19):** effects remain an
+append-only RecordChain. The retired `effects-rollup` Document is no longer
+read; its bytes are kept for ordinary lifecycle treatment. Current lookup
+state is a derived SQLCipher database at `SharedScope::effects_projection`,
+registered as `effects-index` including its sidecars and open lock. Its key
+is tenant scope `effects-index`, checked on every read; no plaintext fallback
+exists. A short advisory lock serializes database initialization; immediate
+SQLite transactions serialize catch-up. Each transaction verifies the source
+suffix, folds changed rows, and advances the source cursor atomically.
+Unverified source history rolls the transaction back. The database is bound
+to its canonical chain and refuses a missing/truncated previously read source.
+Empty first reads create no source chain. Derived files are excluded from
+backup/sync; cold reads rebuild from records. Unsupported/corrupt databases
+fail visibly instead of authorizing from stale state.
+
+Detail, page, run, dispatchable, prepare-match and idempotency-key queries use
+row indexes. Full-list APIs still return all rows deliberately. Cold replay,
+source segment hash verification and seal-manifest inspection remain work;
+this is bounded row decoding, not a constant-time integrity proof.
+RecordChain batches now rotate at the segment byte threshold (plus one
+crossing frame), retaining the writer lock across the batch and syncing each
+filled segment. Strict suffix readers verify hashes/seals before skipping
+already-folded payloads. [Measured evidence](../audits/effects-projection-measurement-2026-10-19.md)
+records the remaining costs.
+
 `79-private-headless-fleet.md` is the proposal for one dedicated 24/7 VM per
 customer, operator-blind management and disaster recovery. It adds a hosted
 deployment trust boundary without changing the locked local-first decisions

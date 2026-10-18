@@ -6740,7 +6740,7 @@ impl Core {
                 vak_config::paths::LOCAL_TENANT,
             ),
         )
-        .with_rollup(self.shared_scope().effects_rollup())
+        .with_projection(self.shared_scope().effects_projection())
     }
 
     /// The run records of this Core's data home (plan M4.2).

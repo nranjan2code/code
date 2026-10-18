@@ -186,7 +186,7 @@ SUBSYSTEMS = [
      ["/data/keys"], [], []),
     ("runs", "Runs, effects and cursors",
      "Run records, at-most-once outbound effects, stream cursors",
-     ["crates/vak-session/src/runs.rs", "crates/vak-session/src/effects.rs", "crates/vak-session/src/cursors.rs",
+     ["crates/vak-session/src/runs.rs", "crates/vak-session/src/effects.rs", "crates/vak-session/src/effects/projection.rs", "crates/vak-session/src/cursors.rs",
       "crates/vak-server/src/effects.rs", "crates/vak/src/effects.rs", "crates/vak/src/runs.rs",
       "crates/vak-admin-ui/src/Runs.tsx", "crates/vak-admin-ui/src/Effects.tsx"],
      ["/runs", "/effects"], ["runs", "effects"], []),

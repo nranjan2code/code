@@ -88,13 +88,13 @@ The audit remains the historical evidence; the implementation log names checks.
 |---|---|---|
 | A01 | Partly repaired | Strict artifact consumers and credential tests pass; remaining decision-reader audit |
 | A02 | Repaired, full gate previously passed | Preserve atomic fencing regressions |
-| A03 | Dispatch, abort partials, fence cards and child terminal writes repaired | Preserve fault-injection regressions; remaining causal-write audit |
+| A03 | Main causal writes and card acceptance verdicts require persistence | Preserve fault-injection regressions; wider auxiliary audit remains |
 | A04 | Child-bound services and optional durable shared call cap implemented | Detached maintenance is outside request scope; budget Document retention remains open |
 | A05 | Repaired, full gate previously passed | Preserve cancellation/stale probe tests |
 | A06 | Repaired, full gate previously passed | Preserve failed-compaction regression |
 | A07 | Conservative scheduling repaired | Preserve unknown/exclusive tool behavior |
 | A08 | Shared parent/child history and presentation construction extracted | Further Core ownership separation remains |
-| A09 | Growth benchmark confirms linear snapshot decode | Sharded or transactional projection required; warm 10k-row reads ~308 ms |
+| A09 | Effects uses encrypted transactional row projection; warm 10k-row reads ~3–4 ms | Cold replay and seal metadata grow; other history-dependent consumers remain |
 | A10 | Encrypted catalog implemented; focused suite passes | Multi-platform packaging and wider acceptance remain |
 | A11 | Typed outcomes and mechanically checked ClientEvent fixture implemented | Wider presentation wire fixture coverage/replay acceptance |
 | A12 | Unreachable production API quarantined | Module now test-only; concurrent chunk ownership must precede any production reintroduction |
@@ -1238,3 +1238,40 @@ The flow integration target compiles. The admin production bundle builds.
 Clippy for Core/Agent/Server/Flow/Config libraries passes with warnings denied;
 formatting and record/path/version checks pass. No full gate, new release,
 installation, or visual acceptance is claimed.
+
+### Effects row projection and card receipts (2026-10-19)
+
+Effects now uses a derived encrypted SQLCipher row projection. Rows and source
+cursor commit together after strict tail verification. Detail/pages, run and
+sendable filtering, prepare ordinals and once-only key lookups use indexes;
+there is no parallel Rollup reader. The old Document remains registered but
+inactive, with no ad hoc deletion. New files/sidecars are registered Derived
+and excluded from backup/sync. Initialization is serialized across processes;
+source mismatch, missing prior history, invalid suffixes and erased keys refuse.
+
+Strict tail reads verify hashes and seals before skipping previously folded
+payloads. RecordChain now rotates inside a large batch, preserving its writer
+lock and conditional-append semantics. One large batch cannot create an
+unbounded segment; a single large crossing frame remains possible.
+
+The [dated measurement](../audits/effects-projection-measurement-2026-10-19.md)
+retains cold/warm values and limits: warm 10k-row page 3.814 ms (previously
+308.245 ms), cold rebuild 1511.215 ms (previously 502.670 ms). This closes
+whole-snapshot decoding for Effects, not all A09 consumers or constant-time
+integrity verification. Further Core separation and other history consumers
+remain S7 work.
+
+Card acceptance verdicts now return typed journal errors through the batch
+boundary. A failed receipt emits a failed live-call end and refuses later
+model work/success; the already appended presentation is preserved. The wider
+auxiliary causal-write audit remains open.
+
+Verification: final Session library suite 94 passed/one ignored benchmark;
+the benchmark was then run explicitly and passed. Six storage record tests,
+49 FinOps cases, the real-auth owner recovery route, card-verdict failure
+regression and 22 Agent loop cases pass. During integration the broader Core
+library suite passed all 541 cases before the final tail/batch optimization;
+final affected-reader coverage is the Session and FinOps suites. Clippy for
+Storage/Session/Agent/Core/Server libraries passes with warnings denied.
+Formatting, record, path and version checks pass. No full workspace gate or
+manual browser acceptance ran, and the installed app was not changed.

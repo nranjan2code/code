@@ -32,7 +32,7 @@ and coordinate independent gates. The existing `max_run_usd` policy remains
 session lifetime across turns and delegated children; the cached gate binds
 its owning session and each admission captures that owner immutably. Actual
 child session and trace stay unchanged in the cost row. Recreating the gate
-does not reset settled spend. This does not introduce a RunId-tree call cap.
+does not reset settled spend. The optional root-RunId model-call cap is a separate policy.
 
 A settlement appends its cost row before removing the reservation. An exact
 reservation id correlates appended rows with surviving pending reservations,
@@ -49,8 +49,9 @@ is unchanged. Predispatch prices are estimates, so actual cost can exceed a
 reservation before settlement. If both the cost append and reservation update
 fail, the larger/unknown actual cannot be promised recoverable after a crash.
 Unmatched abandoned reservations are retained; no invented expiry clears them.
-Read-only financial summaries remain tolerant. The wider hardening plan stays
-open for owner reconciliation and an explicit aggregate model-call policy.
+Cost summaries use strictly verified accounted rows. Owner reconciliation
+and the optional aggregate model-call cap are implemented below; historical
+id-less unknown charges and broader acceptance remain open.
 
 ## Circuit probe ownership
 
@@ -537,8 +538,10 @@ turn 3 even if the user switched providers between turn 2 and turn 3.
 Admission decisions, framing, authorization and successful WorkReceipts must
 persist before dependent work; successful ending/acceptance persistence is
 required before reporting a successful turn. Original abort/failure outcomes
-remain authoritative if their diagnostic ending append also fails. Card
-acceptance decisions written after a card append remain a separate audit gap.
+remain authoritative if their diagnostic ending append also fails. A card acceptance decision must also persist before its card event is emitted
+or its call can reach later model work. Failure closes the live call with an
+error and returns a typed session error to the turn. Partial presentation
+records remain append-only.
 
 FinOps retains uncertain reservations across restart and UTC rollover. Exact
 priced settlements allow interrupted pending-marker cleanup on admission.

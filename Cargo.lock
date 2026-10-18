@@ -7180,6 +7180,7 @@ version = "8.9.0"
 dependencies = [
  "chrono",
  "regex",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",

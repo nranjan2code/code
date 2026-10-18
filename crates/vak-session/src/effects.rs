@@ -19,8 +19,9 @@ use crate::types::SessionError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+
+mod projection;
 
 /// How many times an effect proven not sent is tried before it is left
 /// failed.
@@ -429,15 +430,9 @@ fn digest(bytes: &[u8]) -> String {
 #[derive(Debug, Clone)]
 pub struct Effects {
     chain: RecordChain,
-    rollup: PathBuf,
+    projection: PathBuf,
     tenant_home: PathBuf,
     holder: ProcessId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct EffectIndex {
-    by_id: BTreeMap<EffectId, EffectRecord>,
-    newest_first: BTreeSet<(DateTime<Utc>, EffectId)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -502,21 +497,21 @@ impl Effects {
     /// dispatch refs in the tenant at `tenant_home`.
     pub fn at(dir: impl Into<PathBuf>, tenant_home: impl Into<PathBuf>) -> Self {
         let chain = RecordChain::at(dir);
-        let rollup = vak_config::scope::SharedScope::new(
+        let projection = vak_config::scope::SharedScope::new(
             chain.path().parent().unwrap_or_else(|| Path::new(".")),
         )
-        .effects_rollup();
+        .effects_projection();
         Self {
             chain,
-            rollup,
+            projection,
             tenant_home: tenant_home.into(),
             holder: crate::fence::process(),
         }
     }
 
-    /// Uses the canonical effects Rollup Document from `SharedScope`.
-    pub fn with_rollup(mut self, path: impl Into<PathBuf>) -> Self {
-        self.rollup = path.into();
+    /// Uses the canonical encrypted effects projection from `SharedScope`.
+    pub fn with_projection(mut self, path: impl Into<PathBuf>) -> Self {
+        self.projection = path.into();
         self
     }
 
@@ -556,16 +551,12 @@ impl Effects {
     pub fn prepare(&self, prepare: Prepare) -> Result<EffectRecord, SessionError> {
         let run = prepare.trace.as_ref().map(|trace| trace.run);
         let payload_digest = digest(&prepare.payload);
-        let ordinal = self
-            .list()?
-            .iter()
-            .filter(|record| {
-                record.run == run
-                    && record.kind == prepare.kind
-                    && record.target == prepare.target
-                    && record.payload_digest == payload_digest
-            })
-            .count();
+        let ordinal = self.projection()?.matching_count(
+            run,
+            &prepare.kind,
+            &prepare.target,
+            &payload_digest,
+        )?;
         let run_text = run.map(|run| run.to_string()).unwrap_or_default();
         let key = key_of(&prepare, &payload_digest, &format!("{run_text}\n{ordinal}"))?;
         self.write_prepared(prepare, key, payload_digest)
@@ -583,11 +574,7 @@ impl Effects {
     ) -> Result<Result<EffectRecord, EffectRecord>, SessionError> {
         let payload_digest = digest(&prepare.payload);
         let key = key_of(&prepare, &payload_digest, "once")?;
-        if let Some(existing) = self
-            .list()?
-            .into_iter()
-            .find(|record| record.idempotency_key == key)
-        {
+        if let Some(existing) = self.projection()?.find_key(&key)? {
             return Ok(Err(existing));
         }
         self.write_prepared(prepare, key, payload_digest).map(Ok)
@@ -928,61 +915,20 @@ impl Effects {
             .collect()
     }
 
-    fn index(&self) -> Result<EffectIndex, SessionError> {
-        let rollup = crate::rollup::Rollup::new(self.chain.path(), &self.rollup);
-        let index = rollup.try_read(|index: &mut EffectIndex, bytes| {
-            let event: EffectEvent =
-                serde_json::from_slice(bytes).map_err(|error| SessionError::Corrupt {
-                    line: 0,
-                    message: format!("effect record: {error}"),
-                })?;
-            match index.by_id.get_mut(&event.effect) {
-                Some(record) => record.apply(event.at, event.step),
-                None => {
-                    let record =
-                        EffectRecord::prepared(event.effect, event.at, event.trace, event.step)
-                            .ok_or_else(|| SessionError::Corrupt {
-                                line: 0,
-                                message: format!(
-                                    "effect {} has a step before it was prepared",
-                                    event.effect
-                                ),
-                            })?;
-                    index.newest_first.insert((record.prepared_at, record.id));
-                    index.by_id.insert(record.id, record);
-                }
-            }
-            Ok(())
-        })?;
-        if index.by_id.len() != index.newest_first.len()
-            || index.by_id.values().any(|record| {
-                !index
-                    .newest_first
-                    .contains(&(record.prepared_at, record.id))
-            })
-        {
-            return Err(SessionError::Objects(
-                "effects rollup index is inconsistent".into(),
-            ));
-        }
-        Ok(index)
+    fn projection(&self) -> Result<projection::Projection, SessionError> {
+        let mut projection = projection::Projection::open(&self.projection, &self.tenant_home)?;
+        projection.sync(self.chain.path())?;
+        Ok(projection)
     }
 
-    /// Every effect, newest first. The order index avoids rebuilding and
-    /// sorting a separate vector, though loading the Document remains O(n).
+    /// Every effect, newest first. Full-list callers deliberately read every
+    /// record; detail and page callers decode only their selected rows.
     pub fn list(&self) -> Result<Vec<EffectRecord>, SessionError> {
-        let index = self.index()?;
-        Ok(index
-            .newest_first
-            .iter()
-            .rev()
-            .filter_map(|(_, id)| index.by_id.get(id).cloned())
-            .collect())
+        self.projection()?.list()
     }
 
-    /// Reads a bounded page from the verified projection. Filters are applied
-    /// while walking the ordered index; the cursor resumes strictly before
-    /// its prior record in newest-first order.
+    /// Reads a bounded page from the verified encrypted projection. The
+    /// cursor resumes strictly before its prior record in newest-first order.
     pub fn list_page(
         &self,
         run: Option<RunId>,
@@ -990,40 +936,20 @@ impl Effects {
         limit: usize,
         cursor: Option<&str>,
     ) -> Result<EffectPage, SessionError> {
-        use std::ops::Bound::{Excluded, Unbounded};
-        let index = self.index()?;
         let after = cursor.map(decode_cursor).transpose()?;
-        let upper = after.as_ref().map_or(Unbounded, |cursor| {
-            Excluded((cursor.prepared_at, cursor.id))
-        });
-        let mut selected = Vec::new();
-        let cap = limit.clamp(1, 1000);
-        let mut more = false;
-        for key in index.newest_first.range((Unbounded, upper)).rev() {
-            let (_, id) = key;
-            let Some(record) = index.by_id.get(id) else {
-                return Err(SessionError::Objects(
-                    "effects rollup index is inconsistent".into(),
-                ));
-            };
-            if run.is_some_and(|run| record.run != Some(run))
-                || state.is_some_and(|state| record.status != state)
-            {
-                continue;
-            }
-            if selected.len() == cap {
-                more = true;
-                break;
-            }
-            selected.push((*key, record.clone()));
-        }
+        let (effects, more) = self.projection()?.list_page(
+            run,
+            state,
+            limit,
+            after.map(|cursor| (cursor.prepared_at, cursor.id)),
+        )?;
         let next_cursor = if more {
-            selected
+            effects
                 .last()
-                .map(|((prepared_at, id), _)| {
+                .map(|record| {
                     encode_cursor(&EffectCursor {
-                        prepared_at: *prepared_at,
-                        id: *id,
+                        prepared_at: record.prepared_at,
+                        id: record.id,
                     })
                 })
                 .transpose()?
@@ -1031,35 +957,25 @@ impl Effects {
             None
         };
         Ok(EffectPage {
-            effects: selected.into_iter().map(|(_, effect)| effect).collect(),
+            effects,
             next_cursor,
         })
     }
 
     pub fn get(&self, effect: EffectId) -> Result<Option<EffectRecord>, SessionError> {
-        Ok(self.index()?.by_id.get(&effect).cloned())
+        self.projection()?.get(effect)
     }
 
     /// Every effect the run `run` caused, newest first.
     pub fn of_run(&self, run: RunId) -> Result<Vec<EffectRecord>, SessionError> {
-        Ok(self
-            .list()?
-            .into_iter()
-            .filter(|record| record.run == Some(run))
-            .collect())
+        self.projection()?.of_run(run)
     }
 
     /// Effects the background sender may take now, oldest first: only
     /// kinds that are sent again by themselves (`EffectKind::retries`). A
     /// mail or calendar change is sent only by the request that approved it.
     pub fn dispatchable(&self) -> Result<Vec<EffectRecord>, SessionError> {
-        let mut list: Vec<EffectRecord> = self
-            .list()?
-            .into_iter()
-            .filter(|record| record.kind.retries() && record.is_dispatchable())
-            .collect();
-        list.reverse();
-        Ok(list)
+        self.projection()?.dispatchable()
     }
 }
 
@@ -1107,7 +1023,123 @@ mod tests {
     }
 
     #[test]
-    fn rollup_reads_cold_and_warm_and_pages_without_losing_records() {
+    fn empty_projection_and_deleted_source_are_distinguished() {
+        let (_dir, effects) = home();
+        assert!(effects.list().unwrap().is_empty());
+        assert!(effects.get(EffectId::new()).unwrap().is_none());
+        assert!(
+            !effects.chain.path().exists(),
+            "reading never creates a source chain"
+        );
+        let record = delivery(&effects, &trace(), "source survives");
+        assert!(effects.get(record.id).unwrap().is_some());
+        // Fault injection only: normal data removal uses lifecycle/erasure.
+        std::fs::remove_dir_all(effects.chain.path()).unwrap();
+        assert!(effects.get(record.id).is_err());
+    }
+
+    #[test]
+    fn projection_catch_up_rolls_back_all_rows_on_an_invalid_suffix() {
+        let (_dir, effects) = home();
+        let first = delivery(&effects, &trace(), "first");
+        let mut index = effects.projection().unwrap();
+        let next_id = EffectId::new();
+        let mut rows = effects.events().unwrap();
+        rows[0].effect = next_id;
+        rows.push(EffectEvent {
+            effect: EffectId::new(),
+            at: Utc::now(),
+            trace: None,
+            actor: None,
+            step: EffectStep::Unknown {
+                reason: "orphan".into(),
+            },
+        });
+        effects.chain.append_all(&rows).unwrap();
+        assert!(index.sync(effects.path()).is_err());
+        assert!(index.get(first.id).unwrap().is_some());
+        assert!(
+            index.get(next_id).unwrap().is_none(),
+            "no partial transaction is visible"
+        );
+        drop(index);
+        assert!(
+            effects.get(next_id).is_err(),
+            "the failed suffix is retried after reopen"
+        );
+    }
+
+    #[test]
+    fn projection_is_encrypted_and_live_handles_refuse_a_destroyed_key() {
+        let (_dir, effects) = home();
+        let record = delivery(&effects, &trace(), "payload");
+        let mut index = effects.projection().unwrap();
+        // A unique content-bearing reason exercises both the database and WAL.
+        let marker = "private-effect-reason-7d8fa9e0";
+        effects.failed(record.id, marker, false).unwrap();
+        index.sync(effects.path()).unwrap();
+        for entry in std::fs::read_dir(effects.projection.parent().unwrap()).unwrap() {
+            let bytes = std::fs::read(entry.unwrap().path()).unwrap();
+            assert!(
+                !bytes
+                    .windows(marker.len())
+                    .any(|part| part == marker.as_bytes())
+            );
+            assert!(!bytes.starts_with(b"SQLite format 3"));
+        }
+        let tenant = TenantObjects::for_tenant(&effects.tenant_home).unwrap();
+        // Key destruction is a fixture for the production erasure boundary.
+        tenant.destroy_scope_key("effects-index").unwrap();
+        assert!(index.get(record.id).is_err());
+        assert!(effects.get(record.id).is_err());
+    }
+
+    #[test]
+    fn filtered_projection_pages_keep_state_and_run_boundaries() {
+        let (_dir, effects) = home();
+        let first_trace = trace();
+        let other_trace = trace();
+        let records: Vec<_> = (0..5)
+            .map(|n| delivery(&effects, &first_trace, &format!("first-{n}")))
+            .collect();
+        let other = delivery(&effects, &other_trace, "other");
+        effects.failed(records[1].id, "unknown", false).unwrap();
+        effects.failed(records[3].id, "unknown", false).unwrap();
+        let first = effects
+            .list_page(Some(first_trace.run), Some(EffectStatus::Unknown), 1, None)
+            .unwrap();
+        assert_eq!(first.effects.len(), 1);
+        let second = effects
+            .list_page(
+                Some(first_trace.run),
+                Some(EffectStatus::Unknown),
+                1,
+                first.next_cursor.as_deref(),
+            )
+            .unwrap();
+        assert_eq!(second.effects.len(), 1);
+        assert_ne!(first.effects[0].id, second.effects[0].id);
+        assert!(second.next_cursor.is_none());
+        assert_eq!(
+            effects
+                .of_run(other_trace.run)
+                .unwrap()
+                .iter()
+                .map(|r| r.id)
+                .collect::<Vec<_>>(),
+            vec![other.id]
+        );
+        assert!(
+            effects
+                .dispatchable()
+                .unwrap()
+                .iter()
+                .all(|r| r.status == EffectStatus::Queued)
+        );
+    }
+
+    #[test]
+    fn projection_reads_cold_and_warm_and_pages_without_losing_records() {
         let (_dir, effects) = home();
         let trace = trace();
         let records: Vec<_> = (0..5)
@@ -1117,11 +1149,12 @@ mod tests {
         let cold = effects.list_page(None, None, 2, None).expect("cold page");
         assert_eq!(cold.effects.len(), 2);
         assert!(cold.next_cursor.is_some());
-        let saved = crate::documents::version_count(&effects.rollup);
-        assert!(saved > 0, "cold read writes the verified projection");
+        assert!(
+            effects.projection.is_file(),
+            "cold read writes the encrypted projection"
+        );
         let warm = effects.list_page(None, None, 2, None).expect("warm page");
         assert_eq!(cold.effects, warm.effects);
-        assert_eq!(crate::documents::version_count(&effects.rollup), saved);
 
         let mut seen = cold
             .effects
@@ -1151,8 +1184,8 @@ mod tests {
     /// `cargo test -p vak-session effects_index_growth_measurement -- --ignored --nocapture`.
     /// The chain is seeded through RecordChain in one synced batch so setup
     /// does not measure per-row fsync. Reads below use the production Effects
-    /// Rollup and lookup/page APIs. This measures whole-Document decode too;
-    /// indexed lookup does not imply bounded decoding.
+    /// encrypted projection and lookup/page APIs. Cold reads include replay;
+    /// warm reads verify the source suffix and decode only selected rows.
     #[test]
     #[ignore = "manual local growth measurement; writes up to 10,000 effect rows"]
     fn effects_index_growth_measurement() {

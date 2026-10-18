@@ -453,6 +453,14 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
+        path: "effects-index",
+        root: Root::Data,
+        owner: "vak-session",
+        schema: Some(1),
+        class: Class::Derived,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
         path: "effects-rollup",
         root: Root::Data,
         owner: "vak-session",

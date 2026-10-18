@@ -9,7 +9,7 @@
 # When a change makes a finding wrong, fixes it, or adds one, edit it here and
 # set `prose_reviewed` to the version and date, in the same commit.
 
-prose_reviewed = "8.9.0 · 2026-10-18"
+prose_reviewed = "8.9.0 · 2026-10-19"
 
 summary = """
 Vakyartha (`vak`) is a local-first agent harness for one owner: agents that \
@@ -107,21 +107,6 @@ or a write that should have been fenced.
 """
 fix = "A model-based test of each chain's reader against a reference, and multi-process interleavings of every fenced write path."
 sources = "[docs/audits/architecture-and-presentation-review-2026-10-18.md](../docs/audits/architecture-and-presentation-review-2026-10-18.md) (A01, A02); `crates/vak-storage`, `crates/vak-session`."
-
-[[finding]]
-id = "F4"
-tag = "Performance"
-verdict = "Measured linear growth"
-title = "Effects reads decode the entire history projection"
-evidence = """
-The 2026-10-18 growth benchmark uses the production EffectIndex Rollup and \
-measures warm lookup / cursor page reads at 3.638 / 3.258 ms for 100 rows, \
-30.198 / 30.077 ms for 1,000 rows, and 307.920 / 308.245 ms for 10,000 rows. \
-The in-memory index avoids replay but each read decodes the whole Document.
-"""
-matters = "History growth makes effect detail and list reads progressively slower, despite indexed lookup and cursor pagination."
-fix = "Use a bounded storage projection and retain the production growth benchmark to verify scaling."
-sources = "`crates/vak-session/src/effects.rs` (`effects_index_growth_measurement`); [hardening plan](../docs/plans/architecture-and-presentation-hardening-plan.md) (A09)."
 
 [[keep]]
 name = "vak-permission"

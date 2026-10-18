@@ -95,22 +95,24 @@ pub fn try_tail(
                 return Err(corrupt("the segment does not match its seal"));
             }
         }
-        let frames =
-            vak_storage::records::located_entries(&bytes, 0, key.as_ref()).map_err(corrupt)?;
         let skip = if number == from.segment {
             from.frames
         } else {
             0
         };
-        if skip > frames.len() as u64 {
+        if skip > report.entries {
             return Err(corrupt("the chain no longer holds the reader's position"));
         }
+        // The complete segment hash chain and seal were verified above.
+        // Already folded payloads need not be opened again.
+        let frames = vak_storage::records::located_entries_after(&bytes, skip, key.as_ref())
+            .map_err(corrupt)?;
         at = Position {
             segment: number,
             frames: skip,
         };
-        for (index, frame) in frames.iter().enumerate().skip(skip as usize) {
-            at.frames = index as u64 + 1;
+        for (index, frame) in frames.iter().enumerate() {
+            at.frames = skip + index as u64 + 1;
             if !visit(at, &frame.entry)? {
                 return Ok(at);
             }

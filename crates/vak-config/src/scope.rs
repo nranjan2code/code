@@ -462,9 +462,14 @@ impl SharedScope {
         self.root.join("effects")
     }
 
-    /// The verified Rollup Document for [`SharedScope::effects`].
+    /// Retired Effects Rollup Document, retained for inventory/lifecycle.
     pub fn effects_rollup(&self) -> PathBuf {
         self.root.join("effects-rollup")
+    }
+
+    /// Derived encrypted row projection and its SQLite sidecars.
+    pub fn effects_projection(&self) -> PathBuf {
+        self.root.join("effects-index").join("effects.db")
     }
 
     /// The cursor gap rows (plan M4.7): each range of an external stream a
@@ -722,6 +727,10 @@ mod tests {
         assert_eq!(s.gateway_deliveries(), data.join("gateway/deliveries"));
         assert_eq!(s.effects(), data.join("effects"));
         assert_eq!(s.effects_rollup(), data.join("effects-rollup"));
+        assert_eq!(
+            s.effects_projection(),
+            data.join("effects-index/effects.db")
+        );
         assert_eq!(s.cursors(), data.join("cursors"));
         assert_eq!(s.operations_incidents(), data.join("operations/incidents"));
         assert_eq!(s.operations_actions(), data.join("operations/actions"));

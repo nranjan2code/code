@@ -3366,7 +3366,15 @@ impl Agent {
                 .iter()
                 .map(|call| (call.name.clone(), call.input.clone()))
                 .collect();
-            let (mut results, history_misses) = self.execute_batch(calls, &cancel, &events).await;
+            let (mut results, history_misses) =
+                match self.execute_batch(calls, &cancel, &events).await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(format!("session write failed: {error}")),
+                        };
+                    }
+                };
             let shown_only = results.iter().any(|(id, _)| {
                 call_names
                     .get(id)
@@ -6212,7 +6220,7 @@ impl Agent {
         calls: Vec<PendingToolCall>,
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
-    ) -> (Vec<(String, ToolRunOutput)>, HashSet<String>) {
+    ) -> Result<(Vec<(String, ToolRunOutput)>, HashSet<String>), vak_session::SessionError> {
         // `recall` is answered from the session here, before dispatch —
         // never sent to a worker (docs/design/68-context-engine.md §3/§7).
         // Intercepting by name mirrors how `emit_*_card` results are
@@ -6278,6 +6286,18 @@ impl Agent {
         for call in card_calls {
             loop_call_started(events, &call).await;
             let (output, verdict) = self.show_card(&call).await;
+            if let Err(error) = self.record_card_verdict(&call.id, verdict).await {
+                loop_call_ended(
+                    events,
+                    &call,
+                    &ToolRunOutput::Err(
+                        Fault::Tool,
+                        "The card decision could not be recorded.".into(),
+                    ),
+                )
+                .await;
+                return Err(error);
+            }
             if matches!(output, ToolRunOutput::Ok(_)) {
                 let recorded = self
                     .session
@@ -6303,14 +6323,9 @@ impl Agent {
                 }
             }
             // Also tells a surface the call is no longer being written
-            // (docs/design/96, Q2).
+            // (docs/design/96, Q2). The card event above is emitted only
+            // after its verdict has become durable.
             loop_call_ended(events, &call, &output).await;
-            let _ = self
-                .record_decisions(vec![
-                    vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(verdict))
-                        .with(vak_control::Evidence::Call(call.id.clone())),
-                ])
-                .await;
             results.push((call.id, output));
         }
         let mut history_misses = HashSet::new();
@@ -6352,7 +6367,19 @@ impl Agent {
             results.push((call.id, output));
         }
         results.extend(self.execute_batch_inner(calls, cancel, events).await);
-        (results, history_misses)
+        Ok((results, history_misses))
+    }
+
+    async fn record_card_verdict(
+        &self,
+        call_id: &str,
+        verdict: vak_control::CallVerdict,
+    ) -> Result<(), vak_session::SessionError> {
+        self.record_decision(
+            vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(verdict))
+                .with(vak_control::Evidence::Call(call_id.to_owned())),
+        )
+        .await
     }
 
     /// Answers one `recall` call, with what its result holds
@@ -10607,6 +10634,27 @@ mod compaction_error_tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn failed_card_verdict_append_is_a_typed_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session");
+        drop(
+            vak_session::SessionLog::create(
+                path.clone(),
+                test_header(dir.path(), "card-verdict-write-error"),
+            )
+            .unwrap(),
+        );
+        let log = vak_session::SessionLog::open_read_only(path).unwrap();
+        let agent = Agent::new(Arc::new(UnusedProvider), log, AgentConfig::new("sys"));
+
+        let result = agent
+            .record_card_verdict("call-1", vak_control::CallVerdict::Accepted)
+            .await;
+
+        assert!(result.is_err());
     }
 
     #[test]
