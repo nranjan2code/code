@@ -69,6 +69,8 @@ fn record_voice_dispatch(
                 usd: None,
                 source: source.into(),
                 session_id: session_id.to_string(),
+                reservation_id: None,
+                budget_session_id: None,
                 trace: None,
                 actor: None,
             },

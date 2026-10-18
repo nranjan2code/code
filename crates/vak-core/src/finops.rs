@@ -35,6 +35,14 @@ pub struct CostRow {
     /// settlement data.
     pub source: String,
     pub session_id: String,
+    /// Exact admission that produced this row, allowing a crash after append
+    /// but before reservation disposition to reconcile without double count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservation_id: Option<String>,
+    /// Stable session whose lifetime cap owns this spend. Child dispatch rows
+    /// keep their actual session and trace while charging their parent's gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<vak_session::trace::TraceKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -141,23 +149,45 @@ impl FinOpsLedger {
         }
     }
 
-    fn strict_day_total_usd(&self, now: chrono::DateTime<chrono::Utc>) -> Result<f64, String> {
-        let totals = Rollup::new(&self.path, &self.rollup_path)
-            .try_read(|totals: &mut DailyCostTotals, bytes| {
+    fn strict_cost_totals(&self) -> Result<DailyCostTotals, vak_session::types::SessionError> {
+        Rollup::new(&self.path, &self.rollup_path).try_read(
+            |totals: &mut DailyCostTotals, bytes| {
                 let row: CostRow = serde_json::from_slice(bytes).map_err(|error| {
                     vak_session::types::SessionError::Corrupt {
                         line: 0,
                         message: error.to_string(),
                     }
                 })?;
-                let total = totals.0.entry(row.ts.date_naive()).or_default();
-                if let Some(usd) = row.usd {
-                    if !valid_usd(usd) {
+                if row.usd.is_some_and(|usd| !valid_usd(usd)) {
+                    return Err(vak_session::types::SessionError::Corrupt {
+                        line: 0,
+                        message: "cost row USD must be finite and non-negative".into(),
+                    });
+                }
+                if let Some(id) = &row.reservation_id {
+                    if totals.reservations.contains_key(id) {
+                        // A dispatch has exactly one settlement row. A repeat
+                        // may describe another paid dispatch accidentally
+                        // reusing the id; never hide that cost by deduping it.
                         return Err(vak_session::types::SessionError::Corrupt {
                             line: 0,
-                            message: "cost row USD must be finite and non-negative".into(),
+                            message: "reservation id has multiple settled rows".into(),
                         });
                     }
+                    totals.reservations.insert(
+                        id.clone(),
+                        SettledReservation {
+                            session_id: row
+                                .budget_session_id
+                                .as_deref()
+                                .unwrap_or(&row.session_id)
+                                .to_string(),
+                            usd: row.usd,
+                        },
+                    );
+                }
+                let total = totals.days.entry(row.ts.date_naive()).or_default();
+                if let Some(usd) = row.usd {
                     total.usd += usd;
                     if !total.usd.is_finite() {
                         return Err(vak_session::types::SessionError::Corrupt {
@@ -168,14 +198,37 @@ impl FinOpsLedger {
                 } else {
                     total.unknown_calls = total.unknown_calls.saturating_add(1);
                 }
+                let budget_session = row.budget_session_id.as_deref().unwrap_or(&row.session_id);
+                let session = totals
+                    .sessions
+                    .entry(budget_session.to_string())
+                    .or_default();
+                match row.usd {
+                    Some(usd) => {
+                        session.usd += usd;
+                        if !session.usd.is_finite() {
+                            return Err(vak_session::types::SessionError::Corrupt {
+                                line: 0,
+                                message: "session cost total is not finite".into(),
+                            });
+                        }
+                    }
+                    None => session.unknown_calls = session.unknown_calls.saturating_add(1),
+                }
+                if row.budget_session_id.is_none()
+                    && row.trace.as_ref().is_some_and(|trace| {
+                        matches!(trace.cause, vak_session::trace::Cause::Delegation { .. })
+                    })
+                {
+                    totals.unmapped_delegated = totals.unmapped_delegated.saturating_add(1);
+                }
                 Ok(())
-            })
-            .map_err(|error| error.to_string())?;
-        let total = totals.0.get(&now.date_naive()).cloned().unwrap_or_default();
-        if total.unknown_calls > 0 {
-            return Err("current day contains unpriced cost rows".into());
-        }
-        Ok(total.usd)
+            },
+        )
+    }
+
+    fn strict_session_totals(&self) -> Result<DailyCostTotals, String> {
+        self.strict_cost_totals().map_err(|error| error.to_string())
     }
 
     /// Every row from the ledger, oldest first, for callers that need to
@@ -211,7 +264,17 @@ impl FinOpsLedger {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct DailyCostTotals(BTreeMap<chrono::NaiveDate, DailySpend>);
+#[serde(deny_unknown_fields)]
+struct DailyCostTotals {
+    #[serde(default)]
+    days: BTreeMap<chrono::NaiveDate, DailySpend>,
+    #[serde(default)]
+    sessions: BTreeMap<String, SessionSpend>,
+    #[serde(default)]
+    reservations: BTreeMap<String, SettledReservation>,
+    #[serde(default)]
+    unmapped_delegated: u64,
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct DailySpend {
@@ -219,6 +282,20 @@ struct DailySpend {
     usd: f64,
     #[serde(default)]
     unknown_calls: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct SessionSpend {
+    #[serde(default)]
+    usd: f64,
+    #[serde(default)]
+    unknown_calls: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SettledReservation {
+    session_id: String,
+    usd: Option<f64>,
 }
 
 fn valid_usd(usd: f64) -> bool {
@@ -300,12 +377,15 @@ struct DurableReservation {
     created_at: chrono::DateTime<chrono::Utc>,
     day: chrono::NaiveDate,
     estimate_usd: Option<f64>,
+    #[serde(default)]
+    budget_session_id: String,
     trace: Option<vak_session::trace::TraceKey>,
     actor: Option<vak_session::ids::PrincipalId>,
 }
 
 struct SpendReservation {
     estimated_usd: Option<f64>,
+    budget_session_id: String,
     trace: Option<vak_session::trace::TraceKey>,
     actor: Option<vak_session::ids::PrincipalId>,
     terminal: bool,
@@ -320,6 +400,8 @@ struct CostSettlement<'a> {
     usd: Option<f64>,
     trace: Option<vak_session::trace::TraceKey>,
     actor: Option<vak_session::ids::PrincipalId>,
+    reservation_id: Option<String>,
+    budget_session_id: Option<String>,
 }
 
 impl DayBudget {
@@ -377,6 +459,7 @@ pub struct CoreSpendGate {
     day_budget: Arc<Mutex<DayBudget>>,
     /// The trace of the turn now spending, stamped onto the rows it writes.
     trace: Mutex<Option<vak_session::trace::TraceKey>>,
+    budget_session_id: Mutex<Option<String>>,
 }
 
 impl CoreSpendGate {
@@ -403,6 +486,7 @@ impl CoreSpendGate {
         CoreSpendGate {
             ledger: FinOpsLedger::new(sessions_home),
             trace: Mutex::new(None),
+            budget_session_id: Mutex::new(None),
             max_run_usd: Mutex::new(finops.max_run_usd),
             max_day_usd: Mutex::new(finops.max_day_usd),
             overrides: Mutex::new(finops.price_overrides.clone()),
@@ -414,6 +498,13 @@ impl CoreSpendGate {
             raised_once: AtomicBool::new(false),
             day_budget,
         }
+    }
+
+    pub(crate) fn bind_budget_session(&self, session_id: &str) {
+        *self
+            .budget_session_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session_id.to_string());
     }
 
     /// Pick up a live `PATCH /finops` cap change on a gate that is being
@@ -505,7 +596,7 @@ impl CoreSpendGate {
             .day_budget
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let run_spent = self
+        let run_spent = *self
             .run_spent_usd
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -514,6 +605,9 @@ impl CoreSpendGate {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let run_cap_enabled = max_run.is_some() && !self.raised_once.load(Ordering::SeqCst);
+        // The verified ledger is the durable authority. Keep local failed-
+        // write liabilities conservative too, including when both durable
+        // settlement writes failed and the store becomes writable again.
         if let Some(cap) = max_run.filter(|_| run_cap_enabled) {
             let unknown = *self
                 .run_unknown_reservations
@@ -525,27 +619,49 @@ impl CoreSpendGate {
                 ));
             }
             let estimate = estimate.unwrap_or_default();
-            if *run_spent + *run_reserved + estimate > cap {
+            if run_spent + *run_reserved + estimate > cap {
                 return Err(format!(
-                    "run budget ${cap:.2} would be exceeded by this dispatch (+${estimate:.2}, ${:.2} spent and ${:.2} reserved)",
-                    *run_spent, *run_reserved
+                    "run budget ${cap:.2} would be exceeded by this dispatch (+${estimate:.2}, ${run_spent:.2} spent and ${:.2} reserved)",
+                    *run_reserved
                 ));
             }
         }
         let id = SpendReservationId::new();
         let trace = check.trace.cloned().or_else(|| self.current_trace().0);
         let actor = trace.as_ref().and_then(|trace| trace.actor);
-        if let Err(error) = self.reserve_durable(id, estimate, trace.clone(), actor, now, max_day) {
+        let budget_session_id = self
+            .budget_session_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap_or_else(|| check.session_id.to_string());
+        if let Err(error) = self.reserve_durable(
+            DurableReservation {
+                id: id.as_str(),
+                created_at: now,
+                day: now.date_naive(),
+                estimate_usd: estimate,
+                budget_session_id: budget_session_id.clone(),
+                trace: trace.clone(),
+                actor,
+            },
+            max_day,
+            max_run.filter(|_| run_cap_enabled),
+        ) {
             let history_unverified = error == "cost history could not be verified";
-            let budget_limit =
-                error.starts_with("day budget ") || error.starts_with("cannot enforce day budget ");
+            let budget_limit = error.starts_with("day budget ")
+                || error.starts_with("cannot enforce day budget ")
+                || error.starts_with("run budget ")
+                || error.starts_with("cannot enforce run budget ");
             tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error.clone())), "durable budget admission failed");
             if budget_limit {
                 // These messages are assembled only from the configured cap
                 // and measured amounts inside this module.
                 return Err(error);
             }
-            if max_day.is_some() && history_unverified {
+            if (max_day.is_some() || max_run.filter(|_| run_cap_enabled).is_some())
+                && history_unverified
+            {
                 return Err("cannot enforce day budget: cost history could not be verified; dispatch denied".into());
             }
             return Err("cannot enforce budget: durable reservation could not be verified or saved; dispatch denied".into());
@@ -557,6 +673,7 @@ impl CoreSpendGate {
                 id,
                 SpendReservation {
                     estimated_usd: estimate,
+                    budget_session_id: budget_session_id.clone(),
                     trace,
                     actor,
                     terminal: false,
@@ -599,25 +716,17 @@ impl CoreSpendGate {
 
     fn reserve_durable(
         &self,
-        id: SpendReservationId,
-        estimate_usd: Option<f64>,
-        trace: Option<vak_session::trace::TraceKey>,
-        actor: Option<vak_session::ids::PrincipalId>,
-        now: chrono::DateTime<chrono::Utc>,
+        record: DurableReservation,
         day_cap: Option<f64>,
+        run_cap: Option<f64>,
     ) -> Result<(), String> {
+        let estimate_usd = record.estimate_usd;
         if estimate_usd.is_some_and(|usd| !valid_usd(usd)) {
             return Err("cannot enforce budget: estimated cost is invalid".into());
         }
-        let id_text = id.as_str();
-        let record = DurableReservation {
-            id: id_text.clone(),
-            created_at: now,
-            day: now.date_naive(),
-            estimate_usd,
-            trace,
-            actor,
-        };
+        let now = record.created_at;
+        let budget_session_id = record.budget_session_id.as_str();
+        let id_text = record.id.clone();
         vak_session::documents::update(&self.ledger.reservations_path, |current| {
             let mut state = match current {
                 Some(raw) => serde_json::from_str::<DurableReservations>(raw)
@@ -635,10 +744,27 @@ impl CoreSpendGate {
             }
             // Every CAS retry reaches this closure again, so both the strict
             // cost history and the full unresolved liability set are fresh.
-            let total = if day_cap.is_some() {
-                self.ledger
-                    .strict_day_total_usd(now)
-                    .map_err(|_| "cost history could not be verified".to_string())?
+            let totals = if day_cap.is_some() || run_cap.is_some() {
+                Some(
+                    self.ledger
+                        .strict_session_totals()
+                        .map_err(|_| "cost history could not be verified".to_string())?,
+                )
+            } else {
+                None
+            };
+            let total = if let Some(_cap) = day_cap {
+                let day = totals
+                    .as_ref()
+                    .and_then(|totals| totals.days.get(&now.date_naive()))
+                    .cloned()
+                    .unwrap_or_default();
+                if day.unknown_calls > 0 {
+                    return Err(
+                        "cannot enforce day budget: current day contains unpriced cost rows".into(),
+                    );
+                }
+                day.usd
             } else {
                 0.0
             };
@@ -656,7 +782,27 @@ impl CoreSpendGate {
                 if !valid_usd(amount) {
                     return Err("durable budget reservations contain an invalid estimate".into());
                 }
-                reserved += amount;
+                if let Some(row) = totals
+                    .as_ref()
+                    .and_then(|totals| totals.reservations.get(&entry.id))
+                {
+                    if row.usd.is_none() {
+                        if day_cap.is_some() {
+                            return Err(
+                                "cannot enforce day budget: a settled call has unknown pricing"
+                                    .into(),
+                            );
+                        }
+                    } else {
+                        // A row appended before the reservation Document was
+                        // settled is already in `total`; retain only any
+                        // estimate excess so the liability is max(estimate,
+                        // actual), never their sum.
+                        reserved += (amount - row.usd.unwrap_or_default()).max(0.0);
+                    }
+                } else {
+                    reserved += amount;
+                }
             }
             if !reserved.is_finite() {
                 return Err("durable budget reservation total is invalid".into());
@@ -672,6 +818,79 @@ impl CoreSpendGate {
                     return Err(format!(
                         "day budget ${cap:.2} would be exceeded by this dispatch (+${estimate:.2}, ${:.2} spent or reserved)",
                         total + reserved
+                    ));
+                }
+            }
+            if let Some(cap) = run_cap {
+                let Some(totals) = totals.as_ref() else {
+                    return Err("cost history could not be verified".into());
+                };
+                if totals.unmapped_delegated > 0 {
+                    return Err("cannot enforce run budget: historical delegated spend cannot be attributed to this session".into());
+                }
+                let history = totals
+                    .sessions
+                    .get(budget_session_id)
+                    .cloned()
+                    .unwrap_or_default();
+                if history.unknown_calls > 0 {
+                    return Err(format!(
+                        "cannot enforce run budget ${cap:.2}: this session has unknown settled spend"
+                    ));
+                }
+                if state
+                    .reservations
+                    .iter()
+                    .any(|entry| entry.budget_session_id.is_empty())
+                {
+                    return Err(format!(
+                        "cannot enforce run budget ${cap:.2}: an unsettled legacy reservation has no session attribution"
+                    ));
+                }
+                let settled = history.usd;
+                let mut run_reserved = 0.0;
+                for entry in state
+                    .reservations
+                    .iter()
+                    .filter(|entry| entry.budget_session_id == budget_session_id)
+                {
+                    let Some(amount) = entry.estimate_usd else {
+                        return Err(format!(
+                            "cannot enforce run budget ${cap:.2}: an unsettled call has unknown pricing"
+                        ));
+                    };
+                    if !valid_usd(amount) {
+                        return Err("durable budget reservation total is invalid".into());
+                    }
+                    if let Some(row) = totals.reservations.get(&entry.id) {
+                        if row.session_id != budget_session_id {
+                            return Err(
+                                "reservation settlement is attributed to another budget session"
+                                    .into(),
+                            );
+                        }
+                        if row.usd.is_none() {
+                            return Err(format!(
+                                "cannot enforce run budget ${cap:.2}: this session has unknown settled spend"
+                            ));
+                        }
+                        // The rollup total already contains this actual row;
+                        // retain any estimate excess to protect the larger
+                        // of estimated and actual cost across a crash.
+                        run_reserved += (amount - row.usd.unwrap_or_default()).max(0.0);
+                        continue;
+                    }
+                    run_reserved += amount;
+                }
+                let Some(estimate) = estimate_usd else {
+                    return Err(format!(
+                        "cannot enforce run budget ${cap:.2}: this call has unknown pricing"
+                    ));
+                };
+                let projected = settled + run_reserved + estimate;
+                if !valid_usd(projected) || projected > cap {
+                    return Err(format!(
+                        "run budget ${cap:.2} would be exceeded by this dispatch (+${estimate:.2}, ${settled:.2} spent and ${run_reserved:.2} reserved)"
                     ));
                 }
             }
@@ -736,6 +955,36 @@ impl CoreSpendGate {
         Ok(())
     }
 
+    fn settle_durable(&self, id: SpendReservationId, actual: Option<f64>) -> Result<(), String> {
+        let id_text = id.as_str();
+        vak_session::documents::update(&self.ledger.reservations_path, |current| {
+            let Some(current) = current else {
+                return Err("durable budget reservations are missing".into());
+            };
+            let mut state: DurableReservations = serde_json::from_str(current)
+                .map_err(|_| "durable budget reservations are unreadable".to_string())?;
+            if state.schema != 1 {
+                return Err("durable budget reservations have an unsupported schema".into());
+            }
+            let Some(_reservation) = state
+                .reservations
+                .iter()
+                .find(|entry| entry.id == id_text)
+                .cloned()
+            else {
+                return Err("durable budget reservation is missing".into());
+            };
+            if actual.is_some_and(|usd| !valid_usd(usd)) {
+                return Err("settled cost is invalid".into());
+            }
+            state.reservations.retain(|entry| entry.id != id_text);
+            let next = serde_json::to_string(&state)
+                .map_err(|_| "durable budget reservations could not be encoded".to_string())?;
+            Ok(Some((next, ())))
+        })?;
+        Ok(())
+    }
+
     fn append_settled_row(&self, settlement: &CostSettlement<'_>) -> Result<(), std::io::Error> {
         let row = CostRow {
             ts: chrono::Utc::now(),
@@ -749,6 +998,8 @@ impl CoreSpendGate {
             session_id: settlement.session_id.to_string(),
             trace: settlement.trace.clone(),
             actor: settlement.actor,
+            reservation_id: settlement.reservation_id.clone(),
+            budget_session_id: settlement.budget_session_id.clone(),
         };
         self.ledger.append(&row)?;
         let _ = ActivityLedger::new(
@@ -819,6 +1070,7 @@ impl SpendGate for CoreSpendGate {
         let actual = self.estimate(model, usage).filter(|usd| valid_usd(*usd));
         let trace = reservation.trace.clone();
         let actor = reservation.actor;
+        let budget_session_id = reservation.budget_session_id.clone();
         let appended = self.append_settled_row(&CostSettlement {
             provider,
             model,
@@ -828,13 +1080,20 @@ impl SpendGate for CoreSpendGate {
             usd: actual,
             trace,
             actor,
+            reservation_id: Some(id.as_str().to_string()),
+            budget_session_id: Some(budget_session_id),
         });
-        let retain = actual.is_none() || appended.is_err();
+        let durable_settled = appended.is_ok() && self.settle_durable(id, actual).is_ok();
+        let retain = !durable_settled;
         if retain {
             let retained = match (estimated, actual) {
                 (Some(estimate), Some(actual)) => Some(estimate.max(actual)),
                 (None, Some(actual)) => Some(actual),
-                (estimate, None) => estimate,
+                // Unknown settlement is durable unknown, even if an estimate
+                // existed at admission. Keep the in-memory estimate below as
+                // a conservative current-process check, but do not let a
+                // restart mistake the stale estimate for a settled amount.
+                (_, None) => None,
             };
             reservation.estimated_usd = retained;
             reservation.terminal = true;
@@ -863,22 +1122,10 @@ impl SpendGate for CoreSpendGate {
                 }
                 _ => {}
             }
-            if appended.is_ok()
-                && let Err(error) = self.remove_durable(id)
+            if (appended.is_err() || !durable_settled)
+                && let Err(error) = self.update_durable_estimate(id, retained)
             {
-                tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "durable budget reservation release failed");
-            }
-            if actual.is_none() && appended.is_ok() {
-                // The durable unpriced row protects today's day cap through
-                // the strict rollup. Keep only the aggregate run unknown
-                // liability in memory.
-                reservations.remove(&id);
-            } else {
-                if appended.is_err()
-                    && let Err(error) = self.update_durable_estimate(id, retained)
-                {
-                    tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "durable budget reservation update failed");
-                }
+                tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "durable budget reservation update failed");
             }
             if let Err(error) = appended {
                 tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the cost ledger append failed");
@@ -903,9 +1150,6 @@ impl SpendGate for CoreSpendGate {
             .run_spent_usd
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) += actual;
-        if let Err(error) = self.remove_durable(id) {
-            tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "durable budget reservation release failed");
-        }
         reservations.remove(&id);
     }
 
@@ -993,6 +1237,12 @@ impl SpendGate for CoreSpendGate {
             .day_budget
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let budget_session_id = self
+            .budget_session_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap_or_else(|| session_id.to_string());
         if let Err(error) = self.append_settled_row(&CostSettlement {
             provider,
             model,
@@ -1002,12 +1252,25 @@ impl SpendGate for CoreSpendGate {
             usd,
             trace: trace.clone(),
             actor,
+            reservation_id: None,
+            budget_session_id: Some(budget_session_id.clone()),
         }) {
             tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the cost ledger append failed");
             let id = SpendReservationId::new();
-            if let Err(error) =
-                self.reserve_durable(id, usd, trace, actor, chrono::Utc::now(), None)
-            {
+            let now = chrono::Utc::now();
+            if let Err(error) = self.reserve_durable(
+                DurableReservation {
+                    id: id.as_str(),
+                    created_at: now,
+                    day: now.date_naive(),
+                    estimate_usd: usd,
+                    budget_session_id,
+                    trace,
+                    actor,
+                },
+                None,
+                None,
+            ) {
                 tracing::warn!(error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)), "durable settled-cost liability could not be saved");
             }
             if let Some(usd) = usd {
@@ -1021,16 +1284,18 @@ impl SpendGate for CoreSpendGate {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
             }
-        } else if let Some(usd) = usd {
-            *self
-                .run_spent_usd
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) += usd;
         } else {
-            *self
-                .run_unknown_reservations
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
+            if let Some(usd) = usd {
+                *self
+                    .run_spent_usd
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) += usd;
+            } else {
+                *self
+                    .run_unknown_reservations
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
+            }
         }
     }
 }
@@ -1212,6 +1477,244 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn durable_session_spend_survives_gate_reopen_and_isolation() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_run_usd: Some(5.0),
+            ..Default::default()
+        };
+        let check = check("claude-sonnet");
+        let first = CoreSpendGate::new(dir.path(), &finops);
+        first.bind_budget_session("session-a");
+        let id = first.reserve_dispatch(&check).await.unwrap().unwrap();
+        first.settle_dispatch(
+            id,
+            "anthropic",
+            "claude-sonnet",
+            "s1",
+            &usage(1_000_000, 100_000),
+            1,
+        );
+        drop(first);
+
+        let reopened = CoreSpendGate::new(dir.path(), &finops);
+        reopened.bind_budget_session("session-a");
+        assert!(
+            reopened.reserve_dispatch(&check).await.is_err(),
+            "settled session spend survives process/gate loss"
+        );
+
+        let other_session = CoreSpendGate::new(dir.path(), &finops);
+        other_session.bind_budget_session("session-b");
+        assert!(
+            other_session
+                .reserve_dispatch(&check)
+                .await
+                .unwrap()
+                .is_some(),
+            "one session's lifetime total does not charge another"
+        );
+    }
+
+    #[tokio::test]
+    async fn durable_session_cap_serializes_independent_gates() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_run_usd: Some(5.0),
+            ..Default::default()
+        };
+        let first = Arc::new(CoreSpendGate::new(dir.path(), &finops));
+        let second = Arc::new(CoreSpendGate::new(dir.path(), &finops));
+        first.bind_budget_session("same-session");
+        second.bind_budget_session("same-session");
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let a = first.clone();
+        let a_barrier = barrier.clone();
+        let handle = tokio::runtime::Handle::current();
+        let first_task = tokio::task::spawn_blocking(move || {
+            a_barrier.wait();
+            handle.block_on(a.reserve_dispatch(&check("claude-sonnet")))
+        });
+        let b = second.clone();
+        let handle = tokio::runtime::Handle::current();
+        let second_task = tokio::task::spawn_blocking(move || {
+            barrier.wait();
+            handle.block_on(b.reserve_dispatch(&check("claude-sonnet")))
+        });
+        let results = tokio::join!(first_task, second_task);
+        let a = results.0.unwrap();
+        let b = results.1.unwrap();
+        assert_ne!(
+            a.is_ok(),
+            b.is_ok(),
+            "only one concurrent CAS admission can fit the cap: {a:?}, {b:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn child_trace_is_preserved_and_admission_session_owns_settlement() {
+        use vak_session::ids::{AgentId, SpaceId, TenantId};
+        use vak_session::trace::{Cause, TraceKey};
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_run_usd: Some(5.0),
+            ..Default::default()
+        };
+        let gate = CoreSpendGate::new(dir.path(), &finops);
+        let child_trace = TraceKey::root(
+            TenantId::new(),
+            SpaceId::new(),
+            AgentId::new(),
+            Cause::Heartbeat,
+        )
+        .child();
+        let child_check = SpendCheck {
+            session_id: "admitted-session",
+            trace: Some(&child_trace),
+            ..check("claude-sonnet")
+        };
+        let id = gate.reserve_dispatch(&child_check).await.unwrap().unwrap();
+        gate.settle_dispatch(
+            id,
+            "anthropic",
+            "claude-sonnet",
+            "reported-session",
+            &usage(1_000_000, 100_000),
+            1,
+        );
+        let rows = gate.ledger.all_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].session_id, "reported-session");
+        assert_eq!(rows[0].trace.as_ref(), Some(&child_trace));
+        assert_eq!(
+            rows[0].budget_session_id.as_deref(),
+            Some("admitted-session")
+        );
+        assert!(rows[0].reservation_id.is_some());
+        drop(gate);
+        let reopened = CoreSpendGate::new(dir.path(), &finops);
+        reopened.bind_budget_session("admitted-session");
+        assert!(
+            reopened
+                .reserve_dispatch(&check("claude-sonnet"))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_reservation_rows_do_not_silently_discount_paid_dispatches() {
+        let dir = tempdir().unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        let mut row = row_on(chrono::Utc::now().date_naive(), Some(1.0));
+        row.reservation_id = Some(SpendReservationId::new().as_str());
+        row.budget_session_id = Some("session".into());
+        ledger.append(&row).unwrap();
+        ledger.append(&row).unwrap();
+        let gate = CoreSpendGate::new(
+            dir.path(),
+            &vak_config::FinopsResolved {
+                max_day_usd: Some(100.0),
+                ..Default::default()
+            },
+        );
+        assert!(
+            gate.reserve_dispatch(&check("claude-sonnet"))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_rollup_cache_is_rebuilt_before_budget_admission() {
+        let dir = tempdir().unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        ledger
+            .append(&row_on(chrono::Utc::now().date_naive(), Some(2.0)))
+            .unwrap();
+        // Simulate the prior verified cache shape: a bare date map inside Stored<S>.
+        Rollup::new(&ledger.path, &ledger.rollup_path)
+            .try_read(|state: &mut BTreeMap<chrono::NaiveDate, f64>, bytes| {
+                if let Ok(row) = serde_json::from_slice::<CostRow>(bytes) {
+                    *state.entry(row.ts.date_naive()).or_default() += row.usd.unwrap_or_default();
+                }
+                Ok(())
+            })
+            .unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_day_usd: Some(5.0),
+            ..Default::default()
+        };
+        let error = CoreSpendGate::new(dir.path(), &finops)
+            .reserve_dispatch(&check("claude-sonnet"))
+            .await
+            .expect_err("legacy date map cannot decode as the new strict totals");
+        assert!(
+            error.contains("day budget"),
+            "the cache was rebuilt from the two-dollar cost row: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn appended_actual_keeps_any_larger_pending_estimate_by_reservation_id() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_run_usd: Some(5.0),
+            ..Default::default()
+        };
+        let first = CoreSpendGate::new(dir.path(), &finops);
+        first.bind_budget_session("session-a");
+        let pending_check = check("claude-sonnet");
+        let id = first
+            .reserve_dispatch(&pending_check)
+            .await
+            .unwrap()
+            .unwrap();
+        let estimate = first
+            .estimate("claude-sonnet", &usage(1_000_000, 100_000))
+            .unwrap();
+        assert!(estimate > 4.0);
+        // Simulate a crash after appending actual usage but before the durable
+        // reservation is removed. Actual is below the reservation estimate.
+        first
+            .ledger
+            .append(&CostRow {
+                ts: chrono::Utc::now(),
+                model: "claude-sonnet".into(),
+                provider: "anthropic".into(),
+                input_tokens: 1_000_000,
+                output_tokens: 100_000,
+                cache_read_input_tokens: None,
+                usd: Some(3.0),
+                source: "estimated".into(),
+                session_id: "s1".into(),
+                reservation_id: Some(id.as_str().to_string()),
+                budget_session_id: Some("session-a".into()),
+                trace: None,
+                actor: None,
+            })
+            .unwrap();
+        drop(first);
+
+        let reopened_finops = vak_config::FinopsResolved {
+            max_run_usd: Some(4.0),
+            ..Default::default()
+        };
+        let reopened = CoreSpendGate::new(dir.path(), &reopened_finops);
+        reopened.bind_budget_session("session-a");
+        let small = SpendCheck {
+            est_input_tokens: 100_000,
+            planned_output_tokens: 0,
+            ..check("claude-sonnet")
+        };
+        let error = reopened
+            .reserve_dispatch(&small)
+            .await
+            .expect_err("the unresolved estimate excess remains charged");
+        assert!(error.contains("run budget"), "{error}");
+    }
+
+    #[tokio::test]
     async fn definite_release_frees_durable_day_reservation() {
         let dir = tempdir().unwrap();
         let finops = vak_config::FinopsResolved {
@@ -1264,6 +1767,42 @@ mod tests {
             gate.reserve_dispatch(&check("claude-sonnet"))
                 .await
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_reservation_without_budget_session_blocks_run_cap() {
+        let dir = tempdir().unwrap();
+        let path = vak_config::scope::SharedScope::new(dir.path()).cost_reservations();
+        vak_session::documents::update(&path, |_| {
+            Ok(Some((
+                serde_json::json!({
+                    "schema": 1,
+                    "reservations": [{
+                        "id": "legacy-reservation",
+                        "created_at": chrono::Utc::now(),
+                        "day": chrono::Utc::now().date_naive(),
+                        "estimate_usd": 0.01,
+                        "trace": null,
+                        "actor": null
+                    }]
+                })
+                .to_string(),
+                (),
+            )))
+        })
+        .unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_run_usd: Some(5.0),
+            ..Default::default()
+        };
+        let error = CoreSpendGate::new(dir.path(), &finops)
+            .reserve_dispatch(&check("claude-sonnet"))
+            .await
+            .expect_err("a pre-attribution unresolved reservation cannot be ignored");
+        assert!(
+            error.contains("legacy reservation has no session attribution"),
+            "{error}"
         );
     }
 
@@ -1343,6 +1882,8 @@ mod tests {
                 usd: Some(2.0),
                 source: "estimated".into(),
                 session_id: "seed".into(),
+                reservation_id: None,
+                budget_session_id: None,
                 trace: None,
                 actor: None,
             })
@@ -1368,6 +1909,8 @@ mod tests {
                 usd: Some(99.0),
                 source: "estimated".into(),
                 session_id: "old".into(),
+                reservation_id: None,
+                budget_session_id: None,
                 trace: None,
                 actor: None,
             })
@@ -1386,6 +1929,8 @@ mod tests {
             usd,
             source: "estimated".into(),
             session_id: "s".into(),
+            reservation_id: None,
+            budget_session_id: None,
             trace: None,
             actor: None,
         }
@@ -1438,6 +1983,8 @@ mod tests {
             usd,
             source: "estimated".into(),
             session_id: "s".into(),
+            reservation_id: None,
+            budget_session_id: None,
             trace: trace.cloned(),
             actor: None,
         };
@@ -1727,7 +2274,7 @@ mod tests {
             .reserve_dispatch(&check("claude-sonnet"))
             .await
             .expect_err("unpriced spend cannot be treated as zero under a new day cap");
-        assert!(error.contains("history could not be verified"), "{error}");
+        assert!(error.contains("budget"), "{error}");
     }
 
     #[tokio::test]
@@ -1968,7 +2515,7 @@ mod tests {
             .reserve_dispatch(&check("mystery-model"))
             .await
             .expect_err("unknown settlement must remain visible under the enabled run cap");
-        assert!(error.contains("active call has unknown pricing"), "{error}");
+        assert!(error.contains("unknown settled spend"), "{error}");
     }
 
     #[tokio::test]
@@ -2003,7 +2550,7 @@ mod tests {
         let today_error = gate
             .admit_at(&check("claude-sonnet"), chrono::Utc::now())
             .expect_err("today's unpriced row remains unknown spend");
-        assert!(today_error.contains("history could not be verified"));
+        assert!(today_error.contains("budget"));
 
         let tomorrow = chrono::Utc::now() + chrono::Duration::days(1);
         assert!(gate.admit_at(&check("claude-sonnet"), tomorrow).is_ok());
@@ -2048,6 +2595,51 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn failed_unknown_settlement_persists_unknown_liability_across_reopen() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_run_usd: Some(5.0),
+            ..Default::default()
+        };
+        let gate = CoreSpendGate::new(dir.path(), &finops);
+        gate.bind_budget_session("session-a");
+        let id = gate
+            .reserve_dispatch(&check("claude-sonnet"))
+            .await
+            .unwrap()
+            .unwrap();
+        let cost_path = gate.ledger.path.clone();
+        let _ = std::fs::remove_dir_all(&cost_path);
+        std::fs::write(&cost_path, "occupied").unwrap();
+        gate.settle_dispatch(
+            id,
+            "anthropic",
+            "mystery-model",
+            "s1",
+            &usage(1_000_000, 100_000),
+            0,
+        );
+        assert_eq!(
+            durable_reservations(dir.path())
+                .reservations
+                .iter()
+                .find(|row| row.id == id.as_str())
+                .and_then(|row| row.estimate_usd),
+            None
+        );
+        drop(gate);
+
+        std::fs::remove_file(&cost_path).unwrap();
+        let reopened = CoreSpendGate::new(dir.path(), &finops);
+        reopened.bind_budget_session("session-a");
+        let error = reopened
+            .reserve_dispatch(&check("claude-sonnet"))
+            .await
+            .expect_err("unknown settlement remains fail-closed after restart");
+        assert!(error.contains("unknown pricing"), "{error}");
     }
 
     /// `record_settled` releases a dispatch's reservation and folds the

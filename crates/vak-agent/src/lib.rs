@@ -3311,10 +3311,14 @@ impl Agent {
                     .filter_map(|id| pending.remove_entry(id))
                     .collect()
             };
+            if let Err(error) = self
+                .record_call_effects(&call_issue_order, &mut yields)
+                .await
+            {
+                return nudge_write_failed(error);
+            }
             let imported_cards = self
                 .record_delegated_cards(&call_issue_order, &mut yields, &mut results)
-                .await;
-            self.record_call_effects(&call_issue_order, &mut yields)
                 .await;
             cards_emitted_this_run |= !imported_cards.is_empty();
             card_answers.extend(imported_cards.into_iter().map(|_| None));
@@ -3457,15 +3461,6 @@ impl Agent {
 
             {
                 let mut session = self.session.lock().await;
-                // What a connected account returned is kept under that
-                // account's key, in the message and in its whole body.
-                for (id, yielded) in yields.iter() {
-                    for effect in &yielded.effects {
-                        if let vak_session::types::CallEffect::Account { account } = effect {
-                            session.result_from_account(id, account);
-                        }
-                    }
-                }
                 // Where each failed call's fault lay, as a typed record
                 // written before the results it describes and committed
                 // with them: nothing later reads a fault back from a
@@ -3631,7 +3626,7 @@ impl Agent {
         &self,
         call_issue_order: &[String],
         yields: &mut HashMap<String, CallYield>,
-    ) {
+    ) -> Result<(), vak_session::SessionError> {
         let mut session = self.session.lock().await;
         for id in call_issue_order {
             let Some(yielded) = yields.get_mut(id) else {
@@ -3641,16 +3636,18 @@ impl Agent {
                 if let vak_session::types::CallEffect::Provenance(labels) = effect {
                     self.note_held(&yielded.tool, labels);
                 }
-                if let Err(error) =
-                    session.append_call_effect(vak_session::types::CallEffectRecord {
-                        tool_use_id: id.clone(),
-                        effect,
-                    })
-                {
-                    tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a call effect was not recorded");
+                if let vak_session::types::CallEffect::Account { account } = &effect {
+                    // Register before draining the effects: both the result
+                    // window and its full body must use the account key.
+                    session.result_from_account(id, account);
                 }
+                session.append_call_effect(vak_session::types::CallEffectRecord {
+                    tool_use_id: id.clone(),
+                    effect,
+                })?;
             }
         }
+        Ok(())
     }
 
     /// Records the cards each delegated run in this batch showed (a `task`
@@ -8502,12 +8499,13 @@ async fn execute_one(
             let output = match res {
                 Ok(out) => {
                     let mut effects = Vec::new();
+                    // Provider errors can contain account data too.
+                    if let Some(account) = out.account.clone() {
+                        effects.push(vak_session::types::CallEffect::Account { account });
+                    }
                     if !out.is_error() {
                         if let Some(source) = out.mcp_source.clone() {
                             effects.push(vak_session::types::CallEffect::Mcp(source));
-                        }
-                        if let Some(account) = out.account.clone() {
-                            effects.push(vak_session::types::CallEffect::Account { account });
                         }
                         if let Some((access, path)) = file_access {
                             effects.push(file_effect(cwd, access, path).await);

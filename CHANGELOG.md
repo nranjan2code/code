@@ -1,5 +1,13 @@
 ## Unreleased
 
+- Session spend limits survive gate recreation and restart, include delegated
+  calls, and coordinate concurrent admissions. Settlement IDs reconcile
+  recorded costs with pending reservations; unknown costs stay conservative.
+
+- Connected-account tool results, including provider errors, keep both their
+  displayed text and full evidence under the account scope. Failed call-effect
+  recording stops the turn before it continues.
+
 - Library lists, file cards and version comparisons report unreadable history
   or workspace files instead of silently showing missing or incomplete state.
 

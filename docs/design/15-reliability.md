@@ -14,8 +14,11 @@ runtime publishes their changed contract; an append failure preserves the
 previous runtime contract. Abort preserves partial output even when its
 append fails and adds a visible persistence-failure marker. Failed fence-card
 appends refuse successful delivery. A failed child terminal record returns an
-error with partial output and withholds its cards. Other causal writes remain
-under the hardening plan's A03 audit.
+error with partial output and withholds its cards. Call effects must also be recorded before the next model request or delegated
+card import; a failure stops the turn. Account attribution is registered before
+effect queues are drained so both result windows and complete evidence bodies
+use the account scope, including provider error results. Other causal writes
+remain under the hardening plan's A03 audit.
 
 Incremental compaction drops its session lock before recording a failed
 write diagnostic, since activity recording takes that same lock. A write
@@ -23,23 +26,31 @@ failure cannot hold the turn waiting on its own lock (hardening A03/A06).
 
 ## Verified budget admission
 
-Day-cap admission reads a verified daily cost rollup; malformed history or
-an unpriced settled call on the current UTC day denies paid dispatch. A
-settlement appends its cost row before releasing its reservation. Failed
-appends retain the unresolved liability, including across UTC rollover.
-Active reservations and known run spend are tracked even before a cap is
-enabled. Successfully recorded unpriced calls retain an unknown run total;
-their daily ledger row protects that day without retaining a per-call marker
-forever. Reservations capture their trace and actor at admission. Each dispatch
-supplies its own trace, including child dispatches through a parent's shared
-gate, so concurrent workers do not inherit a mutable later gate trace.
-The shared budget counters and pending reservations remain shared.
+Budget admission reads a verified cost rollup and reserves through a fenced
+shared Document CAS. Day totals and unresolved reservations survive restart
+and coordinate independent gates. The existing `max_run_usd` policy remains
+session lifetime across turns and delegated children; the cached gate binds
+its owning session and each admission captures that owner immutably. Actual
+child session and trace stay unchanged in the cost row. Recreating the gate
+does not reset settled spend. This does not introduce a RunId-tree call cap.
 
-Approving a run-cap increase still requires a successful second admission;
-a remaining day-cap or history error stops before provider dispatch.
-Reservations are shared within this process, not durable across restart or
-coordinated across processes. Read-only cost summaries remain tolerant;
-this change does not make every financial reader authoritative.
+A settlement appends its cost row before removing the reservation. An exact
+reservation id correlates appended rows with surviving pending reservations,
+counting the larger estimate or actual once after a crash. Duplicate settlement
+ids, malformed history, unknown prices and unattributed legacy liabilities
+refuse admission when a cap cannot be verified. Old rollup cache shapes rebuild
+from the verified ledger. Unknown settlements also survive UTC rollover for
+the session cap. Old delegated rows without budget ownership conservatively
+block session-cap admission; no attribution is invented.
+
+Approving a cap increase still requires successful second admission; day caps
+and history errors remain enforced. The existing process-local waiver lifetime
+is unchanged. Predispatch prices are estimates, so actual cost can exceed a
+reservation before settlement. If both the cost append and reservation update
+fail, the larger/unknown actual cannot be promised recoverable after a crash.
+Unmatched abandoned reservations are retained; no invented expiry clears them.
+Read-only financial summaries remain tolerant. The wider hardening plan stays
+open for owner reconciliation and an explicit aggregate model-call policy.
 
 ## Circuit probe ownership
 

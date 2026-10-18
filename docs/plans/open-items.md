@@ -53,8 +53,11 @@ overlapping fixes should close their original entries as well.
   settlement retains unresolved liabilities on failed writes. The full
   repository gate passes. Durable and cross-process pending reservation
   accounting now use a fenced shared reservation Document with independent
-  gate/restart/release/settlement tests. Durable run-wide accounting and owner
-  reconciliation of abandoned reservations remain open.
+  gate/restart/release/settlement tests. Session-lifetime cap accounting now
+  persists through the verified cost Rollup, with immutable child budget
+  ownership and exact reservation reconciliation (43 FinOps and nine Core
+  tests). An explicit RunId-tree/aggregate-call policy and owner reconciliation
+  of unmatched abandoned reservations remain open.
   Commitment decisions now use verified reads and propagate failures; the
   full repository gate passes. Credential presence updates serialize and fail
   conservatively on detected read errors. Crash-safe presence publication
@@ -69,7 +72,13 @@ overlapping fixes should close their original entries as well.
   dependent tool dispatch (A03), releases the compaction lock before
   diagnostics (A06), and routes unknown effects through conservative wave
   placement (A07). The full repository gate passes. A04 and the audit of other
-  mandatory causal writes remain open. Live outcome publication and steering
+  mandatory causal writes remain open. Required call effects now propagate
+  recording failures, and connected-account result windows/full bodies keep
+  their account scope for successes and errors; eleven provenance tests pass.
+  Pre-fix account results may retain only conversation-scope protection;
+  account-erasure reachability for those historical rows still needs audit.
+  Append-only frames are not rewritten by this repair.
+  Live outcome publication and steering
   now require successful recording; budget approval requires successful
   re-admission. The full repository gate passes. The next A04 slice inherits
   step defaults, protected paths and completion policy, and captures each

@@ -111,6 +111,7 @@ fn text(t: &str) -> AssistantMessage {
 }
 
 struct Scripted {
+    requests: Arc<AtomicUsize>,
     capacity_key: String,
     msgs: std::sync::Mutex<std::collections::VecDeque<AssistantMessage>>,
 }
@@ -128,6 +129,7 @@ impl Provider for Scripted {
         _request: vak_llm::types::ChatRequest,
         _cancel: CancellationToken,
     ) -> Result<vak_llm::EventStream, vak_llm::LlmError> {
+        self.requests.fetch_add(1, Ordering::SeqCst);
         let next = self.msgs.lock().unwrap().pop_front();
         let (mut sink, rx) = vak_llm::stream::channel(8);
         match next {
@@ -145,6 +147,7 @@ impl Provider for Scripted {
 }
 
 struct Setup {
+    requests: Arc<AtomicUsize>,
     agent: Agent,
     reads: Arc<AtomicUsize>,
     fetches: Arc<AtomicUsize>,
@@ -181,7 +184,9 @@ fn setup(
             prompt_layers: Vec::new(),
         },
     };
-    let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
+    let log = SessionLog::create(dir.path().join("s.jsonl"), header)
+        .unwrap()
+        .with_objects(Arc::new(vak_session::objects::MemoryObjects::default()));
     let reads = Arc::new(AtomicUsize::new(0));
     let fetches = Arc::new(AtomicUsize::new(0));
     let mut cfg = AgentConfig::new("sys");
@@ -209,11 +214,14 @@ fn setup(
     cfg.stop_policy = None;
     tune(&mut cfg);
     std::mem::forget(dir);
+    let requests = Arc::new(AtomicUsize::new(0));
     let provider = Scripted {
+        requests: requests.clone(),
         capacity_key: crate::support::capacity_key(),
         msgs: std::sync::Mutex::new(responses.into_iter().collect()),
     };
     Setup {
+        requests,
         agent: Agent::new(Arc::new(provider), log, cfg),
         reads,
         fetches,
@@ -447,4 +455,114 @@ async fn a_declined_tool_leaves_the_turn() {
     // The next turn offers it again, and its call reaches the person.
     run(&mut s.agent, "again").await;
     assert_eq!(approver.asked.lock().unwrap().len(), 2);
+}
+
+struct AccountResult {
+    failed: bool,
+}
+
+#[async_trait::async_trait]
+impl Tool for AccountResult {
+    fn name(&self) -> &str {
+        "account_result"
+    }
+    fn description(&self) -> &str {
+        "fixture connected account"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        let content = "private-provider-marker ".repeat(6000);
+        if self.failed {
+            ToolOutput::error(vak_tools::Fault::Tool, content)
+        } else {
+            ToolOutput::ok(content)
+        }
+        .from_account("fixture-account-sealing")
+    }
+}
+
+#[tokio::test]
+async fn connected_account_success_and_error_results_are_sealed_before_effects_are_drained() {
+    vak_config::paths::isolate_home_for_tests();
+    for failed in [false, true] {
+        let mut s = setup(
+            vec![call("account-call", "account_result"), text("done")],
+            recording(false, true),
+            |cfg| {
+                cfg.mode = Mode::FullAccess;
+                cfg.tools = vec![Arc::new(AccountResult { failed })];
+            },
+        );
+        let outcome = run(&mut s.agent, "read the fixture account").await;
+        assert!(
+            matches!(outcome, TurnOutcome::Completed { .. }),
+            "{outcome:?}"
+        );
+        let session = s.agent.session.lock().await;
+        let stored = SessionLog::text(session.path());
+        assert!(
+            stored.contains("account:fixture-account-sealing"),
+            "account scope must be recorded"
+        );
+        assert!(
+            !stored.contains("private-provider-marker"),
+            "neither result window nor full body may retain provider content under only the conversation key"
+        );
+        let evidence = session.evidence("account-call").unwrap();
+        assert_eq!(evidence.content, "private-provider-marker ".repeat(6000));
+        assert_eq!(evidence.is_error, failed);
+        assert!(
+            session.chain_to_root().iter().any(|entry| matches!(
+                &entry.payload, EntryPayload::EvidenceBody(body)
+                    if body.tool_use_id == "account-call"
+                    && body.scope.as_deref() == Some("account:fixture-account-sealing")
+            )),
+            "the full windowed body uses the same account scope"
+        );
+        assert!(session.chain_to_root().iter().any(|entry| matches!(
+            &entry.payload, EntryPayload::CallEffect(record)
+                if matches!(&record.effect, CallEffect::Account { account } if account == "fixture-account-sealing")
+        )));
+    }
+}
+
+struct RefuseEffectWrite {
+    session: Arc<tokio::sync::Mutex<SessionLog>>,
+}
+
+#[async_trait::async_trait]
+impl Tool for RefuseEffectWrite {
+    fn name(&self) -> &str {
+        "refuse_effect_write"
+    }
+    fn description(&self) -> &str {
+        "fixture effect-write failure"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        let mut session = self.session.lock().await;
+        *session = SessionLog::open_read_only(session.path().to_path_buf()).unwrap();
+        ToolOutput::ok("provider result").from_account("fixture-refused-effect")
+    }
+}
+
+#[tokio::test]
+async fn failed_effect_recording_stops_before_the_next_model_request() {
+    let mut s = setup(
+        vec![call("c1", "refuse_effect_write"), text("must not continue")],
+        recording(false, true),
+        |cfg| cfg.mode = Mode::FullAccess,
+    );
+    s.agent.config.tools = vec![Arc::new(RefuseEffectWrite {
+        session: s.agent.session.clone(),
+    })];
+    let outcome = run(&mut s.agent, "exercise the failed record").await;
+    assert!(matches!(outcome, TurnOutcome::Failed { .. }), "{outcome:?}");
+    assert_eq!(s.requests.load(Ordering::SeqCst), 1);
+    let session = s.agent.session.lock().await;
+    assert!(!SessionLog::text(session.path()).contains("must not continue"));
 }

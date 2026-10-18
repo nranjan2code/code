@@ -2969,6 +2969,7 @@ impl Core {
             &finops,
             day_budget,
         ));
+        gate.bind_budget_session(session_id);
         gates.insert(session_id.to_string(), gate.clone());
         gate
     }
@@ -11771,6 +11772,13 @@ mod spend_gate_persistence_tests {
             .await
             .expect_err("run cap must still reflect turn 1's spend on turn 2");
         assert!(err.contains("run budget $5.00"), "{err}");
+        core.forget_spend_gate("s1");
+        let reopened = core.spend_gate_for("s1");
+        let error = reopened
+            .authorize(&check("s1"))
+            .await
+            .expect_err("dropping the cached gate must not reset durable spend");
+        assert!(error.contains("run budget $5.00"), "{error}");
     }
 
     #[tokio::test]

@@ -579,6 +579,8 @@ async fn budget_alert_fires_once_per_window_then_stops() {
             usd: Some(9.0),
             source: "estimated".into(),
             session_id: "seed".into(),
+            reservation_id: None,
+            budget_session_id: None,
             trace: None,
             actor: None,
         })

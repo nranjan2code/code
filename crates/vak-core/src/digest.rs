@@ -225,6 +225,8 @@ mod tests {
             usd,
             source: "estimated".into(),
             session_id: sid.into(),
+            reservation_id: None,
+            budget_session_id: None,
             trace: None,
             actor: None,
         }

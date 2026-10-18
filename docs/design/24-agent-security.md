@@ -210,3 +210,11 @@ The patterns Vak takes from comparable systems:
   rename races, worktrees, malicious archives, localhost/metadata SSRF, DNS
   rebinding, approval replay, policy downgrade races, fork bombs, and output or
   disk exhaustion.
+
+## Connected-provider result recording
+
+A connected account owns both successful and failed tool-result content. The
+runtime registers its account scope before draining call effects, then seals
+the model-visible result window and any full evidence body under that scope.
+A failed effect append ends the turn before another model request or delegated
+card import; optional telemetry cannot substitute for the required record.

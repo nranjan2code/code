@@ -1120,3 +1120,54 @@ session, deduplicating only the repeated invocation. Five pure client scope
 tests pass, including multiple viewers, source failure/replacement, series
 fallback, final-owner cleanup and reconnect. These verify state and ledger
 behavior; mounted browser/reconnect acceptance remains open.
+
+### Required call effects and account-source sealing (2026-10-18)
+
+The causal audit found `record_call_effects` drained effects before result
+append code registered account sources. The runtime now registers sources
+while recording effects, including provider errors, before result windows or
+complete evidence bodies are written. Effects are required writes; failure
+stops before further model requests or delegated-card import. Eleven
+provenance integration tests pass. New tests check successful/error provider
+content is absent from rendered stored frames, full evidence stays readable
+and names the account scope, and an injected read-only ledger prevents the
+next provider request. Earlier stored results are not rewritten. Pre-fix account content may retain
+only conversation-scope protection; account-erasure reachability for those
+historical rows remains under audit. The wider A03 audit stays open.
+
+### Durable session-budget continuation (2026-10-18)
+
+The existing session-lifetime `max_run_usd` policy now survives gate recreation
+and process restart. `Core::spend_gate_for` binds the existing session id; each
+reservation captures it immutably. Child rows retain their real session/trace
+and record `budget_session_id` plus the existing UUIDv7 `reservation_id`.
+Admission checks verified session totals and durable pending reservations inside
+the shared Document CAS. The cost ledger and its Rollup remain the one source
+of settled totals; no second durable counter or invented work-root id exists.
+
+Exact settlement ids correlate a row appended before reservation cleanup,
+counting max(estimate, actual) once. Repeated settlement ids fail closed instead
+of silently discounting another paid dispatch. Unknown append failures persist
+an unknown reservation when that write succeeds. Legacy date-map caches rebuild;
+unknown legacy reservation owners and historical delegated rows without budget
+ownership refuse session-cap admission. No abandoned liability expires itself.
+
+Forty-three focused FinOps tests and nine Core persistence tests pass. They cover
+reopen, captured ownership despite a changed reported session, independent
+concurrent gates, unknown settlement restart, legacy cache shape, unapportioned
+legacy reservations and append-before-cleanup reconciliation. The Core test
+also forgets its actual cached gate and verifies the reopened gate still denies.
+This does not redefine limits as a RunId-tree cap or add an aggregate model-call
+limit. Waivers retain their existing process-local scope. Estimates cannot bound
+an actual price not yet settled; simultaneous append and reservation-write
+failure cannot promise durable recovery of the larger/unknown actual. Owner
+reconciliation of unmatched reservations and bounded Rollup growth remain open.
+
+Final integration: FinOps 43, Core persistence nine, provenance eleven, Library
+six and worker-card/window five tests pass; client scope five tests pass. Both
+client bundles rebuilt successfully (including the source-test manifest).
+Core/agent/server library Clippy passes with warnings denied. The server
+integration target compiles with all CostRow fixtures updated; its macOS linker
+emits the existing oversized unwind-section warning. Formatting, records,
+document paths, version consistency and diff checks pass. Full gate and manual
+browser acceptance remain waived/deferred as instructed. No release or install.

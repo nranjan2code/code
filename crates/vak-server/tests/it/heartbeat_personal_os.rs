@@ -293,6 +293,8 @@ async fn breached_day_cap_denies_the_dispatch_silently() {
                 usd: Some(5.0),
                 source: "estimated".into(),
                 session_id: "seed".into(),
+                reservation_id: None,
+                budget_session_id: None,
                 trace: None,
                 actor: None,
             })

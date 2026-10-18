@@ -540,6 +540,8 @@ async fn digest_reports_window_math_and_clamps_days() {
             usd: Some(0.25),
             source: "estimated".into(),
             session_id: "s-digest".into(),
+            reservation_id: None,
+            budget_session_id: None,
             trace: None,
             actor: None,
         })
@@ -594,6 +596,8 @@ async fn finops_projects_observed_tokens_and_activity_without_zeroing_unknown_co
         usd: None,
         source: "estimated".into(),
         session_id: "s-finops".into(),
+        reservation_id: None,
+        budget_session_id: None,
         trace: None,
         actor: None,
     })
@@ -649,6 +653,8 @@ async fn finops_reports_spend_per_agent_and_per_run() {
         usd: Some(usd),
         source: "estimated".into(),
         session_id: "s-roll".into(),
+        reservation_id: None,
+        budget_session_id: None,
         trace,
         actor: None,
     };
@@ -694,6 +700,8 @@ async fn finops_platform_scope_uses_shared_home_and_agent_scope_adds_private_hom
         usd: Some(usd),
         source: "estimated".into(),
         session_id: session_id.into(),
+        reservation_id: None,
+        budget_session_id: None,
         trace: None,
         actor: None,
     };
