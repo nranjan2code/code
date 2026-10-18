@@ -121,6 +121,13 @@ missing, or code changed since the last release with no CHANGELOG entry.
 Docs are kept, never deleted: a finished or replaced doc changes its status
 word, and a past section is marked `> **Historical record**`.
 
+The system blueprint (`docs/architecture/blueprint.html`) is generated
+from the tree by `scripts/blueprint.py` on every build, and
+`scripts/release.sh` refuses a release while it is stale. Commit it in a
+commit of its own, right after the change that moved its numbers. When the generator prints
+`needs review`, or a change makes a finding wrong, follow
+`docs/architecture/AGENTS.md`.
+
 ### What is authoritative
 
 **`64-agent-owned-platform.md` is the authoritative product model.** Agents own

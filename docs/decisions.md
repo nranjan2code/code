@@ -9,6 +9,16 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-18
 
+- Vak owns its storage layer: no third-party database beyond the embedded
+  SQLite it already uses for refs and the catalog. Findings about the
+  storage substrate describe its cost and the testing it needs, never its
+  replacement ([the blueprint's rules](architecture/AGENTS.md)).
+
+- Keep a system blueprint in `docs/architecture/blueprint.html`, generated
+  from the tree by `scripts/blueprint.py` on every build and checked by
+  `scripts/release.sh`, so git holds its versions and diffs. Its rules are
+  in [docs/architecture/AGENTS.md](architecture/AGENTS.md).
+
 - Begin implementing the hardening plan. Do not use Astra; use Luna for
   well-defined delegated work and keep token use lean. The main agent owns
   integration and review; the first slice addresses strict authoritative

@@ -260,6 +260,16 @@ if [[ -n "$(git status --porcelain -- crates/vak-server/site/dist)" ]]; then
     git status --short -- crates/vak-server/site/dist >&2
     exit 1
 fi
+
+# The blueprint is the release's architecture record (docs/architecture/
+# AGENTS.md): measured from this tree, it must be committed as measured.
+( cd "$ROOT_DIR" && python3 scripts/blueprint.py --quiet )
+if [[ -n "$(git status --porcelain -- docs/architecture/blueprint.html)" ]]; then
+    printf 'error: docs/architecture/blueprint.html does not match this tree.\n' >&2
+    printf 'Regenerate it (python3 scripts/blueprint.py), review the diff and any\n' >&2
+    printf '"needs review" lines, and commit it before releasing.\n' >&2
+    exit 1
+fi
 printf '  ✓ %-44s matches source\n' "vak-server/site/dist"
 
 for manifest in \

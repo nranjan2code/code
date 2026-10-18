@@ -94,6 +94,14 @@ else
     printf '\npython3 not found — leaving crates/vak-server/site/dist as committed\n' >&2
 fi
 
+# The system blueprint is measured from the tree, so every build refreshes
+# it (docs/architecture/AGENTS.md). It never fails the build: a stale name
+# in its drawings is reported and bannered on the page instead.
+if command -v python3 >/dev/null; then
+    printf '\n== blueprint ==\n'
+    python3 "$ROOT_DIR/scripts/blueprint.py" || printf 'blueprint not regenerated\n' >&2
+fi
+
 # The desktop frontend is embedded into the bundle's Resources by the
 # installer, so it has to exist before `self install` runs.
 if [[ "$DESKTOP" == true ]]; then

@@ -15,6 +15,7 @@ authoritative version.
 | Understand the product and security boundaries | [Agent-owned platform](design/64-agent-owned-platform.md) and [agent security](design/24-agent-security.md) |
 | Work with artwork and public identity | [Brand guide](brand/README.md) |
 | Understand how prompts are built and used | [The prompt system, end to end](design/83-prompt-system.md) |
+| See the whole system, measured | [System blueprint](architecture/blueprint.html), regenerated on every build ([its rules](architecture/AGENTS.md)) |
 | Explore diagrams | [Architecture diagrams](architecture/README.md) and [tutor](tutor/README.md) |
 
 The architecture overview uses Mermaid and the tutor uses PNGs, so both render
@@ -67,6 +68,7 @@ Do these in the same commit as the change they describe:
 | find work left undone, or close it | [plans/open-items.md](plans/open-items.md) |
 | get a decision from the maintainer | a dated line in [decisions.md](decisions.md), and the doc that records it |
 | end a session | the one handover: replace its prompt and "Where things stand"; keep "Working notes" true |
+| build, or change the crate graph, a drawn path or a finding | commit the regenerated [blueprint](architecture/blueprint.html) on its own, right after, and resolve any `needs review` line ([its rules](architecture/AGENTS.md)) |
 | cut a release | CHANGELOG.md's `## Unreleased` becomes the version's heading (`docs/release-and-install.md`) |
 
 Docs are kept, never deleted, so the record reads the same for people and

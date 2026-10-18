@@ -31,13 +31,14 @@ GitHub displays linked `.html` files as source rather than running their
 scripts. Download one and open it locally for its interactive view. The
 diagram above and the tutor's PNGs remain readable on GitHub.
 
-These are dated explanatory snapshots, not the source of truth for the current
-crate graph or runtime. Check `Cargo.toml` and the relevant source before
+Apart from `blueprint.html`, these are dated explanatory snapshots, not the
+source of truth for the current crate graph or runtime. Check `Cargo.toml` and the relevant source before
 using a diagram as implementation evidence.
 
 | File | What it covers |
 |---|---|
-| [`layered-architecture.html`](layered-architecture.html) | A **static** five-layer dependency map from an earlier workspace snapshot. The current workspace has 28 members; use `Cargo.toml` for the complete list. |
+| [`blueprint.html`](blueprint.html) | **The system blueprint**, regenerated from the tree on every build (`scripts/blueprint.py`): layer stack, process topology, one turn end to end, data map, a bill of materials for every crate, size and work, critic's findings and a target shape. Rules for keeping it true are in [AGENTS.md](AGENTS.md). |
+| [`layered-architecture.html`](layered-architecture.html) | Superseded by `blueprint.html`. A **static** five-layer dependency map from an earlier workspace snapshot (28 members), kept as a record. |
 | [`runtime-topology.html`](runtime-topology.html) | The **runtime** view: which processes exist, who hosts a `Core`, the gateway/channel request path, and what is shared-central vs. private-and-local. |
 | [`concurrency-model.html`](concurrency-model.html) | An **animated** walkthrough of what happens when many calls arrive at once — same session (ledger lock → 409/steering), many sessions (one `Core`, rate limit), and many workspaces (`CorePool` eviction). |
 | [`vak-works.html`](vak-works.html) | **The vak Works** — a playable, gamified view of the internals. Every component is a building and every message is a courier who walks the route: channels sit **outside a trust perimeter**, bridges are separate processes holding bot tokens, the gatehouse checks the allowlist, the bindings board writes `bindings.json`, cores are **built and demolished** in the pool, and the ledger tower only ever **grows**. Press **Trace a message** to follow one courier's entire life step by step, or click any courier to pick them up mid-route. |
