@@ -6,6 +6,8 @@ import { fileSubject } from "../src/canvasSubject";
 import { VIEWERS } from "../src/components/canvas/viewers";
 import "../src/styles.css";
 
+document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light";
+
 // Every route the Canvas can read a file through answers with its own marker,
 // and each request is logged, so a check can tell which route served a subject.
 const sid = "canvas-fixture";
@@ -17,7 +19,7 @@ let previews: "origin" | "none" = "none";
 const comments: Record<string, unknown>[] = [];
 const commentBodies: Record<string, unknown>[] = [];
 const revisions: string[] = [];
-let records: unknown[] = [];
+let records: unknown[] = [{ kind: "Candidate", record: { execution_id: "e1", session_id: sid, updated_at: "2026-09-30T09:00:00Z", candidate: { candidate_id: "c1", files: [{ path: "site/index.html", base_hash: "h" }] } } }];
 const page = (source: string) => `<!doctype html>\n<html>\n<head><title>${source}</title></head>\n<body>\n<h1>${source}</h1>\n</body>\n</html>`;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 window.fetch = async (input, init) => {
@@ -46,25 +48,25 @@ window.fetch = async (input, init) => {
     requests.push(`run:${run[1]}:${path}`);
     return json({ kind: "text", content: page(`run ${run[1]}`) });
   }
-  const version = /\/sandbox\/candidates\/([^/]+)\/files$/.exec(url.pathname);
-  if (version) {
-    requests.push(`draft:${version[1]}:${path}`);
-    return json({ kind: "text", content: page(`draft ${version[1]}`) });
+  const versionText = /\/library\/([^/]+)\/versions\/([^/]+)\/text$/.exec(url.pathname);
+  if (versionText) {
+    requests.push(`version:${versionText[1]}:${versionText[2]}`);
+    return json({ kind: "text", content: page(`version ${versionText[2]}`) });
   }
-  const commentsRoute = /\/sandbox\/candidates\/([^/]+)\/comments$/.exec(url.pathname);
-  if (commentsRoute && init?.method === "POST") {
+  const versionCommentsRoute = /\/library\/([^/]+)\/versions\/([^/]+)\/comments$/.exec(url.pathname);
+  if (versionCommentsRoute && init?.method === "POST") {
     const body = JSON.parse(String(init.body));
     commentBodies.push(body);
-    comments.push({ comment_id: `cm${comments.length + 1}`, actor_id: "operator", text: body.text, path: body.path, line_start: body.line_start, line_end: body.line_end, anchor: body.anchor, created_at: "2026-09-30T10:00:00Z" });
-    return json({ comment_id: `cm${comments.length}`, intervention: false });
+    comments.push({ comment_id: `cm${comments.length + 1}`, version: versionCommentsRoute[2], actor_id: "operator", text: body.text, path: body.path, line_start: body.line_start, line_end: body.line_end, anchor: body.anchor, created_at: "2026-09-30T10:00:00Z" });
+    return json({ comment_id: `cm${comments.length}` });
   }
-  const revise = /\/sandbox\/candidates\/([^/]+)\/comments\/([^/]+)\/request-revision$/.exec(url.pathname);
+  if (/\/library\/[^/]+\/versions\/[^/]+\/comments$/.test(url.pathname)) return json({ comments });
+  const revise = /\/library\/([^/]+)\/comments\/([^/]+)\/revise$/.exec(url.pathname);
   if (revise) {
     revisions.push(`${revise[1]}:${revise[2]}`);
     return json({});
   }
-  if (commentsRoute) return json({ comments });
-  if (url.pathname.endsWith("/sandbox/records")) return json({ records });
+  if (url.pathname.endsWith("/sandbox/records")) return json({ records, artifacts: records.flatMap((item: any, index) => item?.record?.candidate?.files?.map((file: any) => ({ artifact: `a${index + 1}`, version: `v${index + 1}`, path: file.path, candidate: item.record.candidate.candidate_id, promoted: false })) ?? []) });
   return json({ comments: [], records: [] });
 };
 
@@ -97,7 +99,7 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   passed.push(check(shown() === "run e1" && requests.join() === "run:e1:site/index.html", "A run's file is read through that run only"));
 
   await open(() => store.openArtifactCanvas(fileSubject("site/index.html", { sessionId: sid, candidateId: "c1", executionId: "e1" }, "index.html")));
-  passed.push(check(shown() === "draft c1" && requests.join() === "draft:c1:site/index.html", "A saved version is read through its candidate only"));
+  passed.push(check(shown() === "version v1" && requests.join() === "version:a1:v1", "A saved version is read through its artifact and version"));
 
   await open(() => store.openArtifactFile("missing.html", { sessionId: sid }));
   passed.push(check(!frame() && !!document.querySelector(".artifact-canvas-error"), "An unreadable file shows an error and no stand-in page"));
@@ -120,7 +122,7 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   passed.push(check(frame()?.getAttribute("src") === "http://localhost:9/token/site/index.html" && !frame()?.getAttribute("srcdoc") && previewCalls.join() === "open:workspace:site/index.html", "A page with files behind it is framed from a preview origin"));
   passed.push(check(frame()?.getAttribute("sandbox") === "allow-scripts allow-same-origin allow-forms allow-popups", "A preview origin frame keeps its own storage and opens windows"));
   await open(() => store.openArtifactCanvas(fileSubject("site/index.html", { sessionId: sid, candidateId: "c1" }, "index.html")));
-  passed.push(check(previewCalls.join() === "open:candidate:site/index.html", "A saved version opens its preview through its candidate"));
+  passed.push(check(previewCalls.join() === "open:candidate:site/index.html", "A saved version opens its local preview from the saved draft identity"));
   await open(() => store.openArtifactCanvas({ kind: "inline", title: "Probe", html: "<h1>inline</h1>" }));
   passed.push(check(previewCalls.length === 0 && shown() === "inline", "Markup from the conversation never gets an origin"));
   await open(() => store.openArtifactFile("site/index.html", { sessionId: sid }));
@@ -151,11 +153,11 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   type("tighten this block");
   button("Comment")!.click();
   await settle();
-  passed.push(check(commentBodies.length === 1 && commentBodies[0].line_start === 3 && commentBodies[0].line_end === 5 && revisions.length === 0, "Comment saves it on the version at those lines and asks nobody"));
+  passed.push(check(commentBodies.length === 1 && commentBodies[0].line_start === 3 && commentBodies[0].line_end === 5 && revisions.length === 0, "Comment saves it on the artifact version at those lines and asks nobody"));
   type("and make it faster");
   button("Ask Agent")!.click();
   await settle();
-  passed.push(check(commentBodies.length === 2 && revisions.length === 1 && revisions[0].startsWith("c1:"), "Ask Agent saves the comment and asks the Agent to act on it"));
+  passed.push(check(commentBodies.length === 2 && revisions.length === 1 && revisions[0] === "a1:cm2", "Ask Agent saves the comment and asks the Agent to act on it through the artifact thread"));
   passed.push(check(document.querySelectorAll(".artifact-canvas-comments article").length === 2 && document.querySelector(".artifact-canvas-comments")?.textContent?.includes("Lines 3–5") === true, "Comments show the place they were written at"));
   seg("Preview")!.click();
   await settle();
@@ -259,17 +261,17 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   store.setCanvasStacks({});
   store.setNotice(null);
   for (let i = 0; i < 8; i++) {
-    store.openArtifactCanvas(fileSubject(`note${i}.html`, { sessionId: sid }));
+    store.openArtifactCanvas(fileSubject(`note${i}.html`, { sessionId: sid }, `note${i}.html`));
     store.updateCanvasEntry({ draft: `Unsent note ${i}` });
   }
   const before = store.canvasStacks();
-  store.openArtifactCanvas(fileSubject("overflow.html", { sessionId: sid }));
+  store.openArtifactCanvas(fileSubject("overflow.html", { sessionId: sid }, "overflow.html"));
   await settle();
   if (store.canvasStacks() !== before) throw new Error("Opening a ninth tab discarded unsent work");
   if (store.canvasEntry()?.draft !== "Unsent note 7") throw new Error("The active note changed");
   if (!document.querySelector(".toast")?.textContent?.includes("unsent notes")) throw new Error("The tab-limit explanation is missing");
   store.updateCanvasEntry({ draft: "" });
-  store.openArtifactCanvas(fileSubject("overflow.html", { sessionId: sid }));
+  store.openArtifactCanvas(fileSubject("overflow.html", { sessionId: sid }, "overflow.html"));
   await settle();
   if (store.canvasEntry()?.subject.kind !== "file" || (store.canvasEntry()?.subject as any).path !== "overflow.html") throw new Error("A clean tab did not make room");
   if (store.canvasEntries().filter(entry => entry.draft.length > 0).length !== 7) throw new Error("A protected note was evicted");

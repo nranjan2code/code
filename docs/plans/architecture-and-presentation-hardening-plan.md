@@ -795,6 +795,68 @@ This does not settle replacement identity or the wider lifecycle matrix.
   does not persist unacknowledged client operations or settle per-contributor
   drafts, saved-page resource authorization, or live browser acceptance.
 
+### Continuation — responsive plots and current browser acceptance
+
+- Charts and maps now measure the actual plot container without imposing
+  a 280px/260px minimum. Their previous minimums exceeded narrow card
+  interiors and clipped the right edge.
+- Correct the gallery's cramped-text detector to inspect text-bearing HTML
+  leaves rather than tall SVG bars. Keep the geometry overflow check for
+  all elements. Simulate a reader gesture before checking incoming-output
+  scroll preservation; separately verify that explicit submission follows
+  the latest turn, as the production contract requires.
+- Update the Canvas fixture's saved-content/comment/revision mocks to the
+  artifact/version APIs. Its local preview origin still uses the existing
+  draft identity; no production route was changed in this slice.
+- Browser checks pass at 1440 × 900 and 390 × 844, light and dark: all 25
+  presentation checks and all 39 Canvas interaction checks. These are UI
+  fixtures with provider mocks, not installed-route or guest acceptance.
+  Both client bundle builds and the combined Canvas/gallery fixture
+  typecheck pass. Formatting and workspace Clippy pass. The maintainer
+  waived the full gate for this batch and its active run was stopped; no
+  completed workspace test run is claimed.
+- Forced-reload recovery remains open. The existing Document protects edits
+  the server accepted, while the client queue is process-local. A plaintext
+  browser outbox would bypass scoped storage; an independently retained
+  browser key could bypass conversation erasure. Recovery needs an explicit
+  key lifetime and authenticated retrieval protocol, including unavailable
+  server/auth, logout, erased conversation and concurrent windows. No local
+  content cache or key export was introduced.
+
+### Next slice — reload recovery protocol (not implemented)
+
+The safe candidate is a browser outbox containing ciphertext only. Use a
+separate random recovery key whose durable copy is conversation-sealed in
+an Agent-owned Document; never export the conversation scope key. A client
+receives the recovery key only through the authenticated conversation route
+and keeps a non-extractable browser key in memory. Reload can recover only
+after authenticating and reconnecting; an offline reload retains ciphertext
+and reports that recovery is locked. Erasure must make key retrieval fail.
+This is a proposed protocol, not a claim that offline recovery is shipped.
+
+Before implementation, trace the existing participant/audience layers and
+Document retention ownership; register any new durable subpath. Key
+provisioning is fenced, missing/erased scopes fail closed, and the response
+is never cached or logged. Cleartext and keys never enter local/session
+storage, IndexedDB or a service-worker cache. Ciphertext records authenticate
+the install, conversation, writer and format identities as associated data.
+
+Persist each writer's operations together with its actual baseline and
+local snapshot, using an IndexedDB transaction before reporting local
+recovery saved. An acknowledgment may remove only the exact saved prefix;
+late encryption/transaction completion cannot resurrect acknowledged work.
+Multiple windows keep separate writer identities and rebase through the
+same Canvas conflict rules. Storage refusal/quota, missing keys, auth expiry
+and schema mismatch stay visible and preserve the existing copy/unload path.
+
+Exit tests: type then reload before debounce; server refusal/offline then
+reload/reconnect; delayed writes and acknowledgments; two-window edits;
+quota/transaction failure; logout/re-authentication; erase before reload;
+corrupt ciphertext/AAD; and explicit refusal to recreate an erased key.
+An unlocked tab still holds readable content in memory, like the existing
+Canvas; local recovery must not make a stronger erasure claim than the
+running client can enforce. The full S5 exit remains unchanged.
+
 ### Reporting contract
 
 For each slice record finding IDs, exact baseline, reproduction, chosen

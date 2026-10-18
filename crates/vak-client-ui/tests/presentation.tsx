@@ -8,6 +8,8 @@ import { artifactPreviewHtml } from "../src/artifactPreview";
 import { assistantParts } from "../src/structured";
 import "../src/styles.css";
 
+document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light";
+
 const sid = "render-fixture";
 const card = { semantic_type: "stats", block: "stats", schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: { readings: [{ label: "Files reviewed", value: 12, unit: "files" }] } };
 const answer = `Here is the result.\n\n\`\`\`vak\n${JSON.stringify(card)}\n\`\`\`\n\nAll twelve files are ready for review.`;
@@ -96,7 +98,7 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
         const rect = element.getBoundingClientRect();
         if (rect.width === 0) return false;
         const line = parseFloat(getComputedStyle(element).lineHeight) || 18;
-        return rect.right > bounds.right + 2 || (element.children.length === 0 && rect.width < 130 && rect.height > line * 3.2);
+        return rect.right > bounds.right + 2 || (element instanceof HTMLElement && element.children.length === 0 && Boolean(element.textContent?.trim()) && rect.width < 130 && rect.height > line * 3.2);
       });
     }).map((slot) => slot.dataset.renderer);
     check(cramped.length === 0, `Every presentation fits a ${width}px card: ${cramped.join(", ")}`);
@@ -157,9 +159,16 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   store.hydrateFromTranscript(sid, messages(Array.from({length: 80}, (_, i) => `Paragraph ${i}: a longer answer to verify reading position.`).join("\n\n")) as any);
   await tick();
   const scroller = document.querySelector<HTMLDivElement>(".chat")!;
+  // A reader gesture disengages following; layout-induced scroll events do not.
+  scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
   scroller.scrollTop = 100; scroller.dispatchEvent(new Event("scroll"));
+  store.markRunning(sid, true);
+  store.applyEvent(sid, { Stream: { TextDelta: { delta: " More incoming detail.", partial: {} } } } as any, {});
+  await tick();
+  check(scroller.scrollTop < 200, "Incoming output respects the reader's scroll position");
   store.appendUser(sid, "Continue the explanation."); await tick();
-  check(scroller.scrollTop < 200, "New output respects the reader's scroll position");
+  check(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2, "Submitting a prompt returns to the latest turn");
+  store.markRunning(sid, false);
   store.hydrateFromTranscript(sid, messages() as any);
   store.hydrateFromPresentation(sid, snapshot() as any);
   return passed;

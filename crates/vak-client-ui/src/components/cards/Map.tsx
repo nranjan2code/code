@@ -79,7 +79,7 @@ export default function MapCard(props: { payload: Payload }) {
   const [width, setWidth] = createSignal(640);
   onMount(() => {
     if (!host) return;
-    const observer = new ResizeObserver(([entry]) => setWidth(Math.max(260, Math.round(entry.contentRect.width))));
+    const observer = new ResizeObserver(([entry]) => setWidth(Math.max(1, Math.floor(entry.contentRect.width))));
     observer.observe(host);
     onCleanup(() => observer.disconnect());
   });

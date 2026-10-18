@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Charts and maps size their plots to the space inside narrow cards, keeping
+  the right edge visible on phones and in narrow panels.
+
 - Saved Canvas state now uses versioned, fenced Documents with its content
   sealed under the conversation key inside each Document version. Conversation erasure makes saved
   Canvas notes and markup unreadable. Existing plaintext Canvas files are

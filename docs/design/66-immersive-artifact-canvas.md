@@ -71,6 +71,12 @@ ledger objects. The ciphertext is owned by the Document version, so
 history pruning releases old snapshots through ordinary Document collection.
 Unknown fields stay inside the sealed content.
 
+Browser acceptance on 2026-10-18 exercises 39 Canvas interactions at
+1440 × 900 and 390 × 844, light and dark. The fixture reads saved content
+and comments through artifact/version routes and retains the existing
+local preview-origin contract. This verifies mocked-provider UI behavior;
+it does not establish forced-reload durability or shared-page authorization.
+
 ### 0b. Pointing, discussion and new versions
 
 A viewer says what a reader can point at in each of its views (`ViewerSpec.selects`): source lines, or a place in a document (the reader's own address, shown only under Show technical details). A preview page or an image has no place a comment could name, so nothing is selected there and a comment is about the whole file. Pointing opens the discussion; the discussion (`CanvasContext`) offers **Comment** (saved on the version being read, asks nobody) and **Ask Agent** (saves it and asks for a revision, or for a file that is not a saved draft, sends a request that names the place). A comment's place can be shown again with Show where. Activity lists only what the sandbox records and comments show (versions saved, the Agent revising, comments), and Changes lists the files this version adds, changes or removes.

@@ -110,7 +110,8 @@ overlapping fixes should close their original entries as well.
   status; paused/transient failures, in-flight prefix acknowledgement and
   delayed-read races have focused coverage. Before-unload warns while
   pending work remains. Both client bundles and the full repository gate
-  pass for this slice; the new UI fixture is typechecked but not browser-run.
+  pass for that slice; the save-recovery fixture subsequently passed in the
+  browser (2026-10-18).
   Stale replay now restores missing dirty tabs when safe, retains unrelated
   remote notes, and blocks competing note edits/capacity failures without
   changing the local Canvas or advancing the write revision. Copy unsent
@@ -126,8 +127,12 @@ overlapping fixes should close their original entries as well.
   P10 numerical ranges, compact precise labels and overflow-safe y
   positioning pass source tests, both bundle builds and the full gate.
   Running-app acceptance remains open. Geometry and gaps remain open.
-  The presentation gallery currently fails its 260px chart/map fit assertion
-  (2026-10-18 browser run); remaining checks after that assertion did not run.
+  The chart/map minimum-width overflow is repaired. All 25 gallery checks
+  and all 39 Canvas interaction checks pass in browser fixtures at both
+  required sizes, light/dark (2026-10-18). Both bundles, fixture typecheck,
+  formatting and workspace Clippy pass. The maintainer waived the full gate
+  for this slice; wider geometry, authorization and provenance acceptance
+  remain open.
   The focused table fixture passes all four required viewport/theme cases.
 - [ ] S7: narrow Core ownership and bounded history-dependent work
   (A08, A09), retaining the earlier guarantees.

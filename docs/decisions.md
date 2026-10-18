@@ -9,6 +9,13 @@ listed here unless the maintainer reopens it.
 
 ## 2026-10-18
 
+- The maintainer waived the full repository gate for the responsive
+  chart/map and browser-fixture batch ("we dont need gate right now").
+  Stop the active run; retain the passing browser, bundle, typecheck and
+  formatting/Clippy evidence without claiming a completed workspace test
+  run. This exception applies to this batch, not future work. Recorded in
+  [the handover](plans/handover-2026-10-18.md#current-responsive-presentation-batch).
+
 - The workers work (doc 100 and its plan) is deferred as a whole: the
   design and the decided choices stay recorded, and no stage starts until
   the maintainer reopens it. Recorded in
