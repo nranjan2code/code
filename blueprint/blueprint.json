@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "6062009b6",
+  "revision": "530764e2e",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 326480,
-   "rust_tests": 84119,
+   "rust_src": 327202,
+   "rust_tests": 84180,
    "ts_src": 61344,
    "routes": 411,
    "forms": 20,
    "worker_tasks": 14,
-   "state_paths": 68,
+   "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2346,
+   "total_commits": 2347,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
@@ -204,19 +204,19 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 494,
+  "commits": 495,
   "areas": [
    [
     "docs",
-    421
+    422
    ],
    [
     "(root)",
-    251
+    252
    ],
    [
     "vak-core",
-    218
+    219
    ],
    [
     "vak-server",
@@ -228,7 +228,7 @@
    ],
    [
     "vak-agent",
-    97
+    98
    ],
    [
     "vak-session",
@@ -248,7 +248,7 @@
    ],
    [
     "vak-config",
-    58
+    59
    ],
    [
     "vak-control",
@@ -256,6 +256,18 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "530764e2e",
+    "date": "2026-10-18",
+    "subject": "Verify route and budget decisions and record live revisions before use",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-config",
+     "vak-core"
+    ]
+   },
    {
     "hash": "6062009b6",
     "date": "2026-10-18",
@@ -384,21 +396,12 @@
      "docs",
      "scripts"
     ]
-   },
-   {
-    "hash": "c6b65b579",
-    "date": "2026-10-18",
-    "subject": "Require assistant journals, serialize unknown effects and restore Canvas subjects",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-client-ui",
-     "vak-tools"
-    ]
    }
   ],
   "unreleased": [
+   "Route planning stops on unreadable evidence instead of planning from an incomplete history.",
+   "Budget reservations retain unresolved costs when recording fails and keep their original attribution.",
+   "Live outcome revisions and steering messages must be recorded before they change the running contract or reach the model.",
    "Two dependency updates clear seven known vulnerabilities:",
    "Concurrent credential updates preserve every presence marker, and trust checks treat unreadable presence metadata conservatively.",
    "Commitment admission and portfolio reads report unreadable history instead of treating it as an empty portfolio.",
@@ -871,7 +874,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 61423,
+   "lines": 62037,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -881,7 +884,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 53547,
+   "lines": 53645,
    "crates": [
     "vak-tools",
     "vak-agent",
@@ -922,7 +925,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 34109,
+   "lines": 34119,
    "crates": [
     "vak-session",
     "vak-config",
@@ -1022,10 +1025,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 15324,
-   "tests": 18316,
+   "src": 15422,
+   "tests": 18377,
    "files": 13,
-   "commits": 335,
+   "commits": 336,
    "deps": [
     "vak-config",
     "vak-context",
@@ -1063,7 +1066,7 @@
     "uuid"
    ],
    "largest": [
-    10636,
+    10734,
     "crates/vak-agent/src/lib.rs"
    ]
   },
@@ -1203,10 +1206,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Layered TOML, credentials, paths, scopes",
-   "src": 9382,
+   "src": 9392,
    "tests": 867,
    "files": 8,
-   "commits": 207,
+   "commits": 208,
    "deps": [
     "vak-control",
     "vak-llm"
@@ -1313,10 +1316,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 56888,
+   "src": 57502,
    "tests": 9964,
    "files": 70,
-   "commits": 626,
+   "commits": 627,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -1375,7 +1378,7 @@
     "walkdir"
    ],
    "largest": [
-    12362,
+    12385,
     "crates/vak-core/src/lib.rs"
    ]
   },
@@ -2371,11 +2374,11 @@
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12362
+    "lines": 12385
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
-    "lines": 10636
+    "lines": 10734
    },
    {
     "file": "crates/vak-mail-calendar/src/provider.rs",
@@ -2418,8 +2421,8 @@
    {
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 1643,
-    "lines": 1848
+    "line": 1657,
+    "lines": 1862
    },
    {
     "name": "run_turn_recorded",
@@ -2472,8 +2475,8 @@
    {
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5306,
-    "lines": 535
+    "line": 5334,
+    "lines": 538
    },
    {
     "name": "add_slide_from_layout",
@@ -2564,8 +2567,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1326,
-  "hot": 626
+  "docs_commits": 1327,
+  "hot": 627
  },
  "findings": [
   {
@@ -2573,7 +2576,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 194 (rank 1 of 4,348 library functions) and `Core::run_turn_recorded` at 103 (rank 3); the median is 3 and the 99th percentile 24. 147 commits changed the first (6% of all) and 206 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 9.3 per thousand lines, against a median of 4.5 over 396 files; file size alone does not predict the rate (ρ = -0.14).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 194 (rank 1 of 4,348 library functions) and `Core::run_turn_recorded` at 103 (rank 3); the median is 3 and the 99th percentile 24. 148 commits changed the first (6% of all) and 207 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 9.2 per thousand lines, against a median of 4.5 over 396 files; file size alone does not predict the rate (ρ = -0.14).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
