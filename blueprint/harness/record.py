@@ -59,16 +59,37 @@ def decisions(root, limit):
     return out[:limit], len(out)
 
 
+def _checkboxes(body):
+    """Every checkbox item of a Markdown body, top-level or nested, as
+    (checked, text), each joined into one line."""
+    items, cur = [], None
+    for line in body.split("\n"):
+        m = re.match(r"^(\s*)- \[([ xX])\] (.*)$", line)
+        if m:
+            if cur:
+                items.append(cur)
+            cur = [m.group(2) != " ", m.group(3).strip(), len(m.group(1))]
+        elif cur and line.strip() and len(line) - len(line.lstrip()) > cur[2] and not re.match(r"^\s*- ", line):
+            cur[1] += " " + line.strip()
+        else:
+            if cur:
+                items.append(cur)
+            cur = None
+    if cur:
+        items.append(cur)
+    return [(checked, text) for checked, text, _ in items]
+
+
 def open_items(root):
     """Per tracker section: open and closed counts, and the open items'
-    first sentences."""
+    first sentences. Nested items count as items of their own."""
     text = open(os.path.join(root, "docs/plans/open-items.md"), encoding="utf-8").read()
     sections = []
     for section in re.split(r"(?m)^## ", text)[1:]:
         title, _, body = section.partition("\n")
-        items = _bullets(body)
-        todo = [i[4:].strip() for i in items if i.startswith("[ ]")]
-        done = [i for i in items if i.startswith("[x]")]
+        items = _checkboxes(body)
+        todo = [t for checked, t in items if not checked]
+        done = [t for checked, t in items if checked]
         if todo or done:
             sections.append({"section": title.strip(), "open": len(todo), "closed": len(done),
                              "items": [_first_sentence(t) for t in todo]})
