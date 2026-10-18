@@ -137,6 +137,8 @@ source file, script, package, route and `vak` subcommand belongs to exactly
 one subsystem (`blueprint/harness/subsystems.py`). Its Plant tab draws the
 subsystems, the connections measured between them and the flows through
 them as an animated plant diagram, with a full-screen operations view. Its
+Simulator tab moves the model's speed from 0 to 20,000 tokens a second and
+shows what each subsystem, the infrastructure and the cost do at that speed. Its
 rules are
 [blueprint/AGENTS.md](blueprint/AGENTS.md) and its methods are in
 `blueprint/methods/`: reviewing the architecture with evidence

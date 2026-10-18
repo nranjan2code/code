@@ -317,6 +317,114 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
   .cx-pick { max-height: 240px }
   .cx-cols { grid-template-columns: 1fr }
 }
+/* The speed simulator (Simulator tab): the plant's units and pipes, driven by a speed. */
+.sim-wrap { gap: 18px }
+.sim-top { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; align-items: stretch }
+.sim-controls { display: grid; gap: 10px; align-content: start; min-width: 0 }
+.sim-speed { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; border: 1px solid var(--line); background: var(--box); padding: 10px 14px }
+.sim-speed label { font: 600 12px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--line) }
+.sim-speed output { font: 600 34px/1 var(--font-display); text-align: right }
+.sim-speed output small { font: 500 13px var(--font-mono); color: var(--ink-soft) }
+.sim-speed input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: var(--hot); margin: 0 }
+.sim-scale { grid-column: 1 / -1; position: relative; height: 16px; font: 12px var(--font-mono); color: var(--ink-soft) }
+.sim-scale span { position: absolute; transform: translateX(-50%); white-space: nowrap }
+.sim-scale span:nth-child(1) { left: 0; transform: none } .sim-scale span:nth-child(2) { left: 12% } .sim-scale span:nth-child(3) { left: 36.8% }
+.sim-scale span:nth-child(4) { left: 88.8% } .sim-scale span:nth-child(5) { left: 100%; transform: translateX(-100%) }
+.sim-work-note { font-size: 13px }
+.sim-answer { border: 1.5px solid var(--hot); background: var(--box); padding: 12px 16px; display: grid; gap: 8px; align-content: start; min-width: 0 }
+.sim-answer h4 { margin: 0; font: 600 12px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--hot) }
+.sim-big { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; font: 600 26px/1 var(--font-display); color: var(--ink-soft) }
+.sim-big .arrow { color: var(--hot) }
+.sim-big b { font-size: 46px; color: var(--ink); font-weight: 700 }
+.sim-sub { font-size: 14px }
+.sim-stack { display: flex; height: 18px; border: 1px solid var(--line); background: var(--line-faint) }
+.sim-stack i { display: block; height: 100%; min-width: 0 }
+.sim-key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--ink-soft) }
+.sim-key .k { display: inline-flex; align-items: center; gap: 5px }
+.sim-key i { width: 10px; height: 10px; display: inline-block }
+.sim-block { display: grid; gap: 10px; min-width: 0; border-top: 1px solid var(--line-faint); padding-top: 14px }
+.sim-block > h3 { font-size: 22px }
+details.sim-block summary { cursor: pointer; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap }
+.sim-knobs { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 18px; font-size: 13.5px; border: 1px dashed var(--line); padding: 10px 12px }
+.sim-knobs label { display: grid; gap: 2px }
+.sim-knobs label span { display: flex; justify-content: space-between; gap: 8px }
+.sim-knobs label b { font: 600 12.5px var(--font-mono) }
+.sim-knobs input[type="range"] { accent-color: var(--line); width: 100% }
+.sim-knobs .chk { display: flex; gap: 8px; align-items: center }
+.sim-canvas { border: 1px solid var(--line-faint); min-width: 0; background: var(--sheet) }
+.sim-canvas svg { width: 100%; height: auto; display: block }
+.sim-pipe { fill: none; stroke: var(--line); stroke-width: 2; opacity: .55 }
+.sim-pipe.flow { stroke: var(--hot); opacity: .85; stroke-dasharray: 9 7; animation: plant-march linear infinite }
+.sim-pipe.idle { opacity: .2; stroke-dasharray: 3 5 }
+.unit.sim .u-body { cursor: default }
+.unit.sim.warn .u-led { fill: var(--hot); stroke: none }
+.unit.sim.bad .u-led { fill: var(--warn); stroke: none; animation: plant-pulse 1.2s ease-in-out infinite }
+.unit.sim.bad .u-body { stroke: var(--warn); stroke-width: 2 }
+.unit.sim.ok .u-led { fill: var(--ok); stroke: none }
+.sim-u-big { font: 600 17px var(--font-display); fill: var(--ink) }
+.u-load.hot { fill: var(--hot); opacity: .9 }
+.sim-band { fill: var(--line-faint) }
+.sim-band-name { font: 600 12px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; fill: var(--line) }
+.sim-axis { stroke: var(--line); stroke-width: 1 }
+.sim-grid { stroke: var(--line-faint); stroke-width: 1 }
+.sim-tick { font: 12px var(--font-mono); fill: var(--ink-soft) }
+.sim-mark { stroke: var(--hot); stroke-width: 2 }
+.sim-mark-label { font: 600 12px var(--font-mono); fill: var(--hot) }
+.sim-ref { stroke: var(--ink-soft); stroke-width: 1; stroke-dasharray: 4 4 }
+.sim-checks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px }
+.sim-checks li { border: 1px solid var(--line-faint); border-left: 4px solid var(--ok); background: var(--box); padding: 8px 10px; display: grid; gap: 3px; font-size: 13.5px; align-content: start }
+.sim-checks li.warn { border-left-color: var(--hot) }
+.sim-checks li.bad { border-left-color: var(--warn) }
+.sim-checks .h { display: flex; gap: 8px; align-items: baseline }
+.sim-checks .w { font: 600 12px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--ok) }
+.sim-checks li.warn .w { color: var(--hot) } .sim-checks li.bad .w { color: var(--warn) }
+.sim-checks .v { color: var(--ink-soft) }
+.sim-checks .when, .sp-check .when { font: 12.5px var(--font-mono); color: var(--line) }
+.sim-checks .src code, .sp-check code { font-size: 12px }
+.sim-plant-main .plant-side .panel { align-content: start }
+.sim-first { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13.5px; max-height: 340px; overflow: auto }
+.sim-first li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 0 8px; border-left: 3px solid var(--line-faint); padding-left: 8px }
+.sim-first li.bad { border-left-color: var(--warn) }
+.sim-first .at { font: 600 12.5px var(--font-mono); color: var(--hot); grid-row: span 2 }
+.sim-first .linkish { text-decoration: none; font-weight: 600 }
+.sim-first .muted { font-size: 12.5px }
+.sp-dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--line) }
+.sp-dot.fail { background: var(--warn); border-color: var(--warn) } .sp-dot.infra { background: var(--hot); border-color: var(--hot) }
+.sp-dot.cost { background: repeating-linear-gradient(45deg, var(--hot) 0 3px, transparent 3px 5px); border-color: var(--hot) }
+.sp-dot.person { background: var(--g3); border-color: var(--g3) } .sp-dot.busy { background: var(--hot-fill) } .sp-dot.calm { background: var(--ok); border-color: var(--ok) } .sp-dot.none { opacity: .4 }
+.sim-plant .unit[data-sp="fail"] .u-body { fill: color-mix(in srgb, var(--warn) 16%, transparent); stroke: var(--warn); stroke-width: 2.4 }
+.sim-plant .unit[data-sp="fail"] .u-led { fill: var(--warn); stroke: none; animation: plant-pulse 1.2s ease-in-out infinite }
+.sim-plant .unit[data-sp="infra"] .u-body { fill: var(--hot-fill); stroke: var(--hot); stroke-width: 2.2 }
+.sim-plant .unit[data-sp="infra"] .u-led { fill: var(--hot); stroke: none }
+.sim-plant .unit[data-sp="cost"] .u-body { fill: var(--hot-fill); stroke: var(--hot); stroke-width: 2; stroke-dasharray: 6 3 }
+.sim-plant .unit[data-sp="person"] .u-body { stroke: var(--g3); stroke-width: 2 }
+.sim-plant .unit[data-sp="person"] .u-led { fill: var(--g3); stroke: none }
+.sim-plant .unit[data-sp="busy"] .u-body { fill: var(--hot-fill) }
+.sim-plant .unit[data-sp="calm"] .u-led { fill: var(--ok); stroke: none }
+.sim-plant .unit[data-sp="none"], .sim-plant .unit[data-sp="ext"] { opacity: .4 }
+.sim-plant .unit.dim { opacity: .12 }
+.sim-plant .unit.sel .u-body { stroke: var(--ink); stroke-width: 3 }
+.sim-plant .flowpath, .sim-plant .pipe { opacity: .25 }
+.sp-kind { font: 600 12.5px var(--font-mono); text-transform: uppercase; letter-spacing: .08em }
+.sp-kind.fail { color: var(--warn) } .sp-kind.infra, .sp-kind.cost { color: var(--hot) } .sp-kind.person { color: var(--g3) } .sp-kind.calm, .sp-kind.busy { color: var(--ok) }
+.sp-check { display: grid; gap: 2px; border-left: 3px solid var(--ok); padding-left: 8px; font-size: 13px }
+.sp-check.warn { border-left-color: var(--hot) } .sp-check.bad { border-left-color: var(--warn) }
+.sim-read ol { margin: 0; padding-left: 20px; columns: 2 360px; column-gap: 32px; font-size: 14.5px }
+.sim-read li { break-inside: avoid; margin-bottom: 8px }
+.sim-pin { display: grid; gap: 10px }
+.sim-views { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line) }
+.sim-views button { font: 600 13px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink); background: var(--box); border: 0; border-right: 1px solid var(--line); padding: 8px 14px; cursor: pointer }
+.sim-views button[aria-selected="true"] { background: var(--line); color: var(--sheet) }
+.sim-views button:focus-visible { outline: 2px solid var(--hot); outline-offset: -2px }
+.sim-views [data-sim-count]:not(:empty) { color: var(--warn); margin-left: 4px }
+.sim-views button[aria-selected="true"] [data-sim-count] { color: inherit }
+.sim-block[hidden] { display: none }
+.sim-block { border-top: 0; padding-top: 4px }
+@media (max-width: 900px) { .sim-views button { flex: 1 1 auto; padding: 8px 10px } }
+.sim-wrap .plant-bar.flows { flex-wrap: wrap; overflow: visible }
+.sim-wrap.ops .sim-top { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) }
+@media (max-width: 900px) { .sim-top { grid-template-columns: 1fr } .sim-wrap.ops .sim-top { grid-template-columns: 1fr } }
+@media (prefers-reduced-motion: reduce) { .sim-pipe.flow, .unit.sim.bad .u-led, .sim-plant .unit[data-sp="fail"] .u-led { animation: none } }
 </style>
 </head>
 <body>
@@ -443,6 +551,150 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
   <header><span class="sno">Sheet</span><h2>Connections</h2><span class="muted">What each subsystem uses and what uses it, measured from the code (<code>harness/connections.py</code>). Pick a subsystem; select a neighbour to follow it.</span></header>
 %%CONNECTIONS%%
 </section>
+
+<section class="sheet" id="speed">
+  <header><span class="sno">Sheet</span><h2>Speed simulator</h2><span class="muted">Move the model's speed from 0 to 20,000 tokens a second and see what a turn costs, what slows it, what Vak's infrastructure has to carry and what breaks. Today's turn shape is measured; the per-token paths, fixed waits and limits are read from the code on every build (<code>harness/simulator.py</code>); everything marked estimate is one.</span></header>
+  <div class="plant-wrap sim-wrap" id="sim-wrap">
+    <div class="ops-head">
+      <span class="ops-title">Vakyartha · Speed</span>
+      <span class="kpi">Model speed<b data-sim-kpi="tps"></b></span>
+      <span class="kpi">Turn<b data-sim-kpi="turn"></b></span>
+      <span class="kpi">Faster than today<b data-sim-kpi="x"></b></span>
+      <span class="kpi">Slowest part<b data-sim-kpi="neck"></b></span>
+      <span class="kpi">Cost an hour<b data-sim-kpi="cost"></b></span>
+      <span class="kpi">Breaks<b data-sim-kpi="bad"></b></span>
+      <span class="sep"></span>
+      <button type="button" data-sim="exit">Exit (Esc)</button>
+    </div>
+    <div class="sim-pin">
+    <div class="sim-top">
+      <div class="sim-controls">
+        <div class="sim-speed">
+          <label for="sim-tps">Model speed</label>
+          <output id="sim-tps-out" for="sim-tps"></output>
+          <input type="range" id="sim-tps" min="0" max="1000" step="1">
+          <div class="sim-scale" aria-hidden="true"><span>0</span><span>35 today</span><span>1k</span><span>14k</span><span>20k</span></div>
+        </div>
+        <div class="plant-bar" role="toolbar" aria-label="Speed presets">
+          <button type="button" data-sim-tps="0">0</button>
+          <button type="button" data-sim-tps="35">Today · 35</button>
+          <button type="button" data-sim-tps="300">300</button>
+          <button type="button" data-sim-tps="2000">2,000</button>
+          <button type="button" data-sim-tps="14000">Fast chip · 14,000</button>
+          <button type="button" data-sim-tps="20000">20,000</button>
+          <button type="button" data-sim="sweep" aria-pressed="false">Sweep ▶</button>
+        </div>
+        <div class="plant-bar flows" role="group" aria-label="Workload">
+          <span class="kicker">Workload</span>
+          <button type="button" data-sim-work="chat">Quick answer</button>
+          <button type="button" data-sim-work="typical" aria-pressed="true">Typical turn</button>
+          <button type="button" data-sim-work="research">Research turn</button>
+          <button type="button" data-sim-work="build">Long build</button>
+        </div>
+        <p class="muted sim-work-note" data-sim="worknote"></p>
+      </div>
+      <div class="sim-answer" aria-live="polite">
+        <h4>One turn at this speed</h4>
+        <div class="sim-big"><span data-sim="today"></span><span class="arrow">→</span><b data-sim="now"></b></div>
+        <div class="sim-sub" data-sim="sub"></div>
+        <div class="sim-stack" data-sim="stack"></div>
+        <div class="sim-key" data-sim="key"></div>
+        <button type="button" class="linkish" data-sim="ops">Open the operations screen ⛶</button>
+      </div>
+    </div>
+
+    <nav class="sim-views" role="tablist" aria-label="Simulator views">
+      <button type="button" role="tab" data-sim-show="turn" aria-selected="true">The turn</button>
+      <button type="button" role="tab" data-sim-show="plant" aria-selected="false">Subsystems</button>
+      <button type="button" role="tab" data-sim-show="vak" aria-selected="false">Inside Vak <span data-sim-count="vak"></span></button>
+      <button type="button" role="tab" data-sim-show="infra" aria-selected="false">Infrastructure and cost <span data-sim-count="infra"></span></button>
+      <button type="button" role="tab" data-sim-show="read" aria-selected="false">Critical read</button>
+    </nav>
+    </div>
+    <div data-sim-view="turn" class="sim-block">
+      <h3>How the turn shrinks as the model gets faster</h3>
+      <div class="sim-canvas" data-sim="curve" role="img" aria-label="Turn time against model speed, stacked by stage"></div>
+      <p class="muted">Seconds per turn, stacked by stage, against tokens a second on a log scale. The dashed line is today; the amber line is the speed you picked. Past a few hundred tokens a second the writing is gone and the curve flattens on what does not depend on the model.</p>
+    </div>
+
+    <div data-sim-view="turn" class="sim-block">
+      <h3>The turn's path at this speed</h3>
+      <div class="sim-canvas diagram" data-sim="diagram" role="img" aria-label="The stages of a turn left to right, each with its load at the chosen speed"></div>
+      <div class="plant-legend"><span><i class="flow"></i>stream moving: faster dashes, faster stream</span><span><i class="live"></i>holds</span><span>Amber box: the slowest part. Red light: it breaks at this speed. Bar: share of the turn.</span></div>
+    </div>
+
+    <div data-sim-view="plant" class="sim-block">
+      <h3>Every subsystem at this speed</h3>
+      <p class="muted">The Plant tab's drawing: every subsystem on its layer, coloured by what this speed does to it. Hover or select one for what drives its work and from which speed it bends or breaks. What drives each is written in <code>harness/simulator.py</code>, with its reason.</p>
+      <div class="plant-bar" role="group" aria-label="Show only" data-sim="sp-chips">
+        <span class="kicker">Show</span>
+        <button type="button" data-sp="all" aria-pressed="true">All</button>
+        <button type="button" data-sp="fail"><i class="sp-dot fail"></i>Fails</button>
+        <button type="button" data-sp="infra"><i class="sp-dot infra"></i>Needs more infrastructure</button>
+        <button type="button" data-sp="cost"><i class="sp-dot cost"></i>Costs more</button>
+        <button type="button" data-sp="person"><i class="sp-dot person"></i>Waits on a person</button>
+        <button type="button" data-sp="busy"><i class="sp-dot busy"></i>Busier</button>
+        <button type="button" data-sp="calm"><i class="sp-dot calm"></i>As today</button>
+        <button type="button" data-sp="none"><i class="sp-dot none"></i>Unaffected</button>
+      </div>
+      <div class="plant-main sim-plant-main">
+        <div class="plant-canvas sim-plant">%%SIM_PLANT%%<div class="plant-tip" data-sim="tip" hidden></div></div>
+        <aside class="plant-side">
+          <div class="panel" data-sim="unit"><h4>Subsystem</h4><div class="muted">Select a subsystem.</div></div>
+          <div class="panel"><h4>What goes first as speed rises</h4><ol class="sim-first" data-sim="first"></ol></div>
+        </aside>
+      </div>
+    </div>
+
+    <div data-sim-view="vak" class="sim-block">
+      <h3>What changes inside Vak</h3>
+      <ol class="sim-checks" data-sim="checks"></ol>
+    </div>
+
+    <div data-sim-view="infra" class="sim-block">
+      <h3>Infrastructure, cost and failures</h3>
+      <div class="sim-knobs" data-sim-group="infra">
+        <label><span>Conversations at once <b data-sim-v="conv"></b></span><input type="range" data-sim-k="conv" min="1" max="500" step="1"></label>
+        <label><span>Input price, per million <b data-sim-v="pin"></b></span><input type="range" data-sim-k="pin" min="0" max="15" step="0.05"></label>
+        <label><span>Output price, per million <b data-sim-v="pout"></b></span><input type="range" data-sim-k="pout" min="0" max="60" step="0.1"></label>
+        <label><span>Prompt served from cache <b data-sim-v="cache"></b></span><input type="range" data-sim-k="cache" min="0" max="95" step="5"></label>
+        <label><span>Day budget (<code>max_day_usd</code>) <b data-sim-v="budget"></b></span><input type="range" data-sim-k="budget" min="5" max="2000" step="5"></label>
+        <label><span>Provider allowance, tokens a minute <b data-sim-v="allow"></b></span><input type="range" data-sim-k="allow" min="100000" max="50000000" step="100000"></label>
+      </div>
+      <p class="muted">Prices, the allowance and the budget are placeholders: set your own. Cached input is priced at a tenth of input. The disk and server costs are estimates.</p>
+      <ol class="sim-checks" data-sim="infra"></ol>
+    </div>
+
+    <details data-sim-view="read" class="sim-block">
+      <summary><b>Assumptions you can move</b> <span class="muted">output per step, first-token wait, reading speed</span></summary>
+      <div class="sim-knobs">
+        <label><span>Output per step <b data-sim-v="out"></b></span><input type="range" data-sim-k="out" min="20" max="8000" step="10"></label>
+        <label><span>Answer a person reads <b data-sim-v="answer"></b></span><input type="range" data-sim-k="answer" min="50" max="4000" step="50"></label>
+        <label><span>First-token wait today <b data-sim-v="ft0"></b></span><input type="range" data-sim-k="ft0" min="100" max="4000" step="50"></label>
+        <label><span>Network floor <b data-sim-v="net"></b></span><input type="range" data-sim-k="net" min="20" max="1500" step="10"></label>
+        <label><span>Prompt per step <b data-sim-v="prompt"></b></span><input type="range" data-sim-k="prompt" min="1000" max="120000" step="1000"></label>
+        <label><span>Reading speed <b data-sim-v="read"></b></span><input type="range" data-sim-k="read" min="150" max="600" step="10"></label>
+        <label class="chk"><input type="checkbox" data-sim-k="shrink" checked> Prefill and queueing get faster with the model</label>
+      </div>
+      <p class="muted">The defaults reproduce the measured median step (about <span data-sim-calc="step">—</span>) at 35 tokens a second. Measured on <span data-sim-calc="asof">—</span> from <span data-sim-calc="turns">—</span> turns: about 81% of a turn waited on the model, 12% on tools, 2% on Vak between steps.</p>
+    </details>
+    <noscript><p class="muted">The simulator needs JavaScript; its inputs are in <code>blueprint.json</code> under <code>simulator</code>.</p></noscript>
+
+    <div data-sim-view="read" class="sim-block sim-read">
+      <h3>A critical read</h3>
+      <ol>
+        <li><b>The turn gets faster, far less than the model.</b> At 14,000 tokens a second the writing vanishes; what is left is the wait for a first token, the tools (a web fetch is still half a second) and Vak's own work per step. A model 400 times faster makes the typical turn about <span data-sim-calc="x14k">—</span> times faster.</li>
+        <li><b>Safety and the record do not depend on slowness.</b> Permission, the broker, the sandbox and sealed ledger frames cost tens of milliseconds a step. They become a visible share of a fast turn, never a wrong one.</li>
+        <li><b>The one-token-at-a-time paths bend first.</b> One wire frame per delta, a screen that copies its whole text on each one, and a reconnect window of <span data-sim-code="ring">—</span> events. The fix is a stream that follows what its reader can take, not a new number.</li>
+        <li><b>Fixed waits turn long.</b> A worker is looked at every <span data-sim-code="wait_tick">—</span> ms and the breaker cools for <span data-sim-code="breaker">—</span> s: at 14,000 tokens a second one cooldown is <span data-sim-calc="cool14k">—</span> typical turns. They belong under the operator's limits and on events (doc 88 §5a).</li>
+        <li><b>Cost and the provider's allowance become the governor.</b> The same hour asks for as many times the tokens as turns get faster, mostly prompt. The day budget and the provider's tokens-a-minute run out first; prompt caching decides the bill.</li>
+        <li><b>The person becomes the slowest part.</b> People read about five tokens a second at any model speed, and approvals and Review wait on them. What matters is what Vak already leans on: cards, the plan check, receipts and Review, so a person checks outcomes rather than reads streams.</li>
+      </ol>
+    </div>
+  </div>
+  <script type="application/json" id="sim-data">%%SIM_DATA%%</script>
+</section>
+
 
 
 <section class="sheet" id="layers">
@@ -1098,6 +1350,584 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 4px }
     }
     show(t.getAttribute('data-cx'), !t.closest('.cx-pick'));
   });
+})();
+(function () {
+  var wrap = document.getElementById('sim-wrap');
+  var dataEl = document.getElementById('sim-data');
+  if (!wrap || !dataEl) return;
+  var D = JSON.parse(dataEl.textContent), M = D.measured, C = D.code, SUB = D.subsystems || {}, NAMES = D.names || {};
+  var NS = 'http://www.w3.org/2000/svg';
+  var TODAY = 35, MAX = 20000;
+  function code(k, fallback) { return C[k] && C[k].value != null ? C[k].value : fallback; }
+  var RING = code('ring', 1024), TICK = code('wait_tick', 250), COOL = code('breaker', 60);
+  // Workloads: the measured median, 90th percentile and longest turn; a quick answer is one step, no tools.
+  var WORK = {
+    chat: { steps: 1, tools: 0, waits: 0, note: 'One step, no tools: a short reply.' },
+    typical: { steps: M.steps_per_turn.p50, tools: M.tools_per_turn.p50, waits: 0, note: 'The measured median turn: ' + M.steps_per_turn.p50 + ' model steps and ' + M.tools_per_turn.p50 + ' tool calls.' },
+    research: { steps: M.steps_per_turn.p90, tools: M.tools_per_turn.p90, waits: 2, note: 'The measured 90th percentile: ' + M.steps_per_turn.p90 + ' steps, ' + M.tools_per_turn.p90 + ' tool calls, two waits on workers.' },
+    build: { steps: M.steps_per_turn.max, tools: 40, waits: 4, note: 'The longest measured turn: ' + M.steps_per_turn.max + ' steps, 40 tool calls, four waits on workers.' }
+  };
+  // Defaults reproduce the measured median step at today's speed: first token plus output per step at 35/s.
+  var K = { out: Math.round((M.dispatch_p50_ms - 800) / 1000 * TODAY), answer: 400, ft0: 800, net: 250, prompt: 12000, read: 250, shrink: true,
+            conv: 1, pin: 1, pout: 4, cache: 70, budget: 50, allow: 2000000 };
+  var work = 'typical';
+  // Estimates, labelled on the page.
+  var SCREEN_PER_DELTA_MS = 0.03, SCREEN_PER_CHAR_NS = 15, COPY_BYTES_PER_S = 4e9, CHARS_PER_TOKEN = 4;
+  var ENTRIES_PER_STEP = 3, SYNCS_PER_S = 2000, FRAME_CPU_US = 20, LEDGER_EXTRA_BYTES = 1500, CACHED_PRICE = 0.1;
+
+  function q(sel) { return wrap.querySelector(sel); }
+  function qa(sel) { return Array.prototype.slice.call(wrap.querySelectorAll(sel)); }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function sv(tag, attrs, text) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; }
+  function fmtMs(ms) {
+    if (!isFinite(ms)) return 'never';
+    if (ms < 1) return ms.toFixed(2) + ' ms';
+    if (ms < 1000) return Math.round(ms) + ' ms';
+    if (ms < 60000) return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + ' s';
+    if (ms < 3600000) return (ms / 60000).toFixed(1) + ' min';
+    return (ms / 3600000).toFixed(1) + ' h';
+  }
+  function fmtN(n) { return !isFinite(n) ? '∞' : n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : Math.round(n).toLocaleString(); }
+  function fmtX(x) { return !isFinite(x) || x <= 0 ? '—' : x >= 10 ? Math.round(x).toLocaleString() + '×' : x.toFixed(1) + '×'; }
+  function fmtUsd(v) { return !isFinite(v) ? '—' : v >= 100 ? '$' + Math.round(v).toLocaleString() : v >= 1 ? '$' + v.toFixed(2) : '$' + v.toFixed(3); }
+  function fmtBytes(b) { return b >= 1e12 ? (b / 1e12).toFixed(1) + ' TB' : b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? (b / 1e6).toFixed(0) + ' MB' : Math.round(b / 1e3) + ' kB'; }
+  function fmtTps(t) { return t >= 1000 ? (t >= 10000 ? Math.round(t / 1000) + 'k' : (t / 1000).toFixed(1) + 'k') : String(Math.round(t)); }
+  // The slider is cubic so the low end, where today sits, has room.
+  function toTps(p) { return Math.round(MAX * Math.pow(p / 1000, 3)); }
+  function toPos(t) { return Math.round(1000 * Math.cbrt(Math.max(0, t) / MAX)); }
+
+  function model(tps, w) {
+    w = w || WORK[work];
+    var r = { tps: tps };
+    if (tps <= 0) {
+      r.first = Infinity; r.decode = Infinity; r.tools = w.tools * M.tool_p50_ms; r.runtime = Infinity; r.waits = 0; r.turn = Infinity;
+      r.parts = [Infinity, Infinity, r.tools, 0, 0]; r.screen = 0; r.stream = 0; r.copy = 0; r.stepDecode = Infinity; r.stepFirst = Infinity;
+      r.answerRead = K.answer / (K.read * 4 / 3 / 60) * 1000; r.turnsPerHour = 0; r.stepsPerS = 0; r.tokensPerTurn = 0; r.streamShare = 0;
+      return infra(r, w);
+    }
+    var first = K.net + (K.ft0 - K.net) * (K.shrink ? Math.min(1, TODAY / tps) : 1);
+    var decode = K.out / tps * 1000;
+    // every delta carries the whole message so far: the copies grow with the square of the output
+    var copy = (K.out * K.out / 2) * CHARS_PER_TOKEN / COPY_BYTES_PER_S * 1000;
+    r.screen = K.out * SCREEN_PER_DELTA_MS + SCREEN_PER_CHAR_NS * 1e-6 * CHARS_PER_TOKEN * K.out * K.out / 2;
+    r.first = w.steps * first; r.decode = w.steps * decode; r.tools = w.tools * M.tool_p50_ms;
+    r.runtime = w.steps * (M.runtime_per_step_ms + copy) + M.runtime_per_turn_ms;
+    r.waits = w.waits * TICK / 2;
+    r.turn = r.first + r.decode + r.tools + r.runtime + r.waits;
+    r.parts = [r.first, r.decode, r.tools, r.runtime, r.waits];
+    r.stepFirst = first; r.stepDecode = decode; r.copy = copy;
+    r.stream = tps; // one frame per delta, about one delta per token
+    r.streamShare = r.decode / r.turn;
+    r.answerRead = K.answer / (K.read * 4 / 3 / 60) * 1000; // words a minute to tokens a second
+    r.tokensPerTurn = w.steps * (K.out + K.prompt);
+    r.turnsPerHour = 3600000 / r.turn;
+    return infra(r, w);
+  }
+  // Infrastructure for K.conv conversations at once, with the provider's allowance applied.
+  function infra(r, w) {
+    var n = K.conv, need = n * r.turnsPerHour * r.tokensPerTurn / 60; // tokens a minute
+    r.allowNeed = need;
+    r.capped = need > K.allow ? K.allow / need : 1;
+    var tph = n * r.turnsPerHour * r.capped;
+    r.allTurnsPerHour = tph;
+    var inCost = K.prompt * ((1 - K.cache / 100) + (K.cache / 100) * CACHED_PRICE) * K.pin, outCost = K.out * K.pout;
+    r.costPerTurn = w.steps * (inCost + outCost) / 1e6;
+    r.costPerHour = tph * r.costPerTurn;
+    r.budgetHours = r.costPerHour > 0 ? K.budget / r.costPerHour : Infinity;
+    r.stepsPerS = tph * w.steps / 3600;
+    r.syncsPerS = r.stepsPerS * ENTRIES_PER_STEP;
+    r.framesPerS = n * r.stream * (r.streamShare || 0) * r.capped;
+    r.frameCores = r.framesPerS * FRAME_CPU_US / 1e6 * 2; // the server's projection plus the admin hub
+    r.logsPerDay = r.stepsPerS * 86400 * M.log_bytes_per_step;
+    r.ledgerPerDay = r.stepsPerS * 86400 * (K.out * CHARS_PER_TOKEN + LEDGER_EXTRA_BYTES);
+    return r;
+  }
+
+  var PARTS = [
+    { name: 'First token (network, queue, prefill)', color: 'var(--g1)' },
+    { name: 'Writing the output', color: 'var(--g3)' },
+    { name: 'Tools and sandbox', color: 'var(--g2)' },
+    { name: 'Vak runtime (loop, checks, ledger)', color: 'var(--g5)' },
+    { name: 'Waiting on workers', color: 'var(--g6)' }
+  ];
+
+  // Each check: a state at a speed, its words, and the code it rests on.
+  function checksAt(r) {
+    var list = [], today = model(TODAY);
+    function add(key, group, state, title, value) { list.push({ key: key, group: group, state: state, title: title, value: value }); }
+    if (r.tps <= 0) { add('none', 'vak', 'bad', 'Nothing is written', 'At 0 tokens a second a turn never ends.'); return list; }
+    var modelMs = r.first + r.decode, rest = r.tools + r.runtime + r.waits;
+    add('model', 'vak', modelMs > rest ? 'ok' : 'warn', 'The model is the slowest part', 'model ' + fmtMs(modelMs) + ' against tools and Vak ' + fmtMs(rest) + ' a turn');
+    add('floor', 'vak', r.stepDecode > r.stepFirst ? 'ok' : 'warn', 'Writing outlasts the wait for the first token', 'writing ' + fmtMs(r.stepDecode) + ', first token ' + fmtMs(r.stepFirst) + ' a step');
+    var load = r.screen / r.stepDecode;
+    add('append', 'vak', load < 0.5 ? 'ok' : load < 1 ? 'warn' : 'bad', 'The screen keeps up with the stream (estimate)',
+      r.stream.toLocaleString() + ' frames a second; drawing takes ' + fmtMs(r.screen) + ' for ' + fmtMs(r.stepDecode) + ' of output (' + Math.round(load * 100) + '% busy)');
+    var ringS = RING / r.stream;
+    add('ring', 'vak', ringS >= 5 ? 'ok' : ringS >= 1 ? 'warn' : 'bad', 'A reconnect can catch up on what it missed', RING.toLocaleString() + ' events cover ' + fmtMs(ringS * 1000) + ' of stream');
+    var copyShare = r.copy / r.stepDecode;
+    add('snapshot', 'vak', copyShare < 0.05 ? 'ok' : copyShare < 0.5 ? 'warn' : 'bad', 'Copying the whole message into every delta stays cheap (estimate)',
+      fmtMs(r.copy) + ' of copies for ' + fmtMs(r.stepDecode) + ' of output a step, at ' + code('snapshot', 0) + ' adapter sites');
+    var workerTurn = model(r.tps, WORK.typical).turn, tickShare = (TICK / 2) / workerTurn;
+    add('wait_tick', 'vak', tickShare < 0.05 ? 'ok' : tickShare < 0.25 ? 'warn' : 'bad', 'Waiting on a worker is not set by a timer',
+      'a ' + TICK + ' ms tick costs ' + Math.round(tickShare * 100) + '% of a worker\'s ' + fmtMs(workerTurn) + ' turn');
+    var lost = COOL * 1000 / r.turn;
+    add('breaker', 'vak', lost < 1 ? 'ok' : lost < 10 ? 'warn' : 'bad', 'A breaker cooldown is short next to the work',
+      'one ' + COOL + ' s cooldown is ' + (lost < 1 ? 'under one turn' : fmtN(lost) + ' turns') + ' at this speed');
+    var waitShare = r.turn / (r.turn + r.answerRead);
+    add('person', 'vak', waitShare >= 0.15 ? 'ok' : waitShare >= 0.05 ? 'warn' : 'bad', 'The person waits on the agent, not the other way round',
+      'a turn takes ' + fmtMs(r.turn) + '; reading its ' + K.answer + '-token answer takes ' + fmtMs(r.answerRead));
+    // infrastructure, for K.conv conversations
+    add('cost', 'infra', r.costPerHour < today.costPerHour * 3 ? 'ok' : r.costPerHour < today.costPerHour * 30 ? 'warn' : 'bad', 'Spend stays near today\'s',
+      fmtUsd(r.costPerHour) + ' an hour (' + fmtUsd(r.costPerTurn) + ' a turn), ' + fmtX(r.costPerHour / today.costPerHour) + ' today\'s rate; mostly prompt, so caching decides the bill');
+    add('budget', 'infra', r.budgetHours >= 8 ? 'ok' : r.budgetHours >= 2 ? 'warn' : 'bad', 'The day budget lasts a working day',
+      'a ' + fmtUsd(K.budget) + ' day budget lasts ' + fmtMs(r.budgetHours * 3600000) + ' of steady work; then admission stops new turns');
+    add('allow', 'infra', r.allowNeed <= K.allow * 0.5 ? 'ok' : r.allowNeed <= K.allow ? 'warn' : 'bad', 'The provider\'s allowance covers the demand',
+      fmtN(r.allowNeed) + ' tokens a minute wanted, ' + fmtN(K.allow) + ' allowed' + (r.capped < 1 ? '; turns wait on Retry-After and run at ' + Math.round(r.capped * 100) + '% of the speed' : ''));
+    var syncShare = r.syncsPerS / SYNCS_PER_S;
+    add('fsync', 'infra', syncShare < 0.25 ? 'ok' : syncShare < 1 ? 'warn' : 'bad', 'The disk keeps up with durable writes (estimate)',
+      Math.round(r.syncsPerS).toLocaleString() + ' syncs a second against about ' + SYNCS_PER_S.toLocaleString() + ' a laptop disk takes');
+    add('frames', 'infra', r.frameCores < 0.5 ? 'ok' : r.frameCores < 2 ? 'warn' : 'bad', 'The server carries the stream on spare CPU (estimate)',
+      fmtN(r.framesPerS) + ' frames a second across ' + K.conv + ' conversation' + (K.conv > 1 ? 's' : '') + ', about ' + r.frameCores.toFixed(2) + ' cores');
+    add('disk', 'infra', r.ledgerPerDay < 5e9 ? 'ok' : r.ledgerPerDay < 50e9 ? 'warn' : 'bad', 'The record grows at a pace a disk holds (estimate)',
+      fmtBytes(r.ledgerPerDay) + ' of ledger a day of steady work; nothing is pruned but by the lifecycle rules');
+    add('logs', 'infra', r.logsPerDay < 1e9 ? 'ok' : r.logsPerDay < 20e9 ? 'warn' : 'bad', 'Telemetry stays small',
+      fmtBytes(r.logsPerDay) + ' of log lines a day at the measured ' + M.log_bytes_per_step.toLocaleString() + ' bytes a step (rotated by size)');
+    return list;
+  }
+
+  // The speed at which each check first breaks (and first bends), for the current knobs.
+  var SCAN = (function () { var a = []; for (var i = 0; i <= 120; i++) a.push(Math.round(Math.pow(10, Math.log10(5) + (Math.log10(MAX) - Math.log10(5)) * i / 120))); return a; })();
+  function thresholds() {
+    var out = {};
+    SCAN.forEach(function (t) {
+      checksAt(model(t)).forEach(function (c) {
+        var o = out[c.key] || (out[c.key] = { warn: null, bad: null });
+        if (c.state !== 'ok' && o.warn == null) o.warn = t;
+        if (c.state === 'bad' && o.bad == null) o.bad = t;
+      });
+    });
+    // a check already failing at the slowest scanned speed is reported from there
+    return out;
+  }
+
+  // The turn's path, left to right (wide) or top to bottom (narrow).
+  var STAGES = [
+    { name: 'Model provider', units: ['first', 'decode'] },
+    { name: 'Vak runtime', units: ['loop', 'tools', 'workers'] },
+    { name: 'Surfaces', units: ['stream', 'screen'] },
+    { name: 'Person', units: ['read', 'approve'] }
+  ];
+  var UNITS = {
+    first: { name: 'First token', sub: 'network · queue · prefill', g: 'g1', ext: true, check: 'floor' },
+    decode: { name: 'Writing the output', sub: 'model provider', g: 'g3', ext: true, check: 'allow' },
+    loop: { name: 'Agent loop and checks', sub: 'vak-agent · vak-judge', g: 'g5', check: 'breaker' },
+    tools: { name: 'Tools and sandbox', sub: 'vak-tools · worker', g: 'g2', check: 'fsync' },
+    workers: { name: 'Waiting on workers', sub: 'workers tool', g: 'g6', check: 'wait_tick' },
+    stream: { name: 'Event stream', sub: 'vak-server', g: 'g1', check: 'ring' },
+    screen: { name: 'Screen', sub: 'vak-client-ui', g: 'g6', check: 'append' },
+    read: { name: 'Reading the answer', sub: 'the person', g: 'g8', check: 'person' },
+    approve: { name: 'Approvals and Review', sub: 'the person', g: 'g8', check: 'person' }
+  };
+  var PIPES = [['first', 'decode'], ['decode', 'loop'], ['loop', 'tools'], ['loop', 'workers'], ['loop', 'stream'], ['stream', 'screen'], ['screen', 'read'], ['approve', 'loop']];
+  var UW = 250, UH = 76, pos = {}, unitEls = {}, pipeEls = [], narrow = null;
+
+  function drawDiagram() {
+    var host = q('[data-sim="diagram"]');
+    var nowNarrow = host.clientWidth > 0 && host.clientWidth < 760;
+    if (nowNarrow === narrow) return;
+    narrow = nowNarrow; host.textContent = ''; pos = {}; unitEls = {}; pipeEls = [];
+    var W, H, svg;
+    if (!narrow) {
+      var COLW = 270, GAP = 36, L = 20, T = 56, RG = 18;
+      W = L * 2 + STAGES.length * COLW + (STAGES.length - 1) * GAP; H = T + 3 * (UH + RG) + 6;
+      svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H });
+      STAGES.forEach(function (s, i) {
+        var x = L + i * (COLW + GAP);
+        svg.appendChild(sv('rect', { x: x, y: 8, width: COLW, height: H - 14, class: 'sim-band' }));
+        svg.appendChild(sv('text', { x: x + 10, y: 26, class: 'sim-band-name' }, s.name));
+        s.units.forEach(function (id, j) { pos[id] = { x: x + (COLW - UW) / 2, y: T + j * (UH + RG) }; });
+      });
+    } else {
+      var NW = 300, NL = 10, NT = 8, ROW = UH + 18, HEAD = 22;
+      W = NW + NL * 2; var y = NT;
+      STAGES.forEach(function (s) { y += HEAD + s.units.length * ROW; });
+      H = y + 6;
+      svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H });
+      y = NT;
+      STAGES.forEach(function (s) {
+        svg.appendChild(sv('text', { x: NL + (NW - UW) / 2 + 20, y: y + 14, class: 'sim-band-name' }, s.name));
+        y += HEAD;
+        s.units.forEach(function (id) { pos[id] = { x: NL + (NW - UW) / 2 + 20, y: y }; y += ROW; });
+      });
+    }
+    PIPES.forEach(function (p) {
+      var a = pos[p[0]], b = pos[p[1]], d;
+      if (!narrow && Math.abs(a.x - b.x) < 1) { // same column: down the left side
+        var ex = a.x - 10, ay = a.y + UH / 2, by = b.y + UH / 2;
+        d = 'M' + a.x + ',' + ay + ' C' + ex + ',' + ay + ' ' + ex + ',' + by + ' ' + b.x + ',' + by;
+      } else if (!narrow) {
+        var fx = a.x < b.x ? a.x + UW : a.x, tx = a.x < b.x ? b.x : b.x + UW, fy = a.y + UH / 2, ty = b.y + UH / 2, mx = (fx + tx) / 2;
+        d = 'M' + fx + ',' + fy + ' C' + mx + ',' + fy + ' ' + mx + ',' + ty + ' ' + tx + ',' + ty;
+      } else { // narrow: down the left edge
+        var lx = a.x - 14, ny1 = a.y + UH / 2, ny2 = b.y + UH / 2;
+        d = 'M' + a.x + ',' + ny1 + ' L' + lx + ',' + ny1 + ' L' + lx + ',' + ny2 + ' L' + b.x + ',' + ny2;
+      }
+      var path = sv('path', { d: d, class: 'sim-pipe' });
+      svg.appendChild(path); pipeEls.push({ el: path, from: p[0], to: p[1] });
+    });
+    Object.keys(UNITS).forEach(function (id) {
+      var u = UNITS[id], p = pos[id];
+      var g = sv('g', { class: 'unit sim ' + u.g + (u.ext ? ' ext' : ''), transform: 'translate(' + p.x + ',' + p.y + ')' });
+      g.appendChild(sv('rect', { class: 'u-body', width: UW, height: UH, rx: 3 }));
+      g.appendChild(sv('rect', { class: 'u-stripe', width: 5, height: UH }));
+      g.appendChild(sv('circle', { class: 'u-led', cx: UW - 12, cy: 13, r: 5 }));
+      g.appendChild(sv('text', { class: 'u-name', x: 16, y: 22 }, u.name));
+      var big = sv('text', { class: 'sim-u-big', x: 16, y: 45 }, '');
+      var sub = sv('text', { class: 'u-sub', x: 16, y: 62 }, u.sub);
+      g.appendChild(big); g.appendChild(sub);
+      g.appendChild(sv('rect', { class: 'u-track', x: 16, y: UH - 7, width: UW - 32, height: 3 }));
+      var load = sv('rect', { class: 'u-load', x: 16, y: UH - 7, width: 0, height: 3 });
+      g.appendChild(load);
+      svg.appendChild(g);
+      unitEls[id] = { g: g, big: big, sub: sub, load: load };
+    });
+    host.appendChild(svg);
+  }
+
+  function curve(r) {
+    var host = q('[data-sim="curve"]');
+    host.textContent = '';
+    var CW = 1180, CH = 280, L = 70, R = 20, T = 24, B = 40;
+    var s = sv('svg', { viewBox: '0 0 ' + CW + ' ' + CH });
+    var xs = [], n = 90;
+    for (var i = 0; i <= n; i++) xs.push(Math.pow(10, Math.log10(5) + (Math.log10(MAX) - Math.log10(5)) * i / n));
+    var rows = xs.map(function (t) { return model(t); });
+    var ymax = model(TODAY).turn * 1.1;
+    function X(t) { return L + (Math.log10(t) - Math.log10(5)) / (Math.log10(MAX) - Math.log10(5)) * (CW - L - R); }
+    function Y(ms) { return T + (1 - Math.min(ms, ymax) / ymax) * (CH - T - B); }
+    [10, 35, 100, 300, 1000, 3000, 14000].forEach(function (t) {
+      s.appendChild(sv('line', { x1: X(t), x2: X(t), y1: T, y2: CH - B, class: 'sim-grid' }));
+      s.appendChild(sv('text', { x: X(t), y: CH - B + 18, 'text-anchor': 'middle', class: 'sim-tick' }, t.toLocaleString()));
+    });
+    for (var j = 0; j <= 4; j++) {
+      var v = ymax * j / 4;
+      s.appendChild(sv('line', { x1: L, x2: CW - R, y1: Y(v), y2: Y(v), class: 'sim-grid' }));
+      s.appendChild(sv('text', { x: L - 8, y: Y(v) + 4, 'text-anchor': 'end', class: 'sim-tick' }, fmtMs(v)));
+    }
+    var base = rows.map(function () { return 0; });
+    PARTS.forEach(function (p, pi) {
+      var top = rows.map(function (row, i) { return base[i] + row.parts[pi]; });
+      var d = 'M' + X(xs[0]) + ',' + Y(top[0]);
+      for (var a = 1; a < xs.length; a++) d += ' L' + X(xs[a]) + ',' + Y(top[a]);
+      for (var b = xs.length - 1; b >= 0; b--) d += ' L' + X(xs[b]) + ',' + Y(base[b]);
+      s.appendChild(sv('path', { d: d + ' Z', fill: p.color, opacity: 0.78 }));
+      base = top;
+    });
+    s.appendChild(sv('line', { x1: L, x2: L, y1: T, y2: CH - B, class: 'sim-axis' }));
+    s.appendChild(sv('line', { x1: L, x2: CW - R, y1: CH - B, y2: CH - B, class: 'sim-axis' }));
+    var today = model(TODAY);
+    s.appendChild(sv('line', { x1: L, x2: CW - R, y1: Y(today.turn), y2: Y(today.turn), class: 'sim-ref' }));
+    s.appendChild(sv('text', { x: CW - R, y: Y(today.turn) - 6, 'text-anchor': 'end', class: 'sim-tick' }, 'today: ' + fmtMs(today.turn)));
+    if (r.tps >= 5) {
+      var lx = X(r.tps), anchor = lx > CW - 220 ? 'end' : 'start';
+      s.appendChild(sv('line', { x1: lx, x2: lx, y1: T, y2: CH - B, class: 'sim-mark' }));
+      s.appendChild(sv('text', { x: lx + (anchor === 'end' ? -8 : 8), y: T + 14, 'text-anchor': anchor, class: 'sim-mark-label' }, r.tps.toLocaleString() + '/s · ' + fmtMs(r.turn)));
+    }
+    s.appendChild(sv('text', { x: CW - R, y: CH - 4, 'text-anchor': 'end', class: 'sim-tick' }, 'tokens a second, log scale'));
+    host.appendChild(s);
+  }
+
+  function where(key) { var c = C[key]; return c ? c.file + ':' + c.line : ''; }
+  var WORD = { ok: 'Holds', warn: 'Bends', bad: 'Breaks' };
+  function checkList(ol, list, th) {
+    ol.textContent = '';
+    var order = { bad: 0, warn: 1, ok: 2 };
+    list.slice().sort(function (a, b) { return order[a.state] - order[b.state]; }).forEach(function (c) {
+      var li = el('li', c.state);
+      var head = el('div', 'h');
+      head.appendChild(el('span', 'w', WORD[c.state]));
+      head.appendChild(el('b', null, c.title));
+      li.appendChild(head);
+      li.appendChild(el('span', 'v', c.value));
+      var t = th[c.key];
+      if (t && (t.bad || t.warn)) li.appendChild(el('span', 'when', (t.bad ? 'breaks from ' + fmtTps(t.bad) + ' tokens/s' : 'never breaks up to 20k') + (t.warn && t.warn !== t.bad ? ' · bends from ' + fmtTps(t.warn) : '')));
+      else if (t) li.appendChild(el('span', 'when', 'holds up to 20,000 tokens/s'));
+      if (C[c.key]) { var cd = el('span', 'muted src'); cd.appendChild(el('code', null, where(c.key))); cd.appendChild(document.createTextNode(' ' + C[c.key].what)); li.appendChild(cd); }
+      ol.appendChild(li);
+    });
+  }
+
+  // The subsystem plant: every subsystem coloured by what this speed does to it.
+  var plantSvg = q('.sim-plant svg'), plantUnits = {}, spFilter = 'all', selected = null;
+  if (plantSvg) qa('.sim-plant .unit').forEach(function (u) { plantUnits[u.getAttribute('data-id')] = u; });
+  var KIND = { fail: 'Fails at this speed', infra: 'Needs more infrastructure', cost: 'Costs more', person: 'Waits on a person', busy: 'Busier', none: 'Unaffected by speed', calm: 'About as busy as today' };
+  var DRIVER = { token: 'per streamed token', step: 'per model step or call', turn: 'per turn', spend: 'per token bought', timer: 'a fixed wait in code', person: 'a person\'s pace' };
+  function loadFor(driver, r, today) {
+    if (r.tps <= 0) return 0;
+    if (driver === 'token') return K.conv * r.tps * r.capped / TODAY;
+    if (driver === 'step' || driver === 'turn' || driver === 'spend') return r.allTurnsPerHour / today.allTurnsPerHourOne;
+    return 1;
+  }
+  function subState(id, r, today, byKey) {
+    var s = SUB[id];
+    if (!s) return { kind: 'none', load: 0 };
+    var states = s.checks.map(function (k) { return byKey[k] ? byKey[k].state : 'ok'; });
+    var load = loadFor(s.driver, r, today);
+    var kind;
+    if (r.tps <= 0) kind = s.driver === 'person' ? 'person' : 'calm';
+    else if (s.driver === 'person') kind = 'person';
+    else if (s.driver === 'spend') kind = 'cost';
+    else if (states.indexOf('bad') >= 0) kind = 'fail';
+    else if (states.indexOf('warn') >= 0 || load >= 30) kind = 'infra';
+    else if (load >= 3) kind = 'busy';
+    else kind = 'calm';
+    return { kind: kind, load: load, states: states };
+  }
+  function paintPlant(r, th, byKey) {
+    if (!plantSvg) return;
+    var today = model(TODAY); today.allTurnsPerHourOne = today.turnsPerHour;
+    var counts = {};
+    Object.keys(plantUnits).forEach(function (id) {
+      var u = plantUnits[id], st = SUB[id] ? subState(id, r, today, byKey) : { kind: u.classList.contains('ext') ? 'ext' : 'none' };
+      u.setAttribute('data-sp', st.kind);
+      counts[st.kind] = (counts[st.kind] || 0) + 1;
+      u.classList.toggle('dim', spFilter !== 'all' && st.kind !== spFilter);
+      u._sp = st;
+    });
+    qa('[data-sp]').forEach(function (b) {
+      if (b.tagName !== 'BUTTON') return;
+      var k = b.getAttribute('data-sp'), n = k === 'all' ? null : (counts[k] || 0);
+      var label = b.querySelector('.n') || b.appendChild(el('span', 'n'));
+      label.textContent = n == null ? '' : ' ' + n;
+    });
+    // what goes first: subsystems in order of the speed their first check breaks
+    var first = [];
+    Object.keys(SUB).forEach(function (id) {
+      var b = null, why = null;
+      SUB[id].checks.forEach(function (k) { var t = th[k]; if (t && t.bad != null && (b == null || t.bad < b)) { b = t.bad; why = k; } });
+      if (b != null) first.push({ id: id, at: b, key: why });
+    });
+    first.sort(function (a, b) { return a.at - b.at || (NAMES[a.id] < NAMES[b.id] ? -1 : 1); });
+    var groups = [];
+    first.forEach(function (f) {
+      var g = groups[groups.length - 1];
+      if (g && g.at === f.at && g.key === f.key) g.ids.push(f.id); else groups.push({ at: f.at, key: f.key, ids: [f.id] });
+    });
+    var ol = q('[data-sim="first"]'); ol.textContent = '';
+    groups.forEach(function (f) {
+      var li = el('li', r.tps >= f.at ? 'bad' : '');
+      li.appendChild(el('span', 'at', fmtTps(f.at) + '/s'));
+      var names = el('span', 'names');
+      f.ids.forEach(function (id, i) {
+        if (i) names.appendChild(document.createTextNode(', '));
+        var btn = el('button', 'linkish', NAMES[id] || id); btn.type = 'button';
+        btn.addEventListener('click', function () { select(id); });
+        names.appendChild(btn);
+      });
+      li.appendChild(names);
+      var c = byKey[f.key]; li.appendChild(el('span', 'muted', f.key === 'person' ? 'from here the agent waits on the person' : 'breaks: ' + (c ? c.title.replace(/ \(estimate\)$/, '').toLowerCase() : f.key)));
+      ol.appendChild(li);
+    });
+    if (!first.length) ol.appendChild(el('li', 'muted', 'Nothing breaks up to 20,000 tokens a second with these assumptions.'));
+    showUnit(r, th, byKey);
+  }
+  function unitDetail(id, r, th, byKey, box) {
+    var s = SUB[id], u = plantUnits[id], st = u && u._sp;
+    box.appendChild(el('div', 'big', NAMES[id] || id));
+    if (!s) { box.appendChild(el('div', 'muted', u && u.classList.contains('ext') ? 'Outside the repository.' : 'Does its work per action, not per token, step or turn: speed alone does not load it.')); return; }
+    box.appendChild(el('div', 'sp-kind ' + st.kind, KIND[st.kind]));
+    box.appendChild(el('div', null, s.why + '.'));
+    var load = el('div', 'muted', 'Work grows ' + DRIVER[s.driver] + (st.load && s.driver !== 'person' && s.driver !== 'timer' ? ': ' + fmtX(st.load) + ' today\'s load' + (K.conv > 1 ? ' across ' + K.conv + ' conversations' : '') : '') + '.');
+    box.appendChild(load);
+    s.checks.forEach(function (k) {
+      var c = byKey[k], t = th[k];
+      if (!c) return;
+      var row = el('div', 'sp-check ' + c.state);
+      row.appendChild(el('b', null, WORD[c.state] + ' · ' + c.title));
+      row.appendChild(el('span', 'muted', c.value));
+      if (t) row.appendChild(el('span', 'when', t.bad ? 'breaks from ' + fmtTps(t.bad) + ' tokens/s' : 'holds up to 20,000 tokens/s'));
+      if (C[k]) row.appendChild(el('code', null, where(k)));
+      box.appendChild(row);
+    });
+  }
+  var lastR, lastTh, lastByKey;
+  function showUnit(r, th, byKey) {
+    var box = q('[data-sim="unit"]'); box.textContent = '';
+    box.appendChild(el('h4', null, 'Subsystem'));
+    if (!selected) { box.appendChild(el('div', 'muted', 'Select a subsystem, or one in the list below, to see what drives its work and when it breaks.')); return; }
+    unitDetail(selected, r, th, byKey, box);
+  }
+  function select(id) {
+    if (selected && plantUnits[selected]) plantUnits[selected].classList.remove('sel');
+    selected = selected === id ? null : id;
+    if (selected && plantUnits[selected]) plantUnits[selected].classList.add('sel');
+    showUnit(lastR, lastTh, lastByKey);
+  }
+  var tip = q('[data-sim="tip"]'), pcanvas = q('.sim-plant');
+  Object.keys(plantUnits).forEach(function (id) {
+    var u = plantUnits[id];
+    u.addEventListener('click', function () { select(id); });
+    u.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(id); } });
+    u.addEventListener('mouseenter', function () {
+      tip.textContent = '';
+      var st = u._sp || {}, s = SUB[id];
+      tip.appendChild(el('b', null, NAMES[id] || u.getAttribute('aria-label').split(':')[0]));
+      tip.appendChild(el('span', null, KIND[st.kind] || 'Outside the repository'));
+      if (s) tip.appendChild(el('span', 'muted', s.why));
+      tip.hidden = false;
+      var box = pcanvas.getBoundingClientRect(), rr = u.getBoundingClientRect();
+      tip.style.left = Math.max(4, Math.min(rr.left - box.left + pcanvas.scrollLeft, pcanvas.scrollWidth - tip.offsetWidth - 4)) + 'px';
+      tip.style.top = (rr.bottom - box.top + pcanvas.scrollTop + 6) + 'px';
+    });
+    u.addEventListener('mouseleave', function () { tip.hidden = true; });
+  });
+  qa('button[data-sp]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      spFilter = b.getAttribute('data-sp');
+      qa('button[data-sp]').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+      paintPlant(lastR, lastTh, lastByKey);
+    });
+  });
+
+  var ops = false, sweeping = null, slider = q('#sim-tps'), out = q('#sim-tps-out');
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var thCache = null;
+
+  function update(tps) {
+    var r = model(tps), today = model(TODAY);
+    if (!thCache) thCache = thresholds();
+    var th = thCache, list = checksAt(r), byKey = {};
+    list.forEach(function (c) { byKey[c.key] = c; });
+    lastR = r; lastTh = th; lastByKey = byKey;
+    out.textContent = '';
+    out.appendChild(document.createTextNode(tps.toLocaleString()));
+    out.appendChild(el('small', null, ' tokens/s'));
+    var parts = r.parts, neckI = 0;
+    parts.forEach(function (v, i) { if (v > parts[neckI]) neckI = i; });
+    var neck = r.tps <= 0 ? 'the model' : PARTS[neckI].name.split(' (')[0].toLowerCase();
+    var unitNeck = r.tps <= 0 ? 'decode' : ['first', 'decode', 'tools', 'loop', 'workers'][neckI];
+    var bad = list.filter(function (c) { return c.state === 'bad'; }).length;
+    // the answer
+    q('[data-sim="today"]').textContent = fmtMs(today.turn);
+    q('[data-sim="now"]').textContent = r.tps <= 0 ? 'never' : fmtMs(r.turn);
+    q('[data-sim="sub"]').textContent = r.tps <= 0 ? 'Nothing is written, so a turn never ends.'
+      : fmtX(today.turn / r.turn) + ' faster than today · slowest part: ' + neck + ' · ' + fmtUsd(r.costPerHour) + ' an hour · ' + bad + ' of ' + list.length + ' checks break';
+    var stack = q('[data-sim="stack"]'), key = q('[data-sim="key"]');
+    stack.textContent = ''; key.textContent = '';
+    PARTS.forEach(function (p, i) {
+      var share = isFinite(r.turn) && r.turn > 0 ? parts[i] / r.turn : 0;
+      var bar = el('i'); bar.style.width = (share * 100).toFixed(2) + '%'; bar.style.background = p.color; bar.title = p.name;
+      stack.appendChild(bar);
+      var item = el('span', 'k'); var sw = el('i'); sw.style.background = p.color; item.appendChild(sw);
+      item.appendChild(document.createTextNode(p.name.split(' (')[0] + ' ' + (isFinite(share) ? Math.round(share * 100) + '%' : '—')));
+      key.appendChild(item);
+    });
+    // the turn's path
+    drawDiagram();
+    var value = {
+      first: fmtMs(r.first) + ' a turn', decode: fmtMs(r.decode) + ' a turn', tools: fmtMs(r.tools) + ' a turn',
+      loop: fmtMs(r.runtime) + ' a turn', workers: WORK[work].waits ? fmtMs(r.waits) + ' a turn' : 'none in this turn',
+      stream: r.tps > 0 ? fmtN(r.stream) + ' frames/s' : 'no frames', screen: r.tps > 0 ? Math.round(r.screen / r.stepDecode * 100) + '% busy' : 'idle',
+      read: r.tps > 0 ? 'reads ' + fmtMs(r.answerRead) : '—', approve: 'at a person\'s pace'
+    };
+    var subText = {
+      stream: r.tps > 0 ? 'reconnect window ' + fmtMs(RING / r.stream * 1000) : 'vak-server', screen: 'vak-client-ui · estimate',
+      read: r.tps > 0 ? 'after waiting ' + fmtMs(r.turn) : 'the person'
+    };
+    var share = { first: r.first, decode: r.decode, tools: r.tools, loop: r.runtime, workers: r.waits };
+    Object.keys(unitEls).forEach(function (id) {
+      var u = unitEls[id], c = byKey[UNITS[id].check];
+      u.big.textContent = value[id];
+      u.sub.textContent = subText[id] || UNITS[id].sub;
+      var sh = share[id] != null && isFinite(r.turn) && r.turn > 0 ? Math.min(1, share[id] / r.turn) : 0;
+      u.load.setAttribute('width', ((UW - 32) * sh).toFixed(1));
+      u.load.setAttribute('class', 'u-load' + (id === unitNeck ? ' hot' : ''));
+      u.g.setAttribute('class', 'unit sim ' + UNITS[id].g + (UNITS[id].ext ? ' ext' : '') + (id === unitNeck ? ' active' : '') + (c ? ' ' + c.state : ''));
+    });
+    var dur = r.tps <= 0 ? 0 : Math.max(0.15, 2.4 - Math.log10(r.tps) * 0.55);
+    pipeEls.forEach(function (p) {
+      p.el.setAttribute('class', 'sim-pipe' + (r.tps > 0 ? ' flow' : ' idle'));
+      p.el.style.animationDuration = r.tps > 0 && !reduce ? dur.toFixed(2) + 's' : '';
+      p.el.style.strokeWidth = r.tps > 0 && (p.from === 'decode' || p.to === 'stream' || p.to === 'screen') ? (2 + Math.log10(r.tps + 1) * 0.9).toFixed(1) : '';
+    });
+    curve(r);
+    checkList(q('[data-sim="checks"]'), list.filter(function (c) { return c.group === 'vak'; }), th);
+    checkList(q('[data-sim="infra"]'), list.filter(function (c) { return c.group === 'infra'; }), th);
+    paintPlant(r, th, byKey);
+    ['vak', 'infra'].forEach(function (g) {
+      var n = list.filter(function (c) { return c.group === g && c.state === 'bad'; }).length, e = q('[data-sim-count="' + g + '"]');
+      if (e) e.textContent = n ? '· ' + n + ' fail' : '';
+    });
+    function kpi(k, v) { var e = q('[data-sim-kpi="' + k + '"]'); if (e) e.textContent = v; }
+    kpi('tps', r.tps.toLocaleString() + '/s'); kpi('turn', fmtMs(r.turn)); kpi('x', fmtX(today.turn / r.turn));
+    kpi('neck', neck); kpi('cost', fmtUsd(r.costPerHour)); kpi('bad', bad + ' of ' + list.length);
+    qa('[data-sim-tps]').forEach(function (b) { b.setAttribute('aria-pressed', +b.getAttribute('data-sim-tps') === tps ? 'true' : 'false'); });
+  }
+
+  var curTps = TODAY;
+  function setTps(t) { curTps = t; slider.value = toPos(t); update(t); }
+  function knobs() {
+    qa('[data-sim-k]').forEach(function (inp) {
+      var k = inp.getAttribute('data-sim-k');
+      if (inp.type === 'checkbox') inp.checked = K[k]; else inp.value = K[k];
+      inp.addEventListener('input', function () { K[k] = inp.type === 'checkbox' ? inp.checked : +inp.value; thCache = null; labels(); fillProse(); update(curTps); });
+    });
+    labels();
+  }
+  function labels() {
+    var f = { out: K.out.toLocaleString() + ' tokens', answer: K.answer.toLocaleString() + ' tokens', ft0: K.ft0 + ' ms', net: K.net + ' ms',
+              prompt: K.prompt.toLocaleString() + ' tokens', read: K.read + ' words/min', conv: K.conv, pin: '$' + K.pin.toFixed(2), pout: '$' + K.pout.toFixed(2),
+              cache: K.cache + '%', budget: '$' + K.budget, allow: fmtN(K.allow) };
+    Object.keys(f).forEach(function (k) { var e = q('[data-sim-v="' + k + '"]'); if (e) e.textContent = f[k]; });
+  }
+  function fillProse() {
+    qa('[data-sim-code]').forEach(function (e) { e.textContent = code(e.getAttribute('data-sim-code'), '?').toLocaleString(); });
+    var slow = model(TODAY, WORK.typical), fast = model(14000, WORK.typical);
+    var calc = { x14k: Math.round(slow.turn / fast.turn), cool14k: Math.round(COOL * 1000 / fast.turn), step: fmtMs(M.step_p50_ms), asof: M.as_of, turns: M.turns };
+    qa('[data-sim-calc]').forEach(function (e) { var v = calc[e.getAttribute('data-sim-calc')]; if (v != null) e.textContent = v; });
+    q('[data-sim="worknote"]').textContent = WORK[work].note;
+  }
+
+  knobs(); fillProse();
+  slider.addEventListener('input', function () { curTps = toTps(+slider.value); update(curTps); });
+  qa('[data-sim-tps]').forEach(function (b) { b.addEventListener('click', function () { stopSweep(); setTps(+b.getAttribute('data-sim-tps')); }); });
+  qa('[data-sim-work]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      work = b.getAttribute('data-sim-work'); thCache = null;
+      qa('[data-sim-work]').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+      fillProse(); update(curTps);
+    });
+  });
+  var sweepBtn = q('[data-sim="sweep"]');
+  function stopSweep() { if (sweeping) { clearInterval(sweeping); sweeping = null; sweepBtn.setAttribute('aria-pressed', 'false'); sweepBtn.textContent = 'Sweep ▶'; } }
+  sweepBtn.addEventListener('click', function () {
+    if (sweeping) { stopSweep(); return; }
+    sweepBtn.setAttribute('aria-pressed', 'true'); sweepBtn.textContent = 'Stop ■';
+    var p = 0;
+    sweeping = setInterval(function () { p += 5; if (p >= 1000) { p = 1000; stopSweep(); } slider.value = p; curTps = toTps(p); update(curTps); }, reduce ? 250 : 70);
+  });
+  function setOps(on) { ops = on; wrap.classList.toggle('ops', on); document.body.style.overflow = on ? 'hidden' : ''; narrow = null; update(curTps); }
+  q('[data-sim="ops"]').addEventListener('click', function () { setOps(true); });
+  q('[data-sim="exit"]').addEventListener('click', function () { setOps(false); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && ops) setOps(false); });
+  var resizeT;
+  window.addEventListener('resize', function () { clearTimeout(resizeT); resizeT = setTimeout(function () { update(curTps); }, 120); });
+  // a hidden sheet has no width: draw again when its tab is shown
+  document.addEventListener('click', function (e) { if (e.target.closest && e.target.closest('.tabs button')) setTimeout(function () { narrow = null; update(curTps); }, 0); });
+
+  var view = 'turn';
+  try { view = localStorage.getItem('sim-view') || 'turn'; } catch (e) {}
+  function showView(v) {
+    view = v;
+    qa('[data-sim-view]').forEach(function (b) { b.hidden = b.getAttribute('data-sim-view') !== v; });
+    qa('[data-sim-show]').forEach(function (b) { b.setAttribute('aria-selected', b.getAttribute('data-sim-show') === v ? 'true' : 'false'); });
+    try { localStorage.setItem('sim-view', v); } catch (e) {}
+    narrow = null; update(curTps);
+  }
+  qa('[data-sim-show]').forEach(function (b) { b.addEventListener('click', function () { showView(b.getAttribute('data-sim-show')); }); });
+  curTps = TODAY; slider.value = toPos(TODAY);
+  if (!q('[data-sim-show="' + view + '"]')) view = 'turn';
+  showView(view);
 })();
 </script>
 </body>

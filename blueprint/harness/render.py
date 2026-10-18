@@ -10,6 +10,7 @@ from collections import Counter
 
 import measure as ms
 import plant
+import simulator
 
 
 # ---- Markdown helpers -------------------------------------------------------
@@ -429,6 +430,7 @@ def size_tables(model):
 TABS = [
     ("overview", "Overview", ["summary", "attention", "happening", "record"]),
     ("plant", "Plant", ["plant", "flows", "connections"]),
+    ("simulator", "Simulator", ["speed"]),
     ("system", "System", ["layers", "subsystems", "processes", "turn", "data"]),
     ("inventory", "Inventory", ["bom", "size", "work"]),
     ("findings", "Findings", ["findings", "target"]),
@@ -473,7 +475,7 @@ def page(model, resolve):
     plant_svg, plant_review = plant.svg(model)
     model["review"].extend(plant_review)
     blocks = {
-        "PLANT_SVG": plant_svg, "FLOWS": plant.flows_html(model), "FLOW_BUTTONS": plant.flow_buttons(model),
+        "PLANT_SVG": plant_svg, "SIM_PLANT": plant_svg, "FLOWS": plant.flows_html(model), "FLOW_BUTTONS": plant.flow_buttons(model),
         "AREA_CHIPS": plant.area_chips(model),
         "CONNECTIONS": plant.connections_html(model), "WORK_SUBS": work_subsystem_bars(model),
         "SUMMARY": md_to_html(model["summary"]["text"]),
@@ -491,6 +493,7 @@ def page(model, resolve):
     template = resolve(template)
     # data, inserted after placeholders resolve: commit subjects may quote one
     template = template.replace("%%PLANT_DATA%%", plant.data(model))
+    template = template.replace("%%SIM_DATA%%", simulator.data(model))
     # sheets are numbered in page order, and the title block lists them
     n = iter(range(1, 100))
     template = re.sub(r'<span class="sno">Sheet</span>', lambda _: f'<span class="sno">Sheet {next(n):02d}</span>', template)

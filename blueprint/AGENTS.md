@@ -14,7 +14,7 @@ applies in full; this file adds what is specific here.
 | [measures.json](measures.json) | The slow measures (complexity, advisories), cached by `run.py deep` | generated |
 | [content.toml](content.toml) | The hand-written judgement: the summary, the findings, what to keep, the target shape | by hand |
 | [methods/](methods/) | How to work here, one method per file, with name and description front matter | by hand |
-| `harness/` | The code: `run.py` (the entry point), `measure.py`, `subsystems.py`, `connections.py`, `evidence.py`, `record.py`, `model.py`, `render.py`, `plant.py`, `template.html` | by hand |
+| `harness/` | The code: `run.py` (the entry point), `measure.py`, `subsystems.py`, `connections.py`, `evidence.py`, `record.py`, `model.py`, `render.py`, `plant.py`, `simulator.py`, `template.html` | by hand |
 
 Never edit a generated file. Change its source and run the harness.
 
@@ -51,6 +51,7 @@ last release tag; run `deep` before a release.
 | The connections between subsystems | `connections.py`, from the code |
 | The flows | `FLOWS` in `harness/subsystems.py`, by hand, each step checked against a measured connection |
 | The plant diagram and the operations screen | `plant.py` draws them from the model, on the layer stack's layers |
+| The speed simulator (Simulator tab) | `simulator.py`: today's turn shape as a dated measurement (`MEASURED`, from content-free span durations), the constants and per-token paths it rests on read from the code every build (`CODE`), and what drives each subsystem's work as the model gets faster, by hand with its reason (`SPEED`); the page draws the plant again and computes the rest, labelling every estimate |
 | What lies outside the repository (model APIs, chat platforms, mail providers, the OS sandbox, …) and which subsystems reach it | `EXTERNAL` in `harness/subsystems.py`, by hand |
 | The summary, findings, what to keep, the target shape | `content.toml` |
 | The process topology, the turn sequence and the data tree | drawn by hand in `harness/template.html` |
