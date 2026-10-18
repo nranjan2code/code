@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "fe772ff92",
+  "revision": "fb7088877",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -14,16 +14,17 @@
    "rust_src": 327897,
    "rust_tests": 85075,
    "ts_src": 61570,
-   "routes": 411,
+   "routes": 391,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 70,
    "lock_crates": 764,
-   "total_commits": 2355,
+   "total_commits": 2356,
    "days": 59,
    "peak_day": 174,
    "design_docs": 95,
-   "agents_words": 20046
+   "agents_words": 20089,
+   "subsystems": 64
   },
   "tools": [
    "agent_network",
@@ -38,6 +39,7 @@
    "glob",
    "grep",
    "mail_calendar",
+   "mcp",
    "office_apply",
    "plan",
    "propose_skill",
@@ -49,6 +51,30 @@
    "webfetch",
    "workers",
    "write"
+  ],
+  "card_tools": [
+   "emit_ability_chart_card",
+   "emit_ability_table_card",
+   "emit_calendar_card",
+   "emit_callout_card",
+   "emit_chart_card",
+   "emit_comparison_card",
+   "emit_controls_card",
+   "emit_details_card",
+   "emit_diff_card",
+   "emit_file_preview_card",
+   "emit_link_card",
+   "emit_list_card",
+   "emit_map_card",
+   "emit_markup_preview_card",
+   "emit_media_card",
+   "emit_sources_card",
+   "emit_stats_card",
+   "emit_steps_card",
+   "emit_summary_card",
+   "emit_table_card",
+   "emit_terminal_card",
+   "emit_test_report_card"
   ]
  },
  "attention": {
@@ -199,15 +225,15 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 503,
+  "commits": 504,
   "areas": [
    [
     "docs",
-    428
+    429
    ],
    [
     "(root)",
-    258
+    259
    ],
    [
     "vak-core",
@@ -251,6 +277,16 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "fb7088877",
+    "date": "2026-10-18",
+    "subject": "Map every module, route and subcommand to a subsystem in the blueprint",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs"
+    ]
+   },
    {
     "hash": "fe772ff92",
     "date": "2026-10-18",
@@ -392,14 +428,6 @@
     "areas": [
      "docs",
      "scripts"
-    ]
-   },
-   {
-    "hash": "26a6c563b",
-    "date": "2026-10-18",
-    "subject": "Regenerate the system blueprint after integrity hardening",
-    "areas": [
-     "docs"
     ]
    }
   ],
@@ -951,6 +979,3155 @@
    ]
   }
  ],
+ "subsystems": [
+  {
+   "id": "client",
+   "name": "Workspace client",
+   "group": "Surfaces",
+   "role": "The SolidJS app shared by the desktop shell and /app: chat, sidebar, settings, the host seam",
+   "homes": [
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L7"
+   ],
+   "modules": 62,
+   "parts": [],
+   "lines": 17900,
+   "largest": [
+    3120,
+    "crates/vak-client-ui/src/api.ts"
+   ],
+   "routes": [
+    "/app",
+    "/app/",
+    "/app/{*rest}",
+    "/commands",
+    "/favicon.svg",
+    "/fs/dirs",
+    "/fs/file",
+    "/fs/file/raw",
+    "/fs/inbox",
+    "/fs/tree",
+    "/host",
+    "/stream",
+    "/version",
+    "/workspaces",
+    "/workspaces/open"
+   ],
+   "cli": [],
+   "docs": [
+    "48-web-client.md",
+    "63-agent-first-conversations.md",
+    "70-calm-agent-experience-implementation.md",
+    "75-visual-refresh.md",
+    "71-agent-character-system.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/App.tsx",
+    "crates/vak-client-ui/src/answerComposition.ts",
+    "crates/vak-client-ui/src/answerValues.ts",
+    "crates/vak-client-ui/src/api.ts",
+    "crates/vak-client-ui/src/approvalSubject.ts",
+    "crates/vak-client-ui/src/attachFiles.ts",
+    "crates/vak-client-ui/src/capabilityIcon.ts",
+    "crates/vak-client-ui/src/components/ActivitySteps.tsx",
+    "crates/vak-client-ui/src/components/AnswerValuesScope.tsx",
+    "crates/vak-client-ui/src/components/AppErrorBoundary.tsx",
+    "crates/vak-client-ui/src/components/BestOfNDialog.tsx",
+    "crates/vak-client-ui/src/components/ChatPane.tsx",
+    "crates/vak-client-ui/src/components/CodeEditor.tsx",
+    "crates/vak-client-ui/src/components/Composer.tsx",
+    "crates/vak-client-ui/src/components/ConfirmModal.tsx",
+    "crates/vak-client-ui/src/components/DirectoryPicker.tsx",
+    "crates/vak-client-ui/src/components/EditorPane.tsx",
+    "crates/vak-client-ui/src/components/Icon.tsx",
+    "crates/vak-client-ui/src/components/MarkdownView.tsx",
+    "crates/vak-client-ui/src/components/MessageActions.tsx",
+    "crates/vak-client-ui/src/components/ReceiptsModal.tsx",
+    "crates/vak-client-ui/src/components/ResizeHandle.tsx",
+    "crates/vak-client-ui/src/components/Settings.tsx",
+    "crates/vak-client-ui/src/components/Sheet.tsx",
+    "crates/vak-client-ui/src/components/ShortcutsModal.tsx",
+    "crates/vak-client-ui/src/components/SideChatPanel.tsx",
+    "crates/vak-client-ui/src/components/Sidebar.tsx",
+    "crates/vak-client-ui/src/components/Skeleton.tsx",
+    "crates/vak-client-ui/src/components/StatusBar.tsx",
+    "crates/vak-client-ui/src/components/Toast.tsx",
+    "crates/vak-client-ui/src/components/TranscriptModal.tsx",
+    "crates/vak-client-ui/src/components/WorkspaceHeader.tsx",
+    "crates/vak-client-ui/src/controlsExpression.ts",
+    "crates/vak-client-ui/src/delimitedPreview.ts",
+    "crates/vak-client-ui/src/focusTrap.ts",
+    "crates/vak-client-ui/src/highlight.ts",
+    "crates/vak-client-ui/src/host/index.ts",
+    "crates/vak-client-ui/src/host/port.ts",
+    "crates/vak-client-ui/src/host/tauri.ts",
+    "crates/vak-client-ui/src/host/web.ts",
+    "crates/vak-client-ui/src/index.tsx",
+    "crates/vak-client-ui/src/liveGates.ts",
+    "crates/vak-client-ui/src/livePlan.ts",
+    "crates/vak-client-ui/src/mapSettings.ts",
+    "crates/vak-client-ui/src/md.ts",
+    "crates/vak-client-ui/src/mediaSource.ts",
+    "crates/vak-client-ui/src/menus.ts",
+    "crates/vak-client-ui/src/modelChoices.ts",
+    "crates/vak-client-ui/src/resultCard.ts",
+    "crates/vak-client-ui/src/safeUrl.ts",
+    "crates/vak-client-ui/src/store.ts",
+    "crates/vak-client-ui/src/streamConnection.ts",
+    "crates/vak-client-ui/src/streamHub.ts",
+    "crates/vak-client-ui/src/streamMux.ts",
+    "crates/vak-client-ui/src/streamWorker.ts",
+    "crates/vak-client-ui/src/theme.ts",
+    "crates/vak-client-ui/src/time.ts",
+    "crates/vak-client-ui/src/titleBar.ts",
+    "crates/vak-client-ui/src/types.ts",
+    "crates/vak-client-ui/src/typography.ts",
+    "crates/vak-client-ui/src/voice.ts",
+    "crates/vak-client-ui/src/wordDiff.ts"
+   ]
+  },
+  {
+   "id": "desktop",
+   "name": "Desktop shell",
+   "group": "Surfaces",
+   "role": "Tauri window, tray, single instance, PTY panes, native dialogs",
+   "homes": [
+    "vak-desktop",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L7"
+   ],
+   "modules": 3,
+   "parts": [],
+   "lines": 1910,
+   "largest": [
+    1567,
+    "crates/vak-desktop/src/main.rs"
+   ],
+   "routes": [
+    "/pty"
+   ],
+   "cli": [],
+   "docs": [],
+   "units": [
+    "crates/vak-client-ui/src/components/TerminalPane.tsx",
+    "crates/vak-desktop/src/main.rs",
+    "crates/vak-desktop/src/pty.rs"
+   ]
+  },
+  {
+   "id": "terminal",
+   "name": "Rich terminal",
+   "group": "Surfaces",
+   "role": "`vak term`, a ratatui client of a running server",
+   "homes": [
+    "vak-terminal"
+   ],
+   "layers": [
+    "L7"
+   ],
+   "modules": 16,
+   "parts": [],
+   "lines": 5110,
+   "largest": [
+    1184,
+    "crates/vak-terminal/src/app.rs"
+   ],
+   "routes": [],
+   "cli": [
+    "term"
+   ],
+   "docs": [
+    "55-rich-terminal-surface.md"
+   ],
+   "units": [
+    "crates/vak-terminal/src/api.rs",
+    "crates/vak-terminal/src/app.rs",
+    "crates/vak-terminal/src/graphics.rs",
+    "crates/vak-terminal/src/hil.rs",
+    "crates/vak-terminal/src/lib.rs",
+    "crates/vak-terminal/src/repl.rs",
+    "crates/vak-terminal/src/telemetry.rs",
+    "crates/vak-terminal/src/theme.rs",
+    "crates/vak-terminal/src/ui/admin.rs",
+    "crates/vak-terminal/src/ui/composer.rs",
+    "crates/vak-terminal/src/ui/header.rs",
+    "crates/vak-terminal/src/ui/hil_modal.rs",
+    "crates/vak-terminal/src/ui/inbox.rs",
+    "crates/vak-terminal/src/ui/mod.rs",
+    "crates/vak-terminal/src/ui/ops.rs",
+    "crates/vak-terminal/src/ui/studio.rs"
+   ]
+  },
+  {
+   "id": "admin",
+   "name": "Admin console",
+   "group": "Surfaces",
+   "role": "The /admin SPA and its data plane: sessions, capabilities, security, prompts, projects",
+   "homes": [
+    "vak-admin-ui",
+    "vak-server"
+   ],
+   "layers": [
+    "L6",
+    "L7"
+   ],
+   "modules": 20,
+   "parts": [],
+   "lines": 23022,
+   "largest": [
+    7944,
+    "crates/vak-admin-ui/src/App.tsx"
+   ],
+   "routes": [
+    "/admin",
+    "/admin/"
+   ],
+   "cli": [
+    "open"
+   ],
+   "docs": [
+    "33-admin-console.md",
+    "58-admin-ia-and-ui-goal.md"
+   ],
+   "units": [
+    "crates/vak-admin-ui/src/App.tsx",
+    "crates/vak-admin-ui/src/Capabilities.tsx",
+    "crates/vak-admin-ui/src/Commitments.tsx",
+    "crates/vak-admin-ui/src/Home.tsx",
+    "crates/vak-admin-ui/src/Projects.tsx",
+    "crates/vak-admin-ui/src/Prompts.tsx",
+    "crates/vak-admin-ui/src/SessionForensics.tsx",
+    "crates/vak-admin-ui/src/StepSettings.tsx",
+    "crates/vak-admin-ui/src/api.ts",
+    "crates/vak-admin-ui/src/controls.tsx",
+    "crates/vak-admin-ui/src/display.tsx",
+    "crates/vak-admin-ui/src/focusTrap.ts",
+    "crates/vak-admin-ui/src/index.tsx",
+    "crates/vak-admin-ui/src/store.ts",
+    "crates/vak-admin-ui/src/time.ts",
+    "crates/vak-admin-ui/src/types.ts",
+    "crates/vak-server/src/admin.rs",
+    "crates/vak-server/src/admin_ui.rs",
+    "crates/vak-server/src/client_ui.rs",
+    "crates/vak-server/src/embedded_ui.rs"
+   ]
+  },
+  {
+   "id": "site",
+   "name": "Public site and brand",
+   "group": "Surfaces",
+   "role": "The website served at /, its build, and the brand media",
+   "homes": [
+    "vak-server",
+    "site",
+    "scripts",
+    "video"
+   ],
+   "layers": [
+    "L6"
+   ],
+   "modules": 1,
+   "parts": [
+    "crates/vak-server/site",
+    "scripts/video",
+    "video"
+   ],
+   "lines": 209,
+   "largest": [
+    209,
+    "crates/vak-server/src/site.rs"
+   ],
+   "routes": [],
+   "cli": [],
+   "docs": [],
+   "units": [
+    "crates/vak-server/site",
+    "crates/vak-server/src/site.rs",
+    "scripts/video",
+    "video"
+   ]
+  },
+  {
+   "id": "cli",
+   "name": "Command line",
+   "group": "Surfaces",
+   "role": "The `vak` binary's parser, dispatch and shared output",
+   "homes": [
+    "vak"
+   ],
+   "layers": [
+    "L7"
+   ],
+   "modules": 4,
+   "parts": [],
+   "lines": 5071,
+   "largest": [
+    2798,
+    "crates/vak/src/main.rs"
+   ],
+   "routes": [],
+   "cli": [
+    "exec"
+   ],
+   "docs": [],
+   "units": [
+    "crates/vak/src/cli.rs",
+    "crates/vak/src/format.rs",
+    "crates/vak/src/main.rs",
+    "crates/vak/src/question_prompt.rs"
+   ]
+  },
+  {
+   "id": "turn",
+   "name": "Turn admission",
+   "group": "The turn",
+   "role": "Admitting a request: Agent and lifecycle checks, the live route, trace keys, the turn's knobs",
+   "homes": [
+    "vak-core"
+   ],
+   "layers": [
+    "L5"
+   ],
+   "modules": 6,
+   "parts": [],
+   "lines": 14058,
+   "largest": [
+    12390,
+    "crates/vak-core/src/lib.rs"
+   ],
+   "routes": [
+    "/sessions/{id}/cancel",
+    "/sessions/{id}/control-state",
+    "/sessions/{id}/pause",
+    "/sessions/{id}/resume",
+    "/sessions/{id}/run",
+    "/sessions/{id}/side",
+    "/sessions/{id}/side/cancel",
+    "/sessions/{id}/steering",
+    "/sessions/{id}/turns/{turn}/aside",
+    "/sessions/{id}/turns/{turn}/retry"
+   ],
+   "cli": [],
+   "docs": [
+    "13-server.md",
+    "52-outcome-directed-runtime.md",
+    "85-turn-graph.md",
+    "99-turns-that-do-not-poison.md"
+   ],
+   "units": [
+    "crates/vak-core/src/admission.rs",
+    "crates/vak-core/src/file_mentions.rs",
+    "crates/vak-core/src/lib.rs",
+    "crates/vak-core/src/measure.rs",
+    "crates/vak-core/src/routing.rs",
+    "crates/vak-core/src/workspaces.rs"
+   ]
+  },
+  {
+   "id": "loop",
+   "name": "Agent loop",
+   "group": "The turn",
+   "role": "Steps, retries, the breaker, tool waves, stop policy, spend gate, steering",
+   "homes": [
+    "vak-agent"
+   ],
+   "layers": [
+    "L4"
+   ],
+   "modules": 5,
+   "parts": [],
+   "lines": 11871,
+   "largest": [
+    10860,
+    "crates/vak-agent/src/lib.rs"
+   ],
+   "routes": [],
+   "cli": [],
+   "docs": [
+    "03-agent-loop.md",
+    "15-reliability.md"
+   ],
+   "units": [
+    "crates/vak-agent/src/circuit.rs",
+    "crates/vak-agent/src/lib.rs",
+    "crates/vak-agent/src/steering.rs",
+    "crates/vak-agent/src/stop_policy.rs",
+    "crates/vak-agent/src/workspace.rs"
+   ]
+  },
+  {
+   "id": "workers",
+   "name": "Workers and delegation",
+   "group": "The turn",
+   "role": "The task tool, child runs, worker questions, the workers tool, write leases",
+   "homes": [
+    "vak-agent",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L4",
+    "L7"
+   ],
+   "modules": 5,
+   "parts": [],
+   "lines": 3241,
+   "largest": [
+    1777,
+    "crates/vak-agent/src/task.rs"
+   ],
+   "routes": [
+    "/admin/api/questions",
+    "/sessions/{id}/questions",
+    "/sessions/{id}/questions/{qid}",
+    "/sessions/{id}/subagents",
+    "/sessions/{id}/subagents/{child}/steer",
+    "/sessions/{id}/subagents/{child}/stop",
+    "/sessions/{id}/workers",
+    "/sessions/{id}/workers/{child}/steer",
+    "/sessions/{id}/workers/{child}/stop"
+   ],
+   "cli": [],
+   "docs": [
+    "84-worker-questions-and-control.md",
+    "62-universal-delegation-experience.md"
+   ],
+   "units": [
+    "crates/vak-agent/src/questions.rs",
+    "crates/vak-agent/src/task.rs",
+    "crates/vak-agent/src/workers_tool.rs",
+    "crates/vak-agent/src/write_lease.rs",
+    "crates/vak-client-ui/src/components/WorkersPanel.tsx"
+   ]
+  },
+  {
+   "id": "goal",
+   "name": "Goals and managed work",
+   "group": "The turn",
+   "role": "Goal mode, audited completion, work contracts and their review",
+   "homes": [
+    "vak-agent",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L4",
+    "L7"
+   ],
+   "modules": 3,
+   "parts": [],
+   "lines": 478,
+   "largest": [
+    348,
+    "crates/vak-agent/src/goal.rs"
+   ],
+   "routes": [
+    "/sessions/{id}/outcome-review",
+    "/sessions/{id}/plan-change",
+    "/sessions/{id}/work",
+    "/sessions/{id}/work/confirm",
+    "/sessions/{id}/work/items/{item_id}/cancel",
+    "/sessions/{id}/work/items/{item_id}/reassign",
+    "/sessions/{id}/work/items/{item_id}/retry",
+    "/sessions/{id}/work/revise"
+   ],
+   "cli": [],
+   "docs": [
+    "42-managed-work-contracts.md"
+   ],
+   "units": [
+    "crates/vak-agent/src/goal.rs",
+    "crates/vak-client-ui/src/components/RunControls.tsx",
+    "crates/vak-client-ui/src/components/WorkModal.tsx"
+   ]
+  },
+  {
+   "id": "context",
+   "name": "Context engine",
+   "group": "The turn",
+   "role": "Capacity profiles, the working-set planner, prompt assembly, compaction",
+   "homes": [
+    "vak-context",
+    "vak-core"
+   ],
+   "layers": [
+    "L4",
+    "L5"
+   ],
+   "modules": 5,
+   "parts": [],
+   "lines": 4039,
+   "largest": [
+    1530,
+    "crates/vak-context/src/planner.rs"
+   ],
+   "routes": [
+    "/sessions/{id}/compact",
+    "/sessions/{id}/context"
+   ],
+   "cli": [],
+   "docs": [
+    "68-context-engine.md"
+   ],
+   "units": [
+    "crates/vak-context/src/assemble.rs",
+    "crates/vak-context/src/capacity.rs",
+    "crates/vak-context/src/lib.rs",
+    "crates/vak-context/src/planner.rs",
+    "crates/vak-core/src/indexed_history.rs"
+   ]
+  },
+  {
+   "id": "prompt",
+   "name": "Prompt layers",
+   "group": "The turn",
+   "role": "The seed prompt and its layered, per-turn resolution",
+   "homes": [
+    "vak-core",
+    "vak"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 2,
+   "parts": [],
+   "lines": 1740,
+   "largest": [
+    1380,
+    "crates/vak-core/src/prompts.rs"
+   ],
+   "routes": [
+    "/config/prompts",
+    "/config/prompts/effective",
+    "/config/prompts/preview",
+    "/config/prompts/roles"
+   ],
+   "cli": [
+    "prompts"
+   ],
+   "docs": [
+    "07-prompt.md",
+    "45-prompt-layers.md",
+    "83-prompt-system.md"
+   ],
+   "units": [
+    "crates/vak-core/src/prompts.rs",
+    "crates/vak/src/prompts.rs"
+   ]
+  },
+  {
+   "id": "intent",
+   "name": "Intent kernel",
+   "group": "The turn",
+   "role": "Signals, strands, engagements and the narrowing Limits lattice",
+   "homes": [
+    "vak-intent",
+    "vak-core",
+    "vak"
+   ],
+   "layers": [
+    "L3",
+    "L5",
+    "L7"
+   ],
+   "modules": 14,
+   "parts": [],
+   "lines": 11391,
+   "largest": [
+    2889,
+    "crates/vak-intent/src/signals.rs"
+   ],
+   "routes": [
+    "/config/intent/evidence",
+    "/intent/explain",
+    "/intent/policy"
+   ],
+   "cli": [
+    "intent"
+   ],
+   "docs": [
+    "47-commitment-kernel.md"
+   ],
+   "units": [
+    "crates/vak-core/src/intent.rs",
+    "crates/vak-intent/src/authority.rs",
+    "crates/vak-intent/src/axes.rs",
+    "crates/vak-intent/src/control.rs",
+    "crates/vak-intent/src/engage.rs",
+    "crates/vak-intent/src/goal.rs",
+    "crates/vak-intent/src/lib.rs",
+    "crates/vak-intent/src/limits.rs",
+    "crates/vak-intent/src/outcome.rs",
+    "crates/vak-intent/src/reading.rs",
+    "crates/vak-intent/src/resolve.rs",
+    "crates/vak-intent/src/signals.rs",
+    "crates/vak-intent/src/strand.rs",
+    "crates/vak/src/intent.rs"
+   ]
+  },
+  {
+   "id": "control",
+   "name": "Control plane and judges",
+   "group": "The turn",
+   "role": "Decision points, the correction ladder, receipts to verdicts, the plan check",
+   "homes": [
+    "vak-judge",
+    "vak-control",
+    "vak-tools"
+   ],
+   "layers": [
+    "L3",
+    "L4"
+   ],
+   "modules": 9,
+   "parts": [],
+   "lines": 3730,
+   "largest": [
+    1000,
+    "crates/vak-control/src/lib.rs"
+   ],
+   "routes": [
+    "/config/control",
+    "/runs/{id}/decisions",
+    "/sessions/{id}/decisions"
+   ],
+   "cli": [],
+   "docs": [
+    "88-control-plane.md",
+    "86-model-plans-runtime-checks.md"
+   ],
+   "units": [
+    "crates/vak-control/src/correct.rs",
+    "crates/vak-control/src/lib.rs",
+    "crates/vak-judge/src/ability.rs",
+    "crates/vak-judge/src/call.rs",
+    "crates/vak-judge/src/lib.rs",
+    "crates/vak-judge/src/measure.rs",
+    "crates/vak-judge/src/outcome.rs",
+    "crates/vak-judge/src/plan.rs",
+    "crates/vak-tools/src/plan.rs"
+   ]
+  },
+  {
+   "id": "commitments",
+   "name": "Commitments",
+   "group": "The turn",
+   "role": "Durable commitments, the satisfaction lattice and the portfolio scheduler",
+   "homes": [
+    "vak-core",
+    "vak-commit",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L3",
+    "L5",
+    "L7"
+   ],
+   "modules": 8,
+   "parts": [],
+   "lines": 4103,
+   "largest": [
+    1687,
+    "crates/vak-core/src/commitments.rs"
+   ],
+   "routes": [
+    "/commitments",
+    "/commitments/{id}",
+    "/commitments/{id}/close"
+   ],
+   "cli": [
+    "commit"
+   ],
+   "docs": [],
+   "units": [
+    "crates/vak-client-ui/src/components/CommitmentsPanel.tsx",
+    "crates/vak-commit/src/ledger.rs",
+    "crates/vak-commit/src/lib.rs",
+    "crates/vak-commit/src/portfolio.rs",
+    "crates/vak-commit/src/satisfy.rs",
+    "crates/vak-commit/src/types.rs",
+    "crates/vak-core/src/commitments.rs",
+    "crates/vak-core/src/tools_commitments.rs"
+   ]
+  },
+  {
+   "id": "llm",
+   "name": "Model providers and routing",
+   "group": "Models and tools",
+   "role": "Provider wires, model discovery, the route ladder, capacity probes, work receipts",
+   "homes": [
+    "vak-llm",
+    "vak-core"
+   ],
+   "layers": [
+    "L4",
+    "L5"
+   ],
+   "modules": 23,
+   "parts": [],
+   "lines": 15176,
+   "largest": [
+    1818,
+    "crates/vak-llm/src/rate_limit.rs"
+   ],
+   "routes": [
+    "/config/key",
+    "/config/route/suggestions",
+    "/providers",
+    "/providers/{name}/models",
+    "/providers/{name}/status",
+    "/sessions/{id}/receipts"
+   ],
+   "cli": [],
+   "docs": [
+    "01-llm.md",
+    "31-network-resilience.md",
+    "89-constrained-tool-arguments.md"
+   ],
+   "units": [
+    "crates/vak-core/src/discovery.rs",
+    "crates/vak-llm/src/anthropic.rs",
+    "crates/vak-llm/src/error.rs",
+    "crates/vak-llm/src/gate.rs",
+    "crates/vak-llm/src/google.rs",
+    "crates/vak-llm/src/google_live.rs",
+    "crates/vak-llm/src/lib.rs",
+    "crates/vak-llm/src/model_identity.rs",
+    "crates/vak-llm/src/models.rs",
+    "crates/vak-llm/src/ollama.rs",
+    "crates/vak-llm/src/openai.rs",
+    "crates/vak-llm/src/openai_realtime.rs",
+    "crates/vak-llm/src/openai_responses.rs",
+    "crates/vak-llm/src/provider_status.rs",
+    "crates/vak-llm/src/rate_limit.rs",
+    "crates/vak-llm/src/registry.rs",
+    "crates/vak-llm/src/route.rs",
+    "crates/vak-llm/src/sse.rs",
+    "crates/vak-llm/src/stream.rs",
+    "crates/vak-llm/src/strict.rs",
+    "crates/vak-llm/src/turn.rs",
+    "crates/vak-llm/src/types.rs",
+    "crates/vak-llm/src/work.rs"
+   ]
+  },
+  {
+   "id": "tools",
+   "name": "Built-in tools and the worker",
+   "group": "Models and tools",
+   "role": "File, shell and web tools, the argument reader, the broker worker protocol, egress",
+   "homes": [
+    "vak-tools",
+    "vak-core",
+    "vak-server"
+   ],
+   "layers": [
+    "L4",
+    "L5",
+    "L6"
+   ],
+   "modules": 18,
+   "parts": [],
+   "lines": 8630,
+   "largest": [
+    2154,
+    "crates/vak-tools/src/broker.rs"
+   ],
+   "routes": [],
+   "cli": [],
+   "docs": [
+    "04-tools.md",
+    "50-call-and-evidence-contract.md",
+    "51-retired-tools.md"
+   ],
+   "units": [
+    "crates/vak-core/src/reach.rs",
+    "crates/vak-server/src/bin/vak-tool-worker.rs",
+    "crates/vak-tools/src/arguments.rs",
+    "crates/vak-tools/src/bash.rs",
+    "crates/vak-tools/src/broker.rs",
+    "crates/vak-tools/src/context.rs",
+    "crates/vak-tools/src/contract.rs",
+    "crates/vak-tools/src/edit.rs",
+    "crates/vak-tools/src/egress.rs",
+    "crates/vak-tools/src/glob.rs",
+    "crates/vak-tools/src/grep.rs",
+    "crates/vak-tools/src/lib.rs",
+    "crates/vak-tools/src/read.rs",
+    "crates/vak-tools/src/retired.rs",
+    "crates/vak-tools/src/webbrowse.rs",
+    "crates/vak-tools/src/webfetch.rs",
+    "crates/vak-tools/src/window.rs",
+    "crates/vak-tools/src/write.rs"
+   ]
+  },
+  {
+   "id": "recall",
+   "name": "Recall and history",
+   "group": "Models and tools",
+   "role": "The recall tool, turn records, search across conversations",
+   "homes": [
+    "vak-tools",
+    "vak-core"
+   ],
+   "layers": [
+    "L4",
+    "L5"
+   ],
+   "modules": 2,
+   "parts": [],
+   "lines": 758,
+   "largest": [
+    457,
+    "crates/vak-tools/src/recall.rs"
+   ],
+   "routes": [],
+   "cli": [],
+   "docs": [],
+   "units": [
+    "crates/vak-core/src/elsewhere.rs",
+    "crates/vak-tools/src/recall.rs"
+   ]
+  },
+  {
+   "id": "capabilities",
+   "name": "Capability registry",
+   "group": "Models and tools",
+   "role": "The level-triggered registry, epochs, the tool surface, skills, custom commands",
+   "homes": [
+    "vak-core"
+   ],
+   "layers": [
+    "L5"
+   ],
+   "modules": 12,
+   "parts": [],
+   "lines": 4296,
+   "largest": [
+    1122,
+    "crates/vak-core/src/skills.rs"
+   ],
+   "routes": [
+    "/admin/api/capabilities",
+    "/admin/api/capabilities/{name}/revoke",
+    "/skills"
+   ],
+   "cli": [
+    "skills"
+   ],
+   "docs": [
+    "41-capability-registry.md",
+    "95-one-capability-index.md"
+   ],
+   "units": [
+    "crates/vak-core/src/capability/domain.rs",
+    "crates/vak-core/src/capability/mod.rs",
+    "crates/vak-core/src/capability/provider.rs",
+    "crates/vak-core/src/capability/registry.rs",
+    "crates/vak-core/src/capability/report.rs",
+    "crates/vak-core/src/capability/resolution.rs",
+    "crates/vak-core/src/capability/snapshot.rs",
+    "crates/vak-core/src/capability/surface.rs",
+    "crates/vak-core/src/capability/turn.rs",
+    "crates/vak-core/src/custom_commands.rs",
+    "crates/vak-core/src/packages.rs",
+    "crates/vak-core/src/skills.rs"
+   ]
+  },
+  {
+   "id": "abilities",
+   "name": "Self-evolving abilities",
+   "group": "Models and tools",
+   "role": "Skill programs an Agent writes, tests and admits, and their review",
+   "homes": [
+    "vak-core",
+    "vak-tools",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L4",
+    "L5",
+    "L7"
+   ],
+   "modules": 5,
+   "parts": [],
+   "lines": 3846,
+   "largest": [
+    1648,
+    "crates/vak-tools/src/capability.rs"
+   ],
+   "routes": [
+    "/skills/abilities",
+    "/skills/abilities/{name}",
+    "/skills/abilities/{name}/promote",
+    "/skills/abilities/{name}/turn-off",
+    "/skills/abilities/{name}/versions/{version}/use"
+   ],
+   "cli": [],
+   "docs": [
+    "93-self-evolving-capabilities.md",
+    "43-governed-self-evolution.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/components/AbilitySheet.tsx",
+    "crates/vak-core/src/ability_review.rs",
+    "crates/vak-core/src/ability_sheet.rs",
+    "crates/vak-core/src/skill_programs.rs",
+    "crates/vak-tools/src/capability.rs"
+   ]
+  },
+  {
+   "id": "mcp",
+   "name": "MCP integrations",
+   "group": "Models and tools",
+   "role": "The lazy MCP client pool behind one meta-tool, each server behind its egress proxy",
+   "homes": [
+    "vak-mcp",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L4",
+    "L7"
+   ],
+   "modules": 6,
+   "parts": [],
+   "lines": 1573,
+   "largest": [
+    574,
+    "crates/vak-mcp/src/client.rs"
+   ],
+   "routes": [
+    "/config/integrations",
+    "/config/integrations/{id}",
+    "/config/mcp",
+    "/config/mcp/global"
+   ],
+   "cli": [],
+   "docs": [
+    "09-extensibility.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/mcpNetwork.ts",
+    "crates/vak-mcp/src/client.rs",
+    "crates/vak-mcp/src/lib.rs",
+    "crates/vak-mcp/src/manager.rs",
+    "crates/vak-mcp/src/tool.rs",
+    "crates/vak-mcp/src/validate.rs"
+   ]
+  },
+  {
+   "id": "plugins",
+   "name": "Plugins and packages",
+   "group": "Models and tools",
+   "role": "Plugin packages, stores, catalog signatures, and the shipped packages",
+   "homes": [
+    "vak-plugin",
+    "vak",
+    "packages"
+   ],
+   "layers": [
+    "L4",
+    "L7"
+   ],
+   "modules": 3,
+   "parts": [
+    "packages/answer-layouts",
+    "packages/developer-starter",
+    "packages/everyday-starter",
+    "packages/mail-calendar",
+    "packages/social-linkedin",
+    "packages/social-reddit",
+    "packages/social-x",
+    "packages/social-youtube"
+   ],
+   "lines": 3566,
+   "largest": [
+    2982,
+    "crates/vak-plugin/src/lib.rs"
+   ],
+   "routes": [
+    "/plugins",
+    "/plugins/audit",
+    "/plugins/catalog",
+    "/plugins/catalog/install",
+    "/plugins/install",
+    "/plugins/keys/{id}/restore",
+    "/plugins/keys/{id}/revoke",
+    "/plugins/retired",
+    "/plugins/sources",
+    "/plugins/sources/{id}/disable",
+    "/plugins/sources/{id}/enable",
+    "/plugins/update",
+    "/plugins/{name}",
+    "/plugins/{name}/disable",
+    "/plugins/{name}/enable",
+    "/plugins/{name}/rollback"
+   ],
+   "cli": [
+    "plugins"
+   ],
+   "docs": [
+    "39-plugin-ecosystem.md"
+   ],
+   "units": [
+    "crates/vak-plugin/src/lib.rs",
+    "crates/vak-plugin/src/native_adapter.rs",
+    "crates/vak/src/plugins.rs",
+    "packages/answer-layouts",
+    "packages/developer-starter",
+    "packages/everyday-starter",
+    "packages/mail-calendar",
+    "packages/social-linkedin",
+    "packages/social-reddit",
+    "packages/social-x",
+    "packages/social-youtube"
+   ]
+  },
+  {
+   "id": "hooks",
+   "name": "Hooks",
+   "group": "Models and tools",
+   "role": "Lifecycle hooks around tool use, stop and session start",
+   "homes": [
+    "vak-hooks"
+   ],
+   "layers": [
+    "L4"
+   ],
+   "modules": 1,
+   "parts": [],
+   "lines": 307,
+   "largest": [
+    307,
+    "crates/vak-hooks/src/lib.rs"
+   ],
+   "routes": [
+    "/config/hooks",
+    "/config/hooks/global"
+   ],
+   "cli": [],
+   "docs": [],
+   "units": [
+    "crates/vak-hooks/src/lib.rs"
+   ]
+  },
+  {
+   "id": "flows",
+   "name": "Flows and planner",
+   "group": "Models and tools",
+   "role": "Static flow DAGs and the dynamic planner",
+   "homes": [
+    "vak-flow"
+   ],
+   "layers": [
+    "L5"
+   ],
+   "modules": 7,
+   "parts": [],
+   "lines": 2081,
+   "largest": [
+    780,
+    "crates/vak-flow/src/exec.rs"
+   ],
+   "routes": [
+    "/flows",
+    "/flows/{name}/runs/{run}/graph"
+   ],
+   "cli": [
+    "flow",
+    "plan"
+   ],
+   "docs": [
+    "10-flows.md",
+    "11-planner.md"
+   ],
+   "units": [
+    "crates/vak-flow/src/adopt.rs",
+    "crates/vak-flow/src/exec.rs",
+    "crates/vak-flow/src/graph.rs",
+    "crates/vak-flow/src/lib.rs",
+    "crates/vak-flow/src/parse.rs",
+    "crates/vak-flow/src/planner.rs",
+    "crates/vak-flow/src/types.rs"
+   ]
+  },
+  {
+   "id": "permission",
+   "name": "Permissions and provenance",
+   "group": "Safety",
+   "role": "Modes and rules over declared reach, approvals, the provenance gate",
+   "homes": [
+    "vak-permission",
+    "vak-core",
+    "vak-control"
+   ],
+   "layers": [
+    "L3",
+    "L5"
+   ],
+   "modules": 6,
+   "parts": [],
+   "lines": 1529,
+   "largest": [
+    597,
+    "crates/vak-permission/src/engine.rs"
+   ],
+   "routes": [
+    "/admin/api/approvals",
+    "/config/mode",
+    "/config/permissions",
+    "/sessions/{id}/approvals",
+    "/sessions/{id}/approvals/{req_id}"
+   ],
+   "cli": [],
+   "docs": [
+    "08-permissions.md",
+    "24-agent-security.md"
+   ],
+   "units": [
+    "crates/vak-control/src/provenance.rs",
+    "crates/vak-core/src/trust.rs",
+    "crates/vak-permission/src/engine.rs",
+    "crates/vak-permission/src/lib.rs",
+    "crates/vak-permission/src/reach.rs",
+    "crates/vak-permission/src/rules.rs"
+   ]
+  },
+  {
+   "id": "sandbox",
+   "name": "Sandbox and execution",
+   "group": "Safety",
+   "role": "Seatbelt, Landlock, Docker, execution roots, candidate promotion",
+   "homes": [
+    "vak-sandbox",
+    "vak-client-ui",
+    "vak-tools",
+    "vak-server",
+    "vak-core"
+   ],
+   "layers": [
+    "L3",
+    "L4",
+    "L5",
+    "L6",
+    "L7"
+   ],
+   "modules": 13,
+   "parts": [],
+   "lines": 6683,
+   "largest": [
+    2569,
+    "crates/vak-sandbox/src/lib.rs"
+   ],
+   "routes": [
+    "/sandbox/records",
+    "/sessions/{id}/diff",
+    "/sessions/{id}/discard",
+    "/sessions/{id}/keep",
+    "/sessions/{id}/sandbox/candidates",
+    "/sessions/{id}/sandbox/executions",
+    "/sessions/{id}/sandbox/executions/{execution_id}/artifact",
+    "/sessions/{id}/sandbox/executions/{execution_id}/artifact/office",
+    "/sessions/{id}/sandbox/executions/{execution_id}/artifact/raw",
+    "/sessions/{id}/sandbox/records"
+   ],
+   "cli": [],
+   "docs": [
+    "25-docker-sandbox.md",
+    "54-task-environments-and-promotion.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/components/WorkbenchPanel.tsx",
+    "crates/vak-core/src/sandbox_docker.rs",
+    "crates/vak-sandbox/src/backend.rs",
+    "crates/vak-sandbox/src/copy.rs",
+    "crates/vak-sandbox/src/docker.rs",
+    "crates/vak-sandbox/src/landlock.rs",
+    "crates/vak-sandbox/src/lib.rs",
+    "crates/vak-server/src/sandbox_output.rs",
+    "crates/vak-server/src/sandbox_records.rs",
+    "crates/vak-tools/src/drafts.rs",
+    "crates/vak-tools/src/landlock.rs",
+    "crates/vak-tools/src/sandbox.rs",
+    "crates/vak-tools/src/sandbox_events.rs"
+   ]
+  },
+  {
+   "id": "security",
+   "name": "Security events",
+   "group": "Safety",
+   "role": "Security records and the security center",
+   "homes": [
+    "vak-admin-ui",
+    "vak-core"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 2,
+   "parts": [],
+   "lines": 1615,
+   "largest": [
+    1427,
+    "crates/vak-admin-ui/src/SecurityCenter.tsx"
+   ],
+   "routes": [
+    "/admin/api/security"
+   ],
+   "cli": [],
+   "docs": [],
+   "units": [
+    "crates/vak-admin-ui/src/SecurityCenter.tsx",
+    "crates/vak-core/src/security_events.rs"
+   ]
+  },
+  {
+   "id": "identity",
+   "name": "Owner identity and sign-in",
+   "group": "Safety",
+   "role": "Passkeys, recovery, browser sessions, the gateway token, rate limits",
+   "homes": [
+    "vak-server",
+    "vak-core",
+    "vak-client-ui",
+    "vak-admin-ui"
+   ],
+   "layers": [
+    "L5",
+    "L6",
+    "L7"
+   ],
+   "modules": 7,
+   "parts": [],
+   "lines": 1324,
+   "largest": [
+    861,
+    "crates/vak-server/src/auth_identity.rs"
+   ],
+   "routes": [
+    "/auth/account",
+    "/auth/enroll/finish",
+    "/auth/enroll/start",
+    "/auth/login",
+    "/auth/logout",
+    "/auth/methods",
+    "/auth/passkey/add/finish",
+    "/auth/passkey/add/start",
+    "/auth/passkey/finish",
+    "/auth/passkey/start",
+    "/auth/recovery",
+    "/auth/recovery/rotate/finish",
+    "/auth/recovery/rotate/start",
+    "/auth/session",
+    "/auth/sessions/revoke-all",
+    "/config/owner"
+   ],
+   "cli": [],
+   "docs": [
+    "78-headless-identity.md"
+   ],
+   "units": [
+    "crates/vak-admin-ui/src/headlessAuth.ts",
+    "crates/vak-admin-ui/src/ownerRecovery.ts",
+    "crates/vak-client-ui/src/headlessAuth.ts",
+    "crates/vak-client-ui/src/ownerRecovery.ts",
+    "crates/vak-core/src/gateway_token.rs",
+    "crates/vak-server/src/auth_identity.rs",
+    "crates/vak-server/src/rate_limit.rs"
+   ]
+  },
+  {
+   "id": "grants",
+   "name": "Grants and sharing",
+   "group": "Safety",
+   "role": "Who may reach an artifact or a conversation; guests",
+   "homes": [
+    "vak-core",
+    "vak-session"
+   ],
+   "layers": [
+    "L1",
+    "L5"
+   ],
+   "modules": 2,
+   "parts": [],
+   "lines": 364,
+   "largest": [
+    278,
+    "crates/vak-core/src/grants.rs"
+   ],
+   "routes": [
+    "/conversations/{id}/guests",
+    "/conversations/{id}/guests/{principal}/erasure",
+    "/shared/artifact",
+    "/shared/artifact/comments",
+    "/shared/artifact/versions/{version}"
+   ],
+   "cli": [
+    "grant",
+    "revoke"
+   ],
+   "docs": [],
+   "units": [
+    "crates/vak-core/src/grants.rs",
+    "crates/vak-session/src/grants.rs"
+   ]
+  },
+  {
+   "id": "ledger",
+   "name": "Ledgers and records",
+   "group": "Data",
+   "role": "Sealed append-only ledgers, record chains, objects, fencing, documents, turns",
+   "homes": [
+    "vak-session"
+   ],
+   "layers": [
+    "L1"
+   ],
+   "modules": 17,
+   "parts": [],
+   "lines": 11824,
+   "largest": [
+    3617,
+    "crates/vak-session/src/log.rs"
+   ],
+   "routes": [
+    "/conversations/{id}/gone",
+    "/sessions",
+    "/sessions/{id}"
+   ],
+   "cli": [
+    "sessions",
+    "export"
+   ],
+   "docs": [
+    "02-sessions.md",
+    "73-data-architecture-and-lifecycle.md"
+   ],
+   "units": [
+    "crates/vak-session/src/chain.rs",
+    "crates/vak-session/src/content.rs",
+    "crates/vak-session/src/documents.rs",
+    "crates/vak-session/src/fence.rs",
+    "crates/vak-session/src/ids.rs",
+    "crates/vak-session/src/keys.rs",
+    "crates/vak-session/src/lib.rs",
+    "crates/vak-session/src/log.rs",
+    "crates/vak-session/src/objects.rs",
+    "crates/vak-session/src/rollup.rs",
+    "crates/vak-session/src/tail.rs",
+    "crates/vak-session/src/text.rs",
+    "crates/vak-session/src/trace.rs",
+    "crates/vak-session/src/turns.rs",
+    "crates/vak-session/src/types.rs",
+    "crates/vak-session/src/verify.rs",
+    "crates/vak-session/src/work.rs"
+   ]
+  },
+  {
+   "id": "storage",
+   "name": "Storage substrate",
+   "group": "Data",
+   "role": "Keys, refs, encrypted objects, records and segments",
+   "homes": [
+    "vak-storage",
+    "vak-core"
+   ],
+   "layers": [
+    "L1",
+    "L5"
+   ],
+   "modules": 12,
+   "parts": [],
+   "lines": 5217,
+   "largest": [
+    776,
+    "crates/vak-storage/src/store.rs"
+   ],
+   "routes": [
+    "/data/keys",
+    "/data/keys/retire",
+    "/data/keys/rotate"
+   ],
+   "cli": [],
+   "docs": [],
+   "units": [
+    "crates/vak-core/src/keys.rs",
+    "crates/vak-storage/src/blobs.rs",
+    "crates/vak-storage/src/documents.rs",
+    "crates/vak-storage/src/keys.rs",
+    "crates/vak-storage/src/lib.rs",
+    "crates/vak-storage/src/objects.rs",
+    "crates/vak-storage/src/records.rs",
+    "crates/vak-storage/src/refs.rs",
+    "crates/vak-storage/src/scopes.rs",
+    "crates/vak-storage/src/seal.rs",
+    "crates/vak-storage/src/segments.rs",
+    "crates/vak-storage/src/store.rs"
+   ]
+  },
+  {
+   "id": "runs",
+   "name": "Runs, effects and cursors",
+   "group": "Data",
+   "role": "Run records, at-most-once outbound effects, stream cursors",
+   "homes": [
+    "vak-session",
+    "vak-admin-ui",
+    "vak",
+    "vak-server"
+   ],
+   "layers": [
+    "L1",
+    "L6",
+    "L7"
+   ],
+   "modules": 8,
+   "parts": [],
+   "lines": 3509,
+   "largest": [
+    1238,
+    "crates/vak-session/src/effects.rs"
+   ],
+   "routes": [
+    "/effects",
+    "/effects/{id}",
+    "/effects/{id}/reconcile",
+    "/effects/{id}/resend",
+    "/runs",
+    "/runs/{id}"
+   ],
+   "cli": [
+    "runs",
+    "effects"
+   ],
+   "docs": [],
+   "units": [
+    "crates/vak-admin-ui/src/Effects.tsx",
+    "crates/vak-admin-ui/src/Runs.tsx",
+    "crates/vak-server/src/effects.rs",
+    "crates/vak-session/src/cursors.rs",
+    "crates/vak-session/src/effects.rs",
+    "crates/vak-session/src/runs.rs",
+    "crates/vak/src/effects.rs",
+    "crates/vak/src/runs.rs"
+   ]
+  },
+  {
+   "id": "catalog",
+   "name": "Catalog and search",
+   "group": "Data",
+   "role": "The SQLite catalog: nodes, lineage, full-text search",
+   "homes": [
+    "vak-catalog",
+    "vak-admin-ui",
+    "vak-client-ui",
+    "vak-server",
+    "vak-core"
+   ],
+   "layers": [
+    "L1",
+    "L5",
+    "L6",
+    "L7"
+   ],
+   "modules": 9,
+   "parts": [],
+   "lines": 4183,
+   "largest": [
+    1281,
+    "crates/vak-catalog/src/ingest.rs"
+   ],
+   "routes": [
+    "/catalog",
+    "/catalog/rebuild",
+    "/catalog/sessions/{id}/nodes",
+    "/lineage/{id}",
+    "/nodes/{id}",
+    "/search"
+   ],
+   "cli": [],
+   "docs": [],
+   "units": [
+    "crates/vak-admin-ui/src/Lineage.tsx",
+    "crates/vak-catalog/src/history.rs",
+    "crates/vak-catalog/src/ingest.rs",
+    "crates/vak-catalog/src/lib.rs",
+    "crates/vak-catalog/src/sources.rs",
+    "crates/vak-catalog/src/tests.rs",
+    "crates/vak-client-ui/src/components/SearchModal.tsx",
+    "crates/vak-core/src/catalog.rs",
+    "crates/vak-server/src/catalog_api.rs"
+   ]
+  },
+  {
+   "id": "state",
+   "name": "State registry and baseline",
+   "group": "Data",
+   "role": "Every durable path, the data baseline, integrity checks, `vak data`",
+   "homes": [
+    "vak-core",
+    "vak",
+    "vak-admin-ui"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 5,
+   "parts": [],
+   "lines": 3474,
+   "largest": [
+    1653,
+    "crates/vak-core/src/state.rs"
+   ],
+   "routes": [
+    "/data/integrity",
+    "/data/status",
+    "/data/usage"
+   ],
+   "cli": [
+    "data"
+   ],
+   "docs": [],
+   "units": [
+    "crates/vak-admin-ui/src/Data.tsx",
+    "crates/vak-core/src/baseline.rs",
+    "crates/vak-core/src/integrity.rs",
+    "crates/vak-core/src/state.rs",
+    "crates/vak/src/data.rs"
+   ]
+  },
+  {
+   "id": "lifecycle",
+   "name": "Lifecycle and erasure",
+   "group": "Data",
+   "role": "Retention rules, holds, the reconciler, the trash, crypto-shred erasure",
+   "homes": [
+    "vak-core",
+    "vak-lifecycle",
+    "vak-admin-ui",
+    "vak-client-ui",
+    "vak-session"
+   ],
+   "layers": [
+    "L1",
+    "L5",
+    "L7"
+   ],
+   "modules": 9,
+   "parts": [],
+   "lines": 4660,
+   "largest": [
+    1911,
+    "crates/vak-core/src/erasure.rs"
+   ],
+   "routes": [
+    "/conversations/{id}/erasure",
+    "/conversations/{id}/hold",
+    "/conversations/{id}/lifecycle",
+    "/data/erasure/accounts/{account}",
+    "/data/erasure/install",
+    "/data/erasure/people",
+    "/data/erasure/people/allow",
+    "/data/erasure/people/preview",
+    "/data/erasure/projects/{space}",
+    "/data/erasure/receipts",
+    "/data/holds",
+    "/data/lifecycle/plan",
+    "/data/lifecycle/tick",
+    "/data/lifecycle/transitions",
+    "/data/rules",
+    "/data/rules/preview",
+    "/library/trash",
+    "/sessions/archived",
+    "/sessions/{id}/archive",
+    "/sessions/{id}/restore"
+   ],
+   "cli": [],
+   "docs": [
+    "74-lifecycle-and-data-administration.md"
+   ],
+   "units": [
+    "crates/vak-admin-ui/src/ConversationLifecycle.tsx",
+    "crates/vak-client-ui/src/components/EraseAgentSheet.tsx",
+    "crates/vak-client-ui/src/components/EraseConversationSheet.tsx",
+    "crates/vak-client-ui/src/components/YourData.tsx",
+    "crates/vak-core/src/erasure.rs",
+    "crates/vak-core/src/lifecycle.rs",
+    "crates/vak-core/src/trash.rs",
+    "crates/vak-lifecycle/src/lib.rs",
+    "crates/vak-session/src/conversation_state.rs"
+   ]
+  },
+  {
+   "id": "backup",
+   "name": "Backup and restore",
+   "group": "Data",
+   "role": "Encrypted backups and the restore that applies every erasure again",
+   "homes": [
+    "vak-core",
+    "vak-admin-ui",
+    "vak"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 3,
+   "parts": [],
+   "lines": 1140,
+   "largest": [
+    754,
+    "crates/vak-core/src/backup.rs"
+   ],
+   "routes": [
+    "/data/backups",
+    "/data/backups/restore",
+    "/data/backups/restore/preview"
+   ],
+   "cli": [
+    "backup"
+   ],
+   "docs": [],
+   "units": [
+    "crates/vak-admin-ui/src/BackupModels.tsx",
+    "crates/vak-core/src/backup.rs",
+    "crates/vak/src/backup.rs"
+   ]
+  },
+  {
+   "id": "sync",
+   "name": "Sync",
+   "group": "Data",
+   "role": "A folder remote two machines take turns writing",
+   "homes": [
+    "vak-core",
+    "vak"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 2,
+   "parts": [],
+   "lines": 1130,
+   "largest": [
+    889,
+    "crates/vak-core/src/sync.rs"
+   ],
+   "routes": [
+    "/sync",
+    "/sync/forget",
+    "/sync/handover",
+    "/sync/key/export",
+    "/sync/key/import",
+    "/sync/now",
+    "/sync/setup",
+    "/sync/takeover"
+   ],
+   "cli": [
+    "sync"
+   ],
+   "docs": [],
+   "units": [
+    "crates/vak-core/src/sync.rs",
+    "crates/vak/src/sync.rs"
+   ]
+  },
+  {
+   "id": "checkpoints",
+   "name": "Checkpoints and worktrees",
+   "group": "Data",
+   "role": "Workspace checkpoints, restore, git worktrees and PRs",
+   "homes": [
+    "vak-core",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 6,
+   "parts": [],
+   "lines": 1894,
+   "largest": [
+    1180,
+    "crates/vak-core/src/checkpoints.rs"
+   ],
+   "routes": [
+    "/sessions/{id}/checkpoints",
+    "/sessions/{id}/checkpoints/{seq}/restore",
+    "/sessions/{id}/pr",
+    "/sessions/{id}/pr/merge"
+   ],
+   "cli": [
+    "checkpoints"
+   ],
+   "docs": [
+    "14-checkpoints.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/components/CheckpointsModal.tsx",
+    "crates/vak-client-ui/src/components/DiffPane.tsx",
+    "crates/vak-client-ui/src/components/PrPanel.tsx",
+    "crates/vak-client-ui/src/diff.ts",
+    "crates/vak-core/src/checkpoints.rs",
+    "crates/vak-core/src/worktree.rs"
+   ]
+  },
+  {
+   "id": "config",
+   "name": "Configuration and secrets",
+   "group": "Data",
+   "role": "Layered TOML, the credential store, paths, spaces and scopes",
+   "homes": [
+    "vak-config",
+    "vak-server"
+   ],
+   "layers": [
+    "L1",
+    "L6"
+   ],
+   "modules": 9,
+   "parts": [],
+   "lines": 9454,
+   "largest": [
+    6356,
+    "crates/vak-config/src/lib.rs"
+   ],
+   "routes": [
+    "/config",
+    "/config/global",
+    "/config/project",
+    "/config/workspace"
+   ],
+   "cli": [
+    "config"
+   ],
+   "docs": [
+    "05-config.md",
+    "44-shared-config.md"
+   ],
+   "units": [
+    "crates/vak-config/src/credentials.rs",
+    "crates/vak-config/src/file_update.rs",
+    "crates/vak-config/src/finops.rs",
+    "crates/vak-config/src/lib.rs",
+    "crates/vak-config/src/paths.rs",
+    "crates/vak-config/src/scope.rs",
+    "crates/vak-config/src/spaces.rs",
+    "crates/vak-config/src/test_scope.rs",
+    "crates/vak-server/src/restart.rs"
+   ]
+  },
+  {
+   "id": "telemetry",
+   "name": "Telemetry and logs",
+   "group": "Data",
+   "role": "Content-free structured telemetry and service logs",
+   "homes": [
+    "vak-telemetry",
+    "vak-server"
+   ],
+   "layers": [
+    "L1",
+    "L6"
+   ],
+   "modules": 2,
+   "parts": [],
+   "lines": 837,
+   "largest": [
+    724,
+    "crates/vak-telemetry/src/lib.rs"
+   ],
+   "routes": [
+    "/runs/{id}/spans",
+    "/telemetry/logs",
+    "/telemetry/services"
+   ],
+   "cli": [],
+   "docs": [],
+   "units": [
+    "crates/vak-server/src/telemetry.rs",
+    "crates/vak-telemetry/src/lib.rs"
+   ]
+  },
+  {
+   "id": "cards",
+   "name": "Cards and presentation",
+   "group": "Presentation",
+   "role": "Card forms and tools, packs, the closed primitives, projection to clients",
+   "homes": [
+    "vak-server",
+    "vak-core",
+    "vak-client-ui",
+    "vak-presentation",
+    "vak-agent",
+    "vak-session"
+   ],
+   "layers": [
+    "L1",
+    "L2",
+    "L4",
+    "L5",
+    "L6",
+    "L7"
+   ],
+   "modules": 26,
+   "parts": [],
+   "lines": 17888,
+   "largest": [
+    6070,
+    "crates/vak-server/src/projection.rs"
+   ],
+   "routes": [
+    "/config/maps",
+    "/maps/tiles/{z}/{x}/{y}",
+    "/presentations",
+    "/presentations/activate-all",
+    "/presentations/deactivate-all",
+    "/presentations/export",
+    "/presentations/import",
+    "/presentations/plugins/{plugin_id}",
+    "/presentations/revisions",
+    "/presentations/specs/{id}/{revision}",
+    "/presentations/{id}/deactivate",
+    "/presentations/{id}/reset",
+    "/presentations/{id}/{revision}/activate",
+    "/sessions/{id}/card-actions",
+    "/sessions/{id}/interface",
+    "/sessions/{id}/presentation",
+    "/sessions/{id}/presentation/events",
+    "/sessions/{id}/presentation/feedback",
+    "/sessions/{id}/presentation/proposals",
+    "/sessions/{id}/presentation/select",
+    "/sessions/{id}/results/{result_id}"
+   ],
+   "cli": [],
+   "docs": [
+    "30-render-architecture.md",
+    "57-adaptive-presentation-runtime.md",
+    "67-presentation-renderer-guide.md",
+    "87-composed-answers.md",
+    "91-presentation-capabilities.md",
+    "92-card-forms.md",
+    "97-cards-end-the-answer.md",
+    "98-answers-beyond-one-card.md",
+    "96-answer-projection-gaps.md"
+   ],
+   "units": [
+    "crates/vak-agent/src/cards.rs",
+    "crates/vak-agent/src/fences.rs",
+    "crates/vak-client-ui/src/components/PresentationRenderer.tsx",
+    "crates/vak-client-ui/src/components/cards/Chart.tsx",
+    "crates/vak-client-ui/src/components/cards/Controls.tsx",
+    "crates/vak-client-ui/src/components/cards/Map.tsx",
+    "crates/vak-client-ui/src/components/cards/chartScale.ts",
+    "crates/vak-client-ui/src/components/cards/code.tsx",
+    "crates/vak-client-ui/src/components/cards/forms.tsx",
+    "crates/vak-client-ui/src/components/cards/index.tsx",
+    "crates/vak-client-ui/src/components/cards/shared.tsx",
+    "crates/vak-client-ui/src/components/cards/tableNumbers.ts",
+    "crates/vak-client-ui/src/components/presentation/DiffInspector.tsx",
+    "crates/vak-client-ui/src/components/presentation/MermaidViewer.tsx",
+    "crates/vak-client-ui/src/presentationHydration.ts",
+    "crates/vak-client-ui/src/structured.ts",
+    "crates/vak-client-ui/src/turnPairing.ts",
+    "crates/vak-core/src/presentation_store.rs",
+    "crates/vak-core/src/presentation_tools.rs",
+    "crates/vak-presentation/src/lib.rs",
+    "crates/vak-presentation/src/transcoder.rs",
+    "crates/vak-server/src/card_actions.rs",
+    "crates/vak-server/src/client_events.rs",
+    "crates/vak-server/src/maps.rs",
+    "crates/vak-server/src/projection.rs",
+    "crates/vak-session/src/card_actions.rs"
+   ]
+  },
+  {
+   "id": "delivery",
+   "name": "Delivery",
+   "group": "Presentation",
+   "role": "The semantic output contract, Markdown fallback and channel markup",
+   "homes": [
+    "vak-delivery",
+    "vak-server"
+   ],
+   "layers": [
+    "L2",
+    "L6"
+   ],
+   "modules": 14,
+   "parts": [],
+   "lines": 10209,
+   "largest": [
+    2328,
+    "crates/vak-delivery/src/lib.rs"
+   ],
+   "routes": [],
+   "cli": [],
+   "docs": [
+    "30-output-engineering.md"
+   ],
+   "units": [
+    "crates/vak-delivery/src/adaptive.rs",
+    "crates/vak-delivery/src/bin/vak-delivery-worker.rs",
+    "crates/vak-delivery/src/client.rs",
+    "crates/vak-delivery/src/controls.rs",
+    "crates/vak-delivery/src/discord.rs",
+    "crates/vak-delivery/src/expression.rs",
+    "crates/vak-delivery/src/lib.rs",
+    "crates/vak-delivery/src/page.rs",
+    "crates/vak-delivery/src/presentation.rs",
+    "crates/vak-delivery/src/skills.rs",
+    "crates/vak-delivery/src/slack.rs",
+    "crates/vak-delivery/src/telegram.rs",
+    "crates/vak-delivery/src/templates.rs",
+    "crates/vak-server/src/delivery.rs"
+   ]
+  },
+  {
+   "id": "canvas",
+   "name": "Canvas and previews",
+   "group": "Presentation",
+   "role": "The artifact canvas, its viewers, live previews and the preview origin",
+   "homes": [
+    "vak-client-ui",
+    "vak-server"
+   ],
+   "layers": [
+    "L6",
+    "L7"
+   ],
+   "modules": 33,
+   "parts": [],
+   "lines": 3905,
+   "largest": [
+    775,
+    "crates/vak-server/src/preview.rs"
+   ],
+   "routes": [
+    "/previews",
+    "/previews/{id}",
+    "/sessions/{id}/canvas",
+    "/sessions/{id}/launch",
+    "/sessions/{id}/launch/lease",
+    "/sessions/{id}/launch/logs",
+    "/sessions/{id}/launch/prepare",
+    "/sessions/{id}/launch/release",
+    "/sessions/{id}/launch/start",
+    "/sessions/{id}/launch/stop"
+   ],
+   "cli": [],
+   "docs": [
+    "66-immersive-artifact-canvas.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/artifactPreview.ts",
+    "crates/vak-client-ui/src/canvasSelection.ts",
+    "crates/vak-client-ui/src/canvasStack.ts",
+    "crates/vak-client-ui/src/canvasSubject.ts",
+    "crates/vak-client-ui/src/canvasSync.ts",
+    "crates/vak-client-ui/src/canvasSyncState.ts",
+    "crates/vak-client-ui/src/canvasViewers.ts",
+    "crates/vak-client-ui/src/components/ArtifactCanvas.tsx",
+    "crates/vak-client-ui/src/components/LivePreviewPanel.tsx",
+    "crates/vak-client-ui/src/components/canvas/AnswerViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/AutomationViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/CanvasContext.tsx",
+    "crates/vak-client-ui/src/components/canvas/CanvasSaveNotice.tsx",
+    "crates/vak-client-ui/src/components/canvas/DeviceViewport.tsx",
+    "crates/vak-client-ui/src/components/canvas/HtmlViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/LoadState.tsx",
+    "crates/vak-client-ui/src/components/canvas/MediaViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/NewVersionNotice.tsx",
+    "crates/vak-client-ui/src/components/canvas/OfficeViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/PageViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/PdfViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/ServerViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/SourcePane.tsx",
+    "crates/vak-client-ui/src/components/canvas/SourceViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/TableViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/createLoader.ts",
+    "crates/vak-client-ui/src/components/canvas/draftThread.ts",
+    "crates/vak-client-ui/src/components/canvas/types.ts",
+    "crates/vak-client-ui/src/components/canvas/viewers.ts",
+    "crates/vak-client-ui/src/previewLibraries.ts",
+    "crates/vak-client-ui/src/previewTheme.ts",
+    "crates/vak-server/src/canvas.rs",
+    "crates/vak-server/src/preview.rs"
+   ]
+  },
+  {
+   "id": "library",
+   "name": "Library and file state",
+   "group": "Presentation",
+   "role": "Versioned artifacts, review, sharing, and what a file is now",
+   "homes": [
+    "vak-core",
+    "vak-server",
+    "vak-client-ui",
+    "vak-tools"
+   ],
+   "layers": [
+    "L4",
+    "L5",
+    "L6",
+    "L7"
+   ],
+   "modules": 12,
+   "parts": [],
+   "lines": 7089,
+   "largest": [
+    2458,
+    "crates/vak-server/src/library.rs"
+   ],
+   "routes": [
+    "/library",
+    "/library/answers",
+    "/library/made/{session}/{call}",
+    "/library/{id}",
+    "/library/{id}/comments/{comment}/revise",
+    "/library/{id}/shares",
+    "/library/{id}/shares/{grant}",
+    "/library/{id}/versions",
+    "/library/{id}/versions/{version}",
+    "/library/{id}/versions/{version}/accept",
+    "/library/{id}/versions/{version}/checks",
+    "/library/{id}/versions/{version}/comments",
+    "/library/{id}/versions/{version}/compare",
+    "/library/{id}/versions/{version}/document",
+    "/library/{id}/versions/{version}/narrow",
+    "/library/{id}/versions/{version}/origin",
+    "/library/{id}/versions/{version}/raw",
+    "/library/{id}/versions/{version}/review",
+    "/library/{id}/versions/{version}/save",
+    "/library/{id}/versions/{version}/text",
+    "/library/{id}/versions/{version}/trash",
+    "/library/{id}/versions/{version}/undo",
+    "/library/{id}/{action}"
+   ],
+   "cli": [],
+   "docs": [
+    "82-library.md",
+    "90-file-state.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/candidateVersions.ts",
+    "crates/vak-client-ui/src/components/LibraryPage.tsx",
+    "crates/vak-client-ui/src/components/PageKeeper.tsx",
+    "crates/vak-client-ui/src/components/PageView.tsx",
+    "crates/vak-client-ui/src/components/SharedArtifact.tsx",
+    "crates/vak-client-ui/src/components/fileState.tsx",
+    "crates/vak-client-ui/src/draftVersions.ts",
+    "crates/vak-core/src/artifacts.rs",
+    "crates/vak-core/src/file_state.rs",
+    "crates/vak-core/src/files.rs",
+    "crates/vak-server/src/library.rs",
+    "crates/vak-tools/src/artifact.rs"
+   ]
+  },
+  {
+   "id": "office",
+   "name": "Office and PDF documents",
+   "group": "Apps",
+   "role": "The Open XML and PDF engines, doc_read, office_apply, Review and shared rooms",
+   "homes": [
+    "vak-ooxml",
+    "vak-pdf",
+    "vak-tools",
+    "vak-client-ui",
+    "vak-server",
+    "vak"
+   ],
+   "layers": [
+    "L2",
+    "L4",
+    "L6",
+    "L7"
+   ],
+   "modules": 46,
+   "parts": [],
+   "lines": 33516,
+   "largest": [
+    3267,
+    "crates/vak-ooxml/src/read.rs"
+   ],
+   "routes": [
+    "/fs/office",
+    "/sessions/{id}/office-workspaces",
+    "/sessions/{id}/office-workspaces/{room_id}",
+    "/sessions/{id}/office-workspaces/{room_id}/presence"
+   ],
+   "cli": [
+    "office"
+   ],
+   "docs": [
+    "72-openxml-documents.md",
+    "77-pdf-documents.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/components/OfficeChangeList.tsx",
+    "crates/vak-client-ui/src/components/OfficeRedline.tsx",
+    "crates/vak-client-ui/src/components/OfficeView.tsx",
+    "crates/vak-client-ui/src/components/OfficeWorkspacePane.tsx",
+    "crates/vak-client-ui/src/officeCells.ts",
+    "crates/vak-client-ui/src/officeChoices.ts",
+    "crates/vak-client-ui/src/officeFacts.ts",
+    "crates/vak-client-ui/src/officeFiles.ts",
+    "crates/vak-client-ui/src/officeRedline.ts",
+    "crates/vak-ooxml/src/blank.rs",
+    "crates/vak-ooxml/src/diff.rs",
+    "crates/vak-ooxml/src/edit/deck.rs",
+    "crates/vak-ooxml/src/edit/mod.rs",
+    "crates/vak-ooxml/src/edit/redline.rs",
+    "crates/vak-ooxml/src/edit/sheet.rs",
+    "crates/vak-ooxml/src/edit/textdiff.rs",
+    "crates/vak-ooxml/src/edit/word.rs",
+    "crates/vak-ooxml/src/fixtures.rs",
+    "crates/vak-ooxml/src/lib.rs",
+    "crates/vak-ooxml/src/package.rs",
+    "crates/vak-ooxml/src/projection.rs",
+    "crates/vak-ooxml/src/read.rs",
+    "crates/vak-ooxml/src/review.rs",
+    "crates/vak-ooxml/src/splice.rs",
+    "crates/vak-ooxml/src/xml.rs",
+    "crates/vak-pdf/src/content.rs",
+    "crates/vak-pdf/src/diff.rs",
+    "crates/vak-pdf/src/edit.rs",
+    "crates/vak-pdf/src/file.rs",
+    "crates/vak-pdf/src/filter.rs",
+    "crates/vak-pdf/src/fixtures.rs",
+    "crates/vak-pdf/src/font.rs",
+    "crates/vak-pdf/src/layout.rs",
+    "crates/vak-pdf/src/lexer.rs",
+    "crates/vak-pdf/src/lib.rs",
+    "crates/vak-pdf/src/object.rs",
+    "crates/vak-pdf/src/projection.rs",
+    "crates/vak-pdf/src/read.rs",
+    "crates/vak-pdf/src/review.rs",
+    "crates/vak-pdf/src/text.rs",
+    "crates/vak-pdf/src/write.rs",
+    "crates/vak-server/src/office_workspace.rs",
+    "crates/vak-tools/src/doc_read.rs",
+    "crates/vak-tools/src/office_apply.rs",
+    "crates/vak-tools/src/office_pdf.rs",
+    "crates/vak/src/office.rs"
+   ]
+  },
+  {
+   "id": "mail",
+   "name": "Mail and calendar",
+   "group": "Apps",
+   "role": "Accounts, OAuth, the vault, provider adapters, reviewed sends and changes",
+   "homes": [
+    "vak-mail-calendar",
+    "vak-server",
+    "vak-core",
+    "vak-client-ui",
+    "vak-tools"
+   ],
+   "layers": [
+    "L2",
+    "L4",
+    "L5",
+    "L6",
+    "L7"
+   ],
+   "modules": 24,
+   "parts": [],
+   "lines": 28425,
+   "largest": [
+    7839,
+    "crates/vak-mail-calendar/src/provider.rs"
+   ],
+   "routes": [
+    "/mail-calendar/accounts",
+    "/mail-calendar/accounts/{agent_id}/candidates",
+    "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}",
+    "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/cancel-event",
+    "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/create-event",
+    "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/reconcile-event",
+    "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/reconcile-mail",
+    "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/respond-event",
+    "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/review-context",
+    "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/send",
+    "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/update-event",
+    "/mail-calendar/accounts/{agent_id}/google-app-password",
+    "/mail-calendar/accounts/{agent_id}/icloud",
+    "/mail-calendar/accounts/{agent_id}/microsoft-app-password",
+    "/mail-calendar/accounts/{agent_id}/oauth",
+    "/mail-calendar/accounts/{agent_id}/routines/{routine_id}/history",
+    "/mail-calendar/accounts/{agent_id}/{account_id}/attachment-preview",
+    "/mail-calendar/accounts/{agent_id}/{account_id}/calendar-preview",
+    "/mail-calendar/accounts/{agent_id}/{account_id}/calendar-sources",
+    "/mail-calendar/accounts/{agent_id}/{account_id}/disconnect",
+    "/mail-calendar/accounts/{agent_id}/{account_id}/free-busy-preview",
+    "/mail-calendar/accounts/{agent_id}/{account_id}/mail-folders",
+    "/mail-calendar/accounts/{agent_id}/{account_id}/mail-preview",
+    "/mail-calendar/accounts/{agent_id}/{account_id}/message-preview",
+    "/mail-calendar/accounts/{agent_id}/{account_id}/refresh",
+    "/mail-calendar/accounts/{agent_id}/{account_id}/thread-preview",
+    "/mail-calendar/oauth/callback"
+   ],
+   "cli": [],
+   "docs": [
+    "80-mail-and-calendar.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/components/MailCalendarAgenda.tsx",
+    "crates/vak-client-ui/src/components/MailCalendarThreadWorkspace.tsx",
+    "crates/vak-client-ui/src/components/SyntheticMailCalendarDemoControl.tsx",
+    "crates/vak-client-ui/src/components/canvas/DailyMailCalendarViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/MailCalendarDraftWorkspace.tsx",
+    "crates/vak-client-ui/src/components/canvas/MailCalendarRoutineWorkspace.tsx",
+    "crates/vak-client-ui/src/mailCalendarCitation.ts",
+    "crates/vak-client-ui/src/mailCalendarConflicts.d.mts",
+    "crates/vak-client-ui/src/mailCalendarConflicts.mjs",
+    "crates/vak-client-ui/src/mailCalendarDemo.ts",
+    "crates/vak-client-ui/src/mailCalendarRoutineStatus.d.mts",
+    "crates/vak-client-ui/src/mailCalendarRoutineStatus.mjs",
+    "crates/vak-client-ui/src/mailCalendarThreadNavigation.d.mts",
+    "crates/vak-client-ui/src/mailCalendarThreadNavigation.mjs",
+    "crates/vak-core/src/mail_calendar.rs",
+    "crates/vak-mail-calendar/src/connection_ledger.rs",
+    "crates/vak-mail-calendar/src/effect.rs",
+    "crates/vak-mail-calendar/src/endpoints.rs",
+    "crates/vak-mail-calendar/src/lib.rs",
+    "crates/vak-mail-calendar/src/oauth.rs",
+    "crates/vak-mail-calendar/src/provider.rs",
+    "crates/vak-mail-calendar/src/vault.rs",
+    "crates/vak-server/src/mail_calendar.rs",
+    "crates/vak-tools/src/mail_calendar.rs"
+   ]
+  },
+  {
+   "id": "intake",
+   "name": "Intake and feeds",
+   "group": "Apps",
+   "role": "Sources, connectors parsed in the worker, detection that labels",
+   "homes": [
+    "vak-intake",
+    "vak-core",
+    "vak-server",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L2",
+    "L5",
+    "L6",
+    "L7"
+   ],
+   "modules": 9,
+   "parts": [],
+   "lines": 3417,
+   "largest": [
+    735,
+    "crates/vak-server/src/intake.rs"
+   ],
+   "routes": [
+    "/intake/alerts",
+    "/intake/alerts/{id}",
+    "/intake/items",
+    "/intake/items/{id}",
+    "/intake/items/{id}/quarantine",
+    "/intake/items/{id}/release",
+    "/intake/sources",
+    "/intake/sources/{id}",
+    "/intake/sources/{id}/poll"
+   ],
+   "cli": [],
+   "docs": [
+    "76-intake-and-knowledge.md",
+    "51-feed-system.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/components/SourcesPanel.tsx",
+    "crates/vak-core/src/intake.rs",
+    "crates/vak-core/src/intake_alerts.rs",
+    "crates/vak-intake/src/detect.rs",
+    "crates/vak-intake/src/html.rs",
+    "crates/vak-intake/src/lib.rs",
+    "crates/vak-intake/src/parse.rs",
+    "crates/vak-intake/src/text.rs",
+    "crates/vak-server/src/intake.rs"
+   ]
+  },
+  {
+   "id": "social",
+   "name": "Social connectors",
+   "group": "Apps",
+   "role": "LinkedIn, Reddit, X and YouTube connectors and their previews",
+   "homes": [
+    "vak-server",
+    "vak-core"
+   ],
+   "layers": [
+    "L5",
+    "L6"
+   ],
+   "modules": 4,
+   "parts": [],
+   "lines": 1720,
+   "largest": [
+    952,
+    "crates/vak-server/src/social/linkedin.rs"
+   ],
+   "routes": [
+    "/social/connectors",
+    "/social/connectors/{id}/install",
+    "/social/linkedin/account",
+    "/social/linkedin/client-id",
+    "/social/linkedin/connect",
+    "/social/reddit/client-id",
+    "/social/reddit/search",
+    "/social/x/search",
+    "/social/x/token",
+    "/social/x/usage",
+    "/social/youtube/key",
+    "/social/youtube/search"
+   ],
+   "cli": [],
+   "docs": [],
+   "units": [
+    "crates/vak-core/src/social/mod.rs",
+    "crates/vak-server/src/social.rs",
+    "crates/vak-server/src/social/linkedin.rs",
+    "crates/vak-server/src/social/preview.rs"
+   ]
+  },
+  {
+   "id": "voice",
+   "name": "Voice",
+   "group": "Apps",
+   "role": "Speech providers, the live voice session, narration",
+   "homes": [
+    "vak-server",
+    "vak-voice",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L2",
+    "L6",
+    "L7"
+   ],
+   "modules": 12,
+   "parts": [],
+   "lines": 2791,
+   "largest": [
+    1273,
+    "crates/vak-server/src/voice.rs"
+   ],
+   "routes": [
+    "/voice/providers",
+    "/voice/session",
+    "/voice/speak"
+   ],
+   "cli": [],
+   "docs": [
+    "38-voice-personality.md",
+    "49-live-voice.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/components/VoiceControl.tsx",
+    "crates/vak-client-ui/src/soundCues.ts",
+    "crates/vak-client-ui/src/soundFamilies.ts",
+    "crates/vak-client-ui/src/voice-activity.ts",
+    "crates/vak-client-ui/src/voice-capture.ts",
+    "crates/vak-server/src/voice.rs",
+    "crates/vak-voice/src/audio.rs",
+    "crates/vak-voice/src/lib.rs",
+    "crates/vak-voice/src/local.rs",
+    "crates/vak-voice/src/protocol.rs",
+    "crates/vak-voice/src/provider.rs",
+    "crates/vak-voice/src/vad.rs"
+   ]
+  },
+  {
+   "id": "memory",
+   "name": "Memory and learning",
+   "group": "Apps",
+   "role": "Notes, recall of the owner's profile, the learning loop and skill proposals",
+   "homes": [
+    "vak-core",
+    "vak"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 3,
+   "parts": [],
+   "lines": 1494,
+   "largest": [
+    690,
+    "crates/vak-core/src/learning.rs"
+   ],
+   "routes": [
+    "/memory",
+    "/memory/{note_id}",
+    "/skills/proposals",
+    "/skills/proposals/{id}/approve",
+    "/skills/proposals/{id}/promote",
+    "/skills/proposals/{id}/reject",
+    "/skills/review"
+   ],
+   "cli": [
+    "memory"
+   ],
+   "docs": [
+    "23-memory.md",
+    "26-learning.md"
+   ],
+   "units": [
+    "crates/vak-core/src/learning.rs",
+    "crates/vak-core/src/memory.rs",
+    "crates/vak/src/memory.rs"
+   ]
+  },
+  {
+   "id": "automations",
+   "name": "Automations and triggers",
+   "group": "Apps",
+   "role": "The one trigger model, claims, schedules, routines and their runs",
+   "homes": [
+    "vak-core",
+    "vak-server",
+    "vak",
+    "vak-client-ui",
+    "vak-admin-ui"
+   ],
+   "layers": [
+    "L5",
+    "L6",
+    "L7"
+   ],
+   "modules": 10,
+   "parts": [],
+   "lines": 5334,
+   "largest": [
+    1942,
+    "crates/vak-core/src/triggers.rs"
+   ],
+   "routes": [
+    "/triggers",
+    "/triggers/{id}",
+    "/triggers/{id}/run",
+    "/triggers/{id}/slots"
+   ],
+   "cli": [
+    "triggers"
+   ],
+   "docs": [
+    "94-scheduled-work-you-can-see.md"
+   ],
+   "units": [
+    "crates/vak-admin-ui/src/Automations.tsx",
+    "crates/vak-client-ui/src/automationWords.ts",
+    "crates/vak-client-ui/src/components/AutomationCard.tsx",
+    "crates/vak-client-ui/src/components/AutomationsPage.tsx",
+    "crates/vak-client-ui/src/components/SchedulePicker.tsx",
+    "crates/vak-core/src/scheduled.rs",
+    "crates/vak-core/src/tools_automations.rs",
+    "crates/vak-core/src/triggers.rs",
+    "crates/vak-server/src/automations.rs",
+    "crates/vak/src/triggers.rs"
+   ]
+  },
+  {
+   "id": "inbox",
+   "name": "Inbox and digest",
+   "group": "Apps",
+   "role": "What needs the owner, and the periodic digest",
+   "homes": [
+    "vak-core",
+    "vak-admin-ui",
+    "vak",
+    "vak-client-ui",
+    "vak-server"
+   ],
+   "layers": [
+    "L5",
+    "L6",
+    "L7"
+   ],
+   "modules": 9,
+   "parts": [],
+   "lines": 3213,
+   "largest": [
+    782,
+    "crates/vak-core/src/inbox.rs"
+   ],
+   "routes": [
+    "/digest",
+    "/inbox",
+    "/inbox/unread_count",
+    "/inbox/{id}/ack"
+   ],
+   "cli": [
+    "inbox",
+    "digest"
+   ],
+   "docs": [
+    "29-personal-os.md"
+   ],
+   "units": [
+    "crates/vak-admin-ui/src/Inbox.tsx",
+    "crates/vak-client-ui/src/components/DigestCard.tsx",
+    "crates/vak-client-ui/src/components/InboxPage.tsx",
+    "crates/vak-client-ui/src/components/NeedsYou.tsx",
+    "crates/vak-core/src/digest.rs",
+    "crates/vak-core/src/inbox.rs",
+    "crates/vak-server/src/inbox.rs",
+    "crates/vak/src/digest.rs",
+    "crates/vak/src/inbox.rs"
+   ]
+  },
+  {
+   "id": "agents",
+   "name": "Agents",
+   "group": "Apps",
+   "role": "Agent definitions, lifecycle, the Agent network, per-Agent chats",
+   "homes": [
+    "vak-client-ui",
+    "vak-server",
+    "vak-core",
+    "vak"
+   ],
+   "layers": [
+    "L5",
+    "L6",
+    "L7"
+   ],
+   "modules": 13,
+   "parts": [],
+   "lines": 3034,
+   "largest": [
+    710,
+    "crates/vak-core/src/agent_network.rs"
+   ],
+   "routes": [
+    "/agent-network/capabilities",
+    "/agent-network/messages",
+    "/agents",
+    "/agents/instantiate",
+    "/agents/templates",
+    "/agents/{agent}/erasure",
+    "/agents/{agent}/lifecycle",
+    "/agents/{agent}/open",
+    "/agents/{agent}/pause",
+    "/agents/{agent}/resume",
+    "/agents/{agent}/revoke",
+    "/config/agents"
+   ],
+   "cli": [
+    "agents"
+   ],
+   "docs": [
+    "64-agent-owned-platform.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/agentGlyph.ts",
+    "crates/vak-client-ui/src/agentRecents.ts",
+    "crates/vak-client-ui/src/characterTier.ts",
+    "crates/vak-client-ui/src/components/AgentCreateWizard.tsx",
+    "crates/vak-client-ui/src/components/AgentMark.tsx",
+    "crates/vak-client-ui/src/components/AgentPickerModal.tsx",
+    "crates/vak-client-ui/src/components/AgentPresence.tsx",
+    "crates/vak-client-ui/src/components/RevokeAgentSheet.tsx",
+    "crates/vak-core/src/agent_definitions.rs",
+    "crates/vak-core/src/agent_network.rs",
+    "crates/vak-server/src/agent_chats.rs",
+    "crates/vak-server/src/agents.rs",
+    "crates/vak/src/agents_cli.rs"
+   ]
+  },
+  {
+   "id": "coworking",
+   "name": "Shared conversations",
+   "group": "Apps",
+   "role": "Guests in a conversation: invitations, presence, delegated approvals",
+   "homes": [
+    "vak-client-ui",
+    "vak-server"
+   ],
+   "layers": [
+    "L6",
+    "L7"
+   ],
+   "modules": 3,
+   "parts": [],
+   "lines": 792,
+   "largest": [
+    416,
+    "crates/vak-client-ui/src/components/SharedConversation.tsx"
+   ],
+   "routes": [
+    "/sessions/{id}/coworking/approvals",
+    "/sessions/{id}/coworking/approvals/{req_id}",
+    "/sessions/{id}/coworking/approvals/{req_id}/delegate",
+    "/sessions/{id}/coworking/invitations",
+    "/sessions/{id}/coworking/invitations/{grant_id}/revoke",
+    "/sessions/{id}/coworking/me",
+    "/sessions/{id}/coworking/messages",
+    "/sessions/{id}/coworking/presence",
+    "/sessions/{id}/coworking/updates"
+   ],
+   "cli": [],
+   "docs": [
+    "69-shared-conversation-coworking.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/components/CoworkingShare.tsx",
+    "crates/vak-client-ui/src/components/SharedConversation.tsx",
+    "crates/vak-server/src/coworking.rs"
+   ]
+  },
+  {
+   "id": "server",
+   "name": "HTTP service",
+   "group": "Service and operations",
+   "role": "The router, auth layers, the event bus, session handles and the Core pool",
+   "homes": [
+    "vak-server",
+    "vak-core",
+    "vak-session"
+   ],
+   "layers": [
+    "L1",
+    "L5",
+    "L6"
+   ],
+   "modules": 9,
+   "parts": [],
+   "lines": 31913,
+   "largest": [
+    28130,
+    "crates/vak-server/src/lib.rs"
+   ],
+   "routes": [
+    "/admin/api/bestofn",
+    "/admin/api/config",
+    "/admin/api/events",
+    "/admin/api/projects",
+    "/admin/api/projects/{id}",
+    "/admin/api/sessions",
+    "/admin/api/sessions/{id}/transcript",
+    "/admin/api/traffic",
+    "/config/server",
+    "/sessions/{id}/attach",
+    "/sessions/{id}/bestofn",
+    "/sessions/{id}/events",
+    "/sessions/{id}/transcript",
+    "/sessions/{id}/transcript.md",
+    "/traffic"
+   ],
+   "cli": [
+    "serve"
+   ],
+   "docs": [
+    "13-server.md"
+   ],
+   "units": [
+    "crates/vak-core/src/transcript_md.rs",
+    "crates/vak-server/src/core_pool.rs",
+    "crates/vak-server/src/events.rs",
+    "crates/vak-server/src/lib.rs",
+    "crates/vak-server/src/stream.rs",
+    "crates/vak-server/src/traced_rows_tests.rs",
+    "crates/vak-server/src/turn_marks.rs",
+    "crates/vak-server/src/web.rs",
+    "crates/vak-session/src/turn_marks.rs"
+   ]
+  },
+  {
+   "id": "gateway",
+   "name": "Gateway and channels",
+   "group": "Service and operations",
+   "role": "Chat surfaces, bots, the allowlist, bindings, forwarded approvals, heartbeat",
+   "homes": [
+    "vak-server"
+   ],
+   "layers": [
+    "L6"
+   ],
+   "modules": 7,
+   "parts": [],
+   "lines": 9023,
+   "largest": [
+    5559,
+    "crates/vak-server/src/gateway.rs"
+   ],
+   "routes": [
+    "/admin/api/gateway/allowlist",
+    "/admin/api/gateway/allowlist/{key}",
+    "/admin/api/gateway/allowlist/{key}/approve",
+    "/admin/api/gateway/allowlist/{key}/deny",
+    "/admin/api/gateway/bindings/{key}",
+    "/admin/api/gateway/bindings/{key}/rotate",
+    "/admin/api/gateway/status",
+    "/admin/api/gateway/workspace",
+    "/gateway/approvals",
+    "/gateway/bindings/{key}",
+    "/gateway/bots",
+    "/gateway/bots/{id}",
+    "/gateway/bots/{id}/token",
+    "/gateway/inbound",
+    "/gateway/status"
+   ],
+   "cli": [
+    "telegram",
+    "discord",
+    "slack"
+   ],
+   "docs": [
+    "22-gateway.md",
+    "34-channel-onboarding.md"
+   ],
+   "units": [
+    "crates/vak-server/src/channels.rs",
+    "crates/vak-server/src/gateway.rs",
+    "crates/vak-server/src/heartbeat.rs",
+    "crates/vak-server/src/surfaces/discord.rs",
+    "crates/vak-server/src/surfaces/mod.rs",
+    "crates/vak-server/src/surfaces/slack.rs",
+    "crates/vak-server/src/surfaces/telegram.rs"
+   ]
+  },
+  {
+   "id": "bus",
+   "name": "Distributed bus",
+   "group": "Service and operations",
+   "role": "NATS JetStream fabric with causal lineage and encrypted envelopes",
+   "homes": [
+    "vak-bus",
+    "vak-server"
+   ],
+   "layers": [
+    "L6"
+   ],
+   "modules": 7,
+   "parts": [],
+   "lines": 2091,
+   "largest": [
+    638,
+    "crates/vak-server/src/bus.rs"
+   ],
+   "routes": [
+    "/config/bus"
+   ],
+   "cli": [],
+   "docs": [
+    "53-distributed-bus.md"
+   ],
+   "units": [
+    "crates/vak-bus/src/bus.rs",
+    "crates/vak-bus/src/crypto.rs",
+    "crates/vak-bus/src/envelope.rs",
+    "crates/vak-bus/src/lib.rs",
+    "crates/vak-bus/src/subjects.rs",
+    "crates/vak-bus/src/telemetry.rs",
+    "crates/vak-server/src/bus.rs"
+   ]
+  },
+  {
+   "id": "operations",
+   "name": "Operations",
+   "group": "Service and operations",
+   "role": "Service control, the Operations Center, incidents and action receipts",
+   "homes": [
+    "vak-ops",
+    "vak-admin-ui",
+    "vak-server",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L6",
+    "L7"
+   ],
+   "modules": 6,
+   "parts": [],
+   "lines": 3963,
+   "largest": [
+    2202,
+    "crates/vak-ops/src/services.rs"
+   ],
+   "routes": [
+    "/ops/actions",
+    "/ops/center",
+    "/ops/diagnostics",
+    "/ops/incidents",
+    "/ops/services/activate",
+    "/ops/status",
+    "/ops/{service}/{action}"
+   ],
+   "cli": [],
+   "docs": [
+    "28-operations.md"
+   ],
+   "units": [
+    "crates/vak-admin-ui/src/OperationsCenter.tsx",
+    "crates/vak-client-ui/src/components/OperationsPanel.tsx",
+    "crates/vak-ops/src/lib.rs",
+    "crates/vak-ops/src/services.rs",
+    "crates/vak-server/src/operations.rs",
+    "crates/vak-server/src/service_control.rs"
+   ]
+  },
+  {
+   "id": "doctor",
+   "name": "Doctor and health",
+   "group": "Service and operations",
+   "role": "The health report: `vak doctor`, `--repair`, /health, /doctor, diagnostics screens",
+   "homes": [
+    "vak-core",
+    "vak",
+    "vak-admin-ui"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 3,
+   "parts": [],
+   "lines": 1699,
+   "largest": [
+    1239,
+    "crates/vak-core/src/health.rs"
+   ],
+   "routes": [
+    "/doctor",
+    "/health"
+   ],
+   "cli": [
+    "doctor"
+   ],
+   "docs": [],
+   "units": [
+    "crates/vak-admin-ui/src/Diagnostics.tsx",
+    "crates/vak-core/src/health.rs",
+    "crates/vak/src/doctor.rs"
+   ]
+  },
+  {
+   "id": "finops",
+   "name": "Cost and budgets",
+   "group": "Service and operations",
+   "role": "The cost ledger, budget admission, alerts",
+   "homes": [
+    "vak-core",
+    "vak-agent",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L4",
+    "L5",
+    "L7"
+   ],
+   "modules": 3,
+   "parts": [],
+   "lines": 2059,
+   "largest": [
+    1870,
+    "crates/vak-core/src/finops.rs"
+   ],
+   "routes": [
+    "/finops"
+   ],
+   "cli": [],
+   "docs": [],
+   "units": [
+    "crates/vak-agent/src/spend.rs",
+    "crates/vak-client-ui/src/components/BudgetBanner.tsx",
+    "crates/vak-core/src/finops.rs"
+   ]
+  },
+  {
+   "id": "onboarding",
+   "name": "Setup and onboarding",
+   "group": "Service and operations",
+   "role": "First run, workspace trust, seeding, the setup wizard",
+   "homes": [
+    "vak-core",
+    "vak",
+    "vak-client-ui"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 6,
+   "parts": [],
+   "lines": 2356,
+   "largest": [
+    904,
+    "crates/vak-core/src/onboarding.rs"
+   ],
+   "routes": [
+    "/onboarding",
+    "/onboarding/first-task",
+    "/onboarding/seed",
+    "/onboarding/trust",
+    "/onboarding/workspace-review"
+   ],
+   "cli": [
+    "setup"
+   ],
+   "docs": [
+    "36-first-run-onboarding.md",
+    "46-stabilization-install-and-onboarding.md"
+   ],
+   "units": [
+    "crates/vak-client-ui/src/components/ConnectSheet.tsx",
+    "crates/vak-client-ui/src/components/SetupBanner.tsx",
+    "crates/vak-client-ui/src/components/WorkspaceGate.tsx",
+    "crates/vak-core/src/onboarding.rs",
+    "crates/vak-core/src/seed.rs",
+    "crates/vak/src/setup.rs"
+   ]
+  },
+  {
+   "id": "install",
+   "name": "Install and update",
+   "group": "Service and operations",
+   "role": "Self install, the update feed, manifests, transactional upgrades",
+   "homes": [
+    "vak",
+    "vak-core",
+    "docker",
+    "scripts"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 10,
+   "parts": [
+    "docker",
+    "scripts/hosting",
+    "scripts/install.sh",
+    "scripts/integrity-manifest.py",
+    "scripts/merge-feeds.py",
+    "scripts/upgrade-gate.sh"
+   ],
+   "lines": 3431,
+   "largest": [
+    1428,
+    "crates/vak/src/install/mod.rs"
+   ],
+   "routes": [],
+   "cli": [
+    "self"
+   ],
+   "docs": [
+    "37-distribution.md"
+   ],
+   "units": [
+    "crates/vak-core/src/install.rs",
+    "crates/vak/src/install/atomic.rs",
+    "crates/vak/src/install/bundle.rs",
+    "crates/vak/src/install/digest.rs",
+    "crates/vak/src/install/feed.rs",
+    "crates/vak/src/install/layout.rs",
+    "crates/vak/src/install/manifest.rs",
+    "crates/vak/src/install/mod.rs",
+    "crates/vak/src/install/transaction.rs",
+    "crates/vak/src/update_check.rs",
+    "docker",
+    "scripts/hosting",
+    "scripts/install.sh",
+    "scripts/integrity-manifest.py",
+    "scripts/merge-feeds.py",
+    "scripts/upgrade-gate.sh"
+   ]
+  },
+  {
+   "id": "eval",
+   "name": "Evaluation",
+   "group": "Service and operations",
+   "role": "The deterministic suite, live mode, context and banned-token gates, replays",
+   "homes": [
+    "vak-eval",
+    "vak",
+    "vak-admin-ui",
+    "scripts"
+   ],
+   "layers": [
+    "L5",
+    "L7"
+   ],
+   "modules": 10,
+   "parts": [
+    "scripts/capability_coverage",
+    "scripts/capability_coverage.py",
+    "scripts/compound_regression.py",
+    "scripts/harness_500.py",
+    "scripts/harness_selftest.py",
+    "scripts/measure_tool_form.py",
+    "scripts/poison_replay.sh",
+    "scripts/prompt_scenarios.py",
+    "scripts/scenarios",
+    "scripts/test_harness_500.py"
+   ],
+   "lines": 3162,
+   "largest": [
+    664,
+    "crates/vak-eval/src/cases.rs"
+   ],
+   "routes": [
+    "/eval/ledgers",
+    "/eval/proposals/review"
+   ],
+   "cli": [
+    "eval"
+   ],
+   "docs": [
+    "12-evals.md",
+    "40-harness-engineering.md"
+   ],
+   "units": [
+    "crates/vak-admin-ui/src/Measurements.tsx",
+    "crates/vak-eval/src/cases.rs",
+    "crates/vak-eval/src/context_engine_gate.rs",
+    "crates/vak-eval/src/generated.rs",
+    "crates/vak-eval/src/lib.rs",
+    "crates/vak-eval/src/no_first_class_integrations.rs",
+    "crates/vak-eval/src/runner.rs",
+    "crates/vak-eval/src/scorecard.rs",
+    "crates/vak/src/eval_ledgers.rs",
+    "crates/vak/src/eval_poison.rs",
+    "scripts/capability_coverage",
+    "scripts/capability_coverage.py",
+    "scripts/compound_regression.py",
+    "scripts/harness_500.py",
+    "scripts/harness_selftest.py",
+    "scripts/measure_tool_form.py",
+    "scripts/poison_replay.sh",
+    "scripts/prompt_scenarios.py",
+    "scripts/scenarios",
+    "scripts/test_harness_500.py"
+   ]
+  },
+  {
+   "id": "engineering",
+   "name": "Build, gate and release",
+   "group": "Service and operations",
+   "role": "Builds, the gate, version and record checks, the release, platform and smoke checks",
+   "homes": [
+    "scripts"
+   ],
+   "layers": [],
+   "modules": 0,
+   "parts": [
+    "scripts/.version-reset",
+    "scripts/brand",
+    "scripts/build-amazonlinux-arm64.sh",
+    "scripts/build.sh",
+    "scripts/bump-version.sh",
+    "scripts/chaos_driver.py",
+    "scripts/check-advisories.sh",
+    "scripts/check-version.sh",
+    "scripts/check_doc_paths.py",
+    "scripts/check_records.py",
+    "scripts/check_records_drift.py",
+    "scripts/fake_mcp_server.py",
+    "scripts/fault_proxy.py",
+    "scripts/gate.sh",
+    "scripts/landlock_smoke.sh",
+    "scripts/linux-check.sh",
+    "scripts/linux-stack.sh",
+    "scripts/linux-systemd-check.sh",
+    "scripts/macos-check.sh",
+    "scripts/mail-soak",
+    "scripts/mock_anthropic.py",
+    "scripts/mock_gemini.py",
+    "scripts/mock_openai.py",
+    "scripts/mock_openai_responses.py",
+    "scripts/release.sh",
+    "scripts/resource_watch.py",
+    "scripts/server_smoke.py",
+    "scripts/sync-lab",
+    "scripts/telegram_smoke.sh",
+    "scripts/test-mail-calendar-mock-pack.sh",
+    "scripts/ui-acceptance-check.sh",
+    "scripts/ui_bundle_check.rs",
+    "scripts/vak.sh",
+    "scripts/verify-macos-release.sh",
+    "scripts/version.sh"
+   ],
+   "lines": 0,
+   "largest": [
+    0,
+    "scripts/version.sh"
+   ],
+   "routes": [],
+   "cli": [],
+   "docs": [
+    "32-release-engineering.md"
+   ],
+   "units": [
+    "scripts/.version-reset",
+    "scripts/brand",
+    "scripts/build-amazonlinux-arm64.sh",
+    "scripts/build.sh",
+    "scripts/bump-version.sh",
+    "scripts/chaos_driver.py",
+    "scripts/check-advisories.sh",
+    "scripts/check-version.sh",
+    "scripts/check_doc_paths.py",
+    "scripts/check_records.py",
+    "scripts/check_records_drift.py",
+    "scripts/fake_mcp_server.py",
+    "scripts/fault_proxy.py",
+    "scripts/gate.sh",
+    "scripts/landlock_smoke.sh",
+    "scripts/linux-check.sh",
+    "scripts/linux-stack.sh",
+    "scripts/linux-systemd-check.sh",
+    "scripts/macos-check.sh",
+    "scripts/mail-soak",
+    "scripts/mock_anthropic.py",
+    "scripts/mock_gemini.py",
+    "scripts/mock_openai.py",
+    "scripts/mock_openai_responses.py",
+    "scripts/release.sh",
+    "scripts/resource_watch.py",
+    "scripts/server_smoke.py",
+    "scripts/sync-lab",
+    "scripts/telegram_smoke.sh",
+    "scripts/test-mail-calendar-mock-pack.sh",
+    "scripts/ui-acceptance-check.sh",
+    "scripts/ui_bundle_check.rs",
+    "scripts/vak.sh",
+    "scripts/verify-macos-release.sh",
+    "scripts/version.sh"
+   ]
+  }
+ ],
+ "coverage": {
+  "units": 693,
+  "claimed": 693,
+  "routes": 391,
+  "routes_claimed": 391,
+  "verbs": 35,
+  "verbs_claimed": 35,
+  "docs_uncited": [
+   "00-roadmap.md",
+   "35-tavily.md",
+   "56-personal-multi-machine-system.md",
+   "59-reference-ui-acceptance.md",
+   "60-modern-presentation-system-2026.md",
+   "61-adaptive-assistant-experience.md",
+   "62-universal-delegation-prototype.md",
+   "65-universal-adaptive-platform.md",
+   "79-private-headless-fleet.md",
+   "81-pieces-and-home.md"
+  ]
+ },
  "crates": [
   {
    "name": "vak",
@@ -2582,7 +5759,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1333,
+  "docs_commits": 1334,
   "hot": 630
  },
  "findings": [
