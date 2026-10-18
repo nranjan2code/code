@@ -177,21 +177,25 @@ contract:
 - [ ] Still in the recall path: the catalog's 64-candidate cap, its 250 ms
   wait in code and `limit.clamp(1, 20)` are numbers picked in code
   (AGENTS.md "No word lists, no tuned limits"; doc 88 §5a).
-- [ ] `mail_calendar` is loaded, and its long guardrail paragraph is in the
+- [x] `mail_calendar` is loaded, and its long guardrail paragraph is in the
   seed, on every turn with no account connected. Deferring it was tried
   and reverted (2026-10-16): "what's on my calendar today?" reached it
   16/16 loaded, 3/16 deferred, and drew a calendar card with no data
   6/16 (docs/audits/tool-catalogue-2026-10-16.md §6). Its 7,486 chars
-  (18 % of tool bytes) need a design that keeps it findable.
+  (18 % of tool bytes) need a design that keeps it findable. Closed by
+  `e1f993c12`.
 - [ ] `remember` writes a workspace note; a fact about the person (a name)
   is a profile fact, and the tool cannot write the profile. Found from
   another workspace only through `session_search` of that space.
-- [ ] Inside one conversation, `session_search` leaves the conversation
+- [x] Inside one conversation, `session_search` leaves the conversation
   out because "its content is already in context" (doc 23), but the
   planner carries only the previous turn's card; older turns are reached
-  only through `recall`. The doc's reason is no longer true.
-- [ ] Not checked live after the fix on the installed route: needs a
-  release, or a dev build against the installed home.
+  only through `recall`. The doc's reason is no longer true. Overtaken by
+  `2cc942e82`: `session_search` was folded into `recall`, which searches
+  this conversation's turns.
+- [ ] Not checked live on the installed route after the fix. The release
+  is done: 8.4.0 (`def37d9ed`) and later carry it, and 8.7.0 is installed
+  (`3da112973`); the live check remains.
 - [x] Grounded cards (2026-10-15): the terminal, test report, diff, file
   preview, sources and the two ability cards load once the conversation
   holds the call they show (`Tool::grounded_in`, `vak_tools::grounds_held`),
@@ -241,10 +245,11 @@ unless it says so.
   drifted, and leave the rest worded so the report stays readable.
 - [ ] Rewrite `docs/design/83-prompt-system.md` against the current code; it
   is historical until then.
-- [ ] Check every open item in this tracker against the code and git
+- [x] Check every open item in this tracker against the code and git
   history: still open, done but not ticked, or overtaken. The blueprint's
   "Needs attention" shows this file as written, so it is only as true as
-  this check (started 2026-10-18, not done).
+  this check. Done 2026-10-18: of 63 open items, 8 closed (this one
+  among them), 3 overtaken, 2 reworded as partly done, 50 still open.
 - [ ] `vak-intent` still derives an epistemic stance for every strand
   (`derive_epistemic_stance`), but no prompt has carried it since
   `d0875af47`. Remove it, or record what reads it.
@@ -293,8 +298,9 @@ unless it says so.
   `dist/8.2.0/vak self install`, the CLI linked again at
   `~/.local/bin/vak`, `vak self services-sync`; `self verify` clean, both
   services running, the home names `8.2.0`, the plugins seeded.
-- [ ] The maintainer runs `vak setup` with the provider key; then `doctor`
-  in `~/vak-home`.
+- [ ] The maintainer ran `vak setup` on this home (the installed route is
+  recorded in `9ab30dd8a`); running `doctor` in `~/vak-home` is not
+  recorded and remains.
 - [ ] AWS: still 8.0.0; purge and install 8.2.0 fresh when the maintainer
   asks.
 - [x] Seen before the purge: the 8.1.0 gateway could not read automations
@@ -316,8 +322,9 @@ unless it says so.
   --yes`, `dist/8.1.0/vak self install`, the CLI linked again at
   `~/.local/bin/vak`, `vak self services-sync`; `self verify` clean, both
   services running, the home names `8.1.0`, the plugins seeded.
-- [ ] The maintainer runs `vak setup` with the provider key; then `doctor`
-  in `~/vak-home`. AWS stays on 8.0.0 until the maintainer asks.
+- [x] The maintainer runs `vak setup` with the provider key; then `doctor`
+  in `~/vak-home`. AWS stays on 8.0.0 until the maintainer asks. Closed by
+  `f438f0f36` (the setup recorded below).
 - [x] Seen on 2026-10-15, fixed the same day: `vak setup` run from the
   source checkout set the route in that folder's project layer. The setup
   screen saved the route (and its access level step, through
@@ -340,8 +347,9 @@ unless it says so.
   self install`, the CLI linked again at `~/.local/bin/vak` (the purge
   removes the link), `vak self services-sync`; `self verify` clean, both
   services running.
-- [ ] The maintainer runs `vak setup` with the provider key; then `doctor`
-  in `~/vak-home`. AWS is still on 7.1.0.
+- [x] The maintainer runs `vak setup` with the provider key; then `doctor`
+  in `~/vak-home`. AWS is still on 7.1.0. Overtaken by `61d65be2c`: the
+  8.0.0 home was purged for 8.1.0, and AWS runs 8.0.0 (`a3d73d193`).
 - [x] The data baseline is 8.0 (`vak_core::baseline`, invariant 29): a
   data home names the version that created it (`home-version`), and sync
   indexes and backup manifests name theirs; anything older, or unnamed, is
@@ -538,16 +546,19 @@ Carried over from 7.2.0:
     (`keepLiveGates`), and opening a running conversation asks for them.
     The question card shares the path and was not seen live.
   - [x] Markup previews get none of the theme's tokens (Q1).
-  - [ ] Serve pinned vendored libraries from the preview origin, keeping
-    `connect-src` closed (P3).
+  - [x] Serve pinned vendored libraries from the preview origin, keeping
+    `connect-src` closed (P3). Overtaken by `52044b227`: by the
+    maintainer's choice (`9dcad8b3b`) the client inlines the pinned
+    libraries into the opaque frame instead.
 - Found live 2026-10-16 while checking Q1 and Q2:
   - [x] After a card call returns "Shown to the user", the next step wrote
     the card's content again as text (or sent the card again). Cause: the
     step itself, not the prompt, result, thinking or sampling; every card
     now says `then: more | done` and the turn ends on `done`
     (docs/design/97-cards-end-the-answer.md).
-  - [ ] `mail_calendar` (18% of tool bytes) loaded only when an account is
-    connected needs a connected-accounts rollup (doc 97 §7).
+  - [x] `mail_calendar` (18% of tool bytes) loaded only when an account is
+    connected needs a connected-accounts rollup (doc 97 §7). Closed by
+    `e1f993c12`.
   - [ ] Composition skills (`answer-layouts`) reach only a model that calls
     the skill loader; the small route never does (doc 97 §7).
   - [ ] Whether the plan should be the answer's outline (doc 97 §7).
@@ -556,12 +567,13 @@ Carried over from 7.2.0:
   - [ ] A card refused in an earlier turn reads "Used emit chart card" in
     Activity: no card was recorded for it and the client has only the
     tool's name.
-  - [ ] A page bound to its data: a Library artifact of composed cards
+  - [x] A page bound to its data: a Library artifact of composed cards
     whose new version an automation's run produces, shared through grants.
-  - [ ] Decide whether `ui://` HTML resources from MCP servers are drawn
+    Closed by `5a6e1b98a` (living pages, doc 98 S5).
+  - [x] Decide whether `ui://` HTML resources from MCP servers are drawn
     by Vakyartha's own renderer in the opaque sandbox, with calls from the
     UI going through the permission engine, or stay text only. Record the
-    choice in docs/decisions.md.
+    choice in docs/decisions.md. Closed by `9dcad8b3b` (text only).
   - [ ] Measure format choice: a live eval of whether a card helped the
     request, reported beside cost.
 - Media card checked live 2026-10-16 (image and video by URL, an image in
@@ -647,11 +659,12 @@ live.
   proposal and the inbox; declining cleared the entry. The switch toggled
   in the running app at 1440 × 900 dark and persisted to the Shared
   layer alone.
-- [ ] Found live (E3b): Settings lists the proposals of the Agent's own
+- [x] Found live (E3b): Settings lists the proposals of the Agent's own
   folder, but a proposal is filed under the folder the turn ran in, so
   one made in another folder never shows there (the API for that folder
   lists it). Review belongs to E6, drawn from the Library's waiting
-  versions rather than a list per folder.
+  versions rather than a list per folder. Closed by `a61a9d271` (E6a lists
+  and acts on proposals across folders).
 - [x] E4 (2026-10-15): `Tool::serves` returns `Vec<&str>` borrowed from
   the tool, so a program's tool carries its skill's `serves:`
   (`propose_skill` takes `serves`) and defers; the prompt's catalogue
@@ -694,12 +707,13 @@ live.
   kept like a starred artifact's. Checked in the running app on the
   installed home at 1440 × 900 light and 390 × 844 dark: three abilities,
   Working and Ready for every Agent, with what they reach.
-- [ ] Found (E6a): every ability version was a draft (nobody "saved" it),
+- [x] Found (E6a): every ability version was a draft (nobody "saved" it),
   so the lifecycle pass trashed an ability's Library history after the
   drafts' window; fixed by `Artifact::keeps_every_version`. On the
   installed home the history of the abilities made on 2026-10-15 was
   already trashed (their cards show no versions link); the installed
-  copies themselves are untouched.
+  copies themselves are untouched. Closed by `a61a9d271`; the trashed
+  history went with that home's purge for 8.2.0 (`a3d73d193`).
 - [x] E6b (2026-10-15): Approve for this Agent (`Core::approve_for_agent`,
   `POST /skills/proposals/{id}/approve`; approving a program proposal
   now replaces the version it improves); the inbox's proposal and
