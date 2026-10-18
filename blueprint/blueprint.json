@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "420046481",
+  "revision": "4df880c65",
   "first_date": "2026-08-21",
   "last_date": "2026-10-18",
   "prose_reviewed": "8.9.0 · 2026-10-18"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 331781,
-   "rust_tests": 85514,
+   "rust_src": 332383,
+   "rust_tests": 85646,
    "ts_src": 62404,
    "routes": 394,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 75,
    "lock_crates": 764,
-   "total_commits": 2370,
+   "total_commits": 2371,
    "days": 59,
    "peak_day": 174,
    "design_docs": 96,
@@ -239,31 +239,31 @@
  "activity": {
   "since": "2026-10-04",
   "until": "2026-10-18",
-  "commits": 518,
+  "commits": 519,
   "areas": [
    [
     "docs",
-    440
+    441
    ],
    [
     "(root)",
-    270
+    271
    ],
    [
     "vak-core",
-    226
+    227
    ],
    [
     "vak-server",
-    187
+    188
    ],
    [
     "vak-client-ui",
-    120
+    121
    ],
    [
     "vak-agent",
-    102
+    103
    ],
    [
     "vak-session",
@@ -299,7 +299,7 @@
    [
     "turn",
     "Turn admission",
-    109
+    110
    ],
    [
     "client",
@@ -307,14 +307,14 @@
     102
    ],
    [
-    "cards",
-    "Cards and presentation",
+    "loop",
+    "Agent loop",
     95
    ],
    [
-    "loop",
-    "Agent loop",
-    94
+    "cards",
+    "Cards and presentation",
+    95
    ],
    [
     "ledger",
@@ -452,14 +452,14 @@
     18
    ],
    [
-    "eval",
-    "Evaluation",
+    "inbox",
+    "Inbox and digest",
     18
    ],
    [
-    "inbox",
-    "Inbox and digest",
-    17
+    "eval",
+    "Evaluation",
+    18
    ],
    [
     "flows",
@@ -537,6 +537,16 @@
     5
    ],
    [
+    "voice",
+    "Voice",
+    5
+   ],
+   [
+    "finops",
+    "Cost and budgets",
+    5
+   ],
+   [
     "onboarding",
     "Setup and onboarding",
     5
@@ -559,16 +569,6 @@
    [
     "grants",
     "Grants and sharing",
-    4
-   ],
-   [
-    "voice",
-    "Voice",
-    4
-   ],
-   [
-    "finops",
-    "Cost and budgets",
     4
    ],
    [
@@ -613,6 +613,19 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "4df880c65",
+    "date": "2026-10-18",
+    "subject": "Persist session budget enforcement and seal account results causally",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-client-ui",
+     "vak-core",
+     "vak-server"
+    ]
+   },
    {
     "hash": "420046481",
     "date": "2026-10-18",
@@ -766,19 +779,11 @@
      "docs",
      "vak-client-ui"
     ]
-   },
-   {
-    "hash": "fb7088877",
-    "date": "2026-10-18",
-    "subject": "Map every module, route and subcommand to a subsystem in the blueprint",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs"
-    ]
    }
   ],
   "unreleased": [
+   "Session spend limits survive gate recreation and restart, include delegated calls, and coordinate concurrent admissions.",
+   "Connected-account tool results, including provider errors, keep both their displayed text and full evidence under the account scope.",
    "Library lists, file cards and version comparisons report unreadable history or workspace files instead of silently showing missing or incomplete state.",
    "Canvas note conflicts show both versions and let you choose what to keep for each note.",
    "Ability tables infer columns from every recorded row, keeping later-only fields.",
@@ -1280,7 +1285,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 78103,
+   "lines": 78105,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1290,7 +1295,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 63144,
+   "lines": 63746,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1300,7 +1305,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 54136,
+   "lines": 54134,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -4261,9 +4266,9 @@
    ],
    "modules": 6,
    "parts": [],
-   "lines": 14280,
+   "lines": 14288,
    "largest": [
-    12612,
+    12620,
     "crates/vak-core/src/lib.rs"
    ],
    "routes": [
@@ -4293,9 +4298,9 @@
     "crates/vak-core/src/routing.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 374,
+   "commits": 375,
    "fixes": 58,
-   "recent": 109,
+   "recent": 110,
    "fix_density": 4.1,
    "out": [
     {
@@ -5066,9 +5071,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 12018,
+   "lines": 12016,
    "largest": [
-    11007,
+    11005,
     "crates/vak-agent/src/lib.rs"
    ],
    "routes": [],
@@ -5084,9 +5089,9 @@
     "crates/vak-agent/src/stop_policy.rs",
     "crates/vak-agent/src/workspace.rs"
    ],
-   "commits": 291,
+   "commits": 292,
    "fixes": 55,
-   "recent": 94,
+   "recent": 95,
    "fix_density": 4.6,
    "out": [
     {
@@ -16797,9 +16802,9 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 2791,
+   "lines": 2793,
    "largest": [
-    1273,
+    1275,
     "crates/vak-server/src/voice.rs"
    ],
    "routes": [
@@ -16826,9 +16831,9 @@
     "crates/vak-voice/src/provider.rs",
     "crates/vak-voice/src/vad.rs"
    ],
-   "commits": 43,
+   "commits": 44,
    "fixes": 3,
-   "recent": 4,
+   "recent": 5,
    "fix_density": 1.1,
    "out": [
     {
@@ -17714,7 +17719,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 3213,
+   "lines": 3215,
    "largest": [
     782,
     "crates/vak-core/src/inbox.rs"
@@ -17743,9 +17748,9 @@
     "crates/vak/src/digest.rs",
     "crates/vak/src/inbox.rs"
    ],
-   "commits": 45,
+   "commits": 46,
    "fixes": 4,
-   "recent": 17,
+   "recent": 18,
    "fix_density": 1.2,
    "out": [
     {
@@ -20319,9 +20324,9 @@
    ],
    "modules": 3,
    "parts": [],
-   "lines": 2303,
+   "lines": 2895,
    "largest": [
-    2110,
+    2702,
     "crates/vak-core/src/finops.rs"
    ],
    "routes": [
@@ -20334,10 +20339,10 @@
     "crates/vak-client-ui/src/components/BudgetBanner.tsx",
     "crates/vak-core/src/finops.rs"
    ],
-   "commits": 31,
+   "commits": 32,
    "fixes": 4,
-   "recent": 4,
-   "fix_density": 1.7,
+   "recent": 5,
+   "fix_density": 1.4,
    "out": [
     {
      "from": "finops",
@@ -29781,6 +29786,18 @@
  ],
  "replay": [
   {
+   "hash": "4df880c65",
+   "date": "2026-10-18",
+   "subject": "Persist session budget enforcement and seal account results causally",
+   "subsystems": [
+    "finops",
+    "inbox",
+    "loop",
+    "turn",
+    "voice"
+   ]
+  },
+  {
    "hash": "420046481",
    "date": "2026-10-18",
    "subject": "Verify Library state and exercise card provenance lifecycles",
@@ -35056,10 +35073,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 15907,
-   "tests": 19352,
+   "src": 15905,
+   "tests": 19470,
    "files": 13,
-   "commits": 340,
+   "commits": 341,
    "deps": [
     "vak-config",
     "vak-context",
@@ -35097,7 +35114,7 @@
     "uuid"
    ],
    "largest": [
-    11007,
+    11005,
     "crates/vak-agent/src/lib.rs"
    ],
    "subsystems": [
@@ -35193,7 +35210,7 @@
    "src": 37668,
    "tests": 324,
    "files": 187,
-   "commits": 640,
+   "commits": 641,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35401,10 +35418,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 58608,
+   "src": 59210,
    "tests": 9964,
    "files": 70,
-   "commits": 634,
+   "commits": 635,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35463,7 +35480,7 @@
     "walkdir"
    ],
    "largest": [
-    12612,
+    12620,
     "crates/vak-core/src/lib.rs"
    ],
    "subsystems": [
@@ -36237,10 +36254,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 73934,
-   "tests": 23792,
+   "src": 73936,
+   "tests": 23806,
    "files": 51,
-   "commits": 835,
+   "commits": 836,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -36612,11 +36629,11 @@
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12612
+    "lines": 12620
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
-    "lines": 11007
+    "lines": 11005
    },
    {
     "file": "crates/vak-mail-calendar/src/provider.rs",
@@ -36660,12 +36677,12 @@
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
     "line": 1704,
-    "lines": 1873
+    "lines": 1868
    },
    {
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6900,
+    "line": 6901,
     "lines": 1664
    },
    {
@@ -36707,7 +36724,7 @@
    {
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5489,
+    "line": 5486,
     "lines": 539
    },
    {
@@ -36805,8 +36822,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1345,
-  "hot": 634
+  "docs_commits": 1346,
+  "hot": 635
  },
  "findings": [
   {
@@ -36814,7 +36831,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 194 (rank 1 of 4,348 library functions) and `Core::run_turn_recorded` at 103 (rank 3); the median is 3 and the 99th percentile 24. 150 commits changed the first (6% of all) and 209 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.0 and `vak-agent/src/lib.rs` at 9.0 per thousand lines, against a median of 4.5 over 396 files; file size alone does not predict the rate (ρ = -0.14).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 194 (rank 1 of 4,348 library functions) and `Core::run_turn_recorded` at 103 (rank 3); the median is 3 and the 99th percentile 24. 151 commits changed the first (6% of all) and 209 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.0 and `vak-agent/src/lib.rs` at 9.0 per thousand lines, against a median of 4.5 over 396 files; file size alone does not predict the rate (ρ = -0.14).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
