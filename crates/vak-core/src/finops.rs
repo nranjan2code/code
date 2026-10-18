@@ -792,9 +792,7 @@ pub(crate) fn shared_day_budget(data_home: &Path) -> Arc<Mutex<DayBudget>> {
 /// Core-side SpendGate: run/day caps + pricing-driven estimates.
 pub struct CoreSpendGate {
     ledger: FinOpsLedger,
-    max_run_usd: Mutex<Option<f64>>,
-    max_day_usd: Mutex<Option<f64>>,
-    overrides: Mutex<BTreeMap<String, vak_config::PriceEntry>>,
+    settings: Mutex<vak_config::FinopsResolved>,
     run_spent_usd: Mutex<f64>,
     /// Estimated cost admitted but not yet settled. Without this reservation,
     /// concurrent dispatches can all pass against the same stale run total.
@@ -840,9 +838,7 @@ impl CoreSpendGate {
             ledger: FinOpsLedger::new(sessions_home),
             trace: Mutex::new(None),
             budget_session_id: Mutex::new(None),
-            max_run_usd: Mutex::new(finops.max_run_usd),
-            max_day_usd: Mutex::new(finops.max_day_usd),
-            overrides: Mutex::new(finops.price_overrides.clone()),
+            settings: Mutex::new(finops.clone()),
             run_spent_usd: Mutex::new(0.0),
             run_reserved_usd: Mutex::new(0.0),
             run_unknown_reservations: Mutex::new(0),
@@ -867,17 +863,9 @@ impl CoreSpendGate {
     /// approver already raised.
     pub(crate) fn refresh_caps(&self, finops: &vak_config::FinopsResolved) {
         *self
-            .max_run_usd
+            .settings
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = finops.max_run_usd;
-        *self
-            .max_day_usd
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = finops.max_day_usd;
-        *self
-            .overrides
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = finops.price_overrides.clone();
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = finops.clone();
     }
 
     /// The approver answered "raise the cap for this run once".
@@ -891,11 +879,15 @@ impl CoreSpendGate {
     /// the configured `max_run_usd` and the engagement's `spend_ceiling_usd`
     /// meet, and the smaller governs.
     pub fn narrow_run_cap(&self, cap: f64) {
-        let mut current = self
-            .max_run_usd
+        let mut settings = self
+            .settings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *current = Some(current.map_or(cap, |existing| existing.min(cap)));
+        settings.max_run_usd = Some(
+            settings
+                .max_run_usd
+                .map_or(cap, |existing| existing.min(cap)),
+        );
     }
 
     /// Estimated cost of `usage` on `model` under the configured prices,
@@ -905,11 +897,11 @@ impl CoreSpendGate {
     }
 
     fn estimate(&self, model: &str, usage: &Usage) -> Option<f64> {
-        let overrides = self
-            .overrides
+        let settings = self
+            .settings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        vak_config::finops::estimate_cost_usd(model, usage, &overrides)
+        vak_config::finops::estimate_cost_usd(model, usage, &settings.price_overrides)
     }
 
     fn admit(&self, check: &SpendCheck<'_>) -> Result<SpendReservationId, String> {
@@ -926,15 +918,25 @@ impl CoreSpendGate {
             output_tokens: check.planned_output_tokens,
             ..Default::default()
         };
-        let max_run = *self
-            .max_run_usd
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let max_day = *self
-            .max_day_usd
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let estimate = match self.estimate(check.model, &planned) {
+        // Admission must use caps and prices from one policy snapshot. A
+        // concurrent refresh must not combine an old cheap price with a new
+        // high cap when both complete policies would deny the dispatch.
+        let (max_run, max_day, quoted) = {
+            let settings = self
+                .settings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (
+                settings.max_run_usd,
+                settings.max_day_usd,
+                vak_config::finops::estimate_cost_usd(
+                    check.model,
+                    &planned,
+                    &settings.price_overrides,
+                ),
+            )
+        };
+        let estimate = match quoted {
             Some(value) if valid_usd(value) => Some(value),
             Some(_) => return Err("cannot enforce dollar budget: estimated cost is invalid".into()),
             None if max_run.is_some() || max_day.is_some() => {
@@ -1803,6 +1805,138 @@ mod tests {
             }
         }
         (CoreSpendGate::new(dir.path(), &finops), dir)
+    }
+
+    #[tokio::test]
+    async fn concurrent_price_and_cap_refresh_cannot_admit_a_mixed_policy() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempdir().unwrap();
+        let policy = |price, cap| vak_config::FinopsResolved {
+            max_run_usd: Some(cap),
+            price_overrides: BTreeMap::from([(
+                "atomic-fixture".into(),
+                vak_config::PriceEntry {
+                    input: price,
+                    output: price,
+                },
+            )]),
+            ..Default::default()
+        };
+        let lower = policy(10.0, 5.0);
+        let higher = policy(100.0, 50.0);
+        let gate = Arc::new(CoreSpendGate::new(dir.path(), &lower));
+        let writer = gate.clone();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let start = barrier.clone();
+        let updates = std::thread::spawn(move || {
+            start.wait();
+            for n in 0..10_000 {
+                writer.refresh_caps(if n % 2 == 0 { &higher } else { &lower });
+            }
+        });
+        barrier.wait();
+        for _ in 0..1_000 {
+            assert!(
+                gate.reserve_dispatch(&check("atomic-fixture"))
+                    .await
+                    .is_err(),
+                "both complete policies refuse this request"
+            );
+        }
+        updates.join().unwrap();
+    }
+
+    /// Manual growth probe for the strict cost rollup and durable admission
+    /// path. Run with `cargo test -p vak-core finops_growth_ -- --ignored
+    /// --nocapture`; this intentionally measures production code and is not a
+    /// timing-sensitive CI test.
+    #[tokio::test]
+    #[ignore = "manual FinOps scaling benchmark"]
+    async fn finops_growth_100_1000_10000() {
+        vak_config::paths::isolate_home_for_tests();
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        for count in [100_usize, 1_000, 10_000] {
+            let dir = tempdir().unwrap();
+            let ledger = FinOpsLedger::new(dir.path());
+            let now = chrono::Utc::now();
+            let rows: Vec<_> = (0..count)
+                .map(|index| CostRow {
+                    ts: now,
+                    model: "benchmark-model".into(),
+                    provider: "benchmark-provider".into(),
+                    input_tokens: 1_000,
+                    output_tokens: 100,
+                    cache_read_input_tokens: None,
+                    usd: Some(0.001),
+                    source: "estimated".into(),
+                    session_id: format!("session-{index}"),
+                    reservation_id: Some(uuid::Uuid::now_v7().hyphenated().to_string()),
+                    budget_session_id: Some("benchmark-budget-owner".into()),
+                    trace: None,
+                    actor: None,
+                })
+                .collect();
+
+            let seed_started = Instant::now();
+            assert!(
+                ledger
+                    .cost_chain()
+                    .append_all_after(vak_session::tail::Position::default(), &rows)
+                    .unwrap()
+            );
+            let seed_elapsed = seed_started.elapsed();
+
+            let cold_started = Instant::now();
+            let totals = ledger.strict_session_totals().unwrap();
+            let cold_elapsed = cold_started.elapsed();
+            assert_eq!(totals.reservations.len(), count);
+
+            let warm_started = Instant::now();
+            for _ in 0..25 {
+                black_box(ledger.strict_session_totals().unwrap());
+            }
+            let warm_elapsed = warm_started.elapsed() / 25;
+
+            let mut price_overrides = BTreeMap::new();
+            price_overrides.insert(
+                "benchmark-model".to_string(),
+                vak_config::PriceEntry {
+                    input: 1.0,
+                    output: 1.0,
+                },
+            );
+            let finops = vak_config::FinopsResolved {
+                max_day_usd: Some(1_000_000.0),
+                price_overrides,
+                ..Default::default()
+            };
+            let gate = CoreSpendGate::new(dir.path(), &finops);
+            gate.bind_budget_session("benchmark-budget-owner");
+            let admission_check = SpendCheck {
+                model: "benchmark-model",
+                provider: "benchmark-provider",
+                session_id: "benchmark-session",
+                est_input_tokens: 1_000,
+                planned_output_tokens: 100,
+                trace: None,
+            };
+            let gate_started = Instant::now();
+            for _ in 0..5 {
+                let reservation = gate
+                    .reserve_dispatch(&admission_check)
+                    .await
+                    .unwrap()
+                    .expect("core gate returns a reservation id");
+                gate.release_dispatch(reservation);
+            }
+            let gate_elapsed = gate_started.elapsed() / 5;
+
+            eprintln!(
+                "FinOps rows={count}: seed_append_all={seed_elapsed:?}, strict_cold={cold_elapsed:?}, strict_warm_avg={warm_elapsed:?}, durable_admit_release_avg={gate_elapsed:?}"
+            );
+        }
     }
 
     fn durable_reservations(home: &Path) -> DurableReservations {

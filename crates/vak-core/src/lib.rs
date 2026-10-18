@@ -64,6 +64,7 @@ pub mod seed;
 pub mod skill_programs;
 pub mod skills;
 pub mod social;
+mod spend_services;
 pub mod state;
 pub mod sync;
 pub mod trash;
@@ -600,16 +601,6 @@ struct CoreInner {
     /// it from disk after every persist, so a capability or egress change
     /// lands on the next turn (docs/design/41-capability-registry.md).
     plugins_override: std::sync::Mutex<Option<vak_config::PluginResolved>>,
-    /// Live overrides for `[finops]` budget caps (docs/design/15-reliability.md).
-    /// `None` = follow the persisted value; `Some(None)` = explicitly
-    /// cleared (no cap); `Some(Some(v))` = pinned to `v`. Distinct from
-    /// the other overrides here because "no cap" is a real, settable
-    /// value, not merely "unset" — a plain `Mutex<Option<f64>>` couldn't
-    /// tell "never overridden" from "overridden to no cap" apart.
-    finops_max_run_usd_override: std::sync::Mutex<Option<Option<f64>>>,
-    finops_max_day_usd_override: std::sync::Mutex<Option<Option<f64>>>,
-    finops_price_overrides_override:
-        std::sync::Mutex<Option<std::collections::BTreeMap<String, vak_config::PriceEntry>>>,
     sandbox_backend_override: std::sync::Mutex<Option<String>>,
     agent_network: Arc<std::sync::Mutex<agent_network::AgentNetworkBroker>>,
     task_sandboxes: TaskSandboxMap,
@@ -693,13 +684,7 @@ struct CoreInner {
     /// (Phase R). Fed from work receipts at run end; read at ladder
     /// admission.
     beliefs: Arc<routing::BeliefState>,
-    /// Per-session FinOps spend gates (docs/design/15-reliability.md), keyed by
-    /// session id. Built once per session and reused for every turn: a
-    /// fresh gate per turn used to zero out `max_run_usd`'s accounting on
-    /// every message, so a multi-turn conversation could blow past the
-    /// run cap by an arbitrary multiple. Sessions are evicted explicitly
-    /// (see `Core::forget_spend_gate`) rather than left to grow forever.
-    spend_gates: std::sync::Mutex<HashMap<String, Arc<finops::CoreSpendGate>>>,
+    spend: spend_services::SpendServices,
 }
 
 /// Learned permission rules live outside the main config so they can be
@@ -1504,9 +1489,6 @@ impl Core {
             work_override: std::sync::Mutex::new(None),
             route_settings_override: std::sync::Mutex::new(None),
             plugins_override: std::sync::Mutex::new(None),
-            finops_max_run_usd_override: std::sync::Mutex::new(None),
-            finops_max_day_usd_override: std::sync::Mutex::new(None),
-            finops_price_overrides_override: std::sync::Mutex::new(None),
             provider_instance: std::sync::Mutex::new(None),
             sessions_home_override: std::sync::Mutex::new(None),
             breaker,
@@ -1536,7 +1518,7 @@ impl Core {
             browse_override: std::sync::Mutex::new(None),
             commitment_override: std::sync::Mutex::new(None),
             beliefs: Arc::new(routing::BeliefState::new()),
-            spend_gates: std::sync::Mutex::new(HashMap::new()),
+            spend: spend_services::SpendServices::default(),
             mcp_cache: std::sync::Mutex::new(None),
             capability_registry: std::sync::OnceLock::new(),
             capability_shutdown: std::sync::Mutex::new(None),
@@ -2926,116 +2908,6 @@ impl Core {
         Self::write_override(&self.inner.commitment_override, Some(enabled));
     }
 
-    /// The `[finops]` config, with any live cap override substituted in —
-    /// pass this to [`finops::CoreSpendGate::new`] instead of
-    /// `self.config().finops` directly, or a PATCH-set cap would never
-    /// actually bind.
-    pub fn effective_finops(&self) -> vak_config::FinopsResolved {
-        let mut finops = self.inner.config.finops.clone();
-        if let Some(run) = Self::read_override(&self.inner.finops_max_run_usd_override) {
-            finops.max_run_usd = run;
-        }
-        if let Some(day) = Self::read_override(&self.inner.finops_max_day_usd_override) {
-            finops.max_day_usd = day;
-        }
-        if let Some(prices) = self
-            .inner
-            .finops_price_overrides_override
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-        {
-            finops.price_overrides = prices.clone();
-        }
-        finops
-    }
-
-    /// The spend gate for `session_id`, built once and reused for every
-    /// subsequent turn of that session (docs/design/15-reliability.md). Rebuilding
-    /// a fresh gate per turn used to reset `max_run_usd`'s in-memory spend
-    /// counter to zero on every message — this cache is what makes the run
-    /// cap actually span the whole run rather than a single turn. Live cap
-    /// edits (`PATCH /finops`) are picked up on the next call via
-    /// `refresh_caps`, without disturbing spend already tallied.
-    fn spend_gate_for(&self, session_id: &str) -> Arc<finops::CoreSpendGate> {
-        let finops = self.effective_finops();
-        let mut gates = self
-            .inner
-            .spend_gates
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(gate) = gates.get(session_id) {
-            gate.refresh_caps(&finops);
-            return gate.clone();
-        }
-        let scope = self.shared_scope();
-        let sessions_home = scope.root();
-        let day_budget = finops::shared_day_budget(sessions_home);
-        let gate = Arc::new(finops::CoreSpendGate::with_shared_day_budget(
-            // `self.scope().into_root()`, not the raw `inner.sessions_home`
-            // field — the latter ignores `set_shared_scope` (the SDK
-            // seam tests/embedded runtimes use to relocate storage), so
-            // the ledger would silently keep writing to the original
-            // location.
-            sessions_home,
-            &finops,
-            day_budget,
-        ));
-        gate.bind_budget_session(session_id);
-        gates.insert(session_id.to_string(), gate.clone());
-        gate
-    }
-
-    /// Drop a session's spend gate (and the run-spend it was tracking)
-    /// once the session is done, so `spend_gates` doesn't grow forever
-    /// across the lifetime of a long-running process. Safe to call even
-    /// when no gate was ever built for `session_id`.
-    pub fn forget_spend_gate(&self, session_id: &str) {
-        self.inner
-            .spend_gates
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(session_id);
-    }
-
-    pub fn effective_finops_max_run_usd(&self) -> Option<f64> {
-        Self::read_override(&self.inner.finops_max_run_usd_override)
-            .unwrap_or(self.inner.config.finops.max_run_usd)
-    }
-
-    pub fn effective_finops_max_day_usd(&self) -> Option<f64> {
-        Self::read_override(&self.inner.finops_max_day_usd_override)
-            .unwrap_or(self.inner.config.finops.max_day_usd)
-    }
-
-    /// `None` for either cap leaves it at its current effective value —
-    /// same "absent means don't touch" convention `apply_persisted_memory`
-    /// uses, except here the value being set/kept is itself an
-    /// `Option<f64>` (a cap can legitimately be cleared to "none").
-    pub fn apply_persisted_finops_caps(
-        &self,
-        max_run_usd: Option<Option<f64>>,
-        max_day_usd: Option<Option<f64>>,
-    ) {
-        if let Some(run) = max_run_usd {
-            Self::write_override(&self.inner.finops_max_run_usd_override, Some(run));
-        }
-        if let Some(day) = max_day_usd {
-            Self::write_override(&self.inner.finops_max_day_usd_override, Some(day));
-        }
-    }
-
-    pub fn apply_persisted_finops_prices(
-        &self,
-        price_overrides: std::collections::BTreeMap<String, vak_config::PriceEntry>,
-    ) {
-        *self
-            .inner
-            .finops_price_overrides_override
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(price_overrides);
-    }
-
     /// Refresh every non-security persisted preference. Permission mode is
     /// returned to the server control plane so it can revoke in-flight
     /// capabilities before applying a changed value.
@@ -3100,11 +2972,7 @@ impl Core {
             config.memory.skill_proposals,
         );
         self.apply_persisted_workers(config.workers);
-        self.apply_persisted_finops_caps(
-            Some(config.finops.max_run_usd),
-            Some(config.finops.max_day_usd),
-        );
-        self.apply_persisted_finops_prices(config.finops.price_overrides.clone());
+        self.apply_persisted_finops(&config.finops);
         self.apply_persisted_work(config.work.clone());
         self.apply_persisted_route_settings(config.route.clone());
         self.apply_persisted_tools(config.tools.web_fetch, config.tools.browse);
@@ -11624,6 +11492,53 @@ mod spend_gate_persistence_tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn relocating_shared_scope_never_reuses_another_homes_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core_with_run_cap(dir.path(), 5.0);
+        let original = core.shared_scope();
+        let first = core.spend_gate_for("s1");
+        first.authorize(&check("s1")).await.unwrap();
+        let relocated = vak_config::scope::SharedScope::new(dir.path().join("relocated"));
+        core.set_shared_scope(relocated.clone());
+        let second = core.spend_gate_for("s1");
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "a cache hit must include the data home"
+        );
+        second.authorize(&check("s1")).await.unwrap();
+        // A handle already admitted to the original home settles there even
+        // after the Core changes scope.
+        first.record_settled("anthropic", "claude-sonnet", "s1", &usage_1m_in_100k_out());
+        second.record_settled("anthropic", "claude-sonnet", "s1", &usage_1m_in_100k_out());
+        assert_eq!(
+            super::finops::FinOpsLedger::new(original.root())
+                .accounted_rows()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            super::finops::FinOpsLedger::new(relocated.root())
+                .accounted_rows()
+                .unwrap()
+                .len(),
+            1
+        );
+        core.set_shared_scope(original);
+        assert!(Arc::ptr_eq(&first, &core.spend_gate_for("s1")));
+        assert!(
+            core.spend_gate_for("s1")
+                .authorize(&check("s1"))
+                .await
+                .is_err()
+        );
+        core.forget_spend_gate("s1");
+        assert!(!Arc::ptr_eq(&first, &core.spend_gate_for("s1")));
+        core.set_shared_scope(relocated);
+        assert!(!Arc::ptr_eq(&second, &core.spend_gate_for("s1")));
     }
 
     #[test]

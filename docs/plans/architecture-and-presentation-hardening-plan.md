@@ -93,8 +93,8 @@ The audit remains the historical evidence; the implementation log names checks.
 | A05 | Repaired, full gate previously passed | Preserve cancellation/stale probe tests |
 | A06 | Repaired, full gate previously passed | Preserve failed-compaction regression |
 | A07 | Conservative scheduling repaired | Preserve unknown/exclusive tool behavior |
-| A08 | Shared parent/child history and presentation construction extracted | Further Core ownership separation remains |
-| A09 | Effects uses encrypted transactional row projection; warm 10k-row reads ~3–4 ms | Cold replay and seal metadata grow; other history-dependent consumers remain |
+| A08 | Shared run-service constructors and process-owned budget state extracted | Further Core ownership separation remains |
+| A09 | Effects warm reads ~3–4 ms; FinOps growth measured | Cost Rollup warm reads ~86 ms at 10k; indexed financial projection remains |
 | A10 | Encrypted catalog implemented; focused suite passes | Multi-platform packaging and wider acceptance remain |
 | A11 | Typed outcomes and mechanically checked ClientEvent fixture implemented | Wider presentation wire fixture coverage/replay acceptance |
 | A12 | Unreachable production API quarantined | Module now test-only; concurrent chunk ownership must precede any production reintroduction |
@@ -1275,3 +1275,35 @@ final affected-reader coverage is the Session and FinOps suites. Clippy for
 Storage/Session/Agent/Core/Server libraries passes with warnings denied.
 Formatting, record, path and version checks pass. No full workspace gate or
 manual browser acceptance ran, and the installed app was not changed.
+
+### Budget domain ownership and scope identity (2026-10-19)
+
+A reproducer failed before repair: Core's session-only cache reused a spend
+gate after `set_shared_scope`, retaining the previous data home's ledger.
+The budget domain now owns cap/price overrides and the gate map together;
+CoreInner holds one owner instead of four separate state fields. Gate keys
+include both captured home and budget session. Existing dispatched handles
+settle to their original home, a new scope admits against its own ledger,
+returning to a prior scope preserves its spend, and eviction drops cached
+handles across scopes. Two supplied caps update atomically with coherent
+read snapshots. Each CoreSpendGate now also holds one pricing/cap policy
+snapshot: an admission reads all of it together, rather than observing an
+old cheap price with a new high cap. A concurrent refresh regression uses
+two complete policies that both refuse the dispatch and checks every call
+stays refused. The old parallel construction and state fields are removed.
+
+The [FinOps measurement](../audits/finops-growth-measurement-2026-10-19.md)
+finds another concrete A09 cost: warm strict reads 1.44/9.87/85.40 ms and
+reserve/release averages 67.67/71.01/144.99 ms at 100/1k/10k rows. The full
+settled-reservation map is decoded by the Rollup. An encrypted indexed
+projection must preserve correction, ownership, duplicate and unresolved-debt
+semantics; no policy decision or permission change is needed to do that.
+This finding remains open, rather than claiming Effects fixed all histories.
+
+Focused verification: 50 FinOps cases pass (one ignored benchmark run
+explicitly), ten selected Core persistence/scope cases, two policy-snapshot
+concurrency cases, both cap-patch route cases and the real-auth recovery
+route. The relocation regression was observed failing before the fix.
+Core/Server library Clippy passes with warnings denied, as do formatting,
+record, path and version checks. No full gate, browser acceptance, release
+or installation ran.

@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Relocating an embedded Core's data home no longer reuses budget gates
+  bound to its prior home. Existing dispatches settle to their original
+  ledger. Admission reads prices and caps together, preventing a concurrent
+  edit from admitting a call under a mixture of two policies.
+
 - Effect detail, filtered history and sendable-work reads use an encrypted
   row index instead of decoding the whole history. Large journal batches
   now rotate segments as they fill; verified reads open only new payloads.

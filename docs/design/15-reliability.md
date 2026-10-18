@@ -555,3 +555,23 @@ The server refuses active local work and durably live traced runs before
 recovery. It invalidates known local cached gates after correction; another
 process can remain conservatively blocked until its gate is recreated.
 No unknown charge expires or is silently dismissed.
+
+## Budget service ownership and relocation
+
+Core's process-local cap/price overrides and cached spend gates belong to
+`spend_services::SpendServices`. A single lock provides a coherent settings
+snapshot and applies a supplied pair of cap changes atomically. Gates are
+keyed by the captured shared data home and budget session, rather than a
+session id alone. Changing the Core's shared scope selects a distinct gate;
+previously admitted handles retain their original ledger and reservations.
+Returning to a prior scope reuses that scope's gate. Session eviction removes
+cached handles across scopes without changing durable liabilities. Each gate
+also snapshots its run/day caps and pricing under one lock before admission;
+a live refresh cannot combine an old price with a different policy's cap.
+Narrowing the run cap edits that same policy snapshot. Reloading the full
+persisted configuration also publishes its cap/price values in one update;
+explicit cap-only and price-only operations retain their existing scope.
+
+The cost Rollup still decodes its whole settled-reservation map on warm
+admission reads. [The dated growth probe](../audits/finops-growth-measurement-2026-10-19.md)
+measures this remaining A09 cost; this ownership repair does not close it.

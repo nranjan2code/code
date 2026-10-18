@@ -364,7 +364,7 @@ SUBSYSTEMS = [
      ["/health", "/doctor"], ["doctor"], []),
     ("finops", "Cost and budgets",
      "The cost ledger, budget admission, alerts",
-     ["crates/vak-core/src/finops.rs", "crates/vak-core/src/model_call_budget.rs", "crates/vak-agent/src/spend.rs", "crates/vak-server/src/budget_recovery.rs",
+     ["crates/vak-core/src/finops.rs", "crates/vak-core/src/spend_services.rs", "crates/vak-core/src/model_call_budget.rs", "crates/vak-agent/src/spend.rs", "crates/vak-server/src/budget_recovery.rs",
       "crates/vak-client-ui/src/components/BudgetBanner.tsx"],
      ["/finops", "/finops/reservations", "/finops/reservations/{id}/reconcile"], [], []),
     ("onboarding", "Setup and onboarding",
