@@ -177,6 +177,11 @@ impl AgentScope {
         self.root.join("cost-log")
     }
 
+    /// Verified projection of the cost ledger, used for strict budget admission.
+    pub fn cost_rollup(&self) -> PathBuf {
+        self.root.join("cost-log-rollup")
+    }
+
     pub fn activity_log(&self) -> PathBuf {
         self.root.join("activity-log")
     }
@@ -448,6 +453,11 @@ impl SharedScope {
 
     pub fn cost_log(&self) -> PathBuf {
         self.root.join("cost-log")
+    }
+
+    /// Verified projection of the shared cost ledger, used for strict budget admission.
+    pub fn cost_rollup(&self) -> PathBuf {
+        self.root.join("cost-log-rollup")
     }
 
     pub fn env_file(&self) -> PathBuf {

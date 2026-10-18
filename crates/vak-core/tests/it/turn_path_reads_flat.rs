@@ -53,10 +53,10 @@ fn turn_path_reads_flat() {
             })
             .unwrap();
     }
-    let before = evidence.snapshot();
+    let before = evidence.snapshot().unwrap();
     let chain = vak_config::scope::AgentScope::new(&home).routing_evidence();
     assert!(ruin_sealed(&chain) > 0, "the evidence crossed a seal");
-    let after = evidence.snapshot();
+    let after = evidence.snapshot().unwrap();
     let leg = |snapshot: &vak_llm::EvidenceSnapshot, model: &str| {
         snapshot.by_key[&("p".to_string(), model.to_string())].success
     };

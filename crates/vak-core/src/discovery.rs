@@ -712,7 +712,7 @@ mod tests {
         let core = workspace.core();
         let primary = primary_leg(&core);
 
-        let cold = core.plan_route_ladder(primary.clone(), None);
+        let cold = core.plan_route_ladder(primary.clone(), None).unwrap();
         assert_eq!(
             cold.ladder,
             vec![primary.clone()],
@@ -728,7 +728,7 @@ mod tests {
 
         let models = core.discover_models("opencode-zen").await.unwrap();
         assert!(models.contains(&MODEL.to_string()), "{models:?}");
-        let warm = core.plan_route_ladder(primary.clone(), None);
+        let warm = core.plan_route_ladder(primary.clone(), None).unwrap();
         assert_eq!(warm.ladder.len(), 2, "{:?}", warm.ladder);
         assert_eq!(warm.ladder[0], primary);
         assert_eq!(
@@ -743,7 +743,9 @@ mod tests {
         // one per channel workspace, with nothing sharing or refreshing its
         // catalogues: nobody opened a model list on it.
         let pooled = workspace.core();
-        let pooled_plan = pooled.plan_route_ladder(primary_leg(&pooled), None);
+        let pooled_plan = pooled
+            .plan_route_ladder(primary_leg(&pooled), None)
+            .unwrap();
         assert_eq!(pooled_plan.ladder.len(), 1, "{:?}", pooled_plan.ladder);
         assert_eq!(anthropic.requests(), 0, "planning never reaches a provider");
     }
@@ -789,7 +791,7 @@ mod tests {
 
         core.reconcile_model_discovery_at(now, &providers).await;
         assert_eq!(anthropic.requests(), 2, "one listing per pooled credential");
-        let plan = core.plan_route_ladder(primary.clone(), None);
+        let plan = core.plan_route_ladder(primary.clone(), None).unwrap();
         assert_eq!(plan.ladder.len(), 3, "{:?}", plan.ladder);
         assert_eq!(plan.ladder[0], primary);
         assert!(
@@ -878,7 +880,7 @@ mod tests {
             catalogues.status(&backup, failed + RETRY_BASE).retry_in,
             Some(RETRY_BASE * 2)
         );
-        let plan = core.plan_route_ladder(primary_leg(&core), None);
+        let plan = core.plan_route_ladder(primary_leg(&core), None).unwrap();
         assert_eq!(plan.ladder.len(), 2, "still planned: {:?}", plan.ladder);
 
         anthropic.answer(Reply::Catalogue(vec![MODEL.into(), "newer-model".into()]));
@@ -918,7 +920,7 @@ mod tests {
             assert!(status.failure.is_some(), "{status:?}");
             assert_eq!(status.retry_in, Some(RETRY_BASE));
         }
-        let plan = core.plan_route_ladder(primary_leg(&core), None);
+        let plan = core.plan_route_ladder(primary_leg(&core), None).unwrap();
         assert_eq!(plan.ladder.len(), 1, "{:?}", plan.ladder);
 
         // A person asking is demand of its own: the picker asks straight
@@ -998,7 +1000,7 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        let plan = core.plan_route_ladder(primary_leg(&core), None);
+        let plan = core.plan_route_ladder(primary_leg(&core), None).unwrap();
         assert_eq!(plan.ladder.len(), 2, "{:?}", plan.ladder);
 
         let weak = Arc::downgrade(&core.inner);
@@ -1049,9 +1051,11 @@ mod tests {
             .await;
         assert_eq!(anthropic.requests(), 2);
 
-        let plan = channel.plan_route_ladder(primary_leg(&channel), None);
+        let plan = channel
+            .plan_route_ladder(primary_leg(&channel), None)
+            .unwrap();
         assert_eq!(plan.ladder.len(), 2, "{:?}", plan.ladder);
-        let plan = other.plan_route_ladder(primary_leg(&other), None);
+        let plan = other.plan_route_ladder(primary_leg(&other), None).unwrap();
         assert_eq!(plan.ladder.len(), 1, "{:?}", plan.ladder);
 
         // The channel Core's own pass finds its credentials fresh.
@@ -1110,7 +1114,9 @@ mod tests {
             2,
             "the specialist's two keys, not the built-in Agent's, which planned nothing"
         );
-        let plan = specialist.plan_route_ladder(primary_leg(&specialist), None);
+        let plan = specialist
+            .plan_route_ladder(primary_leg(&specialist), None)
+            .unwrap();
         assert_eq!(plan.ladder.len(), 2, "{:?}", plan.ladder);
     }
 

@@ -49,7 +49,9 @@ backoff resets on success, nothing else changes.
 
 Provider dispatch follows invariant 7: each turn plans a fresh ladder from
 the current effective route and evidence. The session header retains its
-initial admission snapshot for audit. Dispatch uses typed failure domains and
+initial admission snapshot for audit. Route evidence is read through a verified
+rollup; unreadable or malformed evidence stops planning rather than supplying
+an empty or partial history. Dispatch uses typed failure domains and
 retries within that turn's ladder, honoring Retry-After under watchdog
 deadlines, run-level endurance when nothing was committed, and a breaker
 keyed by provider endpoint plus credential fingerprint. An open leg fails

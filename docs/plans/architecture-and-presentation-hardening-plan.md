@@ -392,8 +392,8 @@ presentation conformance checks through each refactor.
 ### Continuation — required journals, compaction locks, claims and Canvas restore
 
 - A03: assistant appends return a required Result. A failed message write
-  settles before dependent tools dispatch; recovery appends also propagate
-  failure. A real Agent regression swaps its session handle to read-only
+  settles before dependent tools dispatch; system-authored completion
+  appends also propagate failure. A real Agent regression swaps its session handle to read-only
   during provider dispatch and asserts no tool ran or second request was
   sent. Other mandatory causal records still need audit.
 - A06: the compaction writer releases its session mutex before recording an
@@ -508,6 +508,62 @@ maintainer approval of a new product model:
   Pass dispatch attribution separately from the shared budget state (the
   current SpendCheck has a session id but no trace). Verify each captured
   service against code before copying it.
+
+### Prepared presentation scopes
+
+These bounded inspections do not close P01/P02:
+
+- P01 table loss is in `presentation_tools::build_table` and ability-table
+  filling: spelling-based inference strips commas and parses through f64.
+  Keep text as text, add an explicit numeric-column tool argument, and
+  preserve exact decimal strings in the existing rows plus numeric-column
+  metadata. Ability numeric status comes from source JSON types. Existing
+  table validators already accept scalar strings, numbers and booleans;
+  keep legacy payloads valid and existing expression/binding paths intact.
+  The client needs decimal comparison without Number conversion or exponent
+  expansion, while display/export preserve strings. Parsed floating-point
+  source tokens cannot be recovered by a downstream builder.
+- P02 eligible leading prose survives server projection but grouped client
+  rendering picks the last assistant item and can omit earlier text.
+  Server `card_followup` currently includes only text after the first card.
+  Fix the composition boundary using existing source order and typed draft/
+  runtime exclusions. Preserve prose before, between and after cards; merely
+  concatenating all prose after cards is not full ordering acceptance.
+  Typed PlanCheck and rejected-draft filtering must stay covered. Residual
+  lexical envelope/scaffolding cleanup remains a separate typed-boundary
+  concern, not permission to suppress more prose.
+
+### Continuation — routing evidence, accounting and live revisions
+
+- Route evidence folds reject undecodable records and read verified rollups.
+  Planning errors propagate through session/turn admission and discovery;
+  discovery and ranking semantics otherwise remain unchanged.
+- Day-cap checks read a strict daily cost rollup on each capped admission,
+  including same-day external appends and unknown-cost rows. Its derived
+  path is declared in the registry and resolved through scope accessors.
+- Reservations track active liabilities even while uncapped, preserve their
+  admission trace/actor, and append settlement before releasing liability.
+  Failed settlement appends retain conservative liabilities across rollover.
+  Successfully recorded unknown costs block today's day cap through the
+  rollup and keep an aggregate unknown run liability without leaking a
+  per-call daily marker forever. Identity-free legacy settlement releases
+  the smallest known estimate conservatively.
+- Live outcome revisions publish only after recording succeeds; failed
+  writes preserve the prior runtime contract. Steering and managed
+  assumption completions require recording. A failed post-approval budget
+  recheck stops before provider dispatch.
+- Focused checks pass: 29 FinOps tests, 9 spend-gate persistence tests,
+  14 routing tests, 2 route-backup tests, flat-path and discovery tests,
+  outcome/steering regressions and all 5 agent spend-gate tests.
+- Full repository gate passes: formatting, workspace Clippy, all workspace
+  tests (725 seconds), version, doc paths, records and advisories. The first
+  attempts caught a helper argument-count lint and an adoption-matrix fixture
+  that relied on approval bypassing a second denial. The helper now uses a
+  settlement context; the fixture explicitly changes its gate on approval
+  and asserts re-admission. Persistent denial still has a zero-dispatch test.
+- A01/A03 and stages S1/S2 remain partial:
+  other readers/causal writes and durable/cross-process reservations are
+  not closed. No UI source changed and no new live UI acceptance is claimed.
 
 ### Reporting contract
 

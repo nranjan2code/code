@@ -370,6 +370,7 @@ pub const REGISTRY: &[StateEntry] = &[
     agent_entry("agents/{agent}/routing-evidence", "vak-core", Class::Record),
     agent_entry("agents/{agent}/security-events", "vak-core", Class::Record),
     agent_entry("agents/{agent}/cost-log", "vak-core", Class::Record),
+    agent_entry("agents/{agent}/cost-log-rollup", "vak-core", Class::Derived),
     agent_entry("agents/{agent}/activity-log", "vak-core", Class::Record),
     agent_entry("agents/{agent}/flow-runs", "vak-flow", Class::Record),
     agent_entry("agents/{agent}/agent-network", "vak-core", Class::Desired),
@@ -537,6 +538,14 @@ pub const REGISTRY: &[StateEntry] = &[
         owner: "vak-core",
         schema: None,
         class: Class::Record,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
+        path: "cost-log-rollup",
+        root: Root::Data,
+        owner: "vak-core",
+        schema: Some(1),
+        class: Class::Derived,
         on_purge: OnPurge::Remove,
     },
     StateEntry {

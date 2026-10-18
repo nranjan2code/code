@@ -112,6 +112,20 @@ pub use steering::{DrainMode, SteeringQueues};
 
 pub use async_trait;
 
+/// Apply a live outcome revision only after the session has recorded it.
+/// The runtime contract is a projection of this journal entry, so a failed
+/// append must leave the previous contract in force.
+fn apply_recorded_outcome(
+    session: &mut SessionLog,
+    runtime_outcome: &mut Option<vak_intent::OutcomeSpec>,
+    update: vak_session::types::IntentRecord,
+) -> Result<(), vak_session::SessionError> {
+    let next_outcome = update.outcome.clone();
+    session.append_intent(update)?;
+    *runtime_outcome = next_outcome;
+    Ok(())
+}
+
 /// Host-owned transformation applied to every user message admitted to a
 /// running agent, including messages queued as steering while a turn is busy.
 /// It is intentionally outside model control and receives the frozen session
@@ -1789,10 +1803,16 @@ impl Agent {
                         "I created the managed work contract, but need these assumptions confirmed before starting:\n{pending}\nReply with: answer: <your answer>.",
                     ),
                 ));
-                let _ = self.session.lock().await.append_message(MessageRecord {
+                if let Err(error) = self.session.lock().await.append_message(MessageRecord {
                     message: response.clone().into_message(),
                     meta: None,
-                });
+                }) {
+                    return TurnOutcome::Failed {
+                        error: LlmError::Network(format!(
+                            "assistant message write failed: {error}"
+                        )),
+                    };
+                }
                 return TurnOutcome::Completed { response };
             }
         }
@@ -1935,8 +1955,9 @@ impl Agent {
             {
                 let mut session = self.session.lock().await;
                 while let Some(update) = steering.take_outcome_update() {
-                    self.config.outcome = update.outcome.clone();
-                    if let Err(error) = session.append_intent(update) {
+                    if let Err(error) =
+                        apply_recorded_outcome(&mut session, &mut self.config.outcome, update)
+                    {
                         return TurnOutcome::Failed {
                             error: LlmError::Network(format!(
                                 "outcome revision write failed: {error}"
@@ -1962,13 +1983,20 @@ impl Agent {
                             error: LlmError::Network(format!("goal update write failed: {error}")),
                         };
                     }
-                    if StopPolicy::is_done_message(&message.text_content()) {
-                        user_completion_released = true;
-                    }
-                    let _ = session.append_message(MessageRecord {
+                    let releases_completion = StopPolicy::is_done_message(&message.text_content());
+                    if let Err(error) = session.append_message(MessageRecord {
                         message,
                         meta: steering_meta,
-                    });
+                    }) {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(format!(
+                                "steering message write failed: {error}"
+                            )),
+                        };
+                    }
+                    if releases_completion {
+                        user_completion_released = true;
+                    }
                 }
             }
 
@@ -5437,11 +5465,14 @@ impl Agent {
                             }
                             // Raise-cap-once: the rest of THIS run is admitted.
                             gate.on_budget_approved();
-                            // A day-cap denial can remain after the run cap
-                            // was raised. Preserve approval behavior by
-                            // proceeding without an identity if re-admission
-                            // still fails.
-                            spend_reservation = gate.reserve_dispatch(&check).await.ok().flatten();
+                            spend_reservation = match gate.reserve_dispatch(&check).await {
+                                Ok(reservation) => reservation,
+                                Err(reason) => {
+                                    return Err(LlmError::InvalidRequest(format!(
+                                        "budget admission recheck failed: {reason}"
+                                    )));
+                                }
+                            };
                         }
                     }
                 }
@@ -9924,8 +9955,68 @@ mod tool_recovery_tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod compaction_error_tests {
-    use super::{Agent, AgentConfig};
+    use super::{Agent, AgentConfig, apply_recorded_outcome};
     use std::sync::Arc;
+
+    fn test_header(dir: &std::path::Path, session_id: &str) -> vak_session::types::SessionHeader {
+        vak_session::types::SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
+            agent: None,
+            session_id: session_id.into(),
+            created_at: chrono::Utc::now(),
+            cwd: dir.to_path_buf(),
+            parent_session_id: None,
+            contract_id: None,
+            work_item_id: None,
+            conversation: None,
+            contract: vak_session::types::FrozenContract {
+                app_version: "test".into(),
+                provider: "unused".into(),
+                model: "test".into(),
+                route_ladder: Vec::new(),
+                route_objective: String::new(),
+                route_annotations: Vec::new(),
+                system_prompt: String::new(),
+                permission_mode: "test".into(),
+                capabilities: Vec::new(),
+                prompt_layers: Vec::new(),
+            },
+        }
+    }
+
+    fn outcome(revision: u64, objective: &str) -> vak_intent::OutcomeSpec {
+        vak_intent::OutcomeSpec {
+            schema_version: 1,
+            revision,
+            objective: objective.into(),
+            assumptions: Vec::new(),
+            requirements: Vec::new(),
+            resolver_version: 1,
+            evidence_max_age_secs: None,
+            max_turns: Some(3),
+            acts: Default::default(),
+            stop: Default::default(),
+        }
+    }
+
+    fn intent(outcome: vak_intent::OutcomeSpec) -> vak_session::types::IntentRecord {
+        vak_session::types::IntentRecord {
+            reading: vak_intent::Reading::general(),
+            strands: Vec::new(),
+            engagement: vak_intent::Engagement::general(),
+            provenance: vak_intent::Provenance::new(
+                vak_intent::Tier::Signals,
+                vak_intent::RESOLVER_VERSION,
+                Vec::new(),
+            ),
+            outcome: Some(outcome),
+            model_visible: None,
+            commitment_id: None,
+            strand_commitments: Default::default(),
+        }
+    }
 
     struct UnusedProvider;
 
@@ -9949,31 +10040,7 @@ mod compaction_error_tests {
         let dir = tempfile::tempdir().unwrap();
         let log = vak_session::SessionLog::create(
             dir.path().join("session"),
-            vak_session::types::SessionHeader {
-                space: None,
-                run: None,
-                cause: None,
-                agent: None,
-                session_id: "compaction-error".into(),
-                created_at: chrono::Utc::now(),
-                cwd: dir.path().to_path_buf(),
-                parent_session_id: None,
-                contract_id: None,
-                work_item_id: None,
-                conversation: None,
-                contract: vak_session::types::FrozenContract {
-                    app_version: "test".into(),
-                    provider: "unused".into(),
-                    model: "test".into(),
-                    route_ladder: Vec::new(),
-                    route_objective: String::new(),
-                    route_annotations: Vec::new(),
-                    system_prompt: String::new(),
-                    permission_mode: "test".into(),
-                    capabilities: Vec::new(),
-                    prompt_layers: Vec::new(),
-                },
-            },
+            test_header(dir.path(), "compaction-error"),
         )
         .unwrap();
         let agent = Agent::new(Arc::new(UnusedProvider), log, AgentConfig::new("sys"));
@@ -10000,6 +10067,37 @@ mod compaction_error_tests {
                 .activities()
                 .iter()
                 .any(|(_, _, activity)| activity.label == "compaction-failed")
+        );
+    }
+
+    #[test]
+    fn rejected_outcome_revision_keeps_the_runtime_contract() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session");
+        drop(
+            vak_session::SessionLog::create(
+                path.clone(),
+                test_header(dir.path(), "outcome-write-error"),
+            )
+            .unwrap(),
+        );
+        let mut session = vak_session::SessionLog::open_read_only(path).unwrap();
+        let original = outcome(1, "original");
+        let mut runtime_outcome = Some(original.clone());
+
+        assert!(
+            apply_recorded_outcome(
+                &mut session,
+                &mut runtime_outcome,
+                intent(outcome(2, "steered")),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            runtime_outcome
+                .expect("the prior runtime contract remains set")
+                .objective,
+            original.objective
         );
     }
 }

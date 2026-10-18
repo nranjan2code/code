@@ -36,6 +36,7 @@ fn text_msg(t: &str) -> AssistantMessage {
 
 struct Success {
     capacity_key: String,
+    dispatches: Arc<AtomicU32>,
 }
 
 #[async_trait::async_trait]
@@ -53,6 +54,7 @@ impl Provider for Success {
         _request: ChatRequest,
         _cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
+        self.dispatches.fetch_add(1, Ordering::SeqCst);
         let (mut sink, rx) = stream::channel(64);
         let m = text_msg("done");
         sink.push(stream::StreamEvent::Start { partial: m.clone() });
@@ -64,6 +66,17 @@ impl Provider for Success {
 /// Denies the first authorize call N times.
 struct FlakyGate {
     remaining_denials: AtomicU8,
+}
+
+struct AlwaysDenyGate;
+
+#[async_trait::async_trait]
+impl SpendGate for AlwaysDenyGate {
+    async fn authorize(&self, _check: &SpendCheck<'_>) -> Result<(), String> {
+        Err("daily budget remains exceeded".into())
+    }
+
+    fn record_settled(&self, _provider: &str, _model: &str, _session_id: &str, _usage: &Usage) {}
 }
 
 #[async_trait::async_trait]
@@ -97,7 +110,7 @@ impl Approver for AutoApproveBudget {
 fn setup(
     approver: Option<Arc<dyn Approver>>,
     gate: Arc<dyn SpendGate>,
-) -> (Agent, tempfile::TempDir) {
+) -> (Agent, tempfile::TempDir, Arc<AtomicU32>) {
     let dir = tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     let header = SessionHeader {
@@ -137,15 +150,18 @@ fn setup(
     cfg.spend_gate = Some(gate);
     cfg.retry_base_backoff_ms = 1;
     cfg.run_retry_base_backoff_ms = 1;
+    let dispatches = Arc::new(AtomicU32::new(0));
     (
         Agent::new(
             Arc::new(Success {
                 capacity_key: crate::support::capacity_key(),
+                dispatches: dispatches.clone(),
             }),
             log,
             cfg,
         ),
         dir,
+        dispatches,
     )
 }
 
@@ -159,7 +175,7 @@ async fn run(agent: &mut Agent) -> TurnOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn budget_denial_without_approver_fails_permanently() {
-    let (mut agent, _dir) = setup(
+    let (mut agent, _dir, _) = setup(
         None,
         Arc::new(FlakyGate {
             remaining_denials: AtomicU8::new(9),
@@ -178,7 +194,7 @@ async fn budget_denial_without_approver_fails_permanently() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn approved_budget_ask_lets_the_run_proceed() {
-    let (mut agent, _dir) = setup(
+    let (mut agent, _dir, _) = setup(
         Some(Arc::new(AutoApproveBudget)),
         Arc::new(FlakyGate {
             remaining_denials: AtomicU8::new(1),
@@ -188,6 +204,28 @@ async fn approved_budget_ask_lets_the_run_proceed() {
     assert!(
         matches!(outcome, TurnOutcome::Completed { .. }),
         "approved ask must proceed, got {outcome:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn approved_budget_recheck_error_stops_before_provider_dispatch() {
+    let (mut agent, _dir, dispatches) =
+        setup(Some(Arc::new(AutoApproveBudget)), Arc::new(AlwaysDenyGate));
+
+    match run(&mut agent).await {
+        TurnOutcome::Failed { error } => assert!(
+            error
+                .to_string()
+                .contains("budget admission recheck failed")
+                && error.to_string().contains("daily budget remains exceeded"),
+            "the failed recheck must be surfaced clearly, got {error}"
+        ),
+        other => panic!("expected failed budget recheck, got {other:?}"),
+    }
+    assert_eq!(
+        dispatches.load(Ordering::SeqCst),
+        0,
+        "an approved ask cannot bypass a denied second admission"
     );
 }
 
@@ -283,6 +321,7 @@ async fn budget_approval_raises_cap_for_rest_of_run() {
     let mut agent = Agent::new(
         Arc::new(Success {
             capacity_key: crate::support::capacity_key(),
+            dispatches: Arc::new(AtomicU32::new(0)),
         }),
         log,
         cfg,
@@ -325,7 +364,7 @@ impl Approver for Silent {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_cancelled_run_stops_waiting_on_an_open_gate() {
     let asked = Arc::new(tokio::sync::Notify::new());
-    let (mut agent, _dir) = setup(
+    let (mut agent, _dir, _) = setup(
         Some(Arc::new(Silent(asked.clone()))),
         Arc::new(FlakyGate {
             remaining_denials: AtomicU8::new(9),

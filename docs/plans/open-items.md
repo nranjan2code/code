@@ -41,7 +41,11 @@ overlapping fixes should close their original entries as well.
   canonical grant records, with the full repository gate passing.
   Artifact transactions and verified-cache provenance pass the full
   repository gate. Read-only
-  artifact callers, routing/accounting, catalog policy and blob ownership remain open.
+  artifact callers, catalog policy and blob ownership remain open.
+  Routing evidence and day-budget admission now use verified rollups;
+  settlement retains unresolved liabilities on failed writes. The full
+  repository gate passes. Durable and cross-process pending reservation
+  accounting remain open.
   Commitment decisions now use verified reads and propagate failures; the
   full repository gate passes. Credential presence updates serialize and fail
   conservatively on detected read errors. Crash-safe presence publication
@@ -53,7 +57,9 @@ overlapping fixes should close their original entries as well.
   dependent tool dispatch (A03), releases the compaction lock before
   diagnostics (A06), and routes unknown effects through conservative wave
   placement (A07). The full repository gate passes. A04 and the audit of other
-  mandatory causal writes remain open.
+  mandatory causal writes remain open. Live outcome publication and steering
+  now require successful recording; budget approval requires successful
+  re-admission. The full repository gate passes.
 - [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
   actual outline attribution and typed cleanup (P01–P03, P13, P14).
   P01 chart categories retain lexical text and ambiguous y strings are

@@ -6127,7 +6127,7 @@ impl Core {
         &self,
         primary: vak_llm::RouteLeg,
         demand: Option<vak_intent::DemandHint>,
-    ) -> routing::RoutePlan {
+    ) -> Result<routing::RoutePlan, CoreError> {
         self.note_route_demand();
         let catalogues = self.model_catalogues().usable(std::time::Instant::now());
         let warm: Vec<routing::WarmCatalogue> = catalogues
@@ -6150,7 +6150,7 @@ impl Core {
         primary: vak_llm::RouteLeg,
         demand: Option<vak_intent::DemandHint>,
         catalogues: &[routing::WarmCatalogue],
-    ) -> routing::RoutePlan {
+    ) -> Result<routing::RoutePlan, CoreError> {
         let route_cfg = self.effective_route_settings();
         let needs_tools = !self.tool_names().is_empty();
         let stand_ins =
@@ -6204,7 +6204,7 @@ impl Core {
         let home = self.scope().into_root();
         let ranked = vak_llm::order_ladder_v2(
             candidates,
-            &routing::EvidenceLedger::new(&home).snapshot(),
+            &routing::EvidenceLedger::new(&home).snapshot()?,
             &belief_map,
             objective,
             &route_cfg.quality_hints,
@@ -6225,11 +6225,11 @@ impl Core {
             route_cfg.max_fallbacks,
             !route_cfg.fallback_models.is_empty(),
         );
-        routing::RoutePlan {
+        Ok(routing::RoutePlan {
             ladder,
             objective: objective.as_str().to_string(),
             annotations,
-        }
+        })
     }
 
     pub async fn start_session(&self) -> Result<SessionLog, CoreError> {
@@ -6306,7 +6306,7 @@ impl Core {
                 credential_id: primary_credential_id,
             },
             demand,
-        );
+        )?;
         let capabilities = self.admitted_capabilities().await;
         let resolution = self.resolve_prompt(&capabilities);
         let system_prompt = resolution.text;
@@ -7196,7 +7196,7 @@ impl Core {
         cfg.provider_name = Some(turn_primary_provider.clone());
         cfg.steps = self.step_defaults_for(&turn_primary_provider, &model);
         let mut turn_plan =
-            self.plan_route_ladder(turn_primary_leg.clone(), Some(engagement.posture.demand));
+            self.plan_route_ladder(turn_primary_leg.clone(), Some(engagement.posture.demand))?;
         // The engagement's modality constraint: a leg that cannot see is not
         // a valid fallback for a vision turn. With no operator hints every
         // leg is assumed capable; with hints and no capable leg, the turn
@@ -8829,7 +8829,9 @@ mod route_backup_tests {
             catalogue("openrouter", "acct-r", &["vendor/model-a", "model-a"]),
         ];
 
-        let plan = core.plan_route_ladder_over(primary.clone(), None, &catalogues);
+        let plan = core
+            .plan_route_ladder_over(primary.clone(), None, &catalogues)
+            .unwrap();
         assert_eq!(
             models(&plan),
             vec!["model-a", "model-b"],
@@ -8842,7 +8844,9 @@ mod route_backup_tests {
              fallback_models = [\"model-b\"]\n\
              same_model = [[\"anthropic/model-a\", \"openrouter/vendor/model-a\"]]\n",
         );
-        let plan = core.plan_route_ladder_over(primary, None, &catalogues);
+        let plan = core
+            .plan_route_ladder_over(primary, None, &catalogues)
+            .unwrap();
         assert_eq!(
             models(&plan),
             vec!["model-a", "vendor/model-a", "model-b"],
@@ -8850,6 +8854,25 @@ mod route_backup_tests {
              somewhere else is tried before a different one"
         );
         assert_eq!(plan.ladder[1].provider, "openrouter");
+    }
+
+    #[test]
+    fn route_planning_fails_on_corrupt_evidence_instead_of_using_partial_history() {
+        isolate_global_config();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("data")));
+        vak_session::chain::RecordChain::at(core.scope().routing_evidence())
+            .append(&"not a routing evidence row")
+            .unwrap();
+
+        let result = core.plan_route_ladder_over(leg("anthropic", "model-a", "acct-a"), None, &[]);
+        assert!(matches!(
+            result,
+            Err(CoreError::Session(
+                vak_session::SessionError::Corrupt { .. }
+            ))
+        ));
     }
 }
 

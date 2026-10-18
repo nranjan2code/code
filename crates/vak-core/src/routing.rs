@@ -69,12 +69,15 @@ fn leg_key(provider: &str, model: &str) -> String {
 }
 
 impl EvidenceDays {
-    /// Folds one row; a row that does not decode is skipped rather than
-    /// trusted, never misranked.
-    fn fold(&mut self, bytes: &[u8]) {
-        let Ok(row) = serde_json::from_slice::<EvidenceRow>(bytes) else {
-            return;
-        };
+    /// Folds one authoritative row. Routing must not make a decision from a
+    /// partial history, so malformed evidence fails the snapshot closed.
+    fn fold(&mut self, bytes: &[u8]) -> Result<(), vak_session::SessionError> {
+        let row = serde_json::from_slice::<EvidenceRow>(bytes).map_err(|error| {
+            vak_session::SessionError::Corrupt {
+                line: 0,
+                message: format!("routing evidence row could not be decoded: {error}"),
+            }
+        })?;
         let day = self
             .days
             .entry(row.ts.date_naive())
@@ -93,6 +96,7 @@ impl EvidenceDays {
         }
         let oldest = (row.ts - chrono::Duration::days(EVIDENCE_TTL_DAYS as i64)).date_naive();
         self.days.retain(|day, _| *day >= oldest);
+        Ok(())
     }
 }
 
@@ -118,12 +122,12 @@ impl EvidenceLedger {
 
     /// TTL-filtered snapshot for the ordering function, read from the
     /// rollup with only the rows appended since folded in: a turn never
-    /// replays the chain (plan M6.3). The window is whole UTC days. Corrupt
-    /// rows are skipped rather than trusted -- never misranked. Latency is
-    /// the p50 over each leg's samples.
-    pub fn snapshot(&self) -> EvidenceSnapshot {
+    /// replays the chain (plan M6.3). The window is whole UTC days. A corrupt
+    /// or unreadable row is a typed error; route selection cannot silently
+    /// use partial history. Latency is the p50 over each leg's samples.
+    pub fn snapshot(&self) -> Result<EvidenceSnapshot, vak_session::SessionError> {
         let rollup = vak_session::rollup::Rollup::new(&self.path, &self.rollup);
-        let evidence: EvidenceDays = rollup.read(EvidenceDays::fold);
+        let evidence: EvidenceDays = rollup.try_read(EvidenceDays::fold)?;
         let oldest =
             (chrono::Utc::now() - chrono::Duration::days(EVIDENCE_TTL_DAYS as i64)).date_naive();
         let mut by_key: HashMap<(String, String), ModelEvidence> = HashMap::new();
@@ -147,7 +151,7 @@ impl EvidenceLedger {
         for (key, e) in by_key.iter_mut() {
             e.p50_latency_ms = p50(latencies.entry(key.clone()).or_default());
         }
-        EvidenceSnapshot { by_key }
+        Ok(EvidenceSnapshot { by_key })
     }
 
     /// Fold a finished run's work receipts into evidence. Attribution is
@@ -501,7 +505,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn snapshot_respects_ttl_and_skips_corrupt_lines() {
+    fn snapshot_respects_ttl_and_success_latency_median() {
         let dir = tempdir().unwrap();
         let ledger = EvidenceLedger::new(dir.path());
         let old = chrono::Utc::now() - chrono::Duration::days(40);
@@ -538,11 +542,7 @@ mod tests {
                 actor: None,
             })
             .unwrap();
-        vak_session::chain::RecordChain::at(dir.path().join("routing-evidence"))
-            .append(&"not a row")
-            .unwrap();
-
-        let snap = ledger.snapshot();
+        let snap = ledger.snapshot().unwrap();
         let e = snap.get("p", "m");
         assert_eq!(e.success, 2);
         assert_eq!(e.failure, 0, "40-day-old rows must be TTL-dropped");
@@ -551,6 +551,45 @@ mod tests {
             Some(42),
             "p50 must be the median of samples, not first-seen"
         );
+    }
+
+    #[test]
+    fn snapshot_rejects_corrupt_evidence_rows() {
+        let dir = tempdir().unwrap();
+        let ledger = EvidenceLedger::new(dir.path());
+        vak_session::chain::RecordChain::at(ledger.path.clone())
+            .append(&"not a row")
+            .unwrap();
+
+        assert!(matches!(
+            ledger.snapshot(),
+            Err(vak_session::SessionError::Corrupt { .. })
+        ));
+    }
+
+    #[test]
+    fn snapshot_rebuilds_a_valid_shaped_unverified_cache() {
+        let dir = tempdir().unwrap();
+        let ledger = EvidenceLedger::new(dir.path());
+        ledger
+            .append(&EvidenceRow {
+                ts: chrono::Utc::now(),
+                provider: "p".into(),
+                model: "m".into(),
+                outcome: "success".into(),
+                latency_ms: 42,
+                trace: None,
+                actor: None,
+            })
+            .unwrap();
+
+        // Simulate the prior tolerant reader: it saves a structurally valid
+        // but incomplete projection and cannot mark it verified.
+        vak_session::rollup::Rollup::new(&ledger.path, &ledger.rollup)
+            .read::<EvidenceDays>(|_, _| {});
+
+        let snapshot = ledger.snapshot().unwrap();
+        assert_eq!(snapshot.get("p", "m").success, 1);
     }
 
     #[test]
@@ -578,7 +617,7 @@ mod tests {
             None,
         );
         ledger.record_receipts(std::slice::from_ref(&r), None);
-        let snap = ledger.snapshot();
+        let snap = ledger.snapshot().unwrap();
         assert_eq!(
             snap.get("openai", "gpt-x").unknown,
             1,

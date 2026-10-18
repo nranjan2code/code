@@ -1,5 +1,14 @@
 ## Unreleased
 
+- Route planning stops on unreadable evidence instead of planning from an
+  incomplete history. Day-budget admission verifies recorded costs before
+  dispatch, including costs written by another gate on the same day.
+- Budget reservations retain unresolved costs when recording fails and keep
+  their original attribution. Approving a run-budget increase no longer
+  bypasses a remaining day-budget denial.
+- Live outcome revisions and steering messages must be recorded before they
+  change the running contract or reach the model.
+
 - Two dependency updates clear seven known vulnerabilities: rustls 0.23.46
   (RUSTSEC-2026-0346 to 0349, under every outbound TLS connection) and
   quinn-proto 0.11.19 (RUSTSEC-2026-0338, 0340, 0343). The gate and the

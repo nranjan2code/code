@@ -6,7 +6,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use tempfile::tempdir;
 use tokio::sync::mpsc;
@@ -96,21 +96,28 @@ impl Provider for MatrixProvider {
     }
 }
 
-/// Denies a specific model; allows everything else.
+/// Denies a specific model until the budget Ask is approved; then allows it.
 struct ModelDenyGate {
     denied_model: &'static str,
+    approved: AtomicBool,
     denials: std::sync::Mutex<Vec<String>>,
+    checks: std::sync::Mutex<Vec<String>>,
 }
 
 #[async_trait::async_trait]
 impl SpendGate for ModelDenyGate {
     async fn authorize(&self, check: &SpendCheck<'_>) -> Result<(), String> {
-        if check.model == self.denied_model {
+        self.checks.lock().unwrap().push(check.model.to_string());
+        if check.model == self.denied_model && !self.approved.load(Ordering::SeqCst) {
             self.denials.lock().unwrap().push(check.model.to_string());
             Err(format!("model {} not funded", check.model))
         } else {
             Ok(())
         }
+    }
+
+    fn on_budget_approved(&self) {
+        self.approved.store(true, Ordering::SeqCst);
     }
 
     fn record_settled(&self, _provider: &str, _model: &str, _session_id: &str, _usage: &Usage) {}
@@ -251,23 +258,34 @@ async fn ladder_serves_goal_audits_when_primary_dead() {
     );
 }
 
-/// B×D: budget denies ONLY the primary model; the Ask auto-fails there
-/// (denial is per-dispatch, approver approves nothing here) — wait: the
-/// approver below approves budget asks, which would let the PRIMARY
-/// through. So instead assert the deny-then-approve path lands the
-/// primary dispatch anyway, and the settled usage records under the
-/// primary model.
+/// B×D: the budget gate initially denies the primary, the approver accepts
+/// the Ask, and the gate admits that model on the required second check. The
+/// dispatch then fails over to the fallback for its independent network error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn budget_ask_on_primary_then_proceed() {
     let provider = MatrixProvider::new(vec![text_msg("primary-model", "answered")]);
+    let gate = Arc::new(ModelDenyGate {
+        denied_model: "primary-model",
+        approved: AtomicBool::new(false),
+        denials: std::sync::Mutex::new(Vec::new()),
+        checks: std::sync::Mutex::new(Vec::new()),
+    });
     let mut agent = setup(provider.clone(), |cfg| {
-        cfg.spend_gate = Some(Arc::new(ModelDenyGate {
-            denied_model: "primary-model",
-            denials: std::sync::Mutex::new(Vec::new()),
-        }));
+        cfg.spend_gate = Some(gate.clone());
     });
     let outcome = run(&mut agent, "hello").await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    assert!(gate.approved.load(Ordering::SeqCst));
+    assert_eq!(
+        gate.denials.lock().unwrap().as_slice(),
+        ["primary-model"],
+        "the Ask was raised once, then its re-admission passed"
+    );
+    assert_eq!(
+        &gate.checks.lock().unwrap()[..2],
+        ["primary-model", "primary-model"],
+        "approval is followed by a real second admission check"
+    );
 
     let session = agent.into_session().await;
     let r = &session.receipts()[0];
@@ -288,12 +306,15 @@ async fn budget_ask_on_primary_then_proceed() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn unattended_budget_denial_fails_even_with_ladder() {
     let provider = MatrixProvider::new(vec![text_msg("fallback-model", "should not happen")]);
+    let gate = Arc::new(ModelDenyGate {
+        denied_model: "primary-model",
+        approved: AtomicBool::new(false),
+        denials: std::sync::Mutex::new(Vec::new()),
+        checks: std::sync::Mutex::new(Vec::new()),
+    });
     let mut agent = setup(provider.clone(), |cfg| {
         cfg.approver = None; // unattended
-        cfg.spend_gate = Some(Arc::new(ModelDenyGate {
-            denied_model: "primary-model",
-            denials: std::sync::Mutex::new(Vec::new()),
-        }));
+        cfg.spend_gate = Some(gate.clone());
     });
     match run(&mut agent, "hello").await {
         TurnOutcome::Failed { error } => {
@@ -311,6 +332,7 @@ async fn unattended_budget_denial_fails_even_with_ladder() {
             .all(|m| m == "primary-model"),
         "no dispatch may leave for the fallback after an unanswered denial"
     );
+    assert!(!gate.approved.load(Ordering::SeqCst));
 }
 
 /// C×H: a goal run with no usable horizon takes the reset-with-handoff

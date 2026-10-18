@@ -5,13 +5,35 @@ Status: implemented in 2.0.0
 
 An assistant message must be appended successfully before any tool call
 from that message executes. A failed append settles the turn as failed;
-streamed output already delivered remains available to consumers. Recovery
-of partial output also reports a failed append rather than claiming a
-successful turn. Diagnostics remain separate best-effort records.
+streamed output already delivered remains available to consumers.
+System-authored completions also require their assistant append before
+reporting success. Diagnostics remain separate best-effort records.
+Steering messages must be recorded before reaching the model or releasing
+user-controlled completion. Live outcome revisions are recorded before the
+runtime publishes their changed contract; an append failure preserves the
+previous runtime contract. Abort partial recording and other causal writes
+remain under the hardening plan's A03 audit.
 
 Incremental compaction drops its session lock before recording a failed
 write diagnostic, since activity recording takes that same lock. A write
 failure cannot hold the turn waiting on its own lock (hardening A03/A06).
+
+## Verified budget admission
+
+Day-cap admission reads a verified daily cost rollup; malformed history or
+an unpriced settled call on the current UTC day denies paid dispatch. A
+settlement appends its cost row before releasing its reservation. Failed
+appends retain the unresolved liability, including across UTC rollover.
+Active reservations and known run spend are tracked even before a cap is
+enabled. Successfully recorded unpriced calls retain an unknown run total;
+their daily ledger row protects that day without retaining a per-call marker
+forever. Reservations capture their trace and actor at admission.
+
+Approving a run-cap increase still requires a successful second admission;
+a remaining day-cap or history error stops before provider dispatch.
+Reservations are shared within this process, not durable across restart or
+coordinated across processes. Read-only cost summaries remain tolerant;
+this change does not make every financial reader authoritative.
 
 ## Circuit probe ownership
 
