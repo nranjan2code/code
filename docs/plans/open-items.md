@@ -246,13 +246,12 @@ unless it says so.
   `d0875af47`. Remove it, or record what reads it.
 - [ ] Blueprint F2: a test that fails when a wrapping `Tool` leaves a
   defaulted method unforwarded (or a delegation macro).
-- [ ] Blueprint F1: the turn's state as one type and the end-of-turn checks
-  (among them goal mode's audit, the managed-work gate and the commitment
-  hold) as one ordered list, with tests of how they combine.
-- [ ] Blueprint F3: a ledger-owned message type, converted at the provider
-  boundary.
-- [ ] Blueprint F4: model-based tests of chain readers, multi-process fencing
-  interleavings, catalog audience tests, fuzz targets for `vak-pdf`.
+- [ ] Blueprint F1: the turn's state as one type, each decision a pure
+  function of it (as `948ece43d` did for two of them), and the end-of-turn
+  checks (among them goal mode's audit, the managed-work gate and the
+  commitment hold) as one ordered list, with tests of how they combine.
+- [ ] Blueprint F3: model-based tests of each chain reader against a
+  reference, and multi-process interleavings of every fenced write path.
 - [ ] `commitments::classify` counts a reply of more than 40 characters as
   progress for the stall breaker: a tuned number the record rules forbid.
   Decide progress from what the episode produced (a moved criterion, a

@@ -106,24 +106,6 @@ def hotspots(b):
     }
 
 
-def fanout(crates):
-    """How many workspace crates rebuild when each crate changes."""
-    rdeps = defaultdict(set)
-    for c in crates:
-        for d in c["deps"]:
-            rdeps[d].add(c["name"])
-    out = {}
-    for c in crates:
-        seen, stack = set(), [c["name"]]
-        while stack:
-            for r in rdeps[stack.pop()]:
-                if r not in seen:
-                    seen.add(r)
-                    stack.append(r)
-        out[c["name"]] = len(seen)
-    return out
-
-
 def tool_wrappers(b):
     """Which defaulted Tool declarations each wrapping tool fails to forward."""
     src = open(os.path.join(b.ROOT, "crates/vak-tools/src/lib.rs"), encoding="utf-8").read().split("\n")
@@ -159,35 +141,6 @@ def tool_wrappers(b):
     impls.sort()
     return {"methods": len(methods), "defaults": len(defaults), "impls": len(impls),
             "median_overrides": impls[len(impls) // 2] if impls else 0, "wrappers": wrappers}
-
-
-def test_density(b, crates):
-    """#[test] functions (inline and tests/) per thousand source lines."""
-    rx = re.compile(r"#\[(?:tokio::)?test\b")
-    out = {}
-    for c in crates:
-        if c["kind"] != "rust" or not c["src"]:
-            continue
-        files = b.files_under(f"crates/{c['name']}/src", (".rs",)) + b.files_under(f"crates/{c['name']}/tests", (".rs",))
-        n = sum(len(rx.findall(open(p, encoding="utf-8", errors="replace").read())) for p in files)
-        fuzz = os.path.isdir(os.path.join(b.ROOT, "crates", c["name"], "fuzz"))
-        out[c["name"]] = {"tests": n, "per_kloc": n / (c["src"] / 1000), "fuzz": fuzz}
-    vals = sorted(v["per_kloc"] for v in out.values())
-    return out, (vals[len(vals) // 2] if vals else 0)
-
-
-def ledger_types(b):
-    """What the session ledger takes from the provider and intent crates."""
-    uses = defaultdict(int)
-    for p in b.files_under("crates/vak-session/src", (".rs",)):
-        for m in re.finditer(r"\b(vak_llm|vak_intent|vak_control)::", "\n".join(b.production_lines(p))):
-            uses[m.group(1)] += 1
-    types_log = git(b.ROOT, "log", "--format=%h", "--", "crates/vak-llm/src/types.rs").split()
-    both = 0
-    for h in types_log:
-        if any(f.startswith("crates/vak-session/") for f in git(b.ROOT, "show", "--name-only", "--format=", h).split("\n")):
-            both += 1
-    return {"uses": dict(uses), "types_commits": len(types_log), "co_changed": both}
 
 
 def deep(b, revision):

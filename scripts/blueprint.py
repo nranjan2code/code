@@ -459,11 +459,7 @@ def evidence_blocks(crates, m):
     """Run the cheap evidence checks; return (values for {{e:…}}, %%blocks%%)."""
     me = sys.modules[__name__]
     hot = evidence.hotspots(me)
-    fan = evidence.fanout(crates)
     wr = evidence.tool_wrappers(me)
-    tests, tmed = evidence.test_density(me, crates)
-    led = evidence.ledger_types(me)
-    by_fan = sorted(fan.items(), key=lambda kv: -kv[1])
     density = hot["density"]
     e = {
         "hot.core": f'{density.get("crates/vak-core/src/lib.rs", 0):.1f}',
@@ -472,21 +468,12 @@ def evidence_blocks(crates, m):
         "hot.rho_density": f'{hot["rho_density"]:+.2f}', "hot.rho_count": f'{hot["rho_count"]:+.2f}',
         "hot.top10_lines": f'{hot["top10_lines"]:.0f}%', "hot.top10_fixes": f'{hot["top10_fixes"]:.0f}%',
         "hot.median": f'{hot["median_density"]:.1f}',
-        "fan.llm": fan.get("vak-llm", 0),
         "tool.methods": wr["methods"], "tool.defaults": wr["defaults"], "tool.impls": wr["impls"],
         "tool.median": wr["median_overrides"], "tool.wrappers": len(wr["wrappers"]),
-        "test.median": f"{tmed:.1f}",
-        "led.llm": led["uses"].get("vak_llm", 0), "led.intent": led["uses"].get("vak_intent", 0),
-        "led.control": led["uses"].get("vak_control", 0),
-        "led.types_commits": led["types_commits"], "led.co_changed": led["co_changed"],
     }
-    for name, t in tests.items():
-        e[f"test.{name}"] = f'{t["per_kloc"]:.1f}'
     rows_wr = "\n".join(f'<li><code>{esc(w["type"])}</code> ({esc(w["file"])}:{w["line"]}): ' + (("does not forward " + ", ".join(f"<code>{esc(x)}</code>" for x in w["missing"])) if w["missing"] else "forwards every default") + "</li>" for w in wr["wrappers"]) or "<li>No wrapping tools found.</li>"
-    thin = sorted(tests.items(), key=lambda kv: kv[1]["per_kloc"])
-    rows_tests = "\n".join(f'<tr><td><code>{esc(n)}</code></td><td class="n">{t["tests"]}</td><td class="n">{t["per_kloc"]:.1f}</td><td>{"yes" if t["fuzz"] else "—"}</td></tr>' for n, t in thin)
     misses = []
-    return e, {"WRAPPERS": rows_wr, "TESTS": rows_tests}, misses
+    return e, {"WRAPPERS": rows_wr}, misses
 
 HOT = 0
 
