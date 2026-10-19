@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.10.0",
-  "revision": "96b1218fc",
+  "version": "8.11.0",
+  "revision": "62451d97d",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2384,
+   "total_commits": 2385,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -261,7 +261,7 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 519,
+  "commits": 520,
   "areas": [
    [
     "docs",
@@ -269,7 +269,7 @@
    ],
    [
     "(root)",
-    276
+    277
    ],
    [
     "vak-core",
@@ -631,6 +631,14 @@
   ],
   "recent": [
    {
+    "hash": "62451d97d",
+    "date": "2026-10-19",
+    "subject": "Release 8.11.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "96b1218fc",
     "date": "2026-10-19",
     "subject": "Clear newer clippy lints and record the failing sync, vocabulary and delivery tests",
@@ -798,25 +806,9 @@
      "vak-core",
      "vak-server"
     ]
-   },
-   {
-    "hash": "420046481",
-    "date": "2026-10-18",
-    "subject": "Verify Library state and exercise card provenance lifecycles",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-client-ui",
-     "vak-server"
-    ]
    }
   ],
-  "unreleased": [
-   "A plan entry can be shown as several cards, and the plan can say which kind of card each part is, including where the provider enforces tool schemas strictly.",
-   "Work receipts record how many tokens a step spent reasoning when the provider reports it, so they no longer say a step did not reason because the provider returned no reasoning text.",
-   "An answer still forming sits in the same column and indent as the finished answer, so it no longer spans the whole chat and then jumps into place."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -29974,6 +29966,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "62451d97d",
+   "date": "2026-10-19",
+   "subject": "Release 8.11.0",
+   "subsystems": []
+  },
   {
    "hash": "96b1218fc",
    "date": "2026-10-19",
