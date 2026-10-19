@@ -1,3 +1,5 @@
+## Unreleased
+
 ## 8.12.0 — 2026-10-19
 
 - A conversation is only locked while something is writing it. Before, once
