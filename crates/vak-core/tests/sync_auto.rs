@@ -68,7 +68,6 @@ async fn sync_survives_network_loss() {
     assert_eq!((status.unpushed, status.last_error), (0, None));
     assert_eq!(status.remote_generation, Some(pushed.generation));
     assert!(core.sync_auto().is_none());
-    assert!(core.data_integrity().broken.is_empty());
 
     // An idle holder renews its liveness every tick; that is this machine's
     // alone, so nothing is owed and nothing is pushed for it.
@@ -82,4 +81,7 @@ async fn sync_survives_network_loss() {
         assert_eq!(core.sync_status().unwrap().unpushed, 0);
         assert!(core.sync_auto().is_none());
     }
+    // Checked last: opening the catalog makes its scope key, which is new
+    // data a push then owes, not liveness.
+    assert!(core.data_integrity().broken.is_empty());
 }

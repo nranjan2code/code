@@ -168,7 +168,6 @@ mod tests {
                     output: run,
                 },
             )]),
-            ..Default::default()
         };
         core.apply_persisted_finops(&policy(1.0));
         let writer = core.clone();

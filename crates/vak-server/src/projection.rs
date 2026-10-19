@@ -2908,6 +2908,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::disallowed_macros)] // prints a measurement for the person running it
     /// Local deterministic workload; prints measurements only when explicitly
     /// requested. The baseline reconstructs the previous prefix compile/wire
     /// behavior, while the changed path uses the real frame projector.

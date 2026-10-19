@@ -2,7 +2,7 @@
 //! equals one rebuilt from the records, search keeps to its audience,
 //! lineage reaches a cause from anything, and a query at a million nodes
 //! answers well under 50 ms.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
 use vak_llm::Role;

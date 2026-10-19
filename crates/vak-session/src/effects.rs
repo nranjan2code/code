@@ -1180,6 +1180,7 @@ mod tests {
         assert!(effects.list_page(None, None, 2, Some("zz")).is_err());
     }
 
+    #[allow(clippy::disallowed_macros)] // prints a measurement for the person running it
     /// Local growth measurement for A09. Run with
     /// `cargo test -p vak-session effects_index_growth_measurement -- --ignored --nocapture`.
     /// The chain is seeded through RecordChain in one synced batch so setup

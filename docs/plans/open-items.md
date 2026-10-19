@@ -15,6 +15,36 @@ item says what is missing and what closes it. A design doc's own Status
 line says what of that doc is built; this file lists only what is open
 across them. Nothing here is started unless it says so.
 
+## Answer composition (2026-10-19)
+
+Measured in [the answer-composition audit](../audits/answer-composition-2026-10-19.md).
+
+- [ ] Search as a stated capability: a tool declares that it finds sources
+  for a query, the code-owned capability contract says plainly when a turn
+  has none, and Setup or Inbox offers to connect one. With none, turns
+  guessed URLs with `webfetch` (up to 17 steps, most fetches 403/404).
+- [ ] Measure the act step's reasoning depth now that receipts carry
+  `reasoning_tokens`; any default belongs in `[control]` configuration.
+- [ ] A shape-named layout guide for explaining a subject across several
+  angles in `packages/answer-layouts` (optional, data only).
+
+## Failing tests found 2026-10-19 (pre-existing on main, under the gate waiver)
+
+- [ ] `vak` sync tests (`sync_lease`, `sync_erasure`,
+  `sync_roundtrip`): after the catalog began creating its own scope key on
+  first open (`2c824de10`), a second machine fails with "catalog encryption
+  could not be established" and a second push copies the new key. Decide
+  whether the catalog key is synced data or machine-local, then fix the
+  path. (`vak-core`'s `sync_survives_network_loss` now checks integrity
+  after the liveness loop, since opening the catalog creates the key.)
+- [ ] `vak-server` `control_vocabulary_sync`: `2c824de10` removed the
+  client's `INLINE_HINT_MARKERS`/`CONTEXT_BLOCK_TAGS` (the server
+  projection filters now); remove the test and the AGENTS.md, doc 30, 83
+  and 88 sentences that describe it (invariant 30).
+- [ ] `vak-server` `gateway::telegram_reply_is_an_ordered_multi_message_packet`:
+  the delivery's `fallback_markdown` loses the answer's trailing newline,
+  against the exact-fallback contract.
+
 ## Architecture and presentation review consolidation (2026-10-18)
 
 All session review scopes are retained in

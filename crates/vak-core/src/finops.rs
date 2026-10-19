@@ -1977,7 +1977,7 @@ mod tests {
         );
         let id = rows[0].reservation_id.clone().unwrap();
         let (selected, _) = ledger
-            .selected_totals_at(None, None, &[id.clone()], false)
+            .selected_totals_at(None, None, std::slice::from_ref(&id), false)
             .unwrap();
         assert_eq!(selected.reservations.len(), 1);
         assert!(selected.reservations.contains_key(&id));
@@ -2066,6 +2066,7 @@ mod tests {
         assert!(projection::Projection::open(&ledger.projection_path, &tenant_home).is_err());
     }
 
+    #[allow(clippy::disallowed_macros)] // prints a measurement for the person running it
     /// Manual growth probe for the strict cost rollup and durable admission
     /// path. Run with `cargo test -p vak-core finops_growth_ -- --ignored
     /// --nocapture`; this intentionally measures production code and is not a
