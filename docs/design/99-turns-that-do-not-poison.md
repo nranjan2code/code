@@ -94,7 +94,10 @@ not sent (`ModelCapabilities::unlisted_calls`, through `Provider::reach`):
 the local wire does; the Responses, Messages and Gemini wires do not; an
 OpenAI-compatible server is not known. Only where it does is a deferred
 tool kept off the wire until called by name. Everywhere else every
-admitted tool is sent.
+admitted tool is sent, a deferred one as its stub: its name and first
+sentence with open arguments, its schema sent once it is called
+(docs/design/68-context-engine.md §5; in full it cost 98k characters a
+turn, 2026-10-19).
 
 ### A3. A loaded skill names the tools for its work
 

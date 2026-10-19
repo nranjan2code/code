@@ -86,7 +86,9 @@ pub fn drop_ungroundable(tools: &mut Vec<Arc<dyn vak_tools::Tool>>) {
 pub fn tool_catalogue<'a>(entries: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
     let mut lines: Vec<String> = entries
         .into_iter()
-        .map(|(name, description)| format!("- {name} — {}", first_sentence(description)))
+        .map(|(name, description)| {
+            format!("- {name} — {}", vak_llm::types::first_sentence(description))
+        })
         .collect();
     if lines.is_empty() {
         return String::new();
@@ -96,14 +98,6 @@ pub fn tool_catalogue<'a>(entries: impl IntoIterator<Item = (&'a str, &'a str)>)
         "\nMore tools (call any of these by its name; its schema is applied for you):\n{}\n",
         lines.join("\n")
     )
-}
-
-fn first_sentence(description: &str) -> &str {
-    let trimmed = description.trim();
-    if let Some(idx) = trimmed.find(". ") {
-        return &trimmed[..=idx];
-    }
-    trimmed.lines().next().unwrap_or(trimmed)
 }
 
 #[cfg(test)]

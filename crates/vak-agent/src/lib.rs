@@ -1088,10 +1088,13 @@ fn strip_replayed_thinking(messages: &mut [Message]) {
 /// wire that hands back a call to a tool it was not sent
 /// (`ModelCapabilities::unlisted_calls`), only the loaded ones: the model
 /// sees a deferred tool's catalogue line, calls it by name, and from then on
-/// it is promoted (`load_promoted`). Anywhere else a deferred tool could
-/// never be called, so every admitted tool is sent (found 2026-10-17: a
-/// Responses-API turn told to make a Word file said the document tool was
-/// not available, and wrote HTML).
+/// it is promoted (`load_promoted`). Anywhere else a deferred tool is sent
+/// as its stub (`ToolDefinition::stub`), so it can be called: leaving it out
+/// made a Responses-API turn told to make a Word file say the document tool
+/// was not available (found 2026-10-17), and sending it in full cost 98k
+/// characters a turn (measured 2026-10-19). A call to a stub is promoted the
+/// same way, and its arguments are written again under the tool's schema
+/// before it runs (`regenerate_unreadable`).
 fn tools_for_leg(
     tools: &[vak_llm::ToolDefinition],
     reach: vak_control::ModelCapabilities,
@@ -1100,11 +1103,7 @@ fn tools_for_leg(
     tools
         .iter()
         .filter(|t| !(defers && t.defer))
-        .cloned()
-        .map(|mut t| {
-            t.defer = false;
-            t
-        })
+        .map(|t| if t.defer { t.stub() } else { t.clone() })
         .collect()
 }
 
@@ -1248,16 +1247,31 @@ mod tool_loading_tests {
     }
 
     /// A wire that only returns calls to tools it was sent, or one nobody
-    /// knows, is sent every admitted tool: a deferred one could never be
-    /// called there.
+    /// knows, is sent every admitted tool, a deferred one as its stub: its
+    /// name and first sentence with open arguments, so it can be called
+    /// without its full schema riding on every turn. Once promoted it goes
+    /// in full.
     #[test]
-    fn every_admitted_tool_is_sent_where_unlisted_calls_never_come_back() {
-        let defs = vec![def("read"), def("office").deferred()];
+    fn a_deferred_tool_is_a_stub_where_unlisted_calls_never_come_back() {
+        let office = ToolDefinition::new(
+            "office",
+            "Edit Office files. Each op names an anchor.",
+            serde_json::json!({"type": "object", "properties": {"ops": {"type": "array"}}}),
+        );
+        let mut defs = vec![def("read"), office.clone().deferred()];
         for support in [vak_control::Support::No, vak_control::Support::Unknown] {
             let sent = tools_for_leg(&defs, wire(support));
             assert_eq!(sent.len(), 2, "{support:?}");
             assert!(sent.iter().all(|d| !d.defer), "sent as ordinary tools");
+            let stub = sent.iter().find(|d| d.name == "office");
+            assert_eq!(
+                stub.map(|d| (d.description.as_str(), &d.parameters)),
+                Some(("Edit Office files.", &serde_json::json!({"type": "object"})))
+            );
         }
+        load_promoted(&mut defs, vec![office.clone()]);
+        let sent = tools_for_leg(&defs, wire(vak_control::Support::No));
+        assert_eq!(sent.iter().find(|d| d.name == "office"), Some(&office));
     }
 }
 

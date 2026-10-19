@@ -174,6 +174,36 @@ impl ToolDefinition {
         self.defer = true;
         self
     }
+
+    /// The first sentence of the description: how a deferred tool is named
+    /// in the prompt's catalogue and in its stub.
+    pub fn summary(&self) -> &str {
+        first_sentence(&self.description)
+    }
+
+    /// A deferred tool as sent on a wire that only accepts calls to tools
+    /// it was sent (docs/design/68-context-engine.md §5): its name and
+    /// summary with an open object for its arguments. The model can call
+    /// it; the loop then writes the call's arguments again under the
+    /// tool's own schema and sends that schema from the next step. Sending
+    /// every deferred schema in full cost 98k characters on every turn of
+    /// the Responses wire (measured 2026-10-19).
+    pub fn stub(&self) -> Self {
+        ToolDefinition::new(
+            self.name.clone(),
+            self.summary(),
+            serde_json::json!({"type": "object"}),
+        )
+    }
+}
+
+/// The text up to and including its first ". ", or its first line.
+pub fn first_sentence(description: &str) -> &str {
+    let trimmed = description.trim();
+    if let Some(idx) = trimmed.find(". ") {
+        return &trimmed[..=idx];
+    }
+    trimmed.lines().next().unwrap_or(trimmed)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

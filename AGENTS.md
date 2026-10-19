@@ -1842,7 +1842,8 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      all of them; a deferred tool is called by its name and
                      loaded from then on, on a wire whose adapter declares
                      `unlisted_calls`; any other wire is sent every admitted
-                     tool; docs/design/68-context-engine.md §5),
+                     tool, a deferred one as its stub until it is called;
+                     docs/design/68-context-engine.md §5),
                      capacity_profile_for (the per-request bind: returns the
                      newer of the ledger-recorded profile and the in-process
                      cache by probed-at timestamp, synchronously, from

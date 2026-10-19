@@ -26,6 +26,10 @@
   description names `$TMPDIR` for temporary files, as the prompt does.
 - Search finds an answer by what its cards said, not only by the question
   and the pages read; the catalog rebuilds itself to include them.
+- On OpenAI, Anthropic and Gemini, a tool the turn has not used yet is sent
+  as its name and one line until it is called, instead of its whole schema:
+  a turn's tool schemas went from about 98k to 55k characters, and every
+  tool stays callable.
 
 ## 8.13.1 — 2026-10-19
 

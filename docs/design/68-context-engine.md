@@ -380,10 +380,17 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
   back a call to a tool it was not sent (the adapter's
   `ModelCapabilities::unlisted_calls`, `Provider::reach`) gets the loaded
   set alone (`tools_for_leg`); every other wire, and one nobody knows, gets
-  every admitted tool, since a deferred tool could never be called there
-  (2026-10-17: on the Responses API a turn asked for a Word file said the
-  document tool was not available and wrote HTML;
-  docs/design/99-turns-that-do-not-poison.md). This replaced `find_tools` and Anthropic's
+  every admitted tool, a deferred one as its stub (`ToolDefinition::stub`:
+  its name and first sentence, with open arguments), since a tool left out
+  could never be called there (2026-10-17: on the Responses API a turn
+  asked for a Word file said the document tool was not available and wrote
+  HTML; docs/design/99-turns-that-do-not-poison.md). A call to a stub is
+  promoted like any deferred call, and its blind arguments are written
+  again under the tool's schema before it runs. Sending deferred tools in
+  full there cost 98,147 characters of schemas on a "hi" turn; stubs made
+  it 55,424 (2026-10-19, installed route), and three Word-file requests
+  each called `office_apply`, had their arguments rewritten once and wrote
+  the draft. This replaced `find_tools` and Anthropic's
   `defer_loading` with its server-side tool search: measured on the
   installed route, the model called `find_tools` for tools it already had
   (compare 8 of 16, table 5 of 16), and a second deferral mechanism on one
