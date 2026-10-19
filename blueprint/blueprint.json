@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.9.0",
-  "revision": "aef6b82e9",
+  "version": "8.10.0",
+  "revision": "8a9f4b9f5",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2378,
+   "total_commits": 2379,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -242,15 +242,15 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 513,
+  "commits": 514,
   "areas": [
    [
     "docs",
-    439
+    440
    ],
    [
     "(root)",
-    271
+    272
    ],
    [
     "vak-core",
@@ -612,6 +612,15 @@
   ],
   "recent": [
    {
+    "hash": "8a9f4b9f5",
+    "date": "2026-10-19",
+    "subject": "Release 8.10.0",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "aef6b82e9",
     "date": "2026-10-19",
     "subject": "Require workspace checkpoint storage before tool dispatch",
@@ -790,67 +799,9 @@
      "vak-core",
      "vak-server"
     ]
-   },
-   {
-    "hash": "1a09af69e",
-    "date": "2026-10-18",
-    "subject": "Fit chart and map plots to narrow cards and verify Canvas flows",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-client-ui"
-    ]
    }
   ],
-  "unreleased": [
-   "Parent and child runs stop before workspace-changing tools when their required checkpoint cannot be captured or stored.",
-   "Run status and crash-recovery queries report corrupt history instead of silently skipping it.",
-   "Tool wrappers preserve card declarations and workspace-change overrides;",
-   "Capped budget admission uses encrypted indexed totals and reservation lookups instead of decoding settled history.",
-   "Relocating an embedded Core's data home no longer reuses budget gates bound to its prior home.",
-   "Effect detail, filtered history and sendable-work reads use an encrypted row index instead of decoding the whole history.",
-   "Card calls fail the turn if their acceptance decision cannot be recorded, and close their live call indicator with an error.",
-   "FinOps lets the owner record a provider-verified actual charge for an uncertain reservation.",
-   "Optional `[control].max_model_calls` caps provider dispatches across a request, its workers and flow planner.",
-   "Required admission, framing, authorization, work receipts and successful endings stop on journal failures.",
-   "Account erasure refuses unreadable connection state and checks the active install’s Agent ledgers.",
-   "Session spend limits survive gate recreation and restart, include delegated calls, and coordinate concurrent admissions.",
-   "Connected-account tool results, including provider errors, keep both their displayed text and full evidence under the account scope.",
-   "Library lists, file cards and version comparisons report unreadable history or workspace files instead of silently showing missing or incomplete state.",
-   "Canvas note conflicts show both versions and let you choose what to keep for each note.",
-   "Ability tables infer columns from every recorded row, keeping later-only fields.",
-   "Ability-backed tables and charts use the exact recorded call selected by the answer.",
-   "Credential writes preserve an unreadable encrypted store, publish presence metadata atomically, and report incomplete install cleanup for retry.",
-   "Charts support explicit numeric and time spacing and leave gaps for missing observations.",
-   "Unacknowledged Canvas edits can recover after a reload in the same browser tab.",
-   "Charts and maps size their plots to the space inside narrow cards, keeping the right edge visible on phones and in narrow panels.",
-   "Saved Canvas state now uses versioned, fenced Documents with its content sealed under the conversation key inside each Document version.",
-   "Canvas conflict replay restores a remotely closed tab when it holds a pending local note and there is safe room.",
-   "Canvas keeps unacknowledged changes after failed saves and shows a recovery message with Retry saving.",
-   "Card replacements use one active-card view for runtime validation and display.",
-   "Linked-card controls share current inputs across views of the same conversation turn.",
-   "Delegated workers inherit configured model-step defaults, protected paths and completion policy.",
-   "Worker cards keep their live bindings when copied into the parent conversation, including when duplicate cards reuse existing IDs.",
-   "Opening another Canvas tab no longer evicts a tab with an unsent note.",
-   "Composed answers retain leading, interleaved and closing prose around cards, including multipart text-only answers.",
-   "Tables preserve textual IDs, comma-containing values and large integers.",
-   "Route planning stops on unreadable evidence instead of planning from an incomplete history.",
-   "Budget reservations retain unresolved costs when recording fails and keep their original attribution.",
-   "Live outcome revisions and steering messages must be recorded before they change the running contract or reach the model.",
-   "Two dependency updates clear seven known vulnerabilities:",
-   "Concurrent credential updates preserve every presence marker, and trust checks treat unreadable presence metadata conservatively.",
-   "Commitment admission and portfolio reads report unreadable history instead of treating it as an empty portfolio.",
-   "Chart category labels retain their original text, including leading zeroes and punctuation.",
-   "Charts retain tiny ranges, distinguish nearby values and position extreme finite values without overflowing.",
-   "Tools stop before execution if their assistant message cannot be saved.",
-   "Saved answer and page views reopen in the Canvas after a reload.",
-   "Calls whose effects are unknown wait for other potentially mutating calls instead of bypassing resource conflict checks.",
-   "Artifact changes stop before deciding or writing when their history is unreadable.",
-   "Search, lists and tool-history queries refresh sharing permissions before returning results, and report unreadable sharing records instead of trusting stale grants.",
-   "Stopping a recovery probe no longer leaves a provider permanently unavailable.",
-   "Grant-service permission checks, outbound-action decisions and connected account reads now fail when new records cannot be read, rather than silently trusting cached state.",
-   "Ref writes and removals check the current writer epoch atomically with their commit record, so a restored store refuses a stale writer even when the two operations race."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -29979,6 +29930,12 @@
  ],
  "replay": [
   {
+   "hash": "8a9f4b9f5",
+   "date": "2026-10-19",
+   "subject": "Release 8.10.0",
+   "subsystems": []
+  },
+  {
    "hash": "aef6b82e9",
    "date": "2026-10-19",
    "subject": "Require workspace checkpoint storage before tool dispatch",
@@ -36943,7 +36900,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1353,
+  "docs_commits": 1354,
   "hot": 641
  },
  "findings": [
