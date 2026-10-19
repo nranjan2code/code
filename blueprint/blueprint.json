@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.13.1",
-  "revision": "2b7f01cb1",
+  "revision": "784ef5a07",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2399,
+   "total_commits": 2400,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -95,11 +95,8 @@
   "health": [
    {
     "check": "records",
-    "ok": false,
-    "problems": [
-     "FAIL: 1 record problem(s):",
-     "CHANGELOG.md: 8.13.1 is released; start a `## Unreleased` section"
-    ]
+    "ok": true,
+    "problems": []
    },
    {
     "check": "doc paths",
@@ -277,7 +274,7 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 534,
+  "commits": 535,
   "areas": [
    [
     "docs",
@@ -285,7 +282,7 @@
    ],
    [
     "(root)",
-    288
+    289
    ],
    [
     "vak-core",
@@ -647,6 +644,14 @@
   ],
   "recent": [
    {
+    "hash": "784ef5a07",
+    "date": "2026-10-19",
+    "subject": "Open unreleased changes after 8.13.1",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "2b7f01cb1",
     "date": "2026-10-19",
     "subject": "Record 8.13.1 release and local installation",
@@ -787,14 +792,6 @@
     "subject": "Record local 8.11.0 install",
     "areas": [
      "docs"
-    ]
-   },
-   {
-    "hash": "62451d97d",
-    "date": "2026-10-19",
-    "subject": "Release 8.11.0",
-    "areas": [
-     "(root)"
     ]
    }
   ],
@@ -29987,6 +29984,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "784ef5a07",
+   "date": "2026-10-19",
+   "subject": "Open unreleased changes after 8.13.1",
+   "subsystems": []
+  },
   {
    "hash": "2b7f01cb1",
    "date": "2026-10-19",
