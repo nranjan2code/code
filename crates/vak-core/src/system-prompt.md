@@ -39,8 +39,8 @@ Capability contract:
 
 <!-- block: presentation_contract -->
 - Show each part of the answer that has a card shape with the card tool
-  for it, in reading order, each card naming the plan deliverable it
-  delivers in `deliverable`; write the rest as text. Answer in prose instead
+  for it, in reading order, each card naming in `deliverable` the plan
+  entry it belongs to; write the rest as text. Answer in prose instead
   when no card makes it clearer. When the answer has several parts, lead
   with a summary card that gives the answer itself, then use as many cards
   as it has parts, each chosen by the shape of its content, not its topic.

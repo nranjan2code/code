@@ -156,7 +156,10 @@ fn agent(
         {
             let mut cfg = AgentConfig::new("sys");
             cfg.model = "test-model".into();
-            cfg.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsCard)];
+            cfg.tools = vec![
+                Arc::new(vak_tools::PlanTool::default()),
+                Arc::new(StepsCard),
+            ];
             cfg.mode = vak_permission::Mode::FullAccess;
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
             cfg.stop_policy = None;
@@ -352,7 +355,10 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
             text("Water on Monday."),
         ],
     );
-    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    agent.config.tools = vec![
+        Arc::new(vak_tools::PlanTool::default()),
+        Arc::new(StepsBlock),
+    ];
     let outcome = run(&mut agent).await;
     assert!(
         matches!(&outcome, TurnOutcome::Completed { .. }),
@@ -429,7 +435,10 @@ async fn a_plan_with_no_card_refuses_a_named_deliverable() {
             text("Water on Monday."),
         ],
     );
-    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    agent.config.tools = vec![
+        Arc::new(vak_tools::PlanTool::default()),
+        Arc::new(StepsBlock),
+    ];
     let outcome = run(&mut agent).await;
     assert!(
         matches!(&outcome, TurnOutcome::Completed { .. }),
@@ -472,7 +481,10 @@ async fn a_turn_short_of_its_plan_says_so_on_its_card() {
             text("Water on Monday."),
         ],
     );
-    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    agent.config.tools = vec![
+        Arc::new(vak_tools::PlanTool::default()),
+        Arc::new(StepsBlock),
+    ];
     let outcome = run(&mut agent).await;
     assert!(
         matches!(&outcome, TurnOutcome::Completed { .. }),
@@ -508,7 +520,10 @@ async fn a_card_delivers_a_deliverable_planned_as_text() {
             text("Water on Monday."),
         ],
     );
-    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    agent.config.tools = vec![
+        Arc::new(vak_tools::PlanTool::default()),
+        Arc::new(StepsBlock),
+    ];
     let outcome = run(&mut agent).await;
     assert!(
         matches!(&outcome, TurnOutcome::Completed { .. }),
@@ -543,7 +558,10 @@ async fn a_card_naming_a_deliverable_with_no_plan_is_refused() {
             text("Done."),
         ],
     );
-    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    agent.config.tools = vec![
+        Arc::new(vak_tools::PlanTool::default()),
+        Arc::new(StepsBlock),
+    ];
     let outcome = run(&mut agent).await;
     assert!(
         matches!(&outcome, TurnOutcome::Completed { .. }),
@@ -588,7 +606,10 @@ async fn a_card_beside_its_plan_is_checked_against_it() {
         input: serde_json::json!({"deliverable": "watering", "steps": ["Water Monday"]}),
     });
     let (mut agent, _) = agent(&dir, "plan-beside", vec![step, text("Water on Monday.")]);
-    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    agent.config.tools = vec![
+        Arc::new(vak_tools::PlanTool::default()),
+        Arc::new(StepsBlock),
+    ];
     let outcome = run(&mut agent).await;
     assert!(
         matches!(&outcome, TurnOutcome::Completed { .. }),
@@ -717,7 +738,10 @@ async fn a_step_of_accepted_cards_is_the_answer() {
             text("never asked"),
         ],
     );
-    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    agent.config.tools = vec![
+        Arc::new(vak_tools::PlanTool::default()),
+        Arc::new(StepsBlock),
+    ];
     let outcome = run(&mut agent).await;
     assert!(
         matches!(&outcome, TurnOutcome::Completed { .. }),
@@ -772,7 +796,10 @@ async fn a_plan_still_owing_text_gets_its_step() {
             text("Roots dry out by Monday."),
         ],
     );
-    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    agent.config.tools = vec![
+        Arc::new(vak_tools::PlanTool::default()),
+        Arc::new(StepsBlock),
+    ];
     let outcome = run(&mut agent).await;
     assert!(
         matches!(&outcome, TurnOutcome::Completed { .. }),
@@ -811,7 +838,10 @@ async fn a_card_that_says_more_keeps_the_turn_going() {
             text("never asked"),
         ],
     );
-    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    agent.config.tools = vec![
+        Arc::new(vak_tools::PlanTool::default()),
+        Arc::new(StepsBlock),
+    ];
     let outcome = run(&mut agent).await;
     assert!(
         matches!(&outcome, TurnOutcome::Completed { .. }),

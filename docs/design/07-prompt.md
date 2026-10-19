@@ -89,6 +89,13 @@ presentation update does not restore stale-context behavior.
 > **Historical record**: one note per change to the seed, newest first,
 > each true as of its version; the current wording is the seed itself.
 
+- 2026-10-19, a card names "the plan entry it belongs to" in `deliverable`
+  instead of "the plan deliverable it delivers". The runtime already put
+  several cards under one entry (`AnswerSection.items`), but the words told
+  the model an entry was one card, so a part with several subjects became
+  one table of long sentences (the installed session's dollar-analysis
+  turn, 2026-10-19). Same length; the pinned "`deliverable`" survives.
+
 - 2026-10-17, the mail and calendar bullet is gone. It told every turn to
   call `mail_calendar`, which is now offered only while an account is
   connected (docs/design/97-cards-end-the-answer.md §7), and everything it

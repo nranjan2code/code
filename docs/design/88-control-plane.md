@@ -209,7 +209,9 @@ Nothing names a model, provider or tool in the loop.
 
 **The receipt records what was asked and what was applied.** "Asked for no
 reasoning, the provider reasoned anyway" is then a visible fact and a
-measurement, not a mystery.
+measurement, not a mystery. A step reasoned when the response carried reasoning or its
+usage counts reasoning tokens (`Usage::reasoning_tokens`): a wire that
+returns no reasoning text still reports the count (2026-10-19).
 
 Where a model cannot honour part of a contract, the contract degrades to
 what it can honour and the receipt says so. The runtime never pretends.

@@ -1,5 +1,11 @@
 ## Unreleased
 
+- A plan entry can be shown as several cards, and the plan can say which
+  kind of card each part is, including where the provider enforces tool
+  schemas strictly. Tables ask for short cell values.
+- Work receipts record how many tokens a step spent reasoning when the
+  provider reports it, so they no longer say a step did not reason because
+  the provider returned no reasoning text.
 
 - An answer still forming sits in the same column and indent as the finished
   answer, so it no longer spans the whole chat and then jumps into place.

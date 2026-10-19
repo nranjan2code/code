@@ -232,7 +232,11 @@ impl WorkReceipt {
                 response
                     .content
                     .iter()
-                    .any(|block| matches!(block, crate::ContentBlock::Thinking { .. })),
+                    .any(|block| matches!(block, crate::ContentBlock::Thinking { .. }))
+                    || response
+                        .usage
+                        .reasoning_tokens
+                        .is_some_and(|tokens| tokens > 0),
             );
         }
     }

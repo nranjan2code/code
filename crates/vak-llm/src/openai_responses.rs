@@ -463,6 +463,9 @@ impl Accumulator {
                             .unwrap_or(0),
                         cache_read_input_tokens: (cached_tokens > 0).then_some(cached_tokens),
                         cache_creation_input_tokens: None,
+                        reasoning_tokens: usage
+                            .pointer("/output_tokens_details/reasoning_tokens")
+                            .and_then(|x| x.as_u64()),
                         ..Default::default()
                     };
                 }

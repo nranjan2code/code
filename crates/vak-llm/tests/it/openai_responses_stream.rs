@@ -168,6 +168,33 @@ async fn a_full_cache_hit_reports_zero_fresh_input_tokens_not_the_raw_total() {
     assert_eq!(msg.usage.prompt_tokens(), 12_000);
 }
 
+const FIXTURE_REASONED: &str = "\
+event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_789\",\"usage\":{\"input_tokens\":10,\"output_tokens\":90,\"output_tokens_details\":{\"reasoning_tokens\":64}}}}\n\
+\n";
+
+/// A wire that returns no reasoning text still reports how much the step
+/// reasoned, so a receipt can say it did (docs/design/88-control-plane.md §4).
+#[tokio::test]
+async fn reasoning_tokens_are_read_from_the_usage() {
+    let provider = OpenAiResponsesProvider::new(OpenAiResponsesConfig {
+        api_key: "k".into(),
+        base_url: mock_url(FIXTURE_REASONED).await,
+        ..Default::default()
+    })
+    .unwrap();
+    let mut req = ChatRequest::new("m");
+    req.messages = vec![Message::user_text("hi")];
+    let mut es = provider
+        .stream(req, CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let msg = es.result().await.unwrap();
+    assert_eq!(msg.usage.reasoning_tokens, Some(64));
+    assert_eq!(msg.usage.output_tokens, 90);
+}
+
 const FIXTURE_INCOMPLETE: &str = "\
 data: {\"type\":\"response.incomplete\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\
 \n";

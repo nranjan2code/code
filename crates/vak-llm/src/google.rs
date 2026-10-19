@@ -460,6 +460,9 @@ impl Accumulator {
                 .get("candidatesTokenCount")
                 .and_then(|x| x.as_u64())
                 .unwrap_or(self.message.usage.output_tokens);
+            if let Some(thoughts) = usage.get("thoughtsTokenCount").and_then(|x| x.as_u64()) {
+                self.message.usage.reasoning_tokens = Some(thoughts);
+            }
         }
 
         let Some(candidate) = v.pointer("/candidates/0") else {

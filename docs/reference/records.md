@@ -131,8 +131,10 @@ Type `CostRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `co
 | `output_tokens` | `u64` | yes |  |
 | `cache_read_input_tokens` | `Option<u64>` | no |  |
 | `usd` | `Option<f64>` | no | Estimated USD. `None` when the model is unpriced — absent is |
-| `source` | `String` | yes | Always "estimated" today; reserved for providers that return real |
+| `source` | `String` | yes | "estimated" for runtime pricing; "owner_verified" for an explicit |
 | `session_id` | `String` | yes |  |
+| `reservation_id` | `Option<String>` | no | Exact admission that produced this row, allowing a crash after append |
+| `budget_session_id` | `Option<String>` | no | Stable session whose lifetime cap owns this spend. Child dispatch rows |
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
 

@@ -72,7 +72,15 @@ required to call the card tool of that kind, once, when the plan named one
   "shelf vs meal comparison").
 - `form` — how it is delivered: `card`, `text`, `file`, `change` (a change
   made in the workspace or outside Vak) or `check` (something run to prove
-  a result).
+  a result), or one of the card forms (`vak_delivery::FORMS`), which the
+  schema's enum lists so a wire that enforces the schema accepts it
+  (2026-10-19: the enum held only the five words, so on a strict wire no
+  plan could name a kind). A form whose tool the turn withdrew is a card
+  with no kind.
+
+An entry is a part of the answer, and an entry shown as cards takes as many
+cards as its content has parts; each names the entry in `deliverable`, and
+the first one covers it (`vak_judge::plan::gap`).
 
 The plan's record is the `plan` call itself: its arguments are ledgered
 untruncated with its result, so it is model-visible and `derive_messages()`

@@ -63,7 +63,22 @@ pub fn parse_plan_args(args: &Value) -> Result<Vec<Deliverable>, String> {
     Ok(plan)
 }
 
-pub struct PlanTool;
+/// The `plan` tool. `forms` are the card forms an entry's `form` may name
+/// besides the five delivery words (docs/design/86 §2.1: a form that names
+/// a kind of card is a card of that kind); the host passes its form
+/// vocabulary, so a wire that enforces the schema accepts them.
+#[derive(Debug, Clone, Default)]
+pub struct PlanTool {
+    forms: Vec<String>,
+}
+
+impl PlanTool {
+    pub fn with_forms(forms: &[&str]) -> Self {
+        Self {
+            forms: forms.iter().map(|form| (*form).to_string()).collect(),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for PlanTool {
@@ -84,30 +99,44 @@ impl Tool for PlanTool {
     }
 
     fn description(&self) -> &str {
-        "Say what your answer will deliver before you produce it: one entry for each \
-         distinct thing the person asked for, in their order, named in a few words, with \
-         how it reaches them. Vakyartha checks each entry against what you actually produce \
-         and tells you if one is missing. Skip it for a reply that is one direct answer."
+        "Say what your answer will deliver before you produce it: one entry for each part \
+         of the answer, in reading order, named in a few words, with how it reaches the \
+         person. An entry shown as cards takes as many cards as its content has parts. \
+         Vakyartha checks each entry against what you actually produce and tells you if one \
+         is missing. Skip it for a reply that is one direct answer."
     }
 
     fn schema(&self) -> Value {
+        let forms: Vec<&str> = DeliverableForm::ALL
+            .map(DeliverableForm::as_str)
+            .into_iter()
+            .chain(self.forms.iter().map(String::as_str))
+            .collect();
+        let card_forms = if self.forms.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " A card form ({}) when it is shown as cards of that form.",
+                self.forms.join(", ")
+            )
+        };
         json!({
             "type": "object",
             "properties": {
                 "deliverables": {
                     "type": "array",
-                    "description": "Each distinct thing the person asked for, in their order.",
+                    "description": "Each part of the answer, in reading order.",
                     "items": {
                         "type": "object",
                         "properties": {
                             "name": {
                                 "type": "string",
-                                "description": "The deliverable in a few words, such as the thing the person asked for."
+                                "description": "The part in a few words, such as the thing the person asked for."
                             },
                             "form": {
                                 "type": "string",
-                                "enum": DeliverableForm::ALL.map(DeliverableForm::as_str),
-                                "description": "card: shown as a block of your answer; text: written in your reply; file: a file saved for review; change: a change you make; check: something you run to prove a result."
+                                "enum": forms,
+                                "description": format!("How it reaches the person. card: shown as one or more cards; text: written in your reply; file: a file saved for review; change: a change you make; check: something you run to prove a result.{card_forms}")
                             }
                         },
                         "required": ["name", "form"]
@@ -138,7 +167,7 @@ mod tests {
     #[test]
     fn the_plan_tool_declares_its_plan_and_that_it_looks_nothing_up() {
         use crate::Tool;
-        let tool = super::PlanTool;
+        let tool = super::PlanTool::default();
         assert!(!tool.looks_up());
         let plan = tool
             .planned(&serde_json::json!({
@@ -163,6 +192,26 @@ mod tests {
         assert_eq!(plan.len(), 3);
         assert_eq!(plan[1].form, DeliverableForm::Card);
         assert_eq!(plan[2].form, DeliverableForm::Text);
+    }
+
+    /// A wire that enforces the schema accepts a card form only when the
+    /// schema lists it (docs/design/86 §2.1).
+    #[test]
+    fn the_form_lists_the_card_forms_it_is_given() {
+        use crate::Tool;
+        let schema = PlanTool::with_forms(&["table", "details"]).schema();
+        let forms = &schema["properties"]["deliverables"]["items"]["properties"]["form"]["enum"];
+        assert_eq!(
+            forms,
+            &json!([
+                "card", "text", "file", "change", "check", "table", "details"
+            ])
+        );
+        let bare = PlanTool::default().schema();
+        assert_eq!(
+            bare["properties"]["deliverables"]["items"]["properties"]["form"]["enum"],
+            json!(["card", "text", "file", "change", "check"])
+        );
     }
 
     #[test]

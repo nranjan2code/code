@@ -2008,7 +2008,7 @@ const SHAPES: &[CardShape] = &[
         ..shape(
             "table",
             "emit_table_card",
-            "Records under the same columns. Rows are strings with the header first and cells separated by |.",
+            "Records under the same columns, each cell a short value. Rows are strings with the header first and cells separated by |.",
             table_fields,
             build_table,
             fill_table,
@@ -2458,7 +2458,7 @@ impl Tool for EmitCardTool {
         );
         properties.insert(
             "deliverable".into(),
-            string("The name of the card in your plan that this card delivers, written as the plan wrote it. Leave it out when your plan lists no card for it."),
+            string("The plan entry this card is part of, written as the plan wrote it; an entry may take several cards. Leave it out when your plan has no entry for it."),
         );
         properties.insert(
             "replaces".into(),

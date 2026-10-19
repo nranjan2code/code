@@ -470,6 +470,7 @@ impl Accumulator {
                     .get("load_duration")
                     .and_then(|x| x.as_u64())
                     .map(|ns| ns / 1_000_000),
+                reasoning_tokens: None,
             };
             if self.message.stop_reason != StopReason::ToolUse {
                 self.message.stop_reason = match v.get("done_reason").and_then(|r| r.as_str()) {

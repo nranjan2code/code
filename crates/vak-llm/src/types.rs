@@ -197,6 +197,13 @@ pub struct Usage {
     /// already warm" from "cold load" when explaining a slow first token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub load_ms: Option<u64>,
+    /// Output tokens the provider reports as reasoning, when it reports
+    /// them apart (a wire that returns no reasoning text still counts it),
+    /// so a receipt can say a step reasoned (docs/design/88-control-plane.md
+    /// §4). It is for saying a step reasoned, not for cost: whether
+    /// `output_tokens` already counts them is each wire's own split.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
 }
 
 impl Usage {

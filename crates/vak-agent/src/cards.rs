@@ -34,17 +34,23 @@ pub(crate) fn plan_forms(
         .and_then(Value::as_array_mut)
     {
         for deliverable in deliverables.iter_mut().filter_map(Value::as_object_mut) {
-            let Some(kind) = deliverable
+            let Some(form) = deliverable
                 .get("form")
                 .and_then(Value::as_str)
                 .map(str::trim)
-                .filter(|form| is_kind(form))
                 .map(str::to_string)
             else {
                 continue;
             };
-            deliverable.insert("form".into(), Value::String("card".into()));
-            deliverable.insert("kind".into(), Value::String(kind));
+            if is_kind(&form) {
+                deliverable.insert("form".into(), Value::String("card".into()));
+                deliverable.insert("kind".into(), Value::String(form));
+            } else if vak_delivery::is_form(&form) {
+                // A form the plan's schema offers whose tool this turn
+                // withdrew: still a card, with no tool a step can be
+                // required to call.
+                deliverable.insert("form".into(), Value::String("card".into()));
+            }
         }
     }
     call
@@ -131,5 +137,22 @@ mod tests {
         );
         assert_eq!(owner("itinerary", &tools()).unwrap().name(), "steps_card");
         assert!(owner("poem", &tools()).is_none());
+    }
+
+    /// The plan's schema offers every form; one whose tool this turn does
+    /// not have is still a card, with no tool a step could be required to call.
+    #[test]
+    fn a_form_with_no_tool_this_turn_is_a_card_without_a_kind() {
+        let call = plan_forms(
+            crate::PendingToolCall {
+                id: "p".into(),
+                name: "plan".into(),
+                input: json!({"deliverables": [{"name": "Figures", "form": "stats"}]}),
+            },
+            &tools(),
+        );
+        let deliverable = &call.input["deliverables"][0];
+        assert_eq!(deliverable["form"], "card");
+        assert!(deliverable.get("kind").is_none());
     }
 }

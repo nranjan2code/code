@@ -213,7 +213,10 @@ async fn a_card_that_keeps_failing_is_located_shown_its_schema_then_withdrawn() 
         {
             let mut cfg = AgentConfig::new("sys");
             cfg.model = "test-model".into();
-            cfg.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(TableCard)];
+            cfg.tools = vec![
+                Arc::new(vak_tools::PlanTool::default()),
+                Arc::new(TableCard),
+            ];
             cfg.mode = vak_permission::Mode::FullAccess;
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
             cfg.stop_policy = None;
