@@ -755,3 +755,64 @@ fn a_question_in_other_words_finds_the_answer() {
         "any word matches: {sessions:?}"
     );
 }
+
+/// A card is the answer in a card turn, so its words find the turn: before,
+/// a search found the question and the pages read, never the answer (found
+/// live 2026-10-19).
+#[test]
+fn a_card_s_words_find_its_turn() {
+    let (_lock, cwd, data, folder) = home();
+    let trace = TraceKey::root(
+        local::tenant(),
+        local::space(&folder),
+        local::agent("vak"),
+        Cause::User {
+            request_id: "req-1".into(),
+        },
+    )
+    .acting(local::local_owner(), None);
+    let id = uuid::Uuid::now_v7().to_string();
+    let path = vak_session::SessionPath::new_session_file(&agent_home(&data, "vak"), &folder, &id);
+    let mut log =
+        SessionLog::create(path, header(&id, &folder, "vak", "local", Some(&trace))).unwrap();
+    let turn = uuid::Uuid::now_v7().to_string();
+    log.begin_turn(&turn).unwrap();
+    log.append_message(message(Role::User, vec![ContentBlock::text("which one?")]))
+        .unwrap();
+    let payload =
+        serde_json::json!({"headline": "Pick ZephyrDB", "points": ["Licence: Apache 2.0"]});
+    log.append_presentation(vak_session::types::PresentationRecord {
+        turn_id: turn.clone(),
+        source: vak_session::types::PresentationSource::ToolCall {
+            tool_use_id: "toolu_card".into(),
+        },
+        semantic_type: "summary".into(),
+        skill_id: "core".into(),
+        skill_version: "2.0.0".into(),
+        schema_version: 2,
+        payload_digest: vak_session::types::payload_digest(&payload),
+        payload,
+        derived_from: Vec::new(),
+        title: String::new(),
+        identity_digest: String::new(),
+        block: Some("summary".into()),
+        data_call_id: None,
+    })
+    .unwrap();
+    drop(log);
+    let catalog = catalog(&cwd, &data, "catalog.db");
+    catalog.catch_up().unwrap();
+    let hits = catalog
+        .search(
+            "zephyrdb licence",
+            &Audience::default(),
+            &Scope::default(),
+            10,
+        )
+        .unwrap();
+    assert!(
+        hits.iter()
+            .any(|hit| hit.node.kind == "turn" && hit.snippet.contains("ZephyrDB")),
+        "{hits:?}"
+    );
+}

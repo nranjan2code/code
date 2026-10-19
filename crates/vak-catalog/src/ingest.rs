@@ -110,6 +110,23 @@ fn edge(tx: &Transaction<'_>, src: &str, kind: &str, dst: &str) -> rusqlite::Res
 }
 
 /// Adds `text` to a node's searchable body.
+/// What a card says: every text and number its payload holds, in order,
+/// one per line.
+fn card_text(payload: &Value) -> String {
+    let mut lines = Vec::new();
+    let mut stack = vec![payload];
+    while let Some(value) = stack.pop() {
+        match value {
+            Value::String(text) if !text.trim().is_empty() => lines.push(text.trim().to_string()),
+            Value::Number(number) => lines.push(number.to_string()),
+            Value::Array(items) => stack.extend(items.iter().rev()),
+            Value::Object(fields) => stack.extend(fields.values().rev()),
+            _ => {}
+        }
+    }
+    lines.join("\n")
+}
+
 fn append_text(tx: &Transaction<'_>, node: &str, text: &str) -> rusqlite::Result<()> {
     let text = text.trim();
     if text.is_empty() {
@@ -469,6 +486,12 @@ fn session_entry(
                     _ => {}
                 }
             }
+        }
+        // A card is the answer in a card turn: its words are the turn's
+        // text, or a search finds the question and the pages read and never
+        // the answer (found live 2026-10-19).
+        EntryPayload::Presentation(record) => {
+            append_text(tx, &turn, &card_text(&record.payload))?;
         }
         EntryPayload::CallEffect(record) => {
             let node = call(tx, &record.tool_use_id, None)?;

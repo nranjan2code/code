@@ -24,6 +24,8 @@
 - A command that fails because its program is not installed says what is
   installed under that name (`python` → `python3`), and the shell's tool
   description names `$TMPDIR` for temporary files, as the prompt does.
+- Search finds an answer by what its cards said, not only by the question
+  and the pages read; the catalog rebuilds itself to include them.
 
 ## 8.13.1 — 2026-10-19
 

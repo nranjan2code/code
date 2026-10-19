@@ -802,8 +802,10 @@ explicitly; optional future vector stores must meet the same boundary.
   call that fetched it; built 2026-10-14). It
   answers "everything this run touched" and "where did this file come from"
   with one query.
-- **`text`**: FTS5 over text projections (messages, tool digests, artifact
-  text via `doc_read`, memory, run summaries). A query matches a text that
+- **`text`**: FTS5 over text projections (messages, the words of every card
+  a turn showed, tool digests, artifact text via `doc_read`, memory, run
+  summaries; a card is the answer in a card turn, and without it a search
+  found the question and the pages read but never the answer). A query matches a text that
   holds any of its words, stemmed on both sides, best first by BM25, so a
   question in a person's own words finds the answer that used other forms
   of them (requiring every word returned nothing, found 2026-10-19). An
