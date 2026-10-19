@@ -803,8 +803,11 @@ explicitly; optional future vector stores must meet the same boundary.
   answers "everything this run touched" and "where did this file come from"
   with one query.
 - **`text`**: FTS5 over text projections (messages, tool digests, artifact
-  text via `doc_read`, memory, run summaries). An optional vector index can
-  sit behind the same query API.
+  text via `doc_read`, memory, run summaries). A query matches a text that
+  holds any of its words, stemmed on both sides, best first by BM25, so a
+  question in a person's own words finds the answer that used other forms
+  of them (requiring every word returned nothing, found 2026-10-19). An
+  optional vector index can sit behind the same query API.
 - **ACL at query time.** Every search is filtered by the caller's audience
   and grants before ranking (invariant 37). Results never carry content the
   caller could not open directly.

@@ -8,6 +8,10 @@
 - A coding turn whose plan is changes, checks and call-filled cards (a diff,
   a terminal, a test report) is no longer marked a partial result just
   because it read the file it fixed.
+- Search, and recall across conversations, find a question asked in other
+  words: any word matches, word forms meet ("recommend", "recommendation"),
+  and the closest match comes first. An empty search tells the model to try
+  the earlier answer's own words before saying it is not there.
 
 ## 8.13.1 — 2026-10-19
 

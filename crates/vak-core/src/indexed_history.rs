@@ -80,6 +80,14 @@ impl Core {
                     None => Vec::new(),
                 };
                 let reached_elsewhere = !elsewhere.is_empty();
+                if this_conversation.is_empty() && elsewhere.is_empty() && reach.is_some() {
+                    notes.push(
+                        "Nothing searched holds any of these words. Search again with the \
+                         words the earlier answer itself would use, such as a name or a \
+                         thing it named, before saying it is not there."
+                            .into(),
+                    );
+                }
                 Ok(vak_agent::Recalled {
                     content: serde_json::json!({"this_conversation": this_conversation,
                         "elsewhere": elsewhere, "note": notes.join(" ")})

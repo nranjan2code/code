@@ -714,3 +714,44 @@ fn a_retired_import_handle_cannot_read_or_write_the_previous_catalog() {
     remove_db(&path).unwrap();
     Catalog::open(&path, &data).unwrap().catch_up().unwrap();
 }
+
+/// A question in a person's own words finds the turn that answered it:
+/// any word matches, stems meet ("recommend" and "Recommendation"), and
+/// the text holding more of the words ranks first (found live 2026-10-19:
+/// requiring every word returned nothing for a word the answer did not
+/// use).
+#[test]
+fn a_question_in_other_words_finds_the_answer() {
+    let (_lock, cwd, data, folder) = home();
+    let (_, answered, _, _) = run_with_turn(
+        &data,
+        &folder,
+        "vak",
+        "local",
+        "Recommendation: choose DuckDB for the desktop analytics app; MIT license",
+    );
+    let (_, other, _, _) = run_with_turn(&data, &folder, "vak", "local", "a desktop wallpaper");
+    let catalog = catalog(&cwd, &data, "catalog.db");
+    catalog.catch_up().unwrap();
+    let hits = catalog
+        .search(
+            "which database did you recommend for my desktop analytics app, and what licence?",
+            &Audience::default(),
+            &Scope::default(),
+            10,
+        )
+        .unwrap();
+    let sessions: Vec<String> = hits
+        .iter()
+        .filter_map(|hit| hit.node.session.clone())
+        .collect();
+    assert_eq!(
+        sessions.first(),
+        Some(&format!("ses_{answered}")),
+        "{sessions:?}"
+    );
+    assert!(
+        sessions.contains(&format!("ses_{other}")),
+        "any word matches: {sessions:?}"
+    );
+}

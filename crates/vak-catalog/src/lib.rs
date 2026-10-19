@@ -52,7 +52,7 @@ pub const FILE_NAME: &str = "catalog.db";
 /// The schema this build writes, and what it derives from the records (5:
 /// a call's outcome as its status, `done` or `failed`). A catalog stamped with another is dropped and rebuilt,
 /// never adapted: it is derived.
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
@@ -796,7 +796,7 @@ fn initialize_schema(conn: &Connection) -> Result<(), CatalogError> {
          CREATE TABLE IF NOT EXISTS texts (
              id INTEGER PRIMARY KEY, node TEXT NOT NULL UNIQUE, body TEXT NOT NULL);
          CREATE VIRTUAL TABLE IF NOT EXISTS texts_fts USING fts5(
-             body, content='texts', content_rowid='id', tokenize='unicode61');
+             body, content='texts', content_rowid='id', tokenize='porter unicode61');
          CREATE TRIGGER IF NOT EXISTS texts_ai AFTER INSERT ON texts BEGIN
              INSERT INTO texts_fts (rowid, body) VALUES (new.id, new.body); END;
          CREATE TRIGGER IF NOT EXISTS texts_ad AFTER DELETE ON texts BEGIN
@@ -820,7 +820,7 @@ fn initialize_schema(conn: &Connection) -> Result<(), CatalogError> {
          CREATE INDEX IF NOT EXISTS turn_marks_turn ON turn_marks (session, turn_id);
          CREATE TABLE IF NOT EXISTS turns_aside (turn TEXT PRIMARY KEY);
          CREATE VIRTUAL TABLE IF NOT EXISTS turn_records_fts USING fts5(
-             record, content='turn_records', content_rowid='rowid', tokenize='unicode61');
+             record, content='turn_records', content_rowid='rowid', tokenize='porter unicode61');
          CREATE TRIGGER IF NOT EXISTS turn_records_ai AFTER INSERT ON turn_records BEGIN
              INSERT INTO turn_records_fts (rowid, record) VALUES (new.rowid, new.record); END;
          CREATE TRIGGER IF NOT EXISTS turn_records_ad AFTER DELETE ON turn_records BEGIN
@@ -1001,13 +1001,18 @@ fn audience_filter(audience: &Audience, first: usize) -> (String, Vec<rusqlite::
 
 /// A person's words as an FTS5 query: every word must appear, each quoted
 /// so nothing they type is read as query syntax.
+/// A query matches a text holding any of its words, each reduced to its
+/// stem on both sides, best first by BM25: a text that holds more of them,
+/// and rarer ones, ranks higher. Requiring every word turned a question in
+/// a person's own words ("which database did you recommend… what licence")
+/// into no result at all (found live 2026-10-19).
 fn fts_query(query: &str) -> Option<String> {
     let words: Vec<String> = query
         .split(|c: char| !c.is_alphanumeric() && c != '_')
         .filter(|word| !word.is_empty())
         .map(|word| format!("\"{}\"", word.replace('"', "")))
         .collect();
-    (!words.is_empty()).then(|| words.join(" "))
+    (!words.is_empty()).then(|| words.join(" OR "))
 }
 
 /// The tail position a source starts from, for tests and tools.
