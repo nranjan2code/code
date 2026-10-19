@@ -1,4 +1,4 @@
-## Unreleased
+## 8.10.0 — 2026-10-19
 
 - Parent and child runs stop before workspace-changing tools when their
   required checkpoint cannot be captured or stored. Failed capture does not
