@@ -1,8 +1,5 @@
 ## Unreleased
 
-- A request on a new subject no longer finishes something an earlier turn
-  left undelivered, such as making a Word file again, unless it asks to.
-
 ## 8.11.0 — 2026-10-19
 
 - A plan entry can be shown as several cards, and the plan can say which

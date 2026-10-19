@@ -63,18 +63,8 @@ Each `TraceLine` gains `failed`, taken from its result's `is_error`, and
 line shows them: `did: webfetch×3 (2 failed), emit_link_card (failed)`;
 a refused card is a failed card call. The card also records the plan's
 deliverables the turn ended without (`unmet`, from the plan check the
-loop already runs): `→ that turn left undelivered: "route map"`. The
-planner's choice of turn is unchanged; what changes is that a failed turn
-reads as one. The words name the turn (2026-10-19): carried before a new
-request on another subject, `not delivered` read as owed now, and the
-next turn made the missing Word file about the new subject; the seed
-says what a turn left undelivered is context, not new work (doc 07).
-In that turn the Word file could be made (the report existed) and the
-turn before had wrongly said the document tool was unavailable. Synthetic
-runs on the installed route where the file could not be made did not
-reproduce it on either build (0 of 4 unrelated turns made a file, before
-and after), and a follow-up that asked for the file still made it (4 of
-4); a repeatable case is open in docs/plans/open-items.md.
+loop already runs): `→ not delivered: "route map"`. The planner's choice
+of turn is unchanged; what changes is that a failed turn reads as one.
 
 ### C. Recall says how the turn ended
 

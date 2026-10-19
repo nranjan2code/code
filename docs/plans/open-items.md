@@ -25,11 +25,18 @@ Measured in [the answer-composition audit](../audits/answer-composition-2026-10-
   guessed URLs with `webfetch` (up to 17 steps, most fetches 403/404).
 - [ ] Measure the act step's reasoning depth now that receipts carry
   `reasoning_tokens`; any default belongs in `[control]` configuration.
-- [ ] A repeatable case for an unmet deliverable carried into an
-  unrelated turn (doc 99 §4 B, 2026-10-19): the observed one needed a
-  deliverable that could be made and a turn that wrongly said its tool was
-  unavailable; four synthetic runs without those did not reproduce it.
-  Also find why that turn read the deferred `office_apply` as unavailable.
+- [ ] An earlier request carried into an unrelated turn (2026-10-19): in
+  the installed Research Analyst conversation, after three turns asking
+  for a Word file (the last, "i thought you would make a docx", ending
+  with the model wrongly saying `office_apply` was unavailable), a turn
+  about dental implants planned and made a Word file. The planner carries
+  the previous turn's card whatever the new request says (doc 68 §4); the
+  model's first step reopens that turn with `recall`. Retried on a build
+  whose card line and seed said an undelivered part is history (reverted),
+  the turn did the same, so wording was not the cause. Four synthetic runs
+  without the earlier failure did not reproduce it. Open: why turn 7 read
+  the deferred `office_apply` as unavailable, which left the request
+  standing.
 - [ ] A shape-named layout guide for explaining a subject across several
   angles in `packages/answer-layouts` (optional, data only).
 
