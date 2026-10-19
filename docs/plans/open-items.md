@@ -25,6 +25,11 @@ Measured in [the answer-composition audit](../audits/answer-composition-2026-10-
   guessed URLs with `webfetch` (up to 17 steps, most fetches 403/404).
 - [ ] Measure the act step's reasoning depth now that receipts carry
   `reasoning_tokens`; any default belongs in `[control]` configuration.
+- [ ] A repeatable case for an unmet deliverable carried into an
+  unrelated turn (doc 99 §4 B, 2026-10-19): the observed one needed a
+  deliverable that could be made and a turn that wrongly said its tool was
+  unavailable; four synthetic runs without those did not reproduce it.
+  Also find why that turn read the deferred `office_apply` as unavailable.
 - [ ] A shape-named layout guide for explaining a subject across several
   angles in `packages/answer-layouts` (optional, data only).
 

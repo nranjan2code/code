@@ -89,6 +89,14 @@ presentation update does not restore stale-context behavior.
 > **Historical record**: one note per change to the seed, newest first,
 > each true as of its version; the current wording is the seed itself.
 
+- 2026-10-19, what an earlier turn left undelivered is context, not new
+  work, like its cards. The planner carries the previous turn's card
+  whatever the request says (doc 68 §4), and that card names what its plan
+  went without; a turn asked about dental implants after a turn that had
+  failed to make a Word file planned and made the Word file again (the
+  installed research session, turn 8). About 12 tokens; the pinned
+  "cards are context, not new work" survives.
+
 - 2026-10-19, a card names "the plan entry it belongs to" in `deliverable`
   instead of "the plan deliverable it delivers". The runtime already put
   several cards under one entry (`AnswerSection.items`), but the words told

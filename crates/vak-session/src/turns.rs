@@ -1604,7 +1604,10 @@ impl TurnCard {
         let unmet = if self.unmet.is_empty() {
             String::new()
         } else {
-            format!(" \u{2192} not delivered: {}", self.unmet_names())
+            format!(
+                " \u{2192} that turn left undelivered: {}",
+                self.unmet_names()
+            )
         };
         format!(
             "#{n} asked: {} \u{2192} did: {did_summary} \u{2192} {outcome_part}{unmet}{ended}",

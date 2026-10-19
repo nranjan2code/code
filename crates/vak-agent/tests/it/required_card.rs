@@ -495,7 +495,8 @@ async fn a_turn_short_of_its_plan_says_so_on_its_card() {
     let card = index.turns[0].card.as_ref().expect("the turn's card");
     assert_eq!(card.unmet, ["watering"]);
     assert!(
-        card.line(1).contains("not delivered: \"watering\""),
+        card.line(1)
+            .contains("that turn left undelivered: \"watering\""),
         "{}",
         card.line(1)
     );
