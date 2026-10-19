@@ -1,4 +1,4 @@
-## Unreleased
+## 8.11.0 — 2026-10-19
 
 - A plan entry can be shown as several cards, and the plan can say which
   kind of card each part is, including where the provider enforces tool
