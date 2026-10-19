@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.12.0",
-  "revision": "e2d28913d",
+  "revision": "9fd336ee0",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2391,
+   "total_commits": 2392,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -269,15 +269,15 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 526,
+  "commits": 527,
   "areas": [
    [
     "docs",
-    448
+    449
    ],
    [
     "(root)",
-    282
+    283
    ],
    [
     "vak-core",
@@ -639,6 +639,15 @@
   ],
   "recent": [
    {
+    "hash": "9fd336ee0",
+    "date": "2026-10-19",
+    "subject": "Record local 8.12.0 install and open Unreleased",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "e2d28913d",
     "date": "2026-10-19",
     "subject": "Release 8.12.0",
@@ -781,19 +790,6 @@
      "vak-agent",
      "vak-core",
      "vak-session"
-    ]
-   },
-   {
-    "hash": "a93d74192",
-    "date": "2026-10-19",
-    "subject": "Enforce strict run decisions and preserve tool wrapper declarations",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "vak-agent",
-     "vak-session",
-     "vak-tools"
     ]
    }
   ],
@@ -29956,6 +29952,12 @@
  ],
  "replay": [
   {
+   "hash": "9fd336ee0",
+   "date": "2026-10-19",
+   "subject": "Record local 8.12.0 install and open Unreleased",
+   "subsystems": []
+  },
+  {
    "hash": "e2d28913d",
    "date": "2026-10-19",
    "subject": "Release 8.12.0",
@@ -37026,7 +37028,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1362,
+  "docs_commits": 1363,
   "hot": 642
  },
  "findings": [
