@@ -20,8 +20,9 @@ across them. Nothing here is started unless it says so.
 - [ ] Conversation/evidence contract acceptance: coherent snapshot and
   applied-state hydration are implemented, with a real ChatPane regression
   (22 checks before the snapshot endpoint change). Final mobile/dark and
-  installed-desktop checks remain blocked by disabled browser access; no
-  release/install was performed. Evidence questions and retrieval/sufficiency
+  installed-desktop visual checks remain blocked by disabled browser access.
+  Release 8.13.0 is installed; HTTP snapshot acceptance on the original request
+  retains all three research cards with a coherent revision. Evidence questions and retrieval/sufficiency
   separation are implemented; a general semantic reviewer and evidence
   progress feedback through the control ladder remain unbuilt. Investigate
   irrelevant upstream search bodies without domain/provider exceptions.

@@ -202,3 +202,33 @@ target directory: 3,851 tests, zero failures, 23 ignored, plus fmt, workspace
 Clippy, version, citations, records and advisories. Evidence:
 `/tmp/vak-chatjimmy-trace/full-gate-worker-path.log`. The worker evidence test
 passes in this isolated build, with no checkout target-path dependency.
+
+
+## Completed release and local installation
+
+The clean release run passed all 3,851 tests (zero failures, 23 ignored) and
+all mandatory release gates without a waiver. `scripts/release.sh` built
+8.13.0 (`c994e7fa6`) for macOS arm64; SHA256SUMS and the local integrity
+manifest verify. Artifacts remain at
+`/Users/nisheethranjan/Projects/Vak/code/dist/8.13.0`. Source main and annotated
+`v8.13.0` were pushed atomically; no force push or GitHub binary publication.
+The remote reported unsigned-commit and PR rule bypasses on the authorized
+push. Source fixes are `6fa02ac29`, portable fixture `f785596e4`.
+
+Managed `self reinstall --yes`, `self verify` and `self services-sync` pass.
+Gateway and desktop services run the new installation; `/version` reports
+8.13.0 (`c994e7fa6`), `/health` is ok with zero failures and not fenced. The
+installed snapshot for the original conversation has a coherent cursor,
+aligned transcript rows, the exact request paired by durable entry id and
+all three research cards retained. The first inspection incorrectly required
+every transcript tool row to be a visible presentation item, then matched a
+quoted tool result; corrected checks use the exact authored request and its
+turn. Neither failure was a product regression.
+
+MacOS verification continues to report the already-known invalid bundle
+resource signature; architecture and dylib checks pass. This is not a verified
+distributable signed or notarized build. Browser/visual acceptance and a
+semantic source-sufficiency reviewer remain open. Release evidence logs:
+`release-8.13.0-final.log`, `install-8.13.0.log`, `services-8.13.0.log`,
+`postinstall-health.json`, `installed-original-snapshot.json` and
+`postinstall-signature.log` under `/tmp/vak-chatjimmy-trace/`.
