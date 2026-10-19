@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.13.0",
-  "revision": "f785596e4",
+  "revision": "384b0a478",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2395,
+   "total_commits": 2396,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -274,15 +274,15 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 530,
+  "commits": 531,
   "areas": [
    [
     "docs",
-    451
+    452
    ],
    [
     "(root)",
-    285
+    286
    ],
    [
     "vak-core",
@@ -644,6 +644,15 @@
   ],
   "recent": [
    {
+    "hash": "384b0a478",
+    "date": "2026-10-19",
+    "subject": "Record 8.13.0 installation and acceptance",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "f785596e4",
     "date": "2026-10-19",
     "subject": "Resolve integration worker from the active Cargo build",
@@ -792,15 +801,6 @@
     "areas": [
      "(root)",
      "vak-client-ui"
-    ]
-   },
-   {
-    "hash": "db89e9e98",
-    "date": "2026-10-19",
-    "subject": "Record local 8.10.0 install and macOS signing limitation",
-    "areas": [
-     "(root)",
-     "docs"
     ]
    }
   ],
@@ -29994,6 +29994,12 @@
  ],
  "replay": [
   {
+   "hash": "384b0a478",
+   "date": "2026-10-19",
+   "subject": "Record 8.13.0 installation and acceptance",
+   "subsystems": []
+  },
+  {
    "hash": "f785596e4",
    "date": "2026-10-19",
    "subject": "Resolve integration worker from the active Cargo build",
@@ -37105,7 +37111,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1365,
+  "docs_commits": 1366,
   "hot": 643
  },
  "findings": [
