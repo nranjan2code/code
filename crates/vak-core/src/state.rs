@@ -159,6 +159,9 @@ pub struct StateEntry {
     pub schema: Option<u32>,
     pub class: Class,
     pub on_purge: OnPurge,
+    /// Encrypted projections bound to the imported records and scope keys.
+    /// Reset only at the explicit restore/pull boundary, never on read failure.
+    pub rebuild_on_import: bool,
 }
 
 /// The path segment that stands for any one Agent id
@@ -265,6 +268,7 @@ const fn agent_entry(path: &'static str, owner: &'static str, class: Class) -> S
         schema: None,
         class,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     }
 }
 
@@ -282,6 +286,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // Public-key credentials and one-way recovery-code digests.
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     // ---- ledgers: append-only, never rewritten by an update ----
     StateEntry {
@@ -293,6 +298,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // use and never rewritten (`baseline::stamp_data_home`).
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     // ---- the tenant tree (docs/design/73 §6) ----
     StateEntry {
@@ -304,6 +310,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // granted per scope, and the refs naming each Document's head.
         class: Class::Object,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "tenants/{tenant}/catalog",
@@ -314,6 +321,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // the records alone, so losing it costs a rebuild, never data.
         class: Class::Derived,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: true,
     },
     StateEntry {
         path: "cost-index",
@@ -322,8 +330,12 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: Some(1),
         class: Class::Derived,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: true,
     },
-    agent_entry("agents/{agent}/cost-index", "vak-core", Class::Derived),
+    StateEntry {
+        rebuild_on_import: true,
+        ..agent_entry("agents/{agent}/cost-index", "vak-core", Class::Derived)
+    },
     StateEntry {
         path: "model-call-budgets/{run}",
         root: Root::Data,
@@ -332,6 +344,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // Durable per-root-run dispatch counts; no expiry is inferred.
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "tenants/{tenant}/keys",
@@ -341,6 +354,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // Revoked scopes and the open lock; the KEKs are in the credential store.
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "tenants/{tenant}/spaces.toml",
@@ -350,6 +364,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // Each space's id and the folders this machine binds to it.
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "tenants/{tenant}/spaces.lock",
@@ -358,6 +373,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Ephemeral,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "tenants/{tenant}/environments",
@@ -368,6 +384,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // are frozen out of it, so it is never the record of the work.
         class: Class::Ephemeral,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "tenants/{tenant}/workspaces",
@@ -377,6 +394,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // Each non-built-in Agent's own working tree, bound to (space, Agent).
         class: Class::Workspace,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     // ---- every Agent home, one entry per subpath ----
     // Some server-side stores here are written under the server Core's own
@@ -434,6 +452,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "activity-log",
@@ -442,6 +461,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         // Which secrets exist per scope, never their values, so trust
@@ -452,6 +472,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: ".credential_index.lock",
@@ -460,6 +481,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "effects-index",
@@ -468,6 +490,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: Some(1),
         class: Class::Derived,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: true,
     },
     StateEntry {
         path: "effects-rollup",
@@ -476,6 +499,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Derived,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "budget-alerts",
@@ -484,6 +508,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "runs",
@@ -492,6 +517,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "effects",
@@ -500,6 +526,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "grants",
@@ -508,6 +535,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         // What erasing the whole install leaves: its signed receipts.
@@ -517,6 +545,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         // This machine's remote folder, its id and what it last synced.
@@ -528,6 +557,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Derived,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "key-rotations",
@@ -536,6 +566,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "proposal-reviews",
@@ -544,6 +575,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "erasures",
@@ -552,6 +584,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "lifecycle",
@@ -560,6 +593,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "artifacts",
@@ -568,6 +602,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "intake",
@@ -576,6 +611,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "cursors",
@@ -584,6 +620,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "cost-log",
@@ -592,6 +629,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "cost-reservations",
@@ -600,6 +638,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: Some(1),
         class: Class::Document,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "cost-log-rollup",
@@ -608,6 +647,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: Some(1),
         class: Class::Derived,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "routing-evidence",
@@ -616,6 +656,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "social-x-usage.json",
@@ -625,6 +666,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // The X preview's monthly request ceiling and the count spent so far.
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "inbox",
@@ -633,6 +675,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "operations",
@@ -641,6 +684,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "checkpoints",
@@ -649,6 +693,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "learning",
@@ -657,6 +702,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     // ---- config: additive-only across an update ----
     StateEntry {
@@ -666,6 +712,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: Some(1),
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "agent-network",
@@ -674,6 +721,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "desktop.json",
@@ -682,6 +730,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "tray.json",
@@ -690,6 +739,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Derived,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "trusted",
@@ -698,6 +748,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "output.toml",
@@ -706,6 +757,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "flows",
@@ -714,6 +766,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "flow-runs",
@@ -722,6 +775,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Record,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "skills",
@@ -730,6 +784,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     // ---- secrets ----
     // The encrypted-file credential backend (docs/design/44-shared-config.md,
@@ -748,6 +803,7 @@ pub const REGISTRY: &[StateEntry] = &[
         class: Class::Secret,
         // A rotated key is the operator's write, never an update's.
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
         // Only with `--include-secrets`, and then with a warning beside it.
     },
     StateEntry {
@@ -757,6 +813,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Secret,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     // The advisory cross-process lock guarding the two entries above
     // (see `EncryptedFileStore::with_lock` in vak-config). Contains no
@@ -770,6 +827,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Ephemeral,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     // ---- the Shared layer ----
     StateEntry {
@@ -781,6 +839,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // falls back to a file.
         class: Class::Secret,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: vak_config::scope::PROJECT_CONFIG,
@@ -789,6 +848,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: vak_config::scope::PROJECT_SKILLS,
@@ -799,6 +859,7 @@ pub const REGISTRY: &[StateEntry] = &[
         // Seeds advance only where the file still matches what we shipped;
         // an edited one is the operator's file permanently (doc 46 VII.4).
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: vak_config::scope::SEED_MANIFEST,
@@ -807,6 +868,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: Some(1),
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: vak_config::scope::PROJECT_PLUGINS,
@@ -815,6 +877,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: Some(1),
         class: Class::Desired,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     // ---- derived: rebuilt, never carried ----
     StateEntry {
@@ -824,6 +887,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Ephemeral,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "broker.sock",
@@ -832,6 +896,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Ephemeral,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "release",
@@ -840,6 +905,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: Some(2),
         class: Class::Derived,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "vak-home",
@@ -848,6 +914,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Workspace,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "",
@@ -857,6 +924,7 @@ pub const REGISTRY: &[StateEntry] = &[
         class: Class::Ephemeral,
         // Sockets and locks: recreated by the process that needs them.
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "",
@@ -866,6 +934,7 @@ pub const REGISTRY: &[StateEntry] = &[
         class: Class::Telemetry,
         // Upgrades append to a log; they never rewrite one.
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
     StateEntry {
         path: "",
@@ -874,12 +943,32 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         class: Class::Derived,
         on_purge: OnPurge::Remove,
+        rebuild_on_import: false,
     },
 ];
 
 /// Entries under one root.
 pub fn entries_for(root: Root) -> impl Iterator<Item = &'static StateEntry> {
     REGISTRY.iter().filter(move |e| e.root == root)
+}
+
+/// Discard projections bound to the previous records/keys after an explicit
+/// import. Machine-local configuration and other Derived state are preserved.
+/// Callers retire open projection handles before invoking this boundary.
+pub(crate) fn reset_import_projections(base: &Path) -> std::io::Result<()> {
+    vak_session::fence::check().map_err(std::io::Error::other)?;
+    for entry in entries_for(Root::Data).filter(|entry| entry.rebuild_on_import) {
+        for relative in entry.expand(base) {
+            let path = resolve(base, &relative);
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                std::fs::remove_dir_all(path)?;
+            } else {
+                std::fs::remove_file(path)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// How much of one Workspace entry a backup or a sync push carries: the
@@ -1102,6 +1191,38 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn import_resets_declared_projections_and_preserves_local_identity_and_records() {
+        let home = tempfile::tempdir().unwrap();
+        let kept = [
+            "sync/local.json",
+            "runs/record",
+            "agents/scout/cost-log/record",
+        ];
+        let reset = [
+            "tenants/local/catalog/catalog.db",
+            "cost-index/costs.db",
+            "agents/scout/cost-index/costs.db",
+            "effects-index/effects.db",
+        ];
+        for path in kept.iter().chain(reset.iter()) {
+            let file = home.path().join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, b"preserved record or disposable projection").unwrap();
+        }
+        reset_import_projections(home.path()).unwrap();
+        for path in kept {
+            assert!(home.path().join(path).exists(), "{path}");
+        }
+        for path in reset {
+            assert!(!home.path().join(path).exists(), "{path}");
+        }
+        for entry in REGISTRY.iter().filter(|entry| entry.rebuild_on_import) {
+            assert_eq!(entry.class, Class::Derived);
+            assert!(!entry.in_backup());
+        }
+    }
 
     #[test]
     fn a_directory_entry_covers_what_is_inside_it() {

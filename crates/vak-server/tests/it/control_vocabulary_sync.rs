@@ -1,63 +1,80 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! The desktop client strips inline runtime hints and context blocks from text
-//! it renders. It cannot import the Rust vocabulary, so this fails the build
-//! if its two lists differ from `vak_intent::control` — the drift that, with
-//! a marker added on one side only, once displaced every later chat turn.
-//! Exact set equality, not "contains": a stale extra entry is drift too.
+//! Control vocabulary crosses the client boundary as typed projection, not
+//! duplicated TypeScript marker lists. Exercise the secured HTTP boundary:
+//! every declared runtime control disappears, authored lookalikes survive,
+//! and transcript identities still match their presentation items.
 
-use std::collections::BTreeSet;
-use std::path::PathBuf;
+use axum::{body::Body, http::Request};
+use tower::ServiceExt;
+use vak_session::types::MessageRecord;
 
-fn client_source(file: &str) -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../vak-client-ui/src")
-        .join(file);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
-}
+#[tokio::test]
+async fn every_control_kind_is_filtered_before_the_client_without_stripping_authored_text() {
+    vak_config::paths::isolate_home_for_tests();
+    let work = tempfile::tempdir().unwrap();
+    let core = vak_core::Core::new(work.path().to_path_buf()).unwrap();
+    let mut log = core
+        .start_session_with_route("ollama".into(), "test-model".into())
+        .await
+        .unwrap();
+    let id = log.header().unwrap().session_id.clone();
+    let question = "Explain [fence-check] and <intent>an authored example</intent>.";
+    let answer = "An authored answer can mention [recovery] and completed.";
+    log.append_message(MessageRecord {
+        message: vak_llm::Message::user_text(question),
+        meta: None,
+    })
+    .unwrap();
+    for kind in vak_intent::control::ControlKind::ALL {
+        log.append_message(MessageRecord::control(
+            kind,
+            "opaque runtime-only directive",
+        ))
+        .unwrap();
+    }
+    log.append_message(MessageRecord {
+        message: vak_llm::Message::assistant(vec![vak_llm::types::ContentBlock::text(answer)]),
+        meta: None,
+    })
+    .unwrap();
+    drop(log);
+    core.catalog().unwrap().catch_up().unwrap();
 
-/// The string literals of `export const NAME = [ ... ]` in the client source.
-fn ts_string_list(source: &str, name: &str) -> BTreeSet<String> {
-    let start = source
-        .find(&format!("export const {name} = ["))
-        .unwrap_or_else(|| panic!("structured.ts must declare `export const {name} = [...]`"));
-    let body = &source[start..];
-    let open = body.find('[').unwrap() + 1;
-    // Not the first `]`: the marker literals themselves contain brackets.
-    let close = body[open..].find("] as const").unwrap() + open;
-    body[open..close]
-        .split(',')
-        .filter_map(|item| {
-            let item = item.trim();
-            item.strip_prefix('"')
-                .and_then(|rest| rest.strip_suffix('"'))
-                .map(str::to_string)
-        })
-        .collect()
-}
-
-#[test]
-fn the_clients_inline_hint_list_is_exactly_the_runtimes() {
-    let client = ts_string_list(&client_source("structured.ts"), "INLINE_HINT_MARKERS");
-    let runtime: BTreeSet<String> = vak_intent::control::inline_markers()
-        .into_iter()
-        .map(str::to_string)
-        .collect();
-    assert_eq!(
-        client, runtime,
-        "structured.ts INLINE_HINT_MARKERS differs from vak_intent::control::inline_markers()"
+    let (app, token) = vak_server::secured_router(core);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/sessions/{id}/snapshot"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let messages = snapshot["transcript"]["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    assert!(messages[0].to_string().contains(question));
+    assert!(messages[1].to_string().contains(answer));
+    assert!(
+        !snapshot
+            .to_string()
+            .contains("opaque runtime-only directive")
     );
-}
-
-#[test]
-fn the_clients_context_block_tags_are_exactly_the_runtimes() {
-    let client = ts_string_list(&client_source("structured.ts"), "CONTEXT_BLOCK_TAGS");
-    let runtime: BTreeSet<String> = vak_intent::control::CONTEXT_BLOCK_TAGS
-        .into_iter()
-        .map(str::to_string)
-        .collect();
-    assert_eq!(
-        client, runtime,
-        "structured.ts CONTEXT_BLOCK_TAGS differs from vak_intent::control::CONTEXT_BLOCK_TAGS"
-    );
+    assert_eq!(snapshot["cursor"], snapshot["presentation"]["cursor"]);
+    let items = snapshot["presentation"]["items"].as_array().unwrap();
+    for entry in snapshot["transcript"]["entries"].as_array().unwrap() {
+        assert!(
+            items
+                .iter()
+                .any(|item| item["provenance"]["entry_id"] == entry["entry_id"])
+        );
+    }
+    assert!(items.iter().any(|item| item["fallback_text"] == question));
+    assert!(items.iter().any(|item| item["fallback_text"] == answer));
 }

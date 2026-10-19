@@ -367,6 +367,7 @@ impl Posture {
 pub const DOMAIN_VOCABULARY: &[&str] = &[
     "live-data",
     "web",
+    "source-discovery",
     "filesystem",
     "code-exec",
     "memory",

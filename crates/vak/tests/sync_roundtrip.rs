@@ -71,6 +71,10 @@ async fn push_pull_roundtrip_identical_derive_messages() {
         "never-leaves-machine-a",
     )
     .unwrap();
+    // Session creation schedules asynchronous history indexing. Settle that
+    // fixture work before asserting an unchanged second push: creating its
+    // encrypted catalog scope is itself a legitimate change to synced keys.
+    core.catalog().unwrap().catch_up().unwrap();
     drop(core);
 
     let folder = remote.to_string_lossy().into_owned();
@@ -114,11 +118,13 @@ async fn push_pull_roundtrip_identical_derive_messages() {
     }
 
     // A second push with nothing changed copies nothing.
-    assert!(ok(&a(&["sync", "now"], None)).contains("0 files copied"));
+    let repeated = ok(&a(&["sync", "now"], None));
+    assert!(repeated.contains("0 files copied"), "{repeated}");
 
-    // Machine B without the keys: it pulls the bytes and reads nothing.
+    // Machine B without the keys cannot complete an import: rebuilding the
+    // encrypted catalog must fail closed, and no content becomes readable.
     ok(&b(&["sync", "setup", &folder], None));
-    ok(&b(&["sync", "pull"], None));
+    assert!(!b(&["sync", "pull"], None).status.success());
     let unread = b(&["data", "cat", &ids[0]], None);
     assert!(
         !String::from_utf8_lossy(&unread.stdout).contains("marigold"),

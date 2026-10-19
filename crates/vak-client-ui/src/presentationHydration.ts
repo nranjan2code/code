@@ -93,3 +93,33 @@ export function applyPresentationDelta(
       return current;
   }
 }
+
+/** Coordinates reads of one conversation. A fetched snapshot is not applied
+ * state: running views may defer it, and slower reads must not replace newer
+ * ones. Only the atomic view commit advances the applied fingerprint. */
+export class ConversationHydration {
+  private versions = new Map<string, number>();
+  private applied = new Map<string, string>();
+
+  begin(id: string): number {
+    const version = (this.versions.get(id) ?? 0) + 1;
+    this.versions.set(id, version);
+    return version;
+  }
+
+  current(id: string, version: number): boolean {
+    return this.versions.get(id) === version;
+  }
+
+  invalidate(id: string): void {
+    this.begin(id);
+    this.applied.delete(id);
+  }
+
+  commit(id: string, version: number, fingerprint: string, ready: boolean, apply: () => void): boolean {
+    if (!this.current(id, version) || !ready || this.applied.get(id) === fingerprint) return false;
+    apply();
+    this.applied.set(id, fingerprint);
+    return true;
+  }
+}

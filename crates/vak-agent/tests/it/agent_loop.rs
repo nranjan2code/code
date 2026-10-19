@@ -132,6 +132,7 @@ fn harness(responses: Vec<ScriptedResponse>, tools: Vec<Arc<dyn Tool>>) -> Harne
             system_prompt: "sys".into(),
             permission_mode: "full-access".into(),
             capabilities: vec![CapabilityDescriptor {
+                serves: Vec::new(),
                 name: "code-task".into(),
                 kind: CapabilityKind::Skill,
                 invocation: CapabilityInvocation::SkillLoader,

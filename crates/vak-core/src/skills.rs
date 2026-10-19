@@ -806,6 +806,7 @@ mod tests {
     #[test]
     fn prompt_lists_each_skill_once_without_leaking_paths_or_bodies() {
         let skill = vak_session::types::CapabilityDescriptor {
+            serves: Vec::new(),
             name: "code-task".into(),
             kind: vak_session::types::CapabilityKind::Skill,
             invocation: vak_session::types::CapabilityInvocation::ModelTool,

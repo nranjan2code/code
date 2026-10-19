@@ -104,6 +104,10 @@ the delivery plane's rule, store and forward:
   only then removes what the new index no longer names. Stopped at any
   point, by a crash or a cable, the remote still holds the previous whole
   copy.
+- After records and scope keys are imported, the shared restore/pull
+  boundary resets registry-declared encrypted projections before rebuilding.
+  Standby-created indexes cannot outlive the keys and records they indexed;
+  old catalog handles are retired and local sync identity remains local.
 - A pull checks every file against the index before it changes anything
   on the machine. One that is stopped part-way is finished by the next
   pull.

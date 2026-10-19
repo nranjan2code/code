@@ -1301,6 +1301,7 @@ fn router_with_state(state: AppState) -> Router {
             get(presentation_events_sse),
         )
         .route("/sessions/{id}/transcript", get(transcript))
+        .route("/sessions/{id}/snapshot", get(conversation_snapshot))
         .route("/sessions/{id}/transcript.md", get(transcript_markdown))
         .route("/sessions/{id}/context", get(context_links))
         .route(
@@ -3790,6 +3791,7 @@ fn participant_read_route_allowed(
     matches!(
         *rest,
         ["transcript"]
+            | ["snapshot"]
             | ["transcript.md"]
             | ["presentation"]
             | ["results", _]
@@ -8287,6 +8289,59 @@ async fn presentation_events_sse(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+/// One revision supplies both message identity and rendered output. A client
+/// must not pair independently sampled transcript and presentation reads.
+async fn conversation_snapshot(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let project = |core: &Core, session: &SessionLog, running: bool| {
+        let presentation = live_presentation_snapshot(core, &id, session);
+        Json(serde_json::json!({
+            "session_id": id,
+            "cursor": presentation.cursor,
+            "running": running,
+            "transcript": transcript_json(session),
+            "presentation": presentation,
+        }))
+        .into_response()
+    };
+    if let Some(handle) = state.get(&id) {
+        let guard = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(session) = guard.as_ref() {
+            return project(&handle.core, session, false);
+        }
+        // The runner owns the log. Both projections read the same committed
+        // prefix; live events continue updating the client until settlement.
+        return match open_historical_session(&state, &id) {
+            Some(session) => project(&handle.core, &session, true),
+            None => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": "run in progress"})),
+            )
+                .into_response(),
+        };
+    }
+    match open_historical_session(&state, &id) {
+        Some(session) => {
+            let core = session
+                .header()
+                .map(|header| resolve_core_for_header(&state, header))
+                .unwrap_or_else(|| state.active_core());
+            project(&core, &session, false)
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "unknown session"})),
+        )
+            .into_response(),
+    }
+}
+
 async fn transcript(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -8400,8 +8455,10 @@ mod active_transcript_tests {
 
         let app = Router::new()
             .route("/sessions/{id}/transcript", get(transcript))
+            .route("/sessions/{id}/snapshot", get(conversation_snapshot))
             .with_state(state);
         let response = app
+            .clone()
             .oneshot(
                 axum::http::Request::builder()
                     .uri(format!("/sessions/{id}/transcript"))
@@ -8420,6 +8477,36 @@ mod active_transcript_tests {
         assert!(messages[0].to_string().contains("Earlier question"));
         assert!(messages[1].to_string().contains("Earlier answer"));
         assert!(messages[2].to_string().contains("Current question"));
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/sessions/{id}/snapshot"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(snapshot["running"], true);
+        let user = snapshot["transcript"]["entries"]
+            .as_array()
+            .unwrap()
+            .first()
+            .unwrap()["entry_id"]
+            .as_str()
+            .unwrap();
+        assert!(
+            snapshot["presentation"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["provenance"]["entry_id"] == user)
+        );
+        assert_eq!(snapshot["cursor"], snapshot["presentation"]["cursor"]);
     }
 }
 
@@ -26887,6 +26974,7 @@ mod sandbox_promotion_tests {
                 "/sessions/{id}/run",
                 post(|| async { StatusCode::NO_CONTENT }),
             )
+            .route("/sessions/{id}/snapshot", get(conversation_snapshot))
             .with_state(state.clone())
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
@@ -26921,6 +27009,46 @@ mod sandbox_promotion_tests {
                 .unwrap()
                 .status(),
             StatusCode::OK
+        );
+        let response = app
+            .clone()
+            .oneshot(request(
+                axum::http::Method::GET,
+                "/sessions/session-1/snapshot",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(snapshot["session_id"], "session-1");
+        assert_eq!(snapshot["presentation"]["session_id"], "session-1");
+        assert!(snapshot["transcript"]["messages"].is_array());
+        assert_eq!(snapshot["cursor"], snapshot["presentation"]["cursor"]);
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    axum::http::Method::GET,
+                    "/sessions/session-2/snapshot"
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let wrong = axum::http::Request::builder()
+            .uri("/sessions/session-1/snapshot")
+            .header(
+                axum::http::header::AUTHORIZATION,
+                "Bearer participant-wrong-audience",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(wrong).await.unwrap().status(),
+            StatusCode::FORBIDDEN
         );
         let wrong_audience = axum::http::Request::builder()
             .uri("/sessions/session-1/transcript")
@@ -26959,6 +27087,17 @@ mod sandbox_promotion_tests {
             None,
         )
         .unwrap();
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    axum::http::Method::GET,
+                    "/sessions/session-1/snapshot"
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
         assert_eq!(
             app.oneshot(request(
                 axum::http::Method::GET,

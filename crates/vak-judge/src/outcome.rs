@@ -405,23 +405,15 @@ pub fn evaluate_requirements(
                     RequirementStatus::Unmet,
                     "no response content was produced".into(),
                 ),
-                RequirementKind::Evidence if evidence_state == EvidenceState::Fresh => (
-                    RequirementStatus::Unknown,
-                    "successful retrieval receipt exists; support and freshness still require evaluation".into(),
-                ),
-                RequirementKind::Evidence if evidence_state == EvidenceState::Stale => (
-                    RequirementStatus::Unknown,
-                    "evidence receipt exists but is stale for this request".into(),
-                ),
-                RequirementKind::Evidence if !facts.evidence_card => (
-                    RequirementStatus::Unmet,
-                    "no retrieval receipt or evidence card was recorded for this turn".into(),
-                ),
-                RequirementKind::Evidence => (
-                    RequirementStatus::Unknown,
-                    "an evidence card exists, but support and freshness were not established"
-                        .into(),
-                ),
+                RequirementKind::Evidence => {
+                    let (status, observation) = match evidence_state {
+                        EvidenceState::Fresh => (RequirementStatus::Unknown, "successful retrieval receipt exists; support and freshness still require evaluation"),
+                        EvidenceState::Stale => (RequirementStatus::Unknown, "evidence receipt exists but is stale for this request"),
+                        _ if !facts.evidence_card => (RequirementStatus::Unmet, "no retrieval receipt or evidence card was recorded for this turn"),
+                        _ => (RequirementStatus::Unknown, "an evidence card exists, but support and freshness were not established"),
+                    };
+                    (status, format!("{}: {observation}", requirement.description))
+                },
                 RequirementKind::Constraint => (
                     RequirementStatus::Unknown,
                     "constraint applicability requires a linked result".into(),

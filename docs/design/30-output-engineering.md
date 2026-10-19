@@ -484,9 +484,10 @@ Consequences, all enforced by tests:
   not create a second workspace artifact just to make that same answer
   shareable. A file is produced when the request names a file, document, or
   saved artifact as a deliverable.
-- **The TypeScript copy cannot drift.** The client keeps `INLINE_HINT_MARKERS`
-  and `CONTEXT_BLOCK_TAGS`; `vak-server/tests/it/control_vocabulary_sync.rs`
-  fails the build unless they equal the Rust lists exactly.
+- **Typed projection owns control filtering.** Clients keep no marker lists
+  and preserve authored examples. `vak-server/tests/it/control_vocabulary_sync.rs`
+  drives the secured snapshot route for every runtime control kind, checking
+  that authored text and durable transcript/presentation identities survive.
 
 ### What is typed, and what is still judgement
 

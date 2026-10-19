@@ -3628,7 +3628,11 @@ impl Core {
         // admitted tool declares it (`Tool::presents_cards`,
         // `Tool::prompt_contract`).
         let runtime = prompts::RuntimeSections {
-            capability_contract: seed.capability_contract,
+            capability_contract: format!(
+                "{}\n{}",
+                seed.capability_contract,
+                capability::report::source_discovery_section(capabilities)
+            ),
             presentation_contract: if has_cards {
                 seed.presentation_contract
             } else {
@@ -7928,6 +7932,10 @@ impl Core {
             let mut delivered = false;
             let mut planned_file = false;
             let mut planned_cards = 0usize;
+            let mut proposed_plans = std::collections::HashMap::new();
+            let mut accepted_plan = Vec::new();
+            let mut source_calls = std::collections::HashSet::new();
+            let mut retrieved_at = None;
             let mut failures = vak_judge::call::Failures::default();
             let chain = session.chain_to_root();
             // Where each failed call's fault lay, as the loop recorded it.
@@ -7958,6 +7966,10 @@ impl Core {
                         delivered = false;
                         planned_file = false;
                         planned_cards = 0;
+                        proposed_plans.clear();
+                        accepted_plan.clear();
+                        source_calls.clear();
+                        retrieved_at = None;
                         failures.clear();
                     }
                     for block in &record.message.content {
@@ -7972,15 +7984,13 @@ impl Core {
                                 if let Some(plan) =
                                     delivering.get(called).and_then(|tool| tool.planned(input))
                                 {
-                                    planned_file |= plan.iter().any(|deliverable| {
-                                        deliverable.form == vak_intent::DeliverableForm::File
-                                    });
-                                    planned_cards = plan
-                                        .iter()
-                                        .filter(|deliverable| {
-                                            deliverable.form == vak_intent::DeliverableForm::Card
-                                        })
-                                        .count();
+                                    proposed_plans.insert(id.clone(), plan);
+                                }
+                                if delivering
+                                    .get(called)
+                                    .is_some_and(|tool| tool.retrieves_evidence(input))
+                                {
+                                    source_calls.insert(id.clone());
                                 }
                                 tool_calls.insert(id.clone(), delivers);
                                 // A card that was not shown changed nothing
@@ -8010,6 +8020,21 @@ impl Core {
                                 ..
                             } if tool_calls.contains_key(tool_use_id) => {
                                 successful_receipts.insert(tool_use_id.clone());
+                                if let Some(plan) = proposed_plans.remove(tool_use_id) {
+                                    planned_file = plan
+                                        .iter()
+                                        .any(|part| part.form == vak_intent::DeliverableForm::File);
+                                    planned_cards = plan
+                                        .iter()
+                                        .filter(|part| {
+                                            part.form == vak_intent::DeliverableForm::Card
+                                        })
+                                        .count();
+                                    accepted_plan = plan;
+                                }
+                                if source_calls.contains(tool_use_id) {
+                                    retrieved_at = Some(entry.ts);
+                                }
                                 failures.succeeded(tool_use_id);
                                 delivered |= tool_calls.get(tool_use_id).copied().unwrap_or(false);
                             }
@@ -8031,13 +8056,17 @@ impl Core {
                     }
                 }
             }
-            let evidence_state = session
-                .successful_tool_receipts_for_latest_turn()
-                .last()
-                .map_or(vak_intent::EvidenceState::None, |(_, recorded_at)| {
+            outcome_spec
+                .requirements
+                .extend(vak_judge::plan::evidence_requirements(
+                    &accepted_plan,
+                    retrieved_at.is_some(),
+                ));
+            let evidence_state =
+                retrieved_at.map_or(vak_intent::EvidenceState::None, |recorded_at| {
                     vak_judge::outcome::evidence_state_from_age(
                         chrono::Utc::now(),
-                        *recorded_at,
+                        recorded_at,
                         chrono::Duration::seconds(
                             outcome_spec.evidence_max_age_secs.unwrap_or(86_400),
                         ),
@@ -9219,6 +9248,7 @@ mod channel_mcp_network_tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         let tool = |name: &str| crate::CapabilityDescriptor {
+            serves: Vec::new(),
             name: name.into(),
             kind: crate::CapabilityKind::Tool,
             invocation: vak_session::types::CapabilityInvocation::ModelTool,
@@ -9258,6 +9288,7 @@ mod channel_mcp_network_tests {
             .unwrap()
             .with_surface(crate::Surface::Desktop);
         let tool = |name: &str| crate::CapabilityDescriptor {
+            serves: Vec::new(),
             name: name.into(),
             kind: crate::CapabilityKind::Tool,
             invocation: vak_session::types::CapabilityInvocation::ModelTool,
@@ -10261,6 +10292,7 @@ mod mcp_section_tests {
 
     fn server(name: &str, configuration: serde_json::Value) -> CapabilityDescriptor {
         CapabilityDescriptor {
+            serves: Vec::new(),
             name: name.into(),
             kind: CapabilityKind::McpServer,
             invocation: CapabilityInvocation::ModelTool,

@@ -187,6 +187,49 @@ pub fn standing_section(set: &CapabilitySet, delta: Option<&CapabilityDelta>) ->
     out
 }
 
+/// State source discovery from the admitted declarations, never tool names or
+/// network reach. Undeclared capabilities remain unknown rather than absent.
+pub fn source_discovery_section(capabilities: &[vak_session::CapabilityDescriptor]) -> String {
+    use vak_session::types::CapabilityKind;
+    let callable = capabilities.iter().filter(|capability| {
+        matches!(
+            capability.kind,
+            CapabilityKind::Tool | CapabilityKind::McpServer
+        )
+    });
+    let mut declared = Vec::new();
+    let mut unknown = false;
+    for capability in callable {
+        // Native tools opt in through their declared domains. An external
+        // server with no declaration may still offer source discovery.
+        unknown |= capability.kind == CapabilityKind::McpServer && capability.serves.is_empty();
+        if capability
+            .serves
+            .iter()
+            .any(|domain| super::Domain::parse(domain) == super::Domain::SourceDiscovery)
+        {
+            declared.push(format!(
+                "{} `{}`",
+                match capability.kind {
+                    CapabilityKind::McpServer => "MCP server",
+                    _ => "tool",
+                },
+                capability.name
+            ));
+        }
+    }
+    if !declared.is_empty() {
+        format!(
+            "Source discovery for this turn: {}. Discover candidate sources with these capabilities, then read and evaluate them; search results alone do not establish a claim.\n",
+            declared.join(", ")
+        )
+    } else if unknown {
+        "Source discovery for this turn: no admitted capability declares it; some tools have undeclared domains. Inspect their published descriptions before claiming search is available or unavailable. Fetching a URL does not itself provide source discovery.\n".into()
+    } else {
+        "Source discovery for this turn: unavailable in the admitted capabilities. Explain this limit and ask for sources or a source-discovery connection when it prevents answering; repeated guessed URLs cannot establish exhaustive coverage. Known sources can still be read.\n".into()
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -225,9 +268,22 @@ mod tests {
         }
     }
 
-    /// A server whose last attempt failed stays callable (the pool retries
-    /// on the next demand), so the operator sees the failure and its fix
-    /// without the model being told the server is gone.
+    #[test]
+    fn source_discovery_is_declared_not_guessed_from_names_or_web_reach() {
+        let mut fetch = failing_server("search-by-name-only");
+        fetch.serves = Serves::from_labels(&["web"]);
+        let mut descriptor = fetch.to_descriptor();
+        assert!(source_discovery_section(&[descriptor.clone()]).contains("unavailable in"));
+        descriptor.serves.clear();
+        assert!(source_discovery_section(&[descriptor.clone()]).contains("undeclared domains"));
+        descriptor.name = "arbitrary-provider-name".into();
+        descriptor.serves = vec!["source-discovery".into()];
+        let contract = source_discovery_section(&[descriptor]);
+        assert!(contract.contains("arbitrary-provider-name"));
+        assert!(!contract.contains("unavailable"));
+    }
+
+    /// A failed server stays callable while exposing its observed failure.
     #[test]
     fn the_operator_sees_an_observed_mcp_failure_and_its_fix() {
         let set = CapabilitySet::new(

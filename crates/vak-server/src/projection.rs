@@ -23,45 +23,167 @@ fn status_for_completion(completion: Option<&str>) -> OutputStatus {
     }
 }
 
+/// Outcome fields stay separate from authored evaluation text. Delimiters in
+/// a question or a reason must never change completion, ids or receipt links.
+#[derive(Debug, Clone)]
+struct TurnEvaluation {
+    status: String,
+    evaluation: String,
+    receipts: Vec<String>,
+    completion: Option<String>,
+    requirement_ids: Vec<String>,
+}
+
+impl TurnEvaluation {
+    fn from_activity(activity: &vak_session::ActivityRecord) -> Self {
+        let data = &activity.data;
+        let evaluation = data
+            .get("evaluation")
+            .cloned()
+            .unwrap_or_else(|| "[]".into());
+        let decoded = serde_json::from_str::<Vec<vak_intent::RequirementEvaluation>>(&evaluation);
+        let requirement_ids = decoded
+            .as_ref()
+            .map(|rows| rows.iter().map(|row| row.requirement_id.clone()).collect())
+            .unwrap_or_default();
+        Self {
+            status: data
+                .get("status")
+                .cloned()
+                .unwrap_or_else(|| "unknown".into()),
+            evaluation,
+            receipts: data
+                .get("evidence_receipts")
+                .into_iter()
+                .flat_map(|ids| ids.split(','))
+                .filter(|id| !id.is_empty())
+                .map(str::to_string)
+                .collect(),
+            completion: if decoded.is_err() {
+                Some("unknown".into())
+            } else {
+                data.get("completion").cloned()
+            },
+            requirement_ids,
+        }
+    }
+}
+
 fn result_outcome(
     result_id: impl Into<String>,
     status: OutputStatus,
     admitted: Option<&vak_intent::OutcomeSpec>,
-    evaluation: Option<&str>,
+    evaluation: Option<&TurnEvaluation>,
     evidence_state: Option<&String>,
     human_review: Option<&String>,
 ) -> ResultOutcome {
-    let completion = evaluation
-        .and_then(|value| value.split('|').nth(3))
-        .map(str::to_owned);
+    let completion = evaluation.and_then(|value| value.completion.clone());
     ResultOutcome {
         result_id: result_id.into(),
         status,
         completion,
         evidence_state: evidence_state.cloned(),
-        requirement_ids: admitted
-            .map(|outcome| {
-                outcome
-                    .requirements
-                    .iter()
-                    .map(|item| item.id.clone())
-                    .collect()
-            })
-            .unwrap_or_default(),
+        requirement_ids: evaluation
+            .map(|value| value.requirement_ids.clone())
+            .filter(|ids| !ids.is_empty())
+            .unwrap_or_else(|| {
+                admitted
+                    .map(|outcome| {
+                        outcome
+                            .requirements
+                            .iter()
+                            .map(|item| item.id.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }),
         evidence_receipt_ids: evaluation
-            .and_then(|value| value.split('|').nth(2))
-            .map(|value| {
-                value
-                    .split(',')
-                    .filter(|item| !item.is_empty())
-                    .map(str::to_owned)
-                    .collect()
-            })
+            .map(|value| value.receipts.clone())
             .unwrap_or_default(),
         evidence: Vec::new(),
         human_review: human_review.cloned(),
     }
 }
+/// Outcome belongs to answer material, including answers made only of cards.
+/// User prompts are never a result anchor. Every form reads the same verdict.
+fn apply_turn_evaluations(
+    timeline: &mut OutputTimeline,
+    evaluations: &HashMap<String, TurnEvaluation>,
+    specs: &HashMap<String, vak_intent::OutcomeSpec>,
+    evidence: &HashMap<String, String>,
+    review: &HashMap<String, String>,
+) {
+    let is_material = |item: &OutputItem| {
+        item.role != OutputRole::User
+            && (item.kind == OutputKind::Card
+                || item.role == OutputRole::Assistant
+                    && matches!(
+                        item.content,
+                        OutputContent::Document { .. } | OutputContent::Adaptive { .. }
+                    ))
+    };
+    let mut directives = HashMap::new();
+    let mut results = HashMap::new();
+    for item in &timeline.items {
+        if item.role == OutputRole::User {
+            if let Some(id) = item
+                .provenance
+                .as_ref()
+                .and_then(|provenance| provenance.entry_id.as_ref())
+            {
+                directives.insert(item.turn_id.clone(), id.clone());
+            }
+        } else if is_material(item) {
+            if let Some(outcome) = &item.outcome {
+                results.insert(item.turn_id.clone(), outcome.result_id.clone());
+            } else {
+                results
+                    .entry(item.turn_id.clone())
+                    .or_insert_with(|| item.id.clone());
+            }
+        }
+    }
+    for item in &mut timeline.items {
+        if item.role == OutputRole::User {
+            item.outcome = None;
+            item.status = OutputStatus::Succeeded;
+            if let OutputContent::Document { document } = &mut item.content {
+                document
+                    .metadata
+                    .retain(|key, _| !key.starts_with("outcome_"));
+            }
+            continue;
+        }
+        if !is_material(item) {
+            continue;
+        }
+        let Some(directive) = directives.get(&item.turn_id) else {
+            continue;
+        };
+        let Some(evaluation) = evaluations.get(directive) else {
+            continue;
+        };
+        let Some(result_id) = results.get(&item.turn_id) else {
+            continue;
+        };
+        let status = status_for_completion(evaluation.completion.as_deref());
+        let id = item
+            .outcome
+            .as_ref()
+            .map(|value| value.result_id.clone())
+            .unwrap_or_else(|| result_id.clone());
+        item.outcome = Some(result_outcome(
+            id,
+            status,
+            specs.get(directive),
+            Some(evaluation),
+            evidence.get(directive),
+            review.get(directive),
+        ));
+        item.status = status;
+    }
+}
+
 use vak_llm::{ContentBlock, Role};
 use vak_session::{ActivityKind, ActivityStatus, EntryPayload, SessionLog};
 
@@ -386,7 +508,7 @@ pub(crate) fn append_sandbox_artifacts(
     let result_by_turn: HashMap<String, ResultOutcome> = timeline
         .items
         .iter()
-        .filter(|item| item.role == OutputRole::Assistant)
+        .filter(|item| item.role != OutputRole::User)
         .filter_map(|item| {
             item.outcome
                 .clone()
@@ -805,7 +927,7 @@ fn snapshot_inner(
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
     let mut tool_inputs: HashMap<String, (String, serde_json::Value)> = HashMap::new();
     let mut turn_outcomes: HashMap<String, vak_intent::OutcomeSpec> = HashMap::new();
-    let mut turn_evaluations: HashMap<String, String> = HashMap::new();
+    let mut turn_evaluations: HashMap<String, TurnEvaluation> = HashMap::new();
     let mut turn_evidence_state: HashMap<String, String> = HashMap::new();
     let mut turn_human_review: HashMap<String, String> = HashMap::new();
     let mut turn_review_verdict: HashMap<String, String> = HashMap::new();
@@ -879,45 +1001,12 @@ fn snapshot_inner(
                     && activity.label == "Outcome evaluation" =>
             {
                 if let Some(turn) = entry.at_turn.clone() {
-                    if let Some(status) = activity.data.get("status") {
-                        turn_evaluations.insert(turn.clone(), status.clone());
-                    }
+                    turn_evaluations.insert(turn.clone(), TurnEvaluation::from_activity(activity));
                     if let Some(evidence_state) = activity.data.get("evidence_state") {
                         turn_evidence_state.insert(turn.clone(), evidence_state.clone());
                     }
                     if let Some(review) = activity.data.get("human_review") {
                         turn_human_review.insert(turn.clone(), review.clone());
-                    }
-                    if let Some(evaluation) = activity.data.get("evaluation") {
-                        let evaluation_status = match activity.data.get("status") {
-                            Some(value) => value.as_str(),
-                            None => "unknown",
-                        };
-                        turn_evaluations.insert(
-                            turn.clone(),
-                            format!("{}|{}", evaluation_status, evaluation),
-                        );
-                    }
-                    if let Some(receipts) = activity.data.get("evidence_receipts") {
-                        let evaluation_status = activity
-                            .data
-                            .get("status")
-                            .map_or("unknown", |value| value.as_str());
-                        let evaluation = activity
-                            .data
-                            .get("evaluation")
-                            .map_or("[]", |value| value.as_str());
-                        let completion = activity
-                            .data
-                            .get("completion")
-                            .map_or("unknown", |value| value.as_str());
-                        turn_evaluations.insert(
-                            turn.clone(),
-                            format!(
-                                "{}|{}|{}|{}",
-                                evaluation_status, evaluation, receipts, completion
-                            ),
-                        );
                     }
                 }
             }
@@ -1125,7 +1214,7 @@ fn snapshot_inner(
                             let output_status = status_for_completion(
                                 turn_evaluations
                                     .get(&current_turn)
-                                    .and_then(|value| value.split('|').nth(3)),
+                                    .and_then(|value| value.completion.as_deref()),
                             );
                             timeline.items.push(OutputItem {
                                 card_state: None,
@@ -1215,38 +1304,32 @@ fn snapshot_inner(
                                                     .join(","),
                                             );
                                         }
-                                        if let Some(status) = turn_evaluations.get(&current_turn) {
-                                            let mut parts = status.splitn(2, '|');
-                                            let outcome_status =
-                                                parts.next().map_or("unknown", |value| value);
+                                        if let Some(evaluation) =
+                                            turn_evaluations.get(&current_turn)
+                                        {
                                             document.metadata.insert(
                                                 "outcome_status".into(),
-                                                outcome_status.into(),
+                                                evaluation.status.clone(),
                                             );
-                                            if let Some(evaluation) = parts.next() {
-                                                let evaluation_json = evaluation
-                                                    .split('|')
-                                                    .next()
-                                                    .map_or("[]", |value| value);
+                                            document.metadata.insert(
+                                                "outcome_evaluation".into(),
+                                                evaluation.evaluation.clone(),
+                                            );
+                                            document.metadata.insert(
+                                                "outcome_evidence_receipts".into(),
+                                                evaluation.receipts.join(","),
+                                            );
+                                            if !evaluation.requirement_ids.is_empty() {
                                                 document.metadata.insert(
-                                                    "outcome_evaluation".into(),
-                                                    evaluation_json.into(),
+                                                    "outcome_requirements".into(),
+                                                    evaluation.requirement_ids.join(","),
                                                 );
-                                                if let Some(receipts) = evaluation.split('|').nth(2)
-                                                {
-                                                    document.metadata.insert(
-                                                        "outcome_evidence_receipts".into(),
-                                                        receipts.into(),
-                                                    );
-                                                }
-                                                if let Some(completion) =
-                                                    evaluation.split('|').nth(3)
-                                                {
-                                                    document.metadata.insert(
-                                                        "outcome_completion".into(),
-                                                        completion.into(),
-                                                    );
-                                                }
+                                            }
+                                            if let Some(completion) = &evaluation.completion {
+                                                document.metadata.insert(
+                                                    "outcome_completion".into(),
+                                                    completion.clone(),
+                                                );
                                             }
                                         }
                                         if let Some(evidence_state) =
@@ -1278,7 +1361,7 @@ fn snapshot_inner(
                                     format!("{}-text-{index}", entry.id),
                                     output_status,
                                     projected_outcome.as_ref(),
-                                    turn_evaluations.get(&current_turn).map(String::as_str),
+                                    turn_evaluations.get(&current_turn),
                                     turn_evidence_state.get(&current_turn),
                                     turn_human_review.get(&current_turn),
                                 )),
@@ -1709,6 +1792,13 @@ fn snapshot_inner(
             item.card_state = Some(state);
         }
     }
+    apply_turn_evaluations(
+        &mut timeline,
+        &turn_evaluations,
+        &turn_outcomes,
+        &turn_evidence_state,
+        &turn_human_review,
+    );
     timeline.answers = answer_outlines(session, &timeline.items);
     timeline.cursor = chain_cursor(session);
     log_turns_with_no_visible_answer(session_id, &timeline);
@@ -6213,5 +6303,83 @@ mod tests {
             })
             .collect();
         assert_eq!(texts, vec!["what is the weather", "Sunny, source: NWS."]);
+    }
+}
+
+#[cfg(test)]
+mod outcome_field_tests {
+    use super::*;
+
+    #[test]
+    fn card_only_answers_carry_the_same_evidence_verdict_and_users_never_do() {
+        let mut timeline: OutputTimeline = serde_json::from_value(serde_json::json!({
+            "schema_version": 2, "session_id": "s", "diagnostics": [], "items": [
+                {"id":"user", "turn_id":"turn-1", "role":"user", "kind":"message", "status":"succeeded", "timestamp":"now", "provenance":{"entry_id":"directive"}, "content":{"type":"progress","label":"question"}, "actions":[], "fallback_text":"question"},
+                {"id":"card", "turn_id":"turn-1", "role":"tool", "kind":"card", "status":"succeeded", "timestamp":"now", "content":{"type":"progress","label":"answer"}, "actions":[], "fallback_text":"answer"}
+            ]
+        })).unwrap();
+        let evaluations = HashMap::from([(
+            "directive".into(),
+            TurnEvaluation {
+                status: "produced".into(),
+                evaluation: "[]".into(),
+                completion: Some("unknown".into()),
+                receipts: vec!["source-call".into()],
+                requirement_ids: vec!["question-1".into()],
+            },
+        )]);
+        apply_turn_evaluations(
+            &mut timeline,
+            &evaluations,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        assert!(timeline.items[0].outcome.is_none());
+        let result = timeline.items[1].outcome.as_ref().unwrap();
+        assert_eq!(result.completion.as_deref(), Some("unknown"));
+        assert_eq!(result.requirement_ids, vec!["question-1"]);
+        assert_eq!(result.evidence_receipt_ids, vec!["source-call"]);
+        assert_eq!(timeline.items[1].status, OutputStatus::Partial);
+    }
+
+    #[test]
+    fn authored_questions_cannot_change_completion_or_receipt_links() {
+        let evaluation = serde_json::json!([{"requirement_id":"plan-evidence-1-1","status":"unknown","reason":"Does A | B hold? Neither is established | complete"}]).to_string();
+        let activity = vak_session::ActivityRecord {
+            activity_id: "evaluation".into(),
+            kind: ActivityKind::Diagnostic,
+            status: vak_session::ActivityStatus::Succeeded,
+            label: "Outcome evaluation".into(),
+            detail: None,
+            data: BTreeMap::from([
+                ("status".into(), "produced".into()),
+                ("evaluation".into(), evaluation.clone()),
+                ("evidence_receipts".into(), "call-a,call-b".into()),
+                ("completion".into(), "unknown".into()),
+            ]),
+        };
+        let projected = TurnEvaluation::from_activity(&activity);
+        let result = result_outcome(
+            "result",
+            OutputStatus::Partial,
+            None,
+            Some(&projected),
+            None,
+            None,
+        );
+        assert_eq!(result.completion.as_deref(), Some("unknown"));
+        assert_eq!(result.requirement_ids, vec!["plan-evidence-1-1"]);
+        assert_eq!(result.evidence_receipt_ids, vec!["call-a", "call-b"]);
+        assert_eq!(projected.evaluation, evaluation);
+        let mut corrupt = activity;
+        corrupt.data.insert("evaluation".into(), "not JSON".into());
+        corrupt.data.insert("completion".into(), "complete".into());
+        assert_eq!(
+            TurnEvaluation::from_activity(&corrupt)
+                .completion
+                .as_deref(),
+            Some("unknown")
+        );
     }
 }

@@ -697,3 +697,20 @@ fn a_conversation_is_named_by_its_first_words() {
         .unwrap();
     assert_eq!(node.title.as_deref(), Some("Split a dinner bill"));
 }
+
+#[test]
+fn a_retired_import_handle_cannot_read_or_write_the_previous_catalog() {
+    let (_guard, _cwd, data, _folder) = home();
+    let path = data.join("retired-catalog/catalog.db");
+    let catalog = Catalog::open(&path, &data).unwrap();
+    catalog.catch_up().unwrap();
+    catalog.retire_for_import().unwrap();
+    assert!(matches!(catalog.catch_up(), Err(CatalogError::Protection)));
+    assert!(matches!(
+        catalog.open_node("anything"),
+        Err(CatalogError::Protection)
+    ));
+    // Closing the retired database permits the explicit reset/reopen path.
+    remove_db(&path).unwrap();
+    Catalog::open(&path, &data).unwrap().catch_up().unwrap();
+}

@@ -31,6 +31,9 @@ pub enum CapabilityInvocation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityDescriptor {
+    /// Provider-declared work domains, frozen with this turn's interface.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub serves: Vec<String>,
     pub name: String,
     pub kind: CapabilityKind,
     pub invocation: CapabilityInvocation,

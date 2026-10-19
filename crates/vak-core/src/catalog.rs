@@ -32,6 +32,27 @@ impl Core {
         Ok(catalog)
     }
 
+    /// Retire cached handles after restore/pull replaces records and keys,
+    /// before resetting projections. Old handles cannot be queried.
+    pub(crate) fn catalog_after_import(&self) -> Result<Arc<Catalog>, CoreError> {
+        let data = self.shared_scope().into_root();
+        let path = vak_config::paths::tenant_home_at(&data, vak_config::paths::LOCAL_TENANT)
+            .join(vak_catalog::DIR_NAME)
+            .join(vak_catalog::FILE_NAME);
+        let mut open = open_catalogs()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(catalog) = open.remove(&path).and_then(|weak| weak.upgrade()) {
+            catalog.retire_for_import()?;
+        }
+        // Keep the registry locked through reset and reopen, so another Core
+        // cannot publish a handle on the previous database in between.
+        crate::state::reset_import_projections(&data).map_err(vak_catalog::CatalogError::from)?;
+        let catalog = Arc::new(Catalog::open(&path, &data)?);
+        open.insert(path, Arc::downgrade(&catalog));
+        Ok(catalog)
+    }
+
     /// What this Core may read through the catalog: its Agent's things in
     /// its conversation audience when it serves one, everything otherwise,
     /// and never a session in the trash (invariant 37) or an intake item

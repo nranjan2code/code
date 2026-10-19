@@ -237,6 +237,7 @@ mod tests {
     #[test]
     fn invocation_expands_only_admitted_commands() {
         let commands = vec![vak_session::CapabilityDescriptor {
+            serves: Vec::new(),
             name: "review".into(),
             kind: vak_session::CapabilityKind::Command,
             invocation: vak_session::CapabilityInvocation::UserCommand,

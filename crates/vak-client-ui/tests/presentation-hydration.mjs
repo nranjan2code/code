@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { applyPresentationDelta, mergePresentationSnapshot } from "../src/presentationHydration.ts";
+import { ConversationHydration, applyPresentationDelta, mergePresentationSnapshot } from "../src/presentationHydration.ts";
 
 const settled = {
   schema_version: 2,
@@ -79,3 +79,30 @@ streaming = applyPresentationDelta(streaming, { type: "text_delta", item_id: "li
 assert.equal(streaming.items[0].fallback_text, "Exact snapshot!");
 assert.equal(mergePresentationSnapshot(streaming, durable).items.length, 0);
 console.log("presentation delta hydration ok");
+
+// The same durable read first arrives while the stream owns the view, then
+// after settlement. Deferred reads must not poison the applied-state cache.
+const coordinator = new ConversationHydration();
+let applied = [];
+const apply = (value) => () => applied.push(value);
+coordinator.commit("s", coordinator.begin("s"), "saved-cards", false, apply("running"));
+coordinator.commit("s", coordinator.begin("s"), "saved-cards", true, apply("settled"));
+coordinator.commit("s", coordinator.begin("s"), "saved-cards", true, apply("duplicate"));
+assert.deepEqual(applied, ["settled"]);
+// A slow pre-admission response cannot overwrite a newly sent message.
+const beforeAdmission = coordinator.begin("s");
+coordinator.invalidate("s");
+assert.equal(coordinator.commit("s", beforeAdmission, "old", true, apply("stale")), false);
+const slow = coordinator.begin("s");
+const fast = coordinator.begin("s");
+coordinator.commit("s", fast, "new", true, apply("new"));
+coordinator.commit("s", slow, "old", true, apply("old"));
+assert.deepEqual(applied, ["settled", "new"]);
+// An optimistic mutation requires applying the same server content again.
+coordinator.invalidate("s");
+coordinator.commit("s", coordinator.begin("s"), "new", true, apply("reconciled"));
+assert.deepEqual(applied, ["settled", "new", "reconciled"]);
+// Exceptions never acknowledge a failed view commit.
+const broken = coordinator.begin("other");
+assert.throws(() => coordinator.commit("other", broken, "data", true, () => { throw Error("apply failed"); }));
+assert.equal(coordinator.commit("other", coordinator.begin("other"), "data", true, apply("recovered")), true);

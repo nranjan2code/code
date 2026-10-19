@@ -558,6 +558,17 @@ pub trait Tool: Send + Sync {
         !self.presents_cards()
     }
 
+    /// Whether a successful call retrieves source material. This is a receipt
+    /// of retrieval, never a verdict on relevance, freshness or claim support.
+    /// Plans, displays, discovery of tools and commands alone are not sources.
+    fn retrieves_evidence(&self, args: &Value) -> bool {
+        self.looks_up()
+            && (self.fetched(args).is_some()
+                || matches!(self.file_access(args), Some((FileAccess::Read, _)))
+                || self.serves().contains(&"source-discovery")
+                || self.permission().reach == vak_permission::Reach::Integration)
+    }
+
     /// The deliverables a call with these arguments declares, for the tool
     /// a model plans its answer with
     /// (docs/design/86-model-plans-runtime-checks.md §2.1).

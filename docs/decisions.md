@@ -1,5 +1,11 @@
 # Decisions
 
+- 2026-10-19: For the requested next release, fix the sync takeover/catalog
+  encryption blocker and require the full gate to pass; do not reuse the
+  previous release's waiver. The shared import boundary resets encrypted
+  projections declared by the state registry; see
+  [data architecture](design/73-data-architecture-and-lifecycle.md).
+
 ## 2026-10-18 — uncertain charges and shared call limits
 
 The maintainer chose provider-verified actual cost for crash reservations;

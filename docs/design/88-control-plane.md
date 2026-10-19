@@ -389,13 +389,13 @@ set at `vak-core/src/lib.rs` (`cfg.effort`) from the engagement.
 - `crates/vak-agent/src/stop_policy.rs`; the plan check is `crates/vak-judge/src/plan.rs`.
 - `crates/vak-core/src/lib.rs`: the outcome evaluation and the per-turn
   effort setting; `crates/vak-core/src/intent.rs`.
-- `crates/vak-intent`: the reader, `control.rs` (the control vocabulary,
-  mirrored in the client and checked by
+- `crates/vak-intent`: the reader and `control.rs` (the runtime control
+  vocabulary; its typed projection boundary is checked by
   `vak-server/tests/it/control_vocabulary_sync.rs`).
 - `crates/vak-llm`: every adapter, `ChatRequest`, `WorkReceipt`.
 - `crates/vak-tools`: `ToolOutput` and its `Fault`.
-- `crates/vak-server/src/projection.rs` (9 control sites) and the client's
-  `structured.ts` lists.
+- `crates/vak-server/src/projection.rs` owns typed visibility. The client's
+  `structured.ts` preserves authored text without duplicate marker lists.
 - `crates/vak-session`: one new entry type; `docs/reference/records.md`.
 - `crates/vak-context`: the tail and the frozen tools array now follow the
   step contract, so the byte-stable prefix rule (invariant 36) needs a

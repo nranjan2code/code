@@ -362,7 +362,10 @@ impl crate::Core {
             .collect();
         crate::trash::mark_erased(&shared, &erased).map_err(|error| error.to_string())?;
         let _ = vak_session::documents::forget(&shared.artifacts_rollup());
-        self.catalog()
+        // Projection bytes were encrypted under the previous local keys and
+        // summarize the previous records. Import must reset them explicitly;
+        // an ordinary unreadable database still fails closed.
+        self.catalog_after_import()
             .map_err(|error| error.to_string())?
             .rebuild_after_erasure()
             .map_err(|error| error.to_string())?;

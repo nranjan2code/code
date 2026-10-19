@@ -17,12 +17,24 @@ across them. Nothing here is started unless it says so.
 
 ## Answer composition (2026-10-19)
 
+- [ ] Conversation/evidence contract acceptance: coherent snapshot and
+  applied-state hydration are implemented, with a real ChatPane regression
+  (22 checks before the snapshot endpoint change). Final mobile/dark and
+  installed-desktop checks remain blocked by disabled browser access; no
+  release/install was performed. Evidence questions and retrieval/sufficiency
+  separation are implemented; a general semantic reviewer and evidence
+  progress feedback through the control ladder remain unbuilt. Investigate
+  irrelevant upstream search bodies without domain/provider exceptions.
+  [Original trace](../audits/chatjimmy-response-trace-2026-10-19.md) and
+  [implementation/checks](../audits/conversation-evidence-contract-2026-10-19.md).
+
 Measured in [the answer-composition audit](../audits/answer-composition-2026-10-19.md).
 
-- [ ] Search as a stated capability: a tool declares that it finds sources
-  for a query, the code-owned capability contract says plainly when a turn
-  has none, and Setup or Inbox offers to connect one. With none, turns
-  guessed URLs with `webfetch` (up to 17 steps, most fetches 403/404).
+- [ ] Source discovery follow-through: `source-discovery` declarations and
+  the admitted-turn contract now distinguish search from URL fetching,
+  including undeclared external capabilities. Setup/Inbox still needs to
+  offer a connection using that same declaration, and live cross-topic
+  acceptance must establish behavior when sources are blocked or irrelevant.
 - [ ] Measure the act step's reasoning depth now that receipts carry
   `reasoning_tokens`; any default belongs in `[control]` configuration.
 - [ ] An earlier request carried into an unrelated turn (2026-10-19): in

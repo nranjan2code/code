@@ -75,7 +75,9 @@ and few tests run two writer processes. The two P1 faults of \
 2026-10-18 needed exactly those shapes: a cached grant that kept authorizing \
 because its revocation sat in an unreadable segment (A01), and a writer \
 paused between the epoch check and the ref update (A02). A review's probes \
-found them, not the suite.
+found them, not the suite. Repeated takeover tests now expose and cover \
+import invalidation of encrypted projections: a standby catalog cannot \
+outlive the imported keys. The broader interleaving gap remains.
 """
 matters = """
 These are the guarantees authorization, erasure and sync rest on. A bug here \
@@ -83,7 +85,7 @@ does not show as a failed turn; it shows as access that should have ended, \
 or a write that should have been fenced.
 """
 fix = "A model-based test of each chain's reader against a reference, and multi-process interleavings of every fenced write path."
-sources = "[docs/audits/architecture-and-presentation-review-2026-10-18.md](../docs/audits/architecture-and-presentation-review-2026-10-18.md) (A01, A02); `crates/vak-storage`, `crates/vak-session`."
+sources = "[docs/audits/architecture-and-presentation-review-2026-10-18.md](../docs/audits/architecture-and-presentation-review-2026-10-18.md) (A01, A02); [conversation/evidence and import checks](../docs/audits/conversation-evidence-contract-2026-10-19.md); `crates/vak-storage`, `crates/vak-session`."
 
 [[keep]]
 name = "vak-permission"

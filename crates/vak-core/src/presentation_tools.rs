@@ -2565,7 +2565,7 @@ impl Tool for EmitCardTool {
             &vak_delivery::built_in_skill_registry(),
         ) {
             Ok(output) => {
-                let mut ack = format!("Shown to the user ({}).", output.semantic_type);
+                let mut ack = format!("Accepted for presentation ({}).", output.semantic_type);
                 // What a later card of the answer can follow (docs/design/98 §2).
                 if output.block == "controls"
                     && let Ok(published) = vak_delivery::controls::published(&output.payload)
@@ -3168,6 +3168,8 @@ mod tests {
         let chart = tool("emit_chart_card");
         let out = chart.execute(&fixture_for("chart"), &ctx).await;
         assert!(!out.is_error(), "{}", out.content);
+        assert!(out.content.starts_with("Accepted for presentation"));
+        assert!(!out.content.contains("Shown to the user"));
         let out = chart
             .execute(&json!({"chart_type": "bar", "data": []}), &ctx)
             .await;

@@ -139,6 +139,7 @@ impl Capability {
             CapabilityKind::Command => CapabilityInvocation::UserCommand,
         };
         CapabilityDescriptor {
+            serves: self.serves.labels(),
             name: self.id.name.clone(),
             kind: self.id.kind.clone(),
             invocation,

@@ -629,3 +629,108 @@ async fn a_turns_facts_come_from_its_decisions() {
         "{proposals:?}"
     );
 }
+
+/// Source retrieval, output delivery and semantic sufficiency are independent.
+/// These turns all finish normally, including one with an irrelevant source;
+/// none may acquire semantic completion from transport or output existence.
+#[tokio::test]
+async fn research_requirements_survive_the_real_turn_and_do_not_self_certify() {
+    fn call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage {
+        AssistantMessage {
+            content: vec![ContentBlock::ToolUse {
+                id: id.into(),
+                name: name.into(),
+                input,
+            }],
+            stop_reason: vak_llm::types::StopReason::ToolUse,
+            ..text("")
+        }
+    }
+    let cases = [
+        (
+            vec![
+                call(
+                    "plan-a",
+                    "plan",
+                    serde_json::json!({"deliverables": [{"name": "analysis", "form": "text", "questions": ["What changed within the requested period?"]}]}),
+                ),
+                text("There is insufficient evidence to answer."),
+            ],
+            false,
+            "plan-evidence-1-1",
+        ),
+        // A successful local read is evidence of retrieval, not relevance.
+        (
+            vec![
+                call("read-a", "read", serde_json::json!({"path": "source.txt"})),
+                text("A claim about an unrelated subject."),
+            ],
+            true,
+            "retrieved-source-support",
+        ),
+    ];
+    for (responses, retrieved, requirement) in cases {
+        let (core, cwd) = core_with("[stop_policy]\nenabled = false\n", responses);
+        core.set_tool_worker_exe(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/vak"),
+        );
+        std::fs::write(
+            cwd.join("source.txt"),
+            "This source is about the weather, not the requested analysis.",
+        )
+        .unwrap();
+        let session = core.start_session().await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        let (outcome, session) = core
+            .run_turn_with(
+                session,
+                "Investigate the question using evidence.",
+                CancellationToken::new(),
+                None,
+                None,
+                None,
+                tx,
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(outcome, vak_agent::TurnOutcome::Completed { .. }),
+            "{outcome:?}"
+        );
+        let evaluation = session
+            .chain_to_root()
+            .into_iter()
+            .rev()
+            .find_map(|entry| match &entry.payload {
+                vak_session::EntryPayload::Activity(activity)
+                    if activity.label == "Outcome evaluation" =>
+                {
+                    Some(activity.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_ne!(
+            evaluation.data.get("completion").map(String::as_str),
+            Some("complete"),
+            "{evaluation:?}"
+        );
+        assert_eq!(
+            evaluation.data.get("evidence_state").map(String::as_str),
+            Some(if retrieved { "fresh" } else { "none" }),
+            "{:?}",
+            session.derive_messages()
+        );
+        let evaluations: Vec<vak_intent::RequirementEvaluation> =
+            serde_json::from_str(&evaluation.data["evaluation"]).unwrap();
+        assert!(
+            evaluations
+                .iter()
+                .any(|row| row.requirement_id == requirement
+                    && row.status != vak_intent::RequirementStatus::Met),
+            "{evaluations:?}"
+        );
+        drain.await.unwrap();
+    }
+}

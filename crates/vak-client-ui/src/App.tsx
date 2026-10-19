@@ -1,5 +1,6 @@
+import { ConversationHydration } from "./presentationHydration";
 import { inQuietHours, playSound } from "./soundCues";
-import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, For, Suspense } from "solid-js";
+import { batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, For, Suspense } from "solid-js";
 import { host } from "./host";
 import { interfaceFonts, contentFonts, codeFonts } from "./typography";
 import { watchSession, watchStatus } from "./streamHub";
@@ -272,57 +273,51 @@ export async function retryHydrate(id: string) {
   await restoreLiveGates(id);
 }
 
-async function readableTranscript(id: string): ReturnType<typeof api.transcript> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    try {
-      const transcript = await api.transcript(id);
-      if (!Array.isArray(transcript.messages)) throw new Error("Transcript response has no messages");
-      return transcript;
-    } catch (error) {
-      if (!(error instanceof Error) || error.message !== "run in progress" || attempt === 7) throw error;
-      await new Promise((resolve) => window.setTimeout(resolve, 200));
-    }
+async function readableSnapshot(id: string): ReturnType<typeof api.conversationSnapshot> {
+  const snapshot = await api.conversationSnapshot(id);
+  const transcript = snapshot.transcript;
+  const presentation = snapshot.presentation;
+  if (snapshot.session_id !== id || typeof snapshot.running !== "boolean"
+    || !Array.isArray(transcript?.messages) || !Array.isArray(transcript.entries)
+    || transcript.messages.length !== transcript.entries.length
+    || !transcript.entries.every(entry => typeof entry.entry_id === "string" && entry.entry_id.length > 0)
+    || presentation?.session_id !== id || presentation.schema_version !== 2
+    || !Array.isArray(presentation.items) || snapshot.cursor !== presentation.cursor) {
+    throw new Error("Conversation snapshot is invalid");
   }
-  throw new Error("Transcript is not ready");
+  return snapshot;
 }
 
 /** What `hydrate` last applied per conversation. The session heartbeat
  * re-reads every visible settled conversation every 10 s; applying an
  * identical read rebuilt every turn (and reloaded every result preview),
  * which read as the page refreshing. */
-const lastHydrated = new Map<string, string>();
+const conversationHydration = new ConversationHydration();
 
 /** Load a conversation's durable record. `background` re-reads (the session
  * heartbeat, a stream resync) never raise the loading state: an empty
  * conversation would swap its greeting for the loading skeleton and back
  * every 10 s. */
 async function hydrate(id: string, background = false) {
+  const version = conversationHydration.begin(id);
   if (!background) setHydratingId(id);
   try {
-    const [t, presentation, sandbox] = await Promise.all([
-      readableTranscript(id),
-      // A presentation snapshot is an optional projection. If it cannot be
-      // read, preserve the last known projection rather than treating a
-      // transient/permission error as an authoritative empty result.
-      api.presentation(id).catch((error) => {
-        setPresentationError(id, error instanceof Error ? error.message : String(error));
-        return undefined;
-      }),
+    const [snapshot, sandbox] = await Promise.all([
+      readableSnapshot(id),
       api.sandboxExecutions(id).catch((error) => ({ events: [], session_id: id, error: error instanceof Error ? error.message : String(error) })),
     ]);
+    const { transcript: t, presentation } = snapshot;
+    if (!conversationHydration.current(id, version)) return;
     const read = JSON.stringify([t ?? null, presentation ?? null, sandbox]);
-    const unchanged = lastHydrated.get(id) === read && itemsOf(id).length > 0 && (!presentation || presentationOf(id) !== null);
-    if (unchanged) return;
-    lastHydrated.set(id, read);
-    // A freshly reopened running conversation has no in-memory items yet, so
-    // paint its committed history prefix. On an already-live conversation,
-    // keep the stream's current turn intact while refreshing sidecar state.
-    if (t && (!isRunning(id) || holdsOnlyLiveGates(itemsOf(id)))) {
-      hydrateFromTranscript(id, t.messages, t.entries, isRunning(id));
-      hydrateSetAside(id, t.set_aside);
-      if (presentation) hydrateFromPresentation(id, presentation);
-      setUsageFor(id, t.usage);
-    }
+    // Transcript identity and its output projection become visible together.
+    // A running read is not acknowledged until it can actually be applied.
+    conversationHydration.commit(id, version, read,
+      Boolean(t && ((!snapshot.running && !isRunning(id)) || holdsOnlyLiveGates(itemsOf(id)))), () => batch(() => {
+        hydrateFromTranscript(id, t.messages, t.entries, isRunning(id));
+        hydrateSetAside(id, t.set_aside);
+        if (presentation) hydrateFromPresentation(id, presentation);
+        setUsageFor(id, t.usage);
+      }));
     if (activeId() === id) {
       setWorkbenchLoadError("error" in sandbox ? sandbox.error : null);
     }
@@ -330,11 +325,11 @@ async function hydrate(id: string, background = false) {
   } catch (error) {
     // The server can admit a new turn between a settled-session snapshot and
     // transcript fetch. Its 409 is an active run, not a load failure.
-    if (!isRunning(id) && !(error instanceof Error && error.message === "run in progress")) {
+    if (conversationHydration.current(id, version) && !isRunning(id) && !(error instanceof Error && error.message === "run in progress")) {
       appendSystem(id, `Could not load this task: ${error instanceof Error ? error.message : String(error)}`);
     }
   } finally {
-    if (!background) setHydratingId((current) => (current === id ? null : current));
+    if (!background && conversationHydration.current(id, version)) setHydratingId((current) => (current === id ? null : current));
   }
 }
 
@@ -361,11 +356,13 @@ function pruneStreams() {
 function openStream(id: string) {
   if (streams.has(id)) return;
   streams.set(id, watchSession(id, {
-    agent: (ev) =>
+    agent: (ev) => {
+      if (typeof ev === "object" && ("TurnStart" in ev || "RunFinished" in ev)) conversationHydration.invalidate(id);
       applyEvent(id, ev, {
         onFinish: (s) => onFinished(id, s),
         onApproval: (requestId, tool) => onApprovalRequested(id, requestId, tool),
-      }),
+      });
+    },
     presentation: (frame) => applyPresentationEvent(id, frame),
     resync: () => {
       // The gap was wider than the server's replay ring, so what is on
@@ -770,6 +767,7 @@ export async function sendPrompt(
 
   const thisGoal = goalAppliesTo(id);
   setArmedGoal(null);
+  conversationHydration.invalidate(id);
   appendUser(id, text, attachments?.files);
   try {
     const requestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -838,6 +836,7 @@ export async function sendPrompt(
 /// a new branch from the turn before it. A refusal puts the view back.
 export async function retryTurn(id: string, turn: string) {
   if (isRunning(id)) return;
+  conversationHydration.invalidate(id);
   branchBeforeTurn(id, turn);
   markRunning(id, true);
   try {

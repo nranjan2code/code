@@ -1,4 +1,5 @@
 import { render } from "solid-js/web";
+import { retryHydrate } from "../src/App";
 import { createSignal } from "solid-js";
 import ChatPane from "../src/components/ChatPane";
 import Composer from "../src/components/Composer";
@@ -9,9 +10,15 @@ import "../src/styles.css";
 // Deterministic run-boundary regressions using the real chat and composer.
 let paused = false;
 const requests: string[] = [];
+let durableTranscript: unknown;
+let durablePresentation: unknown;
 window.fetch = async (input) => {
   const path = String(input);
   requests.push(path);
+  if (path.endsWith("/snapshot") && durableTranscript) return new Response(JSON.stringify({ session_id: "handoff-fixture", running: store.isRunning("handoff-fixture"), cursor: "durable:handoff", transcript: durableTranscript, presentation: durablePresentation }));
+  if (path.endsWith("/transcript") && durableTranscript) return new Response(JSON.stringify(durableTranscript));
+  if (path.endsWith("/presentation") && durablePresentation) return new Response(JSON.stringify(durablePresentation));
+  if (path.includes("/library")) return new Response(JSON.stringify({ artifacts: [] }));
   if (path.endsWith("/pause")) paused = true;
   if (path.endsWith("/resume")) paused = false;
   return new Response(JSON.stringify(path.endsWith("/control-state")
@@ -82,6 +89,32 @@ async function runChecks() {
     store.hydrateFromPresentation(sid, { ...timeline, cursor: "live:2" }); await tick();
     check(Math.abs(chat.scrollTop - nearEndTop) < 2, "small upward scroll disengages following");
     check(document.documentElement.scrollWidth <= window.innerWidth, "layout has no horizontal overflow");
+    // Exercise the actual App hydration entrypoint, not a copy of its logic.
+    // The server snapshot reaches the presentation stream while transcript
+    // identity is still optimistic; the same read must apply on settlement.
+    const handoff = "handoff-fixture";
+    store.markRunning(sid, false);
+    store.setActiveId(handoff);
+    store.appendUser(handoff, "Explain the evidence and its limits.");
+    store.markRunning(handoff, true);
+    store.applyEvent(handoff, { TextDelta: { delta: "Closing confidence paragraph." } } as never, {});
+    const user = { ...timeline.items[0], id: "saved-user", turn_id: "saved-turn", provenance: { entry_id: "saved-user" }, content: { type: "document", document: doc("Explain the evidence and its limits.") } } as OutputItem;
+    const card = { ...timeline.items[1], id: "saved-card", turn_id: "saved-turn", role: "tool", kind: "card", provenance: { source: "emit_summary_card", presentation_id: "presentation-card" }, content: { type: "structured", output: { semantic_type: "summary", block: "summary", schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: { headline: "Recorded findings survive settlement", text: "Source-supported findings and explicitly unresolved questions.", points: [] } } }, fallback_text: "Recorded findings survive settlement" } as OutputItem;
+    const closing = { ...timeline.items[1], id: "saved-closing", turn_id: "saved-turn", content: { type: "document", document: doc("Closing confidence paragraph.") } } as OutputItem;
+    durableTranscript = { messages: [{ role: "user", content: [{ type: "text", text: "Explain the evidence and its limits." }] }, { role: "assistant", content: [{ type: "text", text: "Closing confidence paragraph." }] }], entries: [{ entry_id: "saved-user" }, { entry_id: "saved-closing" }], usage: {}, set_aside: [] };
+    durablePresentation = { schema_version: 2, session_id: handoff, cursor: "durable:handoff", items: [user, card, closing], diagnostics: [] };
+    store.hydrateFromPresentation(handoff, durablePresentation as OutputTimeline);
+    await retryHydrate(handoff);
+    check(!store.itemsOf(handoff).some(item => item.kind === "user" && item.entryId), "running hydration defers transcript identity");
+    store.markRunning(handoff, false);
+    await retryHydrate(handoff);
+    await tick();
+    check(store.itemsOf(handoff).some(item => item.kind === "user" && item.entryId === "saved-user"), "identical settled read applies durable identity");
+    check(document.body.innerText.includes("Recorded findings survive settlement"), "settled recorded card is visible through the real ChatPane");
+    check(document.body.innerText.split("Closing confidence paragraph.").length === 2, "closing prose appears exactly once beside the recorded card");
+    await retryHydrate(handoff); await tick();
+    check(document.querySelectorAll(".primary-result").length === 1, "duplicate snapshots do not duplicate the result");
+    check(document.documentElement.scrollWidth <= innerWidth, "settled card fits the viewport");
     setResult(`PASS: ${passed.length} checks`);
   } catch (error) { setResult(`FAIL after ${passed.length}: ${String(error)}`); }
 }

@@ -510,6 +510,9 @@ pub struct OutcomeSpec {
 /// One deliverable the model said it will produce.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Deliverable {
+    /// Questions this part must establish from evidence, in the model's own
+    /// words. Declaring or citing them never marks them satisfied.
+    pub questions: Vec<String>,
     pub name: String,
     pub form: DeliverableForm,
     /// For a card, the kind of card the plan named, when it named one: the

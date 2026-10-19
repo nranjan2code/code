@@ -342,7 +342,7 @@ SUBSYSTEMS = [
       "crates/vak-core/src/transcript_md.rs"],
      ["/traffic", "/admin/api/traffic", "/admin/api/events", "/admin/api/sessions", "/admin/api/config",
       "/admin/api/bestofn", "/admin/api/projects", "/config/server", "/sessions/{id}/events",
-      "/sessions/{id}/attach", "/sessions/{id}/transcript", "/sessions/{id}/bestofn"],
+      "/sessions/{id}/attach", "/sessions/{id}/transcript", "/sessions/{id}/snapshot", "/sessions/{id}/bestofn"],
      ["serve"], ["13-server.md"]),
     ("gateway", "Gateway and channels",
      "Chat surfaces, bots, the allowlist, bindings, forwarded approvals, heartbeat",

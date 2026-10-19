@@ -976,6 +976,17 @@ export function transcript(id: string): Promise<{
   return req(`/sessions/${id}/transcript`);
 }
 
+/** Transcript identities and output from one immutable ledger revision. */
+export function conversationSnapshot(id: string): Promise<{
+  session_id: string;
+  cursor?: string | null;
+  running: boolean;
+  transcript: Awaited<ReturnType<typeof transcript>>;
+  presentation: OutputTimeline;
+}> {
+  return req(`/sessions/${encodeURIComponent(id)}/snapshot`);
+}
+
 /** Sets a turn aside so later turns no longer see it, or restores it
  *  (docs/design/99-turns-that-do-not-poison.md §4 F). Nothing is deleted. */
 export function setTurnAside(id: string, turn: string, aside: boolean): Promise<{ set_aside: string[] }> {

@@ -1,5 +1,17 @@
 ## Unreleased
 
+- Restore and sync pull reset encrypted projections declared in the state
+  registry before rebuilding from imported records and keys. Repeated
+  takeovers no longer reuse a catalog encrypted under replaced local keys.
+
+- Conversation history and answer cards reconcile from one server snapshot;
+  deferred or out-of-order reads no longer leave only the closing paragraph
+  visible after a run settles.
+- Plans can declare evidence questions. Retrieval and output receipts no
+  longer certify that researched claims are supported; unresolved evidence
+  stays explicit. Source discovery is declared separately from URL fetching,
+  and card acknowledgements describe acceptance for presentation.
+
 ## 8.12.0 — 2026-10-19
 
 - A conversation is only locked while something is writing it. Before, once

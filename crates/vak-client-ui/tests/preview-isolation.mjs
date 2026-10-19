@@ -51,7 +51,8 @@ const themed = sandboxedSrcdoc("<p>hi</p>");
 const themeAt = themed.indexOf("<style data-vak-theme>");
 assert.ok(policyAt(themed) < themeAt && themeAt < themed.indexOf("<p>"));
 assert.match(themed, /--vak-bg:#111;.*--vak-radius:12px;color-scheme:dark/);
-assert.match(themed, /body\{font-family:var\(--vak-font\)\}/);
+// The inherited default has zero specificity, so authored preview styles win.
+assert.match(themed, /:where\(html\)\{[^}]*font-family:var\(--vak-font\)[^}]*\}/);
 assert.ok(!/<script|https?:|url\(/.test(themed.slice(themeAt, themed.indexOf("<p>"))));
 tokens["--bg"] = "#fff</style><script>x()</script>";
 assert.ok(!sandboxedSrcdoc("<p>hi</p>").includes("<script>"), "a token value cannot close the block");

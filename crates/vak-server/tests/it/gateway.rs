@@ -323,7 +323,11 @@ async fn inbound_wait_roundtrip_reuses_binding() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn telegram_reply_is_an_ordered_multi_message_packet() {
-    let answer = format!("# Long result\n\n{}", "🧪 result line\n".repeat(700));
+    // The settled reply normalizes outer whitespace before transport. Keep
+    // this packet/chunk test's fixture canonical and compare its full content.
+    let answer = format!("# Long result\n\n{}", "🧪 result line\n".repeat(700))
+        .trim_end()
+        .to_owned();
     let provider = Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text(&answer)])),

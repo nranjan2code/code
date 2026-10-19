@@ -118,6 +118,11 @@ impl Tool for McpTool {
         args.get("action").and_then(Value::as_str) == Some("call")
     }
 
+    fn retrieves_evidence(&self, args: &Value) -> bool {
+        // Catalogue discovery reads tool definitions, not source material.
+        args.get("action").and_then(Value::as_str) == Some("call")
+    }
+
     fn description(&self) -> &str {
         "Discover and call tools exposed by configured MCP servers. For a current fact or an unknown source URL, check configured servers for a search tool before fetching a page by URL. Always use this broker (never call an MCP tool name directly). Use action \"list\" with a server to get its exact tool names and inputSchemas, then action \"call\" with server, tool, and arguments matching that schema exactly."
     }
@@ -362,4 +367,25 @@ fn unavailable_guidance(server: &str) -> String {
          unavailable and that the fix is to {}",
         remedy(server)
     )
+}
+
+#[cfg(test)]
+mod evidence_declaration_tests {
+    use super::*;
+
+    #[test]
+    fn listing_an_integration_catalog_is_not_source_retrieval() {
+        let tool = McpTool::new(Arc::new(McpManager::new(
+            Default::default(),
+            std::env::temp_dir(),
+        )));
+        assert!(!tool.retrieves_evidence(&serde_json::json!({"action":"list"})));
+        assert!(
+            !tool
+                .retrieves_evidence(&serde_json::json!({"action":"list", "server":"any-provider"}))
+        );
+        assert!(tool.retrieves_evidence(
+            &serde_json::json!({"action":"call", "server":"any-provider", "tool":"arbitrary-name"})
+        ));
+    }
 }

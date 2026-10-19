@@ -40,6 +40,8 @@ pub enum Domain {
     LiveData,
     /// Fetching and reading from the open web.
     Web,
+    /// Discovering candidate sources from a query, distinct from fetching a URL.
+    SourceDiscovery,
     /// Reading or writing files in the workspace.
     Filesystem,
     /// Running commands or code.
@@ -67,6 +69,7 @@ impl Domain {
         match self {
             Domain::LiveData => "live-data",
             Domain::Web => "web",
+            Domain::SourceDiscovery => "source-discovery",
             Domain::Filesystem => "filesystem",
             Domain::CodeExec => "code-exec",
             Domain::Memory => "memory",
@@ -86,6 +89,7 @@ impl Domain {
         match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
             "live-data" | "livedata" => Domain::LiveData,
             "web" => Domain::Web,
+            "source-discovery" => Domain::SourceDiscovery,
             "filesystem" | "fs" => Domain::Filesystem,
             "code-exec" | "exec" => Domain::CodeExec,
             "memory" => Domain::Memory,
@@ -99,10 +103,11 @@ impl Domain {
     }
 
     /// The domains this build knows, as a capability names them.
-    pub fn known() -> [Domain; 10] {
+    pub fn known() -> [Domain; 11] {
         [
             Domain::LiveData,
             Domain::Web,
+            Domain::SourceDiscovery,
             Domain::Filesystem,
             Domain::CodeExec,
             Domain::Memory,
@@ -193,6 +198,7 @@ mod tests {
         let known: Vec<&str> = [
             Domain::LiveData,
             Domain::Web,
+            Domain::SourceDiscovery,
             Domain::Filesystem,
             Domain::CodeExec,
             Domain::Memory,

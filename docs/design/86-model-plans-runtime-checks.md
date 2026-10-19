@@ -10,6 +10,35 @@ opened from a guessed horizon) and the card-completeness self-audit in doc
 30-render-architecture §30.1. Doc 47's safety floor (intent narrows, never
 widens; invariant 32) and its control plane stay as they are.
 
+## Evidence questions and completion (2026-10-19)
+
+A plan entry may declare `questions`, an array of evidence questions in the
+model's own words, including material dates and scope. The accepted plan's
+questions become separate must-have evidence requirements attached to that
+part. A proposed or failed plan does not change the accepted plan; an
+accepted replan replaces it. The ledgered tool call remains the record.
+
+Delivery and support are separate: accepted cards satisfy delivery receipts,
+not evidence questions. Successful source retrieval with no explicit questions
+still carries a support requirement; merely producing output after retrieval
+cannot certify semantic completeness. Retrieval receipt age describes when
+material was observed, not whether its claims are current. Relevance,
+support and source freshness remain unverified in the structural evaluator.
+No automatic semantic reviewer is added by this change; existing managed
+criteria and human review remain the paths to stronger evidence. Missing
+retrieval is unmet; unassessed support is unknown. Both keep normal execution
+completion separate from answer sufficiency.
+
+Tools declare retrieval through `Tool::retrieves_evidence`, forwarded by
+wrappers. URL/file reads and actual integration calls can establish retrieval;
+plans, presentation and integration catalogue listings cannot. Arbitrary
+command success alone is not a source receipt. Output projection keeps
+evaluation fields separately, so punctuation in an authored question cannot
+change completion or receipt links. The answer exposes the evaluated
+requirement ids, including those declared after admission. The verdict is
+attached to card-only answers as well as prose and inherited by delivered
+files; the user's prompt is never a result anchor.
+
 ## 1. Why
 
 A natural two-part request in the original Agent conversation (run

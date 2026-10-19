@@ -114,6 +114,49 @@ pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
     }
 }
 
+/// Evidence questions are separate from output receipts. A recorded answer
+/// satisfies delivery only; source relevance and support remain to be judged.
+pub fn evidence_requirements(
+    plan: &[Deliverable],
+    retrieved: bool,
+) -> Vec<vak_intent::OutcomeRequirement> {
+    let mut requirements: Vec<_> = plan
+        .iter()
+        .enumerate()
+        .flat_map(|(part, deliverable)| {
+            deliverable
+                .questions
+                .iter()
+                .enumerate()
+                .map(move |(question, text)| vak_intent::OutcomeRequirement {
+                    id: format!("plan-evidence-{}-{}", part + 1, question + 1),
+                    kind: vak_intent::RequirementKind::Evidence,
+                    description: text.clone(),
+                    origin: vak_intent::RequirementOrigin::Declared,
+                    importance: vak_intent::RequirementImportance::Must,
+                    target: Some(deliverable.name.clone()),
+                    form: None,
+                })
+        })
+        .collect();
+    // Even when no plan declared the questions, transport receipts cannot
+    // establish that an answer relying on retrieved material is supported.
+    if requirements.is_empty() && retrieved {
+        requirements.push(vak_intent::OutcomeRequirement {
+            id: "retrieved-source-support".into(),
+            kind: vak_intent::RequirementKind::Evidence,
+            description:
+                "Establish relevance, claim support and source freshness for the retrieved material"
+                    .into(),
+            origin: vak_intent::RequirementOrigin::Inferred,
+            importance: vak_intent::RequirementImportance::Must,
+            target: Some("primary".into()),
+            form: None,
+        });
+    }
+    requirements
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -123,6 +166,7 @@ mod tests {
         entries
             .iter()
             .map(|(name, form)| Deliverable {
+                questions: Vec::new(),
                 kind: None,
                 name: (*name).into(),
                 form: *form,
@@ -139,6 +183,43 @@ mod tests {
             checked: false,
             cards_withdrawn: false,
         }
+    }
+
+    #[test]
+    fn delivery_receipts_do_not_establish_evidence_questions() {
+        assert!(evidence_requirements(&[], false).is_empty());
+        assert_eq!(evidence_requirements(&[], true).len(), 1);
+        let mut declared = plan(&[("findings", DeliverableForm::Card)]);
+        declared[0].questions = vec!["Which effects were independently measured?".into()];
+        let cards = [Some("findings".into())];
+        assert!(gap(&declared, &produced(&cards, "")).is_empty());
+        let mut spec = vak_intent::OutcomeSpec::from_reading(
+            "investigate",
+            &vak_intent::Reading::general(),
+            1,
+        );
+        spec.requirements
+            .extend(evidence_requirements(&declared, true));
+        let facts = crate::outcome::TurnFacts {
+            cards_recorded: 1,
+            evidence_card: true,
+            evidence_state: vak_intent::EvidenceState::Fresh,
+            ..crate::outcome::TurnFacts::reply(None)
+        };
+        let evaluations = crate::outcome::evaluate_requirements(&spec, &facts);
+        assert_eq!(
+            evaluations[1].status,
+            vak_intent::RequirementStatus::Unknown
+        );
+        assert_eq!(
+            crate::outcome::evaluate_completion(
+                vak_intent::OutcomeStatus::Produced,
+                &evaluations,
+                &spec
+            ),
+            vak_intent::CompletionVerdict::Unknown
+        );
+        assert_eq!(spec.requirements[1].target.as_deref(), Some("findings"));
     }
 
     #[test]

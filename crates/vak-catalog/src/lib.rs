@@ -178,6 +178,7 @@ pub struct Catalog {
     data: PathBuf,
     tenant: Arc<vak_session::objects::TenantObjects>,
     conn: Mutex<Connection>,
+    retired: std::sync::atomic::AtomicBool,
 }
 
 impl Catalog {
@@ -220,6 +221,7 @@ impl Catalog {
             data: data.to_path_buf(),
             tenant,
             conn: Mutex::new(conn),
+            retired: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -227,14 +229,34 @@ impl Catalog {
         &self.path
     }
 
+    /// Retire the old database before an explicit import resets projections.
+    /// Waiting on the connection serializes this against active readers. The
+    /// empty in-memory connection is a closed-handle sentinel, never a fallback
+    /// catalog: every later read of this handle is refused.
+    pub fn retire_for_import(&self) -> Result<(), CatalogError> {
+        let mut conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let sentinel = Connection::open_in_memory()?;
+        self.retired
+            .store(true, std::sync::atomic::Ordering::Release);
+        *conn = sentinel;
+        Ok(())
+    }
+
     fn conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, CatalogError> {
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.retired.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(CatalogError::Protection);
+        }
         self.tenant
             .scope_key("catalog")
             .map_err(|_| CatalogError::Protection)?;
-        Ok(self
-            .conn
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner))
+        Ok(conn)
     }
 
     /// Takes what every source appended since its cursor.

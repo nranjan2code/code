@@ -6253,7 +6253,16 @@ impl Agent {
                     let listed = plan
                         .iter()
                         .map(|deliverable| {
-                            format!("{} ({})", deliverable.name, deliverable.form.as_str())
+                            if deliverable.questions.is_empty() {
+                                format!("{} ({})", deliverable.name, deliverable.form.as_str())
+                            } else {
+                                format!(
+                                    "{} ({}); evidence questions: {}",
+                                    deliverable.name,
+                                    deliverable.form.as_str(),
+                                    deliverable.questions.join("; ")
+                                )
+                            }
                         })
                         .collect::<Vec<_>>()
                         .join("; ");

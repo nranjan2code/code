@@ -256,6 +256,10 @@ impl Tool for ScopedWriteTool {
         self.inner.looks_up()
     }
 
+    fn retrieves_evidence(&self, args: &Value) -> bool {
+        self.inner.retrieves_evidence(args)
+    }
+
     fn planned(&self, args: &Value) -> Option<Vec<vak_intent::Deliverable>> {
         self.inner.planned(args)
     }

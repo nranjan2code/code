@@ -18,6 +18,19 @@ requirements rather than preferences:
   three weeks picks up new capabilities in place, keeping its ledger and its
   history.
 
+## Source discovery is declared (2026-10-19)
+
+`source-discovery` is a work domain distinct from `web`: discovering candidate
+sources from a query is not fetching a known URL. Tool/ability declarations
+and MCP server `serves` configuration use the existing domain vocabulary;
+no provider or tool name identifies search. Domains survive in the frozen
+capability descriptors, so the turn's contract can name admitted discovery
+capabilities. Native capabilities opt in; an undeclared external server stays
+unknown rather than being declared incapable. The prompt distinguishes
+available, unavailable and undeclared discovery. This introduces no search
+provider or new credential path. Setup/Inbox connection guidance and
+provider-level relevance feedback remain follow-up work.
+
 ## Why the previous design failed
 
 The old registry was correct for a process-per-session lifetime and was never

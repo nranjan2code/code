@@ -54,7 +54,31 @@ pub fn parse_plan_args(args: &Value) -> Result<Vec<Deliverable>, String> {
             .map(str::trim)
             .filter(|kind| !kind.is_empty())
             .map(str::to_string);
+        let questions = match entry.get("questions") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(items)) => items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    item.as_str()
+                        .map(str::trim)
+                        .filter(|question| !question.is_empty())
+                        .map(str::to_string)
+                        .ok_or_else(|| {
+                            format!(
+                                "deliverables[{at}].questions[{index}] must be a non-empty question"
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            Some(_) => {
+                return Err(format!(
+                    "deliverables[{at}].questions must be a list of questions"
+                ));
+            }
+        };
         plan.push(Deliverable {
+            questions,
             name: name.to_string(),
             form,
             kind,
@@ -103,7 +127,9 @@ impl Tool for PlanTool {
          of the answer, in reading order, named in a few words, with how it reaches the \
          person. An entry shown as cards takes as many cards as its content has parts. \
          Vakyartha checks each entry against what you actually produce and tells you if one \
-         is missing. Skip it for a reply that is one direct answer."
+         is missing. For parts that need evidence, declare the questions the sources must \
+         settle, including the date or scope that matters. Output receipts do not prove \
+         these questions answered. Skip it for a reply that is one direct answer."
     }
 
     fn schema(&self) -> Value {
@@ -132,6 +158,11 @@ impl Tool for PlanTool {
                             "name": {
                                 "type": "string",
                                 "description": "The part in a few words, such as the thing the person asked for."
+                            },
+                            "questions": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Questions this part needs evidence to settle, including material scope/date. Empty for a part needing no external evidence. These are requirements, never self-reported completion."
                             },
                             "form": {
                                 "type": "string",
@@ -212,6 +243,30 @@ mod tests {
             bare["properties"]["deliverables"]["items"]["properties"]["form"]["enum"],
             json!(["card", "text", "file", "change", "check"])
         );
+    }
+
+    #[test]
+    fn evidence_questions_are_declared_not_inferred_from_the_topic() {
+        let plan = parse_plan_args(&json!({"deliverables": [{
+            "name": "findings", "form": "card",
+            "questions": ["Who owns the service as of the requested date?", "Which effects have independent measurements?"]
+        }]})).unwrap();
+        assert_eq!(plan[0].questions.len(), 2);
+        assert!(
+            parse_plan_args(
+                &json!({"deliverables": [{"name": "x", "form": "text", "questions": [""]}]})
+            )
+            .is_err()
+        );
+        assert!(
+            parse_plan_args(
+                &json!({"deliverables": [{"name": "x", "form": "text", "questions": "done"}]})
+            )
+            .is_err()
+        );
+        let old =
+            parse_plan_args(&json!({"deliverables": [{"name": "x", "form": "text"}]})).unwrap();
+        assert!(old[0].questions.is_empty());
     }
 
     #[test]

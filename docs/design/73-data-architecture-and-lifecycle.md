@@ -18,6 +18,16 @@ atomic root-publication/release ownership model before a production caller
 may use it. A sequential shared-chunk regression is retained; it is not a
 concurrency guarantee. Ordinary tenant object storage remains in production.
 
+**Import projection boundary (2026-10-19):** the state registry explicitly
+marks encrypted SQL projections that must be reset after imported records and
+scope keys replace local state. `settle_imported` retires cached catalog
+handles, closes their database and refuses subsequent access, removes only
+those declared projection trees (catalog, effects and shared/Agent cost
+indexes), then rebuilds the catalog before moving the writer epoch. Local
+sync identity and authoritative records remain intact. Ordinary corrupt or
+unreadable database opens still fail; import is an explicit invalidation
+boundary, not a read-error recovery path.
+
 **Effects projection qualification (2026-10-19):** effects remain an
 append-only RecordChain. The retired `effects-rollup` Document is no longer
 read; its bytes are kept for ordinary lifecycle treatment. Current lookup

@@ -42,6 +42,13 @@ source and claim evidence; coding needs workspace and verification evidence;
 data comparisons need aligned periods, units, and aggregation basis. Those
 are result contracts, not tool-name branches.
 
+Retrieval, delivery and sufficiency have distinct receipts. A source-fetching
+call establishes observation only; a card's acknowledgement says accepted for
+presentation, never that a client displayed it. Plan evidence questions remain
+unknown or unmet until support is assessed (docs/design/86-model-plans-runtime-checks.md).
+A conversation snapshot binds transcript identity and output to one ledger
+revision (docs/design/87-composed-answers.md).
+
 ## Evidence and rendering
 
 Plain Markdown is always retained as a lossless fallback document. It is not

@@ -12,6 +12,24 @@ doc 30-render-architecture §30.1 (twelve `emit_*_card` tools over 109
 domain-labelled `semantic_type`s); the rendering contract of
 `vak-presentation` and doc 67 stays.
 
+## Conversation state handoff (2026-10-19)
+
+The shared client hydrates from `/sessions/{id}/snapshot`: transcript
+identities and output are projected from one immutable ledger revision.
+An active runner exposes one committed prefix for both, marked `running`;
+stream events continue the live view until a settled read can be applied.
+The client applies message identity and presentation in one reactive batch.
+Its hydration coordinator acknowledges applied state only, rejects older
+in-flight reads, and invalidates reads at local admission and stream run
+boundaries. A deferred running read can never suppress its identical settled
+read. Turn pairing stays by durable entry id, never topic or position.
+
+Cards are acknowledged as accepted for presentation. Acceptance/recording
+is not proof a surface displayed them; no visibility receipt is fabricated.
+The legacy stream renderer remains for an active answer before its durable
+identity is available. This is a coordinated handoff, not a claim that all
+legacy view storage has been removed.
+
 ## Delivery attribution and literal prose
 
 Outline sections use the recorded card’s explicit deliverable name even

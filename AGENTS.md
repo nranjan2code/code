@@ -1370,9 +1370,10 @@ commit (invariant 30).
   and is not projected. A channel, webhook, inbox or routine summary gets the
   turn's cards (their deterministic text form) ahead of the narration, via
   `projection::text_with_run_cards`, because a card emitted through a tool is
-  not in the model's final text. The two lists the desktop client keeps
-  (`INLINE_HINT_MARKERS`, `CONTEXT_BLOCK_TAGS` in `structured.ts`) are checked
-  for exact equality with the Rust vocabulary by
+  not in the model's final text. Clients preserve authored marker examples;
+  they keep no duplicate runtime marker lists. The secured snapshot boundary
+  filters every declared control kind while retaining authored lookalikes and
+  durable message identities, checked by
   `vak-server/tests/it/control_vocabulary_sync.rs`.
   Identifiers that name a lockable resource are unique by construction, not by
   clock: a child worker's session id carries a process-wide sequence number
