@@ -885,8 +885,9 @@ commit (invariant 30).
     environment paths) and zero parent credentials or model API keys. Runtime
     state never lands in the project tree: temp files (`TMPDIR`) go to
     `<runtime>/executions/<space>/<agent_id>/<execution-id>/tmp`, and tool
-    caches and bytecode (`XDG_CACHE_HOME`, `PYTHONPYCACHEPREFIX`, the pip
-    and npm caches) to `<runtime>/executions/<space>/<agent_id>/cache`
+    caches and bytecode (`XDG_CACHE_HOME`, `PYTHONPYCACHEPREFIX`, and each
+    tool's own setting in `vak_tools::bash::cache_environment`: pip, npm,
+    pytest, mypy, ruff) to `<runtime>/executions/<space>/<agent_id>/cache`
     (`vak_config::scope::execution_dir`); a write sandbox grants exactly the
     workspace and that space's execution root. Drafts live there too: a
     draft is still named `.vak/scratch/<agent_id>/<execution>/<path>`, and

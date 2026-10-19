@@ -19,6 +19,11 @@
   answer is caught however long it is.
 - A multi-part answer plans its leading summary like any other part, so the
   summary card no longer borrows the next part's place.
+- pytest, mypy and ruff keep their caches outside the workspace; a test run
+  no longer leaves `.pytest_cache` behind as a saved file.
+- A command that fails because its program is not installed says what is
+  installed under that name (`python` → `python3`), and the shell's tool
+  description names `$TMPDIR` for temporary files, as the prompt does.
 
 ## 8.13.1 — 2026-10-19
 

@@ -48,7 +48,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute any command, program, or script in the execution sandbox: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. Commands run in the workspace, the same place `read` and `write` work; temporary files and tool caches go to `.vak/scratch/`. A command that never exits is killed at its timeout. Never create or change a Word, Excel, PowerPoint, PDF or Visio file with a command or script (no PDF or Office libraries, converters or exporters): those files reach the person only as a draft they review, made with office_apply; when office_apply is not available, or for a Visio drawing, say that instead of building one."
+        "Execute any command, program, or script in the execution sandbox: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. Commands run in the workspace, the same place `read` and `write` work; put temporary files in `$TMPDIR`, and tool caches go outside the workspace on their own. A command that never exits is killed at its timeout. Never create or change a Word, Excel, PowerPoint, PDF or Visio file with a command or script (no PDF or Office libraries, converters or exporters): those files reach the person only as a draft they review, made with office_apply; when office_apply is not available, or for a Visio drawing, say that instead of building one."
     }
 
     /// A command sent as `cmd`, `script`, `code` or `input` is the command.
@@ -167,10 +167,8 @@ impl Tool for BashTool {
             .stderr(Stdio::piped());
         scrub_environment(&mut cmd);
         cmd.env("TMPDIR", &temp_dir)
-            .env("XDG_CACHE_HOME", &cache_dir)
-            .env("PYTHONPYCACHEPREFIX", cache_dir.join("pycache"))
-            .env("PIP_CACHE_DIR", cache_dir.join("pip"))
-            .env("npm_config_cache", cache_dir.join("npm"));
+            .env("PYTHONPYCACHEPREFIX", cache_dir.join("pycache"));
+        cmd.envs(cache_environment(&cache_dir));
 
         // Every execution gets its own process group, including broker workers.
         // Otherwise a shell child can outlive the timed-out worker and keep the
@@ -353,6 +351,18 @@ impl Tool for BashTool {
                     text.push('\n');
                 }
                 if !status.success() {
+                    // 127 is the shell's own "not found": name what is
+                    // installed under that name instead.
+                    if status.code() == Some(127) {
+                        let path: Vec<std::path::PathBuf> =
+                            std::env::split_paths(&execution_path()).collect();
+                        for (missing, installed) in missing_programs(command, &path) {
+                            text.push_str(&format!(
+                                "\n[not installed: `{missing}`; on PATH: {}]",
+                                installed.join(", ")
+                            ));
+                        }
+                    }
                     text.push_str(&format!("\n[exit code: {}]", status.code().unwrap_or(-1)));
                     return ToolOutput::error(Fault::Target, text).ran(status.code(), duration_ms);
                 }
@@ -448,6 +458,75 @@ pub fn executable_available(program: &str, cwd: &std::path::Path) -> bool {
         #[cfg(not(windows))]
         false
     })
+}
+
+/// The programs `command` names that are not in the `path` directories a
+/// command gets, each with the executables there whose names start with
+/// it: what the shell's "not found" left out.
+fn missing_programs(command: &str, path: &[std::path::PathBuf]) -> Vec<(String, Vec<String>)> {
+    let executable = |file: &std::path::Path| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.metadata().is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            file.is_file()
+        }
+    };
+    let mut found = Vec::new();
+    for segment in command.split(['\n', ';', '|', '&']) {
+        let Some(program) = segment
+            .split_whitespace()
+            .find(|word| !word.contains('='))
+            .filter(|word| !word.contains('/'))
+        else {
+            continue;
+        };
+        if path
+            .iter()
+            .any(|directory| executable(&directory.join(program)))
+            || found.iter().any(|(name, _)| name == program)
+        {
+            continue;
+        }
+        let mut installed: Vec<String> = path
+            .iter()
+            .filter_map(|directory| std::fs::read_dir(directory).ok())
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| executable(&entry.path()))
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.starts_with(program) && name != program)
+            .collect();
+        installed.sort();
+        installed.dedup();
+        if !installed.is_empty() {
+            found.push((program.to_string(), installed));
+        }
+    }
+    found
+}
+
+/// Where the tools a command runs keep their caches: under the execution
+/// root's cache, never in the workspace (invariant 35). Each tool's own
+/// setting names the folder; a cache written into the workspace is
+/// reported as work the command made (found live 2026-10-19: pytest's
+/// `.pytest_cache/README.md` showed as a saved file).
+pub fn cache_environment(cache: &std::path::Path) -> Vec<(&'static str, std::ffi::OsString)> {
+    let pytest = cache.join("pytest").display().to_string();
+    let quoted = format!("\"{}\"", pytest.replace('\\', "\\\\").replace('"', "\\\""));
+    vec![
+        ("XDG_CACHE_HOME", cache.as_os_str().to_owned()),
+        ("PIP_CACHE_DIR", cache.join("pip").into_os_string()),
+        ("npm_config_cache", cache.join("npm").into_os_string()),
+        ("PYTEST_ADDOPTS", format!("-o cache_dir={quoted}").into()),
+        ("MYPY_CACHE_DIR", cache.join("mypy").into_os_string()),
+        ("RUFF_CACHE_DIR", cache.join("ruff").into_os_string()),
+    ]
 }
 
 /// Apply the same minimal non-secret environment used for brokered commands.
@@ -794,6 +873,50 @@ fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    #[test]
+    fn every_tool_cache_is_under_the_execution_cache() {
+        let cache = std::path::Path::new("/runtime/executions/space agent/cache");
+        for (name, value) in super::cache_environment(cache) {
+            assert!(
+                value
+                    .to_string_lossy()
+                    .contains("/runtime/executions/space agent/cache"),
+                "{name}"
+            );
+        }
+        let pytest = super::cache_environment(cache)
+            .into_iter()
+            .find(|(name, _)| *name == "PYTEST_ADDOPTS")
+            .unwrap()
+            .1;
+        assert_eq!(
+            pytest.to_string_lossy(),
+            "-o cache_dir=\"/runtime/executions/space agent/cache/pytest\""
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_not_installed_is_shown_what_is() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["python3", "python3.14", "pythonic.txt"] {
+            let file = dir.path().join(name);
+            std::fs::write(&file, "").unwrap();
+            let mode = if name.ends_with(".txt") { 0o644 } else { 0o755 };
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        let path = vec![dir.path().to_path_buf()];
+        assert_eq!(
+            super::missing_programs("FOO=1 python -m pytest -q && python3 x.py", &path),
+            vec![(
+                "python".to_string(),
+                vec!["python3".to_string(), "python3.14".to_string()]
+            )]
+        );
+        assert!(super::missing_programs("python3 -V", &path).is_empty());
+    }
+
     #[test]
     fn bash_declares_the_command_it_runs_and_its_time_limit() {
         use crate::Tool;

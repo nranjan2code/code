@@ -1081,10 +1081,8 @@ impl Runner {
         crate::bash::scrub_environment(&mut command);
         command
             .env("TMPDIR", &run.tmp)
-            .env("XDG_CACHE_HOME", &run.cache)
-            .env("PIP_CACHE_DIR", run.cache.join("pip"))
             .env("PYTHONDONTWRITEBYTECODE", "1")
-            .env("npm_config_cache", run.cache.join("npm"));
+            .envs(crate::bash::cache_environment(&run.cache));
         if let Some(drafts) = &run.drafts {
             command.env("VAK_DRAFTS", drafts);
         }
