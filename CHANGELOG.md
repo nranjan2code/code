@@ -17,6 +17,8 @@
 - A turn's record keeps its whole answer, so recall finds and shows the
   answer even when it opens with an assumption or a caveat, and a repeated
   answer is caught however long it is.
+- A multi-part answer plans its leading summary like any other part, so the
+  summary card no longer borrows the next part's place.
 
 ## 8.13.1 — 2026-10-19
 

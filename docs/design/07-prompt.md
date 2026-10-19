@@ -89,6 +89,12 @@ presentation update does not restore stale-context behavior.
 > **Historical record**: one note per change to the seed, newest first,
 > each true as of its version; the current wording is the seed itself.
 
+- 2026-10-19, "plan a summary first" before "lead with a summary card".
+  Every card names the plan entry it belongs to, and the plan had no entry
+  for the summary the seed asked for, so the model filed its summary card
+  under the next part's entry (the installed session's database
+  comparison, 2026-10-19). Four words longer.
+
 - 2026-10-19, a card names "the plan entry it belongs to" in `deliverable`
   instead of "the plan deliverable it delivers". The runtime already put
   several cards under one entry (`AnswerSection.items`), but the words told
