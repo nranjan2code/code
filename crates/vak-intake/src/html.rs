@@ -2,8 +2,10 @@
 //! lines a model can quote. The page's `<main>` (or its one `<article>`, or
 //! its `<body>`) is read; scripts, styles, navigation, forms and hidden
 //! elements are left out and counted, never silently. Headings keep their
-//! level, list items their bullet, table rows their cells, and links are
-//! gathered on the side, so the text stays the text.
+//! level, list items their bullet, table rows their cells, and a link
+//! reads as `[its text](its address)`, so a model can follow or cite what
+//! it read without guessing an address; links are also gathered on the
+//! side, once each.
 //!
 //! Hostile input: linear in its length, no recursion, no allocation beyond
 //! the output and the token list. Every vak call site runs it in the broker
@@ -115,6 +117,7 @@ pub fn readable(html: &str, base: Option<&url::Url>) -> Readable {
     let mut left_out = LeftOut::default();
     let mut links: Vec<Link> = Vec::new();
     let mut link: Option<(Option<String>, String)> = None;
+    // A link's address, resolved where it opens, written after its text.
     let mut lists: Vec<Option<usize>> = Vec::new();
     let mut first_cell = true;
     let mut pre = 0usize;
@@ -212,7 +215,16 @@ pub fn readable(html: &str, base: Option<&url::Url>) -> Readable {
                         out.mark("> ");
                     }
                     "a" => {
-                        link = Some((attr(attrs, "href"), String::new()));
+                        let href = attr(attrs, "href");
+                        if pre == 0
+                            && href
+                                .as_deref()
+                                .and_then(|href| resolve(href, base))
+                                .is_some()
+                        {
+                            out.open_link();
+                        }
+                        link = Some((href, String::new()));
                     }
                     "img" => {
                         if let Some(alt) = attr(attrs, "alt").filter(|a| !a.trim().is_empty()) {
@@ -239,6 +251,7 @@ pub fn readable(html: &str, base: Option<&url::Url>) -> Readable {
                     if let Some((Some(href), label)) = link.take()
                         && let Some(url) = resolve(&href, base)
                     {
+                        out.close_link(&url);
                         let text = collapse(&label);
                         if !links.iter().any(|l| l.url == url) {
                             links.push(Link { text, url });
@@ -520,6 +533,11 @@ struct Writer {
     /// 0: none, 1: line break, 2: blank line.
     pending_break: u8,
     space: bool,
+    /// A link opened and its `[` not yet written: it is written before the
+    /// link's first word, so a link with no text writes nothing.
+    link_pending: bool,
+    /// A link's `[` was written and its `](address)` is owed.
+    link_open: bool,
 }
 
 impl Writer {
@@ -561,11 +579,28 @@ impl Writer {
         let mut words = text.split_whitespace().peekable();
         while let Some(word) = words.next() {
             self.start();
+            if std::mem::take(&mut self.link_pending) {
+                self.out.push('[');
+                self.link_open = true;
+            }
             self.out.push_str(word);
             self.space = words.peek().is_some();
         }
         if text.ends_with(char::is_whitespace) && !self.out.is_empty() {
             self.space = true;
+        }
+    }
+
+    fn open_link(&mut self) {
+        self.link_pending = true;
+    }
+
+    fn close_link(&mut self, url: &str) {
+        self.link_pending = false;
+        if std::mem::take(&mut self.link_open) {
+            self.out.push_str("](");
+            self.out.push_str(url);
+            self.out.push(')');
         }
     }
 
@@ -614,7 +649,7 @@ See <a href="/wiki/Beacon">beacons</a> and <a href="#notes">notes</a>.</p>
         assert_eq!(
             page.text,
             "# Lighthouse\n\n\
-             A lighthouse is a tower. See beacons and notes.\n\n\
+             A lighthouse is a tower. See [beacons](https://en.example.org/wiki/Beacon) and notes.\n\n\
              ## Famous ones\n\n\
              - Tower of Hercules\n\
              - Bell Rock\n\n  \

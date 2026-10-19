@@ -12,6 +12,8 @@
   words: any word matches, word forms meet ("recommend", "recommendation"),
   and the closest match comes first. An empty search tells the model to try
   the earlier answer's own words before saying it is not there.
+- A fetched page's text keeps each link's address as `[text](address)`, so
+  a model can open a post it read about without guessing its URL.
 
 ## 8.13.1 — 2026-10-19
 

@@ -47,7 +47,7 @@ pub struct WebFetchTool {
     description: String,
 }
 
-const DESCRIPTION: &str = "Fetch a known URL over HTTP(S) with GET; this does not search the web or turn a search-results page into reliable facts. Blocks loopback/private/link-local targets, follows at most 3 redirects, downloads at most 8 MiB, accepts only text/json/xml content types, and never sends credentials. Returns a status line, then the body: an HTML page as its readable text (headings, paragraphs, lists, table rows; scripts, navigation and forms left out and counted), or with format \"links\" its links, or with \"source\" its HTML. Other content types come back as they are.";
+const DESCRIPTION: &str = "Fetch a known URL over HTTP(S) with GET; this does not search the web or turn a search-results page into reliable facts. Blocks loopback/private/link-local targets, follows at most 3 redirects, downloads at most 8 MiB, accepts only text/json/xml content types, and never sends credentials. Returns a status line, then the body: an HTML page as its readable text (headings, paragraphs, lists, table rows, links as [text](address); scripts, navigation and forms left out and counted), or with format \"links\" its links, or with \"source\" its HTML. Other content types come back as they are.";
 
 const RENDER: &str = " With render, the page is first run in a local headless browser with a fresh profile, so content its JavaScript builds is there; the browser's own redirects and subresources are not screened.";
 
@@ -592,7 +592,7 @@ fn render_page(read: &vak_intake::html::Readable, format: PageFormat) -> String 
         head.push_str(&format!(" Left out: {}.", left_out.join(", ")));
     }
     head.push_str(&format!(
-        " {} links: ask with format \"links\" for them, or \"source\" for the HTML.",
+        " Links read as [text](address); {} links in all with format \"links\", or \"source\" for the HTML.",
         read.links.len()
     ));
     if read.text.is_empty() {
@@ -622,7 +622,7 @@ mod tests {
         );
         assert_eq!(
             render_page(&read, PageFormat::Text),
-            "[page] \"T\", the readable text of its body: 11 characters. Left out: 1 navigation and other-language links. 1 links: ask with format \"links\" for them, or \"source\" for the HTML.\n\nHello there"
+            "[page] \"T\", the readable text of its body: 34 characters. Left out: 1 navigation and other-language links. Links read as [text](address); 1 links in all with format \"links\", or \"source\" for the HTML.\n\nHello [there](https://a.example/x)"
         );
         assert_eq!(
             render_page(&read, PageFormat::Links),

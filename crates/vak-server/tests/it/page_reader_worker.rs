@@ -32,7 +32,10 @@ async fn an_html_page_is_read_as_text_in_the_worker() {
         "{text}"
     );
     assert!(
-        text.ends_with("# Lighthouse\n\nA tower with a lamp.\n\nName | Country\nFastnet | Ireland")
+        text.ends_with(
+            "# Lighthouse\n\nA tower with a [lamp](https://en.example.org/wiki/Lamp).\n\nName | Country\nFastnet | Ireland"
+        ),
+        "{text}"
     );
     assert!(!text.contains("injected"), "{text}");
 
