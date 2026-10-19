@@ -1,4 +1,4 @@
-## Unreleased
+## 8.13.1 — 2026-10-19
 
 - File previews that match a delivered file share its compact result card.
   Standalone file and HTML previews start collapsed and expand on request,
