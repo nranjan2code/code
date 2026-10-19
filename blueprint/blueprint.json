@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.13.0",
-  "revision": "384b0a478",
+  "revision": "c51b75181",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -13,13 +13,13 @@
    "ts_crates": 2,
    "rust_src": 337567,
    "rust_tests": 86250,
-   "ts_src": 62524,
+   "ts_src": 62551,
    "routes": 397,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2396,
+   "total_commits": 2397,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -274,15 +274,15 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 531,
+  "commits": 532,
   "areas": [
    [
     "docs",
-    452
+    453
    ],
    [
     "(root)",
-    286
+    287
    ],
    [
     "vak-core",
@@ -294,7 +294,7 @@
    ],
    [
     "vak-client-ui",
-    121
+    122
    ],
    [
     "vak-agent",
@@ -339,12 +339,12 @@
    [
     "client",
     "Workspace client",
-    102
+    103
    ],
    [
     "cards",
     "Cards and presentation",
-    99
+    100
    ],
    [
     "loop",
@@ -644,6 +644,16 @@
   ],
   "recent": [
    {
+    "hash": "c51b75181",
+    "date": "2026-10-19",
+    "subject": "Consolidate file previews and simplify card actions",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-client-ui"
+    ]
+   },
+   {
     "hash": "384b0a478",
     "date": "2026-10-19",
     "subject": "Record 8.13.0 installation and acceptance",
@@ -793,18 +803,11 @@
      "vak-llm",
      "vak-tools"
     ]
-   },
-   {
-    "hash": "d1c6d74e8",
-    "date": "2026-10-19",
-    "subject": "Draw a forming answer in the settled answer's frame",
-    "areas": [
-     "(root)",
-     "vak-client-ui"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "File previews that match a delivered file share its compact result card."
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1259,7 +1262,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 83768,
+   "lines": 83795,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1357,7 +1360,7 @@
    ],
    "modules": 63,
    "parts": [],
-   "lines": 18066,
+   "lines": 18084,
    "largest": [
     3163,
     "crates/vak-client-ui/src/api.ts"
@@ -1452,9 +1455,9 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 505,
+   "commits": 506,
    "fixes": 74,
-   "recent": 102,
+   "recent": 103,
    "fix_density": 4.1,
    "out": [
     {
@@ -14437,7 +14440,7 @@
    ],
    "modules": 26,
    "parts": [],
-   "lines": 19057,
+   "lines": 19066,
    "largest": [
     6385,
     "crates/vak-server/src/projection.rs"
@@ -14505,9 +14508,9 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 300,
+   "commits": 301,
    "fixes": 53,
-   "recent": 99,
+   "recent": 100,
    "fix_density": 2.8,
    "out": [
     {
@@ -29994,6 +29997,15 @@
  ],
  "replay": [
   {
+   "hash": "c51b75181",
+   "date": "2026-10-19",
+   "subject": "Consolidate file previews and simplify card actions",
+   "subsystems": [
+    "cards",
+    "client"
+   ]
+  },
+  {
    "hash": "384b0a478",
    "date": "2026-10-19",
    "subject": "Record 8.13.0 installation and acceptance",
@@ -35493,10 +35505,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 37712,
+   "src": 37739,
    "tests": 324,
    "files": 187,
-   "commits": 643,
+   "commits": 644,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -37111,8 +37123,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1366,
-  "hot": 643
+  "docs_commits": 1367,
+  "hot": 644
  },
  "findings": [
   {
