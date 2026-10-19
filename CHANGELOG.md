@@ -1,4 +1,4 @@
-## Unreleased
+## 8.12.0 — 2026-10-19
 
 - A conversation is only locked while something is writing it. Before, once
   the app had answered a turn in a conversation it kept it locked until the
