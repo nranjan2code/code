@@ -51,6 +51,7 @@ vak-context = { workspace = true }
 vak-tools = { workspace = true }
 vak-sandbox = { workspace = true }
 walkdir = { workspace = true }
+rusqlite = { workspace = true }
 
 [lints]
 workspace = true

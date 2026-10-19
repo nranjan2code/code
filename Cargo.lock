@@ -6740,6 +6740,7 @@ dependencies = [
  "hex",
  "iana-time-zone",
  "include_dir",
+ "rusqlite",
  "semver",
  "serde",
  "serde_json",

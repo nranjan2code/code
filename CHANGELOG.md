@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Capped budget admission uses encrypted indexed totals and reservation
+  lookups instead of decoding settled history. Verified corrections and
+  unresolved charges keep their existing accounting rules; cached monetary
+  values retain their exact floating-point bits.
+
 - Relocating an embedded Core's data home no longer reuses budget gates
   bound to its prior home. Existing dispatches settle to their original
   ledger. Admission reads prices and caps together, preventing a concurrent

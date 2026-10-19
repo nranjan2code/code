@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use vak_session::chain::RecordChain;
+#[cfg(test)]
 use vak_session::rollup::Rollup;
+
+mod projection;
 
 use serde::{Deserialize, Serialize};
 use vak_agent::{SpendCheck, SpendGate, SpendReservationId};
@@ -111,7 +114,9 @@ impl ActivityLedger {
 
 pub struct FinOpsLedger {
     path: PathBuf,
+    #[cfg(test)]
     rollup_path: PathBuf,
+    projection_path: PathBuf,
     reservations_path: PathBuf,
 }
 
@@ -120,7 +125,9 @@ impl FinOpsLedger {
         let scope = vak_config::scope::AgentScope::new(sessions_home);
         FinOpsLedger {
             path: scope.cost_log(),
+            #[cfg(test)]
             rollup_path: scope.cost_rollup(),
+            projection_path: scope.cost_projection(),
             reservations_path: vak_config::scope::SharedScope::new(sessions_home)
                 .cost_reservations(),
         }
@@ -167,7 +174,17 @@ impl FinOpsLedger {
     pub fn pending_reservations(&self) -> Result<Vec<PendingReservation>, String> {
         let state = self.read_reservations()?;
         let totals = self
-            .strict_session_totals()
+            .selected_totals_at(
+                None,
+                None,
+                &state
+                    .reservations
+                    .iter()
+                    .map(|row| row.id.clone())
+                    .collect::<Vec<_>>(),
+                true,
+            )
+            .map(|(totals, _)| totals)
             .map_err(|_| "cost history could not be verified".to_string())?;
         let mut found = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
@@ -243,7 +260,7 @@ impl FinOpsLedger {
             .find(|row| row.id == reservation_id);
         loop {
             let (totals, at) = self
-                .strict_cost_totals_at()
+                .selected_totals_at(None, None, &[reservation_id.to_string()], false)
                 .map_err(|_| "cost history could not be verified".to_string())?;
             if let Some(existing) = totals.reservations.get(reservation_id) {
                 let expected_owner = reservation
@@ -383,135 +400,45 @@ impl FinOpsLedger {
         Ok(())
     }
 
+    fn projection(
+        &self,
+    ) -> Result<
+        (projection::Projection, vak_session::tail::Position),
+        vak_session::types::SessionError,
+    > {
+        // Same canonical tenant key authority as the retired Document Rollup.
+        let mut projection = projection::Projection::open(
+            &self.projection_path,
+            &vak_config::paths::local_tenant_home(),
+        )?;
+        let at = projection.sync(&self.path)?;
+        Ok((projection, at))
+    }
+
+    #[cfg(test)]
     fn strict_cost_totals_at(
         &self,
     ) -> Result<(DailyCostTotals, vak_session::tail::Position), vak_session::types::SessionError>
     {
-        Rollup::new(&self.path, &self.rollup_path).try_read_at(
-            |totals: &mut DailyCostTotals, bytes| {
-                let row: CostRow = serde_json::from_slice(bytes).map_err(|error| {
-                    vak_session::types::SessionError::Corrupt {
-                        line: 0,
-                        message: error.to_string(),
-                    }
-                })?;
-                if row.usd.is_some_and(|usd| !valid_usd(usd)) {
-                    return Err(vak_session::types::SessionError::Corrupt {
-                        line: 0,
-                        message: "cost row USD must be finite and non-negative".into(),
-                    });
-                }
-                if let Some(id) = &row.reservation_id {
-                    let budget_session =
-                        row.budget_session_id.as_deref().unwrap_or(&row.session_id);
-                    let correction = if let Some(previous) = totals.reservations.get(id) {
-                        if previous.usd.is_none()
-                            && row.usd.is_some()
-                            && row.source == "owner_verified"
-                            && row.actor.is_some()
-                            && previous.session_id == budget_session
-                            && !previous.corrected
-                        {
-                            Some(previous.clone())
-                        } else {
-                            return Err(vak_session::types::SessionError::Corrupt {
-                                line: 0,
-                                message: "reservation id has multiple settled rows".into(),
-                            });
-                        }
-                    } else {
-                        None
-                    };
-                    if let Some(previous) = correction {
-                        let old_day = totals.days.entry(previous.day).or_default();
-                        old_day.unknown_calls = old_day.unknown_calls.saturating_sub(1);
-                        let old_session = totals
-                            .sessions
-                            .entry(previous.session_id.clone())
-                            .or_default();
-                        old_session.unknown_calls = old_session.unknown_calls.saturating_sub(1);
-                        totals.reservations.insert(
-                            id.clone(),
-                            SettledReservation {
-                                session_id: budget_session.to_string(),
-                                usd: row.usd,
-                                source: row.source.clone(),
-                                actor: row.actor,
-                                day: row.ts.date_naive(),
-                                corrected: true,
-                                created_at: row.ts,
-                                original_session_id: row.session_id.clone(),
-                                model: row.model.clone(),
-                                provider: row.provider.clone(),
-                                trace: row.trace.clone(),
-                            },
-                        );
-                    } else {
-                        totals.reservations.insert(
-                            id.clone(),
-                            SettledReservation {
-                                session_id: budget_session.to_string(),
-                                usd: row.usd,
-                                source: row.source.clone(),
-                                actor: row.actor,
-                                day: row.ts.date_naive(),
-                                corrected: false,
-                                created_at: row.ts,
-                                original_session_id: row.session_id.clone(),
-                                model: row.model.clone(),
-                                provider: row.provider.clone(),
-                                trace: row.trace.clone(),
-                            },
-                        );
-                    }
-                }
-                let total = totals.days.entry(row.ts.date_naive()).or_default();
-                if let Some(usd) = row.usd {
-                    total.usd += usd;
-                    if !total.usd.is_finite() {
-                        return Err(vak_session::types::SessionError::Corrupt {
-                            line: 0,
-                            message: "daily cost total is not finite".into(),
-                        });
-                    }
-                } else {
-                    total.unknown_calls = total.unknown_calls.saturating_add(1);
-                }
-                let budget_session = row.budget_session_id.as_deref().unwrap_or(&row.session_id);
-                let session = totals
-                    .sessions
-                    .entry(budget_session.to_string())
-                    .or_default();
-                match row.usd {
-                    Some(usd) => {
-                        session.usd += usd;
-                        if !session.usd.is_finite() {
-                            return Err(vak_session::types::SessionError::Corrupt {
-                                line: 0,
-                                message: "session cost total is not finite".into(),
-                            });
-                        }
-                    }
-                    None => session.unknown_calls = session.unknown_calls.saturating_add(1),
-                }
-                if row.budget_session_id.is_none()
-                    && row.trace.as_ref().is_some_and(|trace| {
-                        matches!(trace.cause, vak_session::trace::Cause::Delegation { .. })
-                    })
-                {
-                    totals.unmapped_delegated = totals.unmapped_delegated.saturating_add(1);
-                }
-                Ok(())
-            },
-        )
+        let (projection, _) = self.projection()?;
+        projection.all_totals()
     }
 
+    fn selected_totals_at(
+        &self,
+        day: Option<chrono::NaiveDate>,
+        session: Option<&str>,
+        ids: &[String],
+        unknown: bool,
+    ) -> Result<(DailyCostTotals, vak_session::tail::Position), vak_session::types::SessionError>
+    {
+        let (projection, _) = self.projection()?;
+        projection.select(day, session, ids, unknown)
+    }
+
+    #[cfg(test)]
     fn strict_cost_totals(&self) -> Result<DailyCostTotals, vak_session::types::SessionError> {
         self.strict_cost_totals_at().map(|(totals, _)| totals)
-    }
-
-    fn strict_session_totals(&self) -> Result<DailyCostTotals, String> {
-        self.strict_cost_totals().map_err(|error| error.to_string())
     }
 
     fn cost_chain(&self) -> RecordChain {
@@ -534,7 +461,7 @@ impl FinOpsLedger {
             .cost_chain()
             .try_read::<CostRow>()
             .map_err(|_| "cost history could not be verified".to_string())?;
-        self.strict_cost_totals()
+        self.projection()
             .map_err(|_| "cost history could not be verified".to_string())?;
         let corrections: std::collections::BTreeMap<_, _> = rows
             .iter()
@@ -599,6 +526,124 @@ impl FinOpsLedger {
             .map(|day| (day, totals.get(&day).copied().unwrap_or(0.0)))
             .collect()
     }
+}
+
+fn fold_cost_row(
+    totals: &mut DailyCostTotals,
+    bytes: &[u8],
+) -> Result<(), vak_session::types::SessionError> {
+    let row: CostRow = serde_json::from_slice(bytes).map_err(|error| {
+        vak_session::types::SessionError::Corrupt {
+            line: 0,
+            message: error.to_string(),
+        }
+    })?;
+    if row.usd.is_some_and(|usd| !valid_usd(usd)) {
+        return Err(vak_session::types::SessionError::Corrupt {
+            line: 0,
+            message: "cost row USD must be finite and non-negative".into(),
+        });
+    }
+    if let Some(id) = &row.reservation_id {
+        let budget_session = row.budget_session_id.as_deref().unwrap_or(&row.session_id);
+        let correction = if let Some(previous) = totals.reservations.get(id) {
+            if previous.usd.is_none()
+                && row.usd.is_some()
+                && row.source == "owner_verified"
+                && row.actor.is_some()
+                && previous.session_id == budget_session
+                && !previous.corrected
+            {
+                Some(previous.clone())
+            } else {
+                return Err(vak_session::types::SessionError::Corrupt {
+                    line: 0,
+                    message: "reservation id has multiple settled rows".into(),
+                });
+            }
+        } else {
+            None
+        };
+        if let Some(previous) = correction {
+            let old_day = totals.days.entry(previous.day).or_default();
+            old_day.unknown_calls = old_day.unknown_calls.saturating_sub(1);
+            let old_session = totals
+                .sessions
+                .entry(previous.session_id.clone())
+                .or_default();
+            old_session.unknown_calls = old_session.unknown_calls.saturating_sub(1);
+            totals.reservations.insert(
+                id.clone(),
+                SettledReservation {
+                    session_id: budget_session.to_string(),
+                    usd: row.usd,
+                    source: row.source.clone(),
+                    actor: row.actor,
+                    day: row.ts.date_naive(),
+                    corrected: true,
+                    created_at: row.ts,
+                    original_session_id: row.session_id.clone(),
+                    model: row.model.clone(),
+                    provider: row.provider.clone(),
+                    trace: row.trace.clone(),
+                },
+            );
+        } else {
+            totals.reservations.insert(
+                id.clone(),
+                SettledReservation {
+                    session_id: budget_session.to_string(),
+                    usd: row.usd,
+                    source: row.source.clone(),
+                    actor: row.actor,
+                    day: row.ts.date_naive(),
+                    corrected: false,
+                    created_at: row.ts,
+                    original_session_id: row.session_id.clone(),
+                    model: row.model.clone(),
+                    provider: row.provider.clone(),
+                    trace: row.trace.clone(),
+                },
+            );
+        }
+    }
+    let total = totals.days.entry(row.ts.date_naive()).or_default();
+    if let Some(usd) = row.usd {
+        total.usd += usd;
+        if !total.usd.is_finite() {
+            return Err(vak_session::types::SessionError::Corrupt {
+                line: 0,
+                message: "daily cost total is not finite".into(),
+            });
+        }
+    } else {
+        total.unknown_calls = total.unknown_calls.saturating_add(1);
+    }
+    let budget_session = row.budget_session_id.as_deref().unwrap_or(&row.session_id);
+    let session = totals
+        .sessions
+        .entry(budget_session.to_string())
+        .or_default();
+    match row.usd {
+        Some(usd) => {
+            session.usd += usd;
+            if !session.usd.is_finite() {
+                return Err(vak_session::types::SessionError::Corrupt {
+                    line: 0,
+                    message: "session cost total is not finite".into(),
+                });
+            }
+        }
+        None => session.unknown_calls = session.unknown_calls.saturating_add(1),
+    }
+    if row.budget_session_id.is_none()
+        && row.trace.as_ref().is_some_and(|trace| {
+            matches!(trace.cause, vak_session::trace::Cause::Delegation { .. })
+        })
+    {
+        totals.unmapped_delegated = totals.unmapped_delegated.saturating_add(1);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -1105,7 +1150,17 @@ impl CoreSpendGate {
             let totals = if day_cap.is_some() || run_cap.is_some() {
                 Some(
                     self.ledger
-                        .strict_session_totals()
+                        .selected_totals_at(
+                            Some(now.date_naive()),
+                            Some(budget_session_id),
+                            &state
+                                .reservations
+                                .iter()
+                                .map(|row| row.id.clone())
+                                .collect::<Vec<_>>(),
+                            false,
+                        )
+                        .map(|(totals, _)| totals)
                         .map_err(|_| "cost history could not be verified".to_string())?,
                 )
             } else {
@@ -1846,6 +1901,171 @@ mod tests {
         updates.join().unwrap();
     }
 
+    #[test]
+    fn cost_index_initialization_coordinates_independent_handles_and_binds_source() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempdir().unwrap();
+        let ledger = Arc::new(FinOpsLedger::new(dir.path()));
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let workers: Vec<_> = (0..2)
+            .map(|_| {
+                let ledger = ledger.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    ledger.selected_totals_at(None, None, &[], false).unwrap()
+                })
+            })
+            .collect();
+        for worker in workers {
+            assert_eq!(
+                worker.join().unwrap().1,
+                vak_session::tail::Position::default()
+            );
+        }
+        let (mut index, _) = ledger.projection().unwrap();
+        assert!(
+            index
+                .sync(&dir.path().join("different-cost-chain"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn indexed_cost_projection_matches_reference_fold_across_corrections() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempdir().unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        let now = chrono::Utc::now();
+        let mut rows = Vec::new();
+        for n in 0..30 {
+            let mut row = row_on(
+                (now - chrono::Duration::days(n % 3)).date_naive(),
+                if n % 4 == 0 {
+                    None
+                } else {
+                    Some(n as f64 / 10.0)
+                },
+            );
+            row.reservation_id = Some(uuid::Uuid::now_v7().to_string());
+            row.session_id = format!("child-{n}");
+            row.budget_session_id = Some(format!("owner-{}", n % 3));
+            rows.push(row);
+        }
+        let unknown = rows
+            .iter()
+            .filter(|row| row.usd.is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        let actor = vak_session::ids::PrincipalId::new();
+        for mut row in unknown.into_iter().take(4) {
+            row.ts = now;
+            row.usd = Some(3.25);
+            row.source = "owner_verified".into();
+            row.actor = Some(actor);
+            rows.push(row);
+        }
+        let mut reference = DailyCostTotals::default();
+        for row in &rows {
+            fold_cost_row(&mut reference, &serde_json::to_vec(row).unwrap()).unwrap();
+        }
+        ledger.cost_chain().append_all(&rows).unwrap();
+        let actual = ledger.strict_cost_totals().unwrap();
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(reference).unwrap()
+        );
+        let id = rows[0].reservation_id.clone().unwrap();
+        let (selected, _) = ledger
+            .selected_totals_at(None, None, &[id.clone()], false)
+            .unwrap();
+        assert_eq!(selected.reservations.len(), 1);
+        assert!(selected.reservations.contains_key(&id));
+        assert!(
+            selected.days.is_empty() && selected.sessions.is_empty(),
+            "identity lookup never loads unrelated aggregates"
+        );
+    }
+
+    #[test]
+    fn invalid_cost_suffix_rolls_back_aggregates_reservations_and_cursor() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempdir().unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        let row = row_on(chrono::Utc::now().date_naive(), Some(1.0));
+        ledger.append(&row).unwrap();
+        let (mut index, _) = ledger.projection().unwrap();
+        let before = index.all_totals().unwrap();
+        let mut valid = row.clone();
+        valid.usd = Some(2.0);
+        valid.reservation_id = Some(uuid::Uuid::now_v7().to_string());
+        let mut invalid = valid.clone();
+        invalid.usd = Some(-1.0);
+        ledger.cost_chain().append_all(&[valid, invalid]).unwrap();
+        assert!(index.sync(&ledger.path).is_err());
+        let after = index.all_totals().unwrap();
+        assert_eq!(before.1, after.1);
+        assert_eq!(
+            serde_json::to_value(before.0).unwrap(),
+            serde_json::to_value(after.0).unwrap()
+        );
+        assert!(ledger.selected_totals_at(None, None, &[], false).is_err());
+    }
+
+    #[test]
+    fn indexed_costs_distinguish_empty_source_from_lost_source() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempdir().unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        assert!(ledger.selected_totals_at(None, None, &[], false).is_ok());
+        assert!(!ledger.path.exists());
+        ledger
+            .append(&row_on(chrono::Utc::now().date_naive(), Some(1.0)))
+            .unwrap();
+        assert!(ledger.selected_totals_at(None, None, &[], false).is_ok());
+        // Failure injection only; normal records are removed by lifecycle.
+        std::fs::remove_dir_all(&ledger.path).unwrap();
+        assert!(ledger.selected_totals_at(None, None, &[], false).is_err());
+    }
+
+    #[test]
+    fn cost_index_ciphertext_and_live_key_erasure_are_enforced() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempdir().unwrap();
+        let ledger = FinOpsLedger::new(dir.path());
+        let mut row = row_on(chrono::Utc::now().date_naive(), Some(1.0));
+        let marker = "private-budget-owner-621d9028";
+        row.budget_session_id = Some(marker.into());
+        ledger.append(&row).unwrap();
+        let tenant_home = dir.path().join("isolated-tenant");
+        let mut index =
+            projection::Projection::open(&ledger.projection_path, &tenant_home).unwrap();
+        index.sync(&ledger.path).unwrap();
+        assert!(
+            index
+                .select(None, Some(marker), &[], false)
+                .unwrap()
+                .0
+                .sessions
+                .contains_key(marker)
+        );
+        for entry in std::fs::read_dir(ledger.projection_path.parent().unwrap()).unwrap() {
+            let bytes = std::fs::read(entry.unwrap().path()).unwrap();
+            assert!(
+                !bytes
+                    .windows(marker.len())
+                    .any(|part| part == marker.as_bytes())
+            );
+            assert!(!bytes.starts_with(b"SQLite format 3"));
+        }
+        vak_session::objects::TenantObjects::for_tenant(&tenant_home)
+            .unwrap()
+            .destroy_scope_key("finops-index")
+            .unwrap();
+        assert!(index.select(None, None, &[], false).is_err());
+        assert!(projection::Projection::open(&ledger.projection_path, &tenant_home).is_err());
+    }
+
     /// Manual growth probe for the strict cost rollup and durable admission
     /// path. Run with `cargo test -p vak-core finops_growth_ -- --ignored
     /// --nocapture`; this intentionally measures production code and is not a
@@ -1889,13 +2109,36 @@ mod tests {
             let seed_elapsed = seed_started.elapsed();
 
             let cold_started = Instant::now();
-            let totals = ledger.strict_session_totals().unwrap();
+            let (totals, _) = ledger
+                .selected_totals_at(
+                    Some(now.date_naive()),
+                    Some("benchmark-budget-owner"),
+                    &[],
+                    false,
+                )
+                .unwrap();
             let cold_elapsed = cold_started.elapsed();
-            assert_eq!(totals.reservations.len(), count);
+            assert!(
+                totals.reservations.is_empty(),
+                "admission does not decode settled identities it did not request"
+            );
+            assert!(
+                (totals.sessions["benchmark-budget-owner"].usd - count as f64 * 0.001).abs()
+                    < 0.0001
+            );
 
             let warm_started = Instant::now();
             for _ in 0..25 {
-                black_box(ledger.strict_session_totals().unwrap());
+                black_box(
+                    ledger
+                        .selected_totals_at(
+                            Some(now.date_naive()),
+                            Some("benchmark-budget-owner"),
+                            &[],
+                            false,
+                        )
+                        .unwrap(),
+                );
             }
             let warm_elapsed = warm_started.elapsed() / 25;
 

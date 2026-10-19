@@ -94,7 +94,7 @@ The audit remains the historical evidence; the implementation log names checks.
 | A06 | Repaired, full gate previously passed | Preserve failed-compaction regression |
 | A07 | Conservative scheduling repaired | Preserve unknown/exclusive tool behavior |
 | A08 | Shared run-service constructors and process-owned budget state extracted | Further Core ownership separation remains |
-| A09 | Effects warm reads ~3–4 ms; FinOps growth measured | Cost Rollup warm reads ~86 ms at 10k; indexed financial projection remains |
+| A09 | Effects and FinOps use encrypted row projections; warm reads ~3–4 ms at 10k | Cold replay, seal metadata, unresolved sets and other consumers remain |
 | A10 | Encrypted catalog implemented; focused suite passes | Multi-platform packaging and wider acceptance remain |
 | A11 | Typed outcomes and mechanically checked ClientEvent fixture implemented | Wider presentation wire fixture coverage/replay acceptance |
 | A12 | Unreachable production API quarantined | Module now test-only; concurrent chunk ownership must precede any production reintroduction |
@@ -1307,3 +1307,37 @@ route. The relocation regression was observed failing before the fix.
 Core/Server library Clippy passes with warnings denied, as do formatting,
 record, path and version checks. No full gate, browser acceptance, release
 or installation ran.
+
+### Indexed financial admission (2026-10-19)
+
+The FinOps settled-history bottleneck is repaired with encrypted transactional
+row storage. Admission requests only its day, budget owner and every current
+pending reservation ID. Owner recovery selects its exact settlement identity;
+pending review additionally selects unknown settled rows, preserving liabilities
+whose marker is gone. The same strict fold supplies the accounting rules.
+Corrections include the prior day/session aggregates; row and cursor updates
+commit together. Selected reads and their position share one snapshot before
+conditional append. Old Rollup Documents are no longer production inputs and
+are retained, not deleted. All new files/sidecars are registered Derived.
+
+A parity regression caught JSON floating-point cache-round-trip drift. USD
+values now retain exact bits in aggregate and settlement storage, with invalid
+values refused. The exact full-fold parity assertion remains intact. Other
+regressions cover rollback, source loss/binding, concurrent open, encryption
+and key erasure. Unknown debt, attribution and reconciliation semantics remain.
+
+[Measured evidence](../audits/finops-index-measurement-2026-10-19.md): 10k-row
+warm selected read 2.988 ms (previously 85.40 ms); durable reserve/release
+61.921 ms (144.99 ms); cold read/rebuild 995.574 ms (301.56 ms). This closes
+settled-history decoding on admission, not unresolved-set growth, cold replay,
+seal metadata or all A09 consumers. Further ownership/audit and full app/platform
+acceptance remain open.
+
+Focused verification for this slice: 55 FinOps regressions pass with one
+ignored benchmark executed explicitly; ten Core persistence/scope cases,
+47 state-registry cases, five scope-path cases, the real-auth recovery route
+and two cap-patch route cases pass. Core/Server library Clippy passes with
+warnings denied; formatting, record, path and version checks pass. Independent
+read-only review found no concrete regression in the selected transaction,
+correction, liability and bit-preservation paths. No full workspace gate,
+manual app acceptance, release or installation ran.

@@ -93,8 +93,9 @@ title = "Storage's guarantees are not tested in the shapes that broke them"
 evidence = """
 Owning the storage layer is a decision (docs/decisions.md, 2026-10-18), and \
 it is tested for torn writes, crashes, fsync paths and injected faults, with \
-a fuzz corpus. Nothing tests a chain's reader against a simple reference \
-model, and few tests run two writer processes. The two P1 faults of \
+a fuzz corpus. FinOps now compares its row projection with a direct fold, \
+but the underlying chain reader still lacks an independent reference model, \
+and few tests run two writer processes. The two P1 faults of \
 2026-10-18 needed exactly those shapes: a cached grant that kept authorizing \
 because its revocation sat in an unreadable segment (A01), and a writer \
 paused between the epoch check and the ref update (A02). A review's probes \
@@ -107,22 +108,6 @@ or a write that should have been fenced.
 """
 fix = "A model-based test of each chain's reader against a reference, and multi-process interleavings of every fenced write path."
 sources = "[docs/audits/architecture-and-presentation-review-2026-10-18.md](../docs/audits/architecture-and-presentation-review-2026-10-18.md) (A01, A02); `crates/vak-storage`, `crates/vak-session`."
-
-[[finding]]
-id = "F5"
-tag = "Performance"
-verdict = "Measured linear growth"
-title = "Budget admission decodes settled reservation history"
-evidence = """
-The 2026-10-19 production-path growth probe measures warm strict cost reads \
-at 1.44 ms for 100 rows, 9.87 ms for 1,000, and 85.40 ms for 10,000. \
-Durable reserve/release averages rise from 67.67 to 144.99 ms. \
-DailyCostTotals retains all settled reservation identities in one Rollup \
-Document, decoded even when a capped admission needs only its day and session totals.
-"""
-matters = "Capped per-call budget checks become slower as unrelated paid history accumulates."
-fix = "Use encrypted indexed reservation rows and day/session aggregates, committing their source cursor transactionally; retain strict corrections, ownership and unresolved debt."
-sources = "`crates/vak-core/src/finops.rs` (`strict_cost_totals_at`, `finops_growth_100_1000_10000`); [measured evidence](../docs/audits/finops-growth-measurement-2026-10-19.md)."
 
 [[keep]]
 name = "vak-permission"

@@ -184,9 +184,14 @@ impl AgentScope {
         self.root.join("cost-log")
     }
 
-    /// Verified projection of the cost ledger, used for strict budget admission.
+    /// Retired cost Rollup Document, retained for inventory/lifecycle.
     pub fn cost_rollup(&self) -> PathBuf {
         self.root.join("cost-log-rollup")
+    }
+
+    /// Derived encrypted financial projection and its sidecars.
+    pub fn cost_projection(&self) -> PathBuf {
+        self.root.join("cost-index").join("costs.db")
     }
 
     /// Durable pending spend admissions, updated through fenced Document CAS.
@@ -482,9 +487,14 @@ impl SharedScope {
         self.root.join("cost-log")
     }
 
-    /// Verified projection of the shared cost ledger, used for strict budget admission.
+    /// Retired shared cost Rollup Document, retained for inventory/lifecycle.
     pub fn cost_rollup(&self) -> PathBuf {
         self.root.join("cost-log-rollup")
+    }
+
+    /// Derived encrypted financial projection and its sidecars.
+    pub fn cost_projection(&self) -> PathBuf {
+        self.root.join("cost-index").join("costs.db")
     }
 
     /// Durable pending spend admissions, updated through fenced Document CAS.

@@ -316,6 +316,15 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
+        path: "cost-index",
+        root: Root::Data,
+        owner: "vak-core",
+        schema: Some(1),
+        class: Class::Derived,
+        on_purge: OnPurge::Remove,
+    },
+    agent_entry("agents/{agent}/cost-index", "vak-core", Class::Derived),
+    StateEntry {
         path: "model-call-budgets/{run}",
         root: Root::Data,
         owner: "vak-core",

@@ -572,6 +572,29 @@ Narrowing the run cap edits that same policy snapshot. Reloading the full
 persisted configuration also publishes its cap/price values in one update;
 explicit cap-only and price-only operations retain their existing scope.
 
-The cost Rollup still decodes its whole settled-reservation map on warm
-admission reads. [The dated growth probe](../audits/finops-growth-measurement-2026-10-19.md)
-measures this remaining A09 cost; this ownership repair does not close it.
+Budget admission now reads an encrypted indexed financial projection at
+`AgentScope::cost_projection` / `SharedScope::cost_projection`. The cost
+RecordChain is authoritative; its original strict fold is reused over only
+changed day/session aggregates and an individual settlement identity. Source
+catch-up, aggregate updates, settlement updates and cursor advancement share
+one immediate transaction. Queries read requested aggregates, identities and
+their cursor from one SQLite snapshot, preserving reconciliation's conditional
+append. Pending review includes unknown settled identities even after their
+reservation marker is missing. No liabilities expire or lose attribution.
+
+The `finops-index` key uses the canonical tenant authority already used by
+the retired Rollup Document. Every read checks it; plaintext fallback is
+forbidden. Initialization is serialized across handles, and source mismatch,
+lost prior history, invalid rows and erased keys refuse. The derived directory
+and sidecars are registered and excluded from backup/sync. Old Rollup Documents
+remain for ordinary lifecycle treatment and are not read by production paths.
+Cached aggregate and settlement USD use lossless floating-point bit storage;
+this preserves the existing arithmetic and does not introduce decimal pricing.
+
+Warm admission selects only the current day, budget owner and outstanding
+reservation IDs. Full-history validation for summary endpoints still reads the
+requested records; unknown review output scales with unresolved charges.
+[The indexed measurement](../audits/finops-index-measurement-2026-10-19.md)
+records the improvement and cold-rebuild cost. Seal inspection and scanning
+current unresolved reservations remain work; admission is not constant-time
+independent of every source of growth.

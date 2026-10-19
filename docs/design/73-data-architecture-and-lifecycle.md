@@ -43,6 +43,20 @@ filled segment. Strict suffix readers verify hashes/seals before skipping
 already-folded payloads. [Measured evidence](../audits/effects-projection-measurement-2026-10-19.md)
 records the remaining costs.
 
+**Financial projection qualification (2026-10-19):** cost rows remain an
+append-only chain. `cost-index/costs.db` and its sidecars are a registered
+Derived SQLCipher projection in shared and Agent scopes, with the existing
+canonical tenant key authority and a distinct `finops-index` key. It replaces
+production cost-Rollup reads without deleting historical Documents. Day and
+budget-session aggregates, individual settlement identities and the verified
+source cursor update in one transaction. Selected financial reads and their
+cursor come from one read snapshot. The original strict fold retains unknown
+charges, duplicate rejection, actor/owner checks and verified corrections;
+exact USD bit storage avoids adding cache-round-trip drift. Source/record
+errors and erased keys refuse. Derived files do not travel in backup/sync;
+rebuild reads the authoritative chain. See doc 15 and the
+[indexed measurements](../audits/finops-index-measurement-2026-10-19.md).
+
 `79-private-headless-fleet.md` is the proposal for one dedicated 24/7 VM per
 customer, operator-blind management and disaster recovery. It adds a hosted
 deployment trust boundary without changing the locked local-first decisions

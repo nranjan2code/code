@@ -190,10 +190,11 @@ overlapping fixes should close their original entries as well.
   filters, prepare counts and idempotency lookup. Warm 10,000-row pages now
   measure about 3.8 ms, with a 1.5-second cold rebuild; see the dated evidence
   in the hardening plan. Seal metadata and cold replay still grow, and other
-  history consumers remain to measure. FinOps now has a growth probe:
-  warm cost reads reach ~86 ms and reserve/release ~143 ms at 10k rows;
-  its financial projection still needs indexed storage. Shared run-service
-  constructors and budget domain state are extracted. A scope-relocation
+  history consumers remain to measure. FinOps now also uses encrypted
+  transactional row storage: warm selected reads ~3 ms and reserve/release
+  ~62 ms at 10k rows, with ~1-second cold rebuild. Current unresolved sets
+  and seal metadata still add work. Shared run-service constructors and
+  budget domain state are extracted. A scope-relocation
   gate identity defect is repaired; further Core ownership separation is open.
 
 Catalog encryption is implemented and passes focused acceptance; platform
