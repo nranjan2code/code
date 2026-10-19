@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.11.0",
-  "revision": "62451d97d",
+  "revision": "c31ac501b",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2385,
+   "total_commits": 2386,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -95,8 +95,11 @@
   "health": [
    {
     "check": "records",
-    "ok": true,
-    "problems": []
+    "ok": false,
+    "problems": [
+     "FAIL: 1 record problem(s):",
+     "CHANGELOG.md: 8.11.0 is released; start a `## Unreleased` section"
+    ]
    },
    {
     "check": "doc paths",
@@ -261,11 +264,11 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 520,
+  "commits": 521,
   "areas": [
    [
     "docs",
-    444
+    445
    ],
    [
     "(root)",
@@ -631,6 +634,14 @@
   ],
   "recent": [
    {
+    "hash": "c31ac501b",
+    "date": "2026-10-19",
+    "subject": "Record local 8.11.0 install",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
     "hash": "62451d97d",
     "date": "2026-10-19",
     "subject": "Release 8.11.0",
@@ -792,19 +803,6 @@
      "docs",
      "vak-core",
      "vak-mail-calendar"
-    ]
-   },
-   {
-    "hash": "4df880c65",
-    "date": "2026-10-18",
-    "subject": "Persist session budget enforcement and seal account results causally",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-client-ui",
-     "vak-core",
-     "vak-server"
     ]
    }
   ],
@@ -29967,6 +29965,12 @@
  ],
  "replay": [
   {
+   "hash": "c31ac501b",
+   "date": "2026-10-19",
+   "subject": "Record local 8.11.0 install",
+   "subsystems": []
+  },
+  {
    "hash": "62451d97d",
    "date": "2026-10-19",
    "subject": "Release 8.11.0",
@@ -36989,7 +36993,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1358,
+  "docs_commits": 1359,
   "hot": 642
  },
  "findings": [
