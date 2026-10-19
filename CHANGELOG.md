@@ -5,6 +5,9 @@
 - The changes card shows what this turn's writes really changed in each file,
   taken from the file before and after; it no longer shows lines or counts
   the model wrote.
+- A coding turn whose plan is changes, checks and call-filled cards (a diff,
+  a terminal, a test report) is no longer marked a partial result just
+  because it read the file it fixed.
 
 ## 8.13.1 — 2026-10-19
 

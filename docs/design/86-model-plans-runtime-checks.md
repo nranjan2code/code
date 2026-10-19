@@ -20,8 +20,13 @@ accepted replan replaces it. The ledgered tool call remains the record.
 
 Delivery and support are separate: accepted cards satisfy delivery receipts,
 not evidence questions. Successful source retrieval with no explicit questions
-still carries a support requirement; merely producing output after retrieval
-cannot certify semantic completeness. Retrieval receipt age describes when
+still carries a support requirement when the answer makes claims: no plan, a
+text, a file, or a card the runtime does not fill from calls
+(`vak_judge::plan::makes_claims`). A plan of changes, checks and cards filled
+from calls (a diff, a terminal, a test report) rests on the runtime's own
+receipts, so reading the file it fixes adds no support requirement (found
+live 2026-10-19: such a coding turn was marked a partial result). Merely
+producing output after retrieval cannot certify semantic completeness. Retrieval receipt age describes when
 material was observed, not whether its claims are current. Relevance,
 support and source freshness remain unverified in the structural evaluator.
 No automatic semantic reviewer is added by this change; existing managed

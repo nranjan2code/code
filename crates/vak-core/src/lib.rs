@@ -8060,7 +8060,14 @@ impl Core {
                 .requirements
                 .extend(vak_judge::plan::evidence_requirements(
                     &accepted_plan,
-                    retrieved_at.is_some(),
+                    retrieved_at.is_some()
+                        && vak_judge::plan::makes_claims(&accepted_plan, |kind| {
+                            delivering.values().any(|tool| {
+                                tool.card_kinds().iter().any(|own| own == kind)
+                                    && (tool.output_of_command().is_some()
+                                        || tool.changes_made().is_some())
+                            })
+                        }),
                 ));
             let evidence_state =
                 retrieved_at.map_or(vak_intent::EvidenceState::None, |recorded_at| {

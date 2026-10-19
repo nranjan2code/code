@@ -121,8 +121,25 @@ pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
     }
 }
 
+/// Whether an answer to `plan` makes claims that could rest on material it
+/// retrieved: no plan, a text, a file, or a card the runtime does not fill
+/// from calls (`filled_by_calls` names the card kinds it does: a diff, a
+/// terminal, a test report). A plan of changes, checks and such cards rests
+/// on the runtime's own receipts instead (found live 2026-10-19: a coding
+/// turn that read the file it fixed was marked a partial result).
+pub fn makes_claims(plan: &[Deliverable], filled_by_calls: impl Fn(&str) -> bool) -> bool {
+    plan.is_empty()
+        || plan.iter().any(|deliverable| match deliverable.form {
+            DeliverableForm::Text | DeliverableForm::File => true,
+            DeliverableForm::Card => !deliverable.kind.as_deref().is_some_and(&filled_by_calls),
+            DeliverableForm::Change | DeliverableForm::Check => false,
+        })
+}
+
 /// Evidence questions are separate from output receipts. A recorded answer
 /// satisfies delivery only; source relevance and support remain to be judged.
+/// `retrieved` says the turn retrieved material its claims may rest on
+/// ([`makes_claims`]).
 pub fn evidence_requirements(
     plan: &[Deliverable],
     retrieved: bool,
@@ -328,6 +345,26 @@ mod tests {
         let left = gap(&declared, &produced(&cards, ""));
         assert_eq!(left.cards_unattributed, 0);
         assert_eq!(left.others.len(), 2, "a card is no change and no check");
+    }
+
+    #[test]
+    fn a_plan_of_changes_checks_and_call_filled_cards_makes_no_claims() {
+        let filled = |kind: &str| matches!(kind, "diff" | "terminal" | "test_report");
+        let mut coding = plan(&[
+            ("fix", DeliverableForm::Change),
+            ("tests pass", DeliverableForm::Check),
+            ("the diff", DeliverableForm::Card),
+        ]);
+        coding[2].kind = Some("diff".into());
+        assert!(!makes_claims(&coding, filled));
+        // A card of no named kind, a text, a file or no plan at all may
+        // rest on what was retrieved.
+        coding[2].kind = None;
+        assert!(makes_claims(&coding, filled));
+        for form in [DeliverableForm::Text, DeliverableForm::File] {
+            assert!(makes_claims(&plan(&[("part", form)]), filled));
+        }
+        assert!(makes_claims(&[], filled));
     }
 
     #[test]
