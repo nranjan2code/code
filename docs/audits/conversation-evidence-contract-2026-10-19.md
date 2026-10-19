@@ -187,3 +187,18 @@ document paths, records and advisories all passed. Log:
 regression passes alongside the other integration cases. Source and test
 files in the isolated release checkout were compared byte-for-byte with the
 tested tree. Unrelated Storage simulator source and records are excluded.
+
+
+The first clean 8.13.0 release run exposed a fixture-only worker path bug:
+the evidence integration test assumed checkout `target/debug/vak`, although
+release uses an isolated Cargo target directory. It now resolves the worker
+beside the running test binary's `deps` directory, so it exercises that build
+rather than an unrelated developer binary. The failed release was not tagged,
+pushed or installed; the corrected source is gated again before release.
+
+
+The corrected 8.13.0 checkout passed the entire full gate in its own Cargo
+target directory: 3,851 tests, zero failures, 23 ignored, plus fmt, workspace
+Clippy, version, citations, records and advisories. Evidence:
+`/tmp/vak-chatjimmy-trace/full-gate-worker-path.log`. The worker evidence test
+passes in this isolated build, with no checkout target-path dependency.

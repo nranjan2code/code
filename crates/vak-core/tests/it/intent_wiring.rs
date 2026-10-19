@@ -671,9 +671,11 @@ async fn research_requirements_survive_the_real_turn_and_do_not_self_certify() {
     ];
     for (responses, retrieved, requirement) in cases {
         let (core, cwd) = core_with("[stop_policy]\nenabled = false\n", responses);
-        core.set_tool_worker_exe(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/vak"),
-        );
+        // Cargo may place artifacts outside the checkout (release staging or
+        // CARGO_TARGET_DIR). The real worker is beside this test's deps dir.
+        let executable = std::env::current_exe().unwrap();
+        let profile = executable.parent().unwrap().parent().unwrap();
+        core.set_tool_worker_exe(profile.join(format!("vak{}", std::env::consts::EXE_SUFFIX)));
         std::fs::write(
             cwd.join("source.txt"),
             "This source is about the weather, not the requested analysis.",
