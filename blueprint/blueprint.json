@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.11.0",
-  "revision": "12ad6f124",
+  "revision": "6d36146df",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 336646,
-   "rust_tests": 85965,
+   "rust_src": 336643,
+   "rust_tests": 85964,
    "ts_src": 62484,
    "routes": 396,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2388,
+   "total_commits": 2389,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -121,7 +121,7 @@
     "items": [
      "Search as a stated capability:",
      "Measure the act step's reasoning depth now that receipts carry `reasoning_tokens`;",
-     "A repeatable case for an unmet deliverable carried into an unrelated turn (doc 99 §4 B, 2026-10-19):",
+     "An earlier request carried into an unrelated turn (2026-10-19):",
      "A shape-named layout guide for explaining a subject across several angles in `packages/answer-layouts` (optional, data only)."
     ]
    },
@@ -262,19 +262,19 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 523,
+  "commits": 524,
   "areas": [
    [
     "docs",
-    446
+    447
    ],
    [
     "(root)",
-    279
+    280
    ],
    [
     "vak-core",
-    229
+    230
    ],
    [
     "vak-server",
@@ -286,11 +286,11 @@
    ],
    [
     "vak-agent",
-    108
+    109
    ],
    [
     "vak-session",
-    91
+    92
    ],
    [
     "vak-tools",
@@ -342,7 +342,7 @@
    [
     "ledger",
     "Ledgers and records",
-    77
+    78
    ],
    [
     "tools",
@@ -632,6 +632,18 @@
   ],
   "recent": [
    {
+    "hash": "6d36146df",
+    "date": "2026-10-19",
+    "subject": "Revert carried-turn wording: it did not change the case it was for",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-core",
+     "vak-session"
+    ]
+   },
+   {
     "hash": "12ad6f124",
     "date": "2026-10-19",
     "subject": "Carry what a turn left undelivered as that turn's history",
@@ -779,26 +791,9 @@
      "docs",
      "vak-core"
     ]
-   },
-   {
-    "hash": "89391c7d2",
-    "date": "2026-10-19",
-    "subject": "Bound Effects row decoding and require durable card verdicts",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "vak-agent",
-     "vak-config",
-     "vak-core",
-     "vak-session",
-     "vak-storage"
-    ]
    }
   ],
-  "unreleased": [
-   "A request on a new subject no longer finishes something an earlier turn left undelivered, such as making a Word file again, unless it asks to."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1326,7 +1321,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 36051,
+   "lines": 36048,
    "crates": [
     "vak-session",
     "vak-config",
@@ -10611,7 +10606,7 @@
    ],
    "modules": 17,
    "parts": [],
-   "lines": 11994,
+   "lines": 11991,
    "largest": [
     3617,
     "crates/vak-session/src/log.rs"
@@ -10648,9 +10643,9 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 190,
+   "commits": 191,
    "fixes": 17,
-   "recent": 77,
+   "recent": 78,
    "fix_density": 1.4,
    "out": [
     {
@@ -29957,6 +29952,14 @@
  ],
  "replay": [
   {
+   "hash": "6d36146df",
+   "date": "2026-10-19",
+   "subject": "Revert carried-turn wording: it did not change the case it was for",
+   "subsystems": [
+    "ledger"
+   ]
+  },
+  {
    "hash": "12ad6f124",
    "date": "2026-10-19",
    "subject": "Carry what a turn left undelivered as that turn's history",
@@ -35248,9 +35251,9 @@
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
    "src": 16518,
-   "tests": 19580,
+   "tests": 19579,
    "files": 13,
-   "commits": 347,
+   "commits": 348,
    "deps": [
     "vak-config",
     "vak-context",
@@ -35595,7 +35598,7 @@
    "src": 61313,
    "tests": 10051,
    "files": 74,
-   "commits": 645,
+   "commits": 646,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -36533,10 +36536,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 16010,
+   "src": 16007,
    "tests": 4808,
    "files": 25,
-   "commits": 207,
+   "commits": 208,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36999,7 +37002,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1360,
+  "docs_commits": 1361,
   "hot": 642
  },
  "findings": [
