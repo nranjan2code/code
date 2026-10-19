@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "18d13835d",
+  "revision": "a93d74192",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 335993,
-   "rust_tests": 85835,
+   "rust_src": 336127,
+   "rust_tests": 85902,
    "ts_src": 62480,
    "routes": 396,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2376,
+   "total_commits": 2377,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -87,11 +87,6 @@
     "title": "A turn's decisions share mutable state inside two outlier functions"
    },
    {
-    "id": "F2",
-    "verdict": "Caused a defect",
-    "title": "The rule that wrappers forward every Tool declaration is enforced by nothing"
-   },
-   {
     "id": "F3",
     "verdict": "Defects found by review",
     "title": "Storage's guarantees are not tested in the shapes that broke them"
@@ -116,8 +111,8 @@
   ],
   "advisories": null,
   "stale_names": {
-   "names": 234,
-   "documents": 47
+   "names": 235,
+   "documents": 48
   },
   "open_items": [
    {
@@ -163,12 +158,11 @@
    },
    {
     "section": "The record and the blueprint (2026-10-18)",
-    "open": 7,
+    "open": 6,
     "items": [
      "233 code names cited by 46 living documents no longer occur in the code (`python3 scripts/check_records.py --names`).",
      "Rewrite `docs/design/83-prompt-system.md` against the current code;",
      "`vak-intent` still derives an epistemic stance for every strand (`derive_epistemic_stance`), but no prompt has carried it since `d0875af47`.",
-     "Blueprint F2:",
      "Blueprint F1:",
      "Blueprint F3:",
      "`commitments::classify` counts a reply of more than 40 characters as progress for the stall breaker:"
@@ -242,21 +236,21 @@
     ]
    }
   ],
-  "open_total": 61,
+  "open_total": 60,
   "measures_revision": "825b18564"
  },
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 511,
+  "commits": 512,
   "areas": [
    [
     "docs",
-    437
+    438
    ],
    [
     "(root)",
-    269
+    270
    ],
    [
     "vak-core",
@@ -272,15 +266,15 @@
    ],
    [
     "vak-agent",
-    104
+    105
    ],
    [
     "vak-session",
-    87
+    88
    ],
    [
     "vak-tools",
-    85
+    86
    ],
    [
     "vak",
@@ -331,13 +325,13 @@
     76
    ],
    [
-    "admin",
-    "Admin console",
-    66
-   ],
-   [
     "tools",
     "Built-in tools and the worker",
+    67
+   ],
+   [
+    "admin",
+    "Admin console",
     66
    ],
    [
@@ -366,13 +360,13 @@
     42
    ],
    [
-    "lifecycle",
-    "Lifecycle and erasure",
-    34
-   ],
-   [
     "engineering",
     "Build, gate and release",
+    35
+   ],
+   [
+    "lifecycle",
+    "Lifecycle and erasure",
     34
    ],
    [
@@ -381,14 +375,14 @@
     33
    ],
    [
-    "catalog",
-    "Catalog and search",
+    "workers",
+    "Workers and delegation",
     30
    ],
    [
-    "workers",
-    "Workers and delegation",
-    29
+    "catalog",
+    "Catalog and search",
+    30
    ],
    [
     "delivery",
@@ -403,7 +397,7 @@
    [
     "runs",
     "Runs, effects and cursors",
-    24
+    25
    ],
    [
     "capabilities",
@@ -618,6 +612,19 @@
   ],
   "recent": [
    {
+    "hash": "a93d74192",
+    "date": "2026-10-19",
+    "subject": "Enforce strict run decisions and preserve tool wrapper declarations",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs",
+     "vak-agent",
+     "vak-session",
+     "vak-tools"
+    ]
+   },
+   {
     "hash": "18d13835d",
     "date": "2026-10-19",
     "subject": "Index financial history without weakening accounting guarantees",
@@ -790,17 +797,11 @@
      "(root)",
      "docs"
     ]
-   },
-   {
-    "hash": "95befefa2",
-    "date": "2026-10-18",
-    "subject": "Decide the four open worker choices (doc 100 §12)",
-    "areas": [
-     "docs"
-    ]
    }
   ],
   "unreleased": [
+   "Run status and crash-recovery queries report corrupt history instead of silently skipping it.",
+   "Tool wrappers preserve card declarations and workspace-change overrides;",
    "Capped budget admission uses encrypted indexed totals and reservation lookups instead of decoding settled history.",
    "Relocating an embedded Core's data home no longer reuses budget gates bound to its prior home.",
    "Effect detail, filtered history and sendable-work reads use an encrypted row index instead of decoding the whole history.",
@@ -1332,7 +1333,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 54453,
+   "lines": 54526,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -1373,7 +1374,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 35940,
+   "lines": 36001,
    "crates": [
     "vak-session",
     "vak-config",
@@ -5483,7 +5484,7 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 3335,
+   "lines": 3396,
    "largest": [
     1871,
     "crates/vak-agent/src/task.rs"
@@ -5511,9 +5512,9 @@
     "crates/vak-agent/src/write_lease.rs",
     "crates/vak-client-ui/src/components/WorkersPanel.tsx"
    ],
-   "commits": 84,
+   "commits": 85,
    "fixes": 8,
-   "recent": 29,
+   "recent": 30,
    "fix_density": 2.4,
    "out": [
     {
@@ -7461,9 +7462,9 @@
    ],
    "modules": 18,
    "parts": [],
-   "lines": 8633,
+   "lines": 8645,
    "largest": [
-    2154,
+    2166,
     "crates/vak-tools/src/broker.rs"
    ],
    "routes": [],
@@ -7493,9 +7494,9 @@
     "crates/vak-tools/src/window.rs",
     "crates/vak-tools/src/write.rs"
    ],
-   "commits": 169,
+   "commits": 170,
    "fixes": 22,
-   "recent": 66,
+   "recent": 67,
    "fix_density": 2.5,
    "out": [
     {
@@ -11524,7 +11525,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 4427,
+   "lines": 4488,
    "largest": [
     1532,
     "crates/vak-session/src/effects.rs"
@@ -11553,9 +11554,9 @@
     "crates/vak/src/effects.rs",
     "crates/vak/src/runs.rs"
    ],
-   "commits": 24,
+   "commits": 25,
    "fixes": 1,
-   "recent": 24,
+   "recent": 25,
    "fix_density": 0.2,
    "out": [
     {
@@ -21337,9 +21338,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 119,
+   "commits": 120,
    "fixes": 20,
-   "recent": 34,
+   "recent": 35,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -29974,6 +29975,17 @@
  ],
  "replay": [
   {
+   "hash": "a93d74192",
+   "date": "2026-10-19",
+   "subject": "Enforce strict run decisions and preserve tool wrapper declarations",
+   "subsystems": [
+    "engineering",
+    "runs",
+    "tools",
+    "workers"
+   ]
+  },
+  {
    "hash": "18d13835d",
    "date": "2026-10-19",
    "subject": "Index financial history without weakening accounting guarantees",
@@ -35164,10 +35176,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 16224,
+   "src": 16285,
    "tests": 19546,
    "files": 13,
-   "commits": 343,
+   "commits": 344,
    "deps": [
     "vak-config",
     "vak-context",
@@ -36450,10 +36462,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 15900,
+   "src": 15961,
    "tests": 4808,
    "files": 25,
-   "commits": 203,
+   "commits": 204,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36614,10 +36626,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Built-in tools, argument reader, broker worker protocol, egress proxy",
-   "src": 15880,
-   "tests": 1142,
+   "src": 15892,
+   "tests": 1209,
    "files": 28,
-   "commits": 204,
+   "commits": 205,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36669,7 +36681,7 @@
     "walkdir"
    ],
    "largest": [
-    2154,
+    2166,
     "crates/vak-tools/src/broker.rs"
    ],
    "subsystems": [
@@ -36916,7 +36928,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1351,
+  "docs_commits": 1352,
   "hot": 640
  },
  "findings": [
@@ -36929,16 +36941,6 @@
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
-  },
-  {
-   "id": "F2",
-   "tag": "Structure",
-   "verdict": "Caused a defect",
-   "title": "The rule that wrappers forward every Tool declaration is enforced by nothing",
-   "evidence": "The trait's width is deliberate: a tool declares what it is (34 methods, 30 with a default) so that nothing decides by a tool's name. AGENTS.md then requires that \"a wrapper forwards every declaration\", and no test checks it. 2 wrappers forward by hand, and one that forgets compiles cleanly and answers with the default:\n\n- `ScopedWriteTool` (`crates/vak-agent/src/write_lease.rs:142`): does not forward `card_block`, `card_kinds`, `changes_workspace`, `presents_cards`\n- `BrokeredTool` (`crates/vak-tools/src/broker.rs:349`): does not forward `card_block`, `card_kinds`, `presents_cards`",
-   "matters": "`fill_defaults` joined the trait on 2026-10-07 (`fb981ed3d`), and both wrappers began forwarding it only on 2026-10-12 (`53dbc16f8`): for five days every brokered tool lost its argument aliases. The gaps listed above answer correctly today only because no wrapped tool overrides those methods.",
-   "fix": "A test that fails when a wrapper leaves a defaulted method unforwarded, or a delegation macro that forwards them all.",
-   "sources": "`crates/vak-tools/src/lib.rs` (`pub trait Tool`); AGENTS.md; `git log -S` per method; `evidence.py` `tool_wrappers`."
   },
   {
    "id": "F3",
