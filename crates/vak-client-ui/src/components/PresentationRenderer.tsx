@@ -1299,6 +1299,9 @@ export function LiveAnswer(props: { sessionId: string }) {
   };
   return <>
     <Show when={cards().length > 0}>
+      {/* The settled turn's frame (timeline column, indented body, result
+          width), so the answer does not move when the settled turn replaces it. */}
+      <div class="semantic-timeline"><div class="assistant-turn-body"><article class="primary-result">
       <div class="primary-result-material live-answer" aria-label="Answer so far">
         <For each={[...new Set(cards().map((item) => item.turn_id))]}>{(turn) =>
           <AnswerValuesScope scopeKey={conversationValuesKey(props.sessionId, turn)} items={cards().filter((item) => item.turn_id === turn)}>
@@ -1312,6 +1315,7 @@ export function LiveAnswer(props: { sessionId: string }) {
           </AnswerValuesScope>
         }</For>
       </div>
+      </article></div></div>
     </Show>
   </>;
 }

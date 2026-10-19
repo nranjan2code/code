@@ -1,5 +1,9 @@
 ## Unreleased
 
+
+- An answer still forming sits in the same column and indent as the finished
+  answer, so it no longer spans the whole chat and then jumps into place.
+
 ## 8.10.0 — 2026-10-19
 
 - Standalone CLI flows and planning share the configured optional model-call
