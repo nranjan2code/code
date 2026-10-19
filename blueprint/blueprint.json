@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.13.1",
-  "revision": "641ed5eab",
+  "version": "8.14.0",
+  "revision": "319ad55bf",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2412,
+   "total_commits": 2413,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -292,7 +292,7 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 547,
+  "commits": 548,
   "areas": [
    [
     "docs",
@@ -300,7 +300,7 @@
    ],
    [
     "(root)",
-    299
+    300
    ],
    [
     "vak-core",
@@ -662,6 +662,14 @@
   ],
   "recent": [
    {
+    "hash": "319ad55bf",
+    "date": "2026-10-19",
+    "subject": "Release 8.14.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "641ed5eab",
     "date": "2026-10-19",
     "subject": "Record the model-side review and what it leaves open",
@@ -803,31 +811,9 @@
     "areas": [
      "docs"
     ]
-   },
-   {
-    "hash": "166bd7ed8",
-    "date": "2026-10-19",
-    "subject": "Release 8.13.1",
-    "areas": [
-     "(root)",
-     "docs"
-    ]
    }
   ],
-  "unreleased": [
-   "Blueprint adds a Storage tab to explore months of conversation, card and artifact growth, temporary retention, backup capacity and recovery estimates with editable assumptions and exportable scenarios.",
-   "A card may be part of any entry of the answer's plan, so a diff of a planned change or a test report of a planned check is shown instead of refused.",
-   "The changes card shows what this turn's writes really changed in each file, taken from the file before and after;",
-   "A coding turn whose plan is changes, checks and call-filled cards (a diff, a terminal, a test report) is no longer marked a partial result just because it read the file it fixed.",
-   "Search, and recall across conversations, find a question asked in other words:",
-   "A fetched page's text keeps each link's address as `[text](address)`, so a model can open a post it read about without guessing its URL.",
-   "A turn's record keeps its whole answer, so recall finds and shows the answer even when it opens with an assumption or a caveat, and a repeated answer is caught however long it is.",
-   "A multi-part answer plans its leading summary like any other part, so the summary card no longer borrows the next part's place.",
-   "pytest, mypy and ruff keep their caches outside the workspace;",
-   "A command that fails because its program is not installed says what is installed under that name (`python` → `python3`), and the shell's tool description names `$TMPDIR` for temporary files, as the prompt does.",
-   "Search finds an answer by what its cards said, not only by the question and the pages read;",
-   "On OpenAI, Anthropic and Gemini, a tool the turn has not used yet is sent as its name and one line until it is called, instead of its whole schema:"
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30017,6 +30003,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "319ad55bf",
+   "date": "2026-10-19",
+   "subject": "Release 8.14.0",
+   "subsystems": []
+  },
   {
    "hash": "641ed5eab",
    "date": "2026-10-19",
