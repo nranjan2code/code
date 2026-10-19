@@ -88,13 +88,13 @@ The audit remains the historical evidence; the implementation log names checks.
 |---|---|---|
 | A01 | Partly repaired | Strict artifact consumers and credential tests pass; remaining decision-reader audit |
 | A02 | Repaired, full gate previously passed | Preserve atomic fencing regressions |
-| A03 | Main causal writes and card acceptance verdicts require persistence | Preserve fault-injection regressions; wider auxiliary audit remains |
+| A03 | Main causal writes, card verdicts and pre-mutation checkpoints require persistence | Preserve fault-injection regressions; wider auxiliary audit remains |
 | A04 | Child-bound services and optional durable shared call cap implemented | Detached maintenance is outside request scope; budget Document retention remains open |
 | A05 | Repaired, full gate previously passed | Preserve cancellation/stale probe tests |
 | A06 | Repaired, full gate previously passed | Preserve failed-compaction regression |
 | A07 | Conservative scheduling repaired | Preserve unknown/exclusive tool behavior |
 | A08 | Shared run-service constructors and process-owned budget state extracted | Further Core ownership separation remains |
-| A09 | Effects and FinOps use encrypted row projections; warm reads ~3–4 ms at 10k | Cold replay, seal metadata, unresolved sets and other consumers remain |
+| A09 | Effects and FinOps warm indexed reads ~3–4 ms at 10k; run lookup measured ~155 ms at 10k | Indexed run decisions, cold replay, seal metadata and unresolved sets remain |
 | A10 | Encrypted catalog implemented; focused suite passes | Multi-platform packaging and wider acceptance remain |
 | A11 | Typed outcomes and mechanically checked ClientEvent fixture implemented | Wider presentation wire fixture coverage/replay acceptance |
 | A12 | Unreachable production API quarantined | Module now test-only; concurrent chunk ownership must precede any production reintroduction |
@@ -1365,3 +1365,32 @@ four write-lease tests including nested card/workspace metadata preservation,
 and the source contract guard passed. Session/Tools/Agent library Clippy with
 warnings denied, formatting, record/path/version and diff checks passed. No full
 workspace gate, browser acceptance, release or installation ran.
+
+
+### Required workspace checkpoint and run growth (2026-10-19)
+
+The auxiliary-write audit found both parent and child pre-mutation callbacks
+discarding checkpoint capture/store errors. Their callback now returns a typed
+Result; capture/store failure propagates before tool dispatch, and the
+per-run captured marker changes only after success. The parent's first baseline
+also propagates capture failure. Both paths use one Core capture/store helper
+with their own session, workspace and sequence. Child mutation checkpoints must
+retain a fresh sequence after the initial baseline. This is required checkpoint
+recording, not a claim of full crash durability or complete auxiliary coverage.
+Fencing is checked before capture and before manifest storage; existing bounded
+snapshot/exclusion behavior is unchanged. Object-store write failures now
+propagate from capture instead of silently omitting the file. One AgentScope
+is retained through capture and manifest store so relocation cannot split them.
+
+The [run-history measurement](../audits/run-history-growth-2026-10-19.md)
+records warm exact-ID lookups of 1.592/15.484/154.564 ms at 100/1k/10k
+synthetic run events. Strict lookup still folds the full history. Indexed run
+decisions remain open; preserve RunIds, claims, fencing and strict source reads.
+
+Focused verification passed: all 113 Agent unit tests, ten checkpoint tests
+(including refusal of failed object storage), two Core required-checkpoint tests,
+the child service binding regression, the existing checkpoint-label integration
+and two strict-run regressions. The ignored run-growth fixture ran explicitly.
+Agent/Core/Session library Clippy with warnings denied, formatting and
+record/path/version/diff checks passed. No full workspace gate, running-app
+acceptance, release or installation ran.

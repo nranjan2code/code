@@ -7661,29 +7661,20 @@ impl Core {
         // nothing, whatever its request said.
         if let Some(h) = session.header() {
             let seq = self.next_checkpoint_seq(&h.session_id);
-            let capture = {
-                let core = self.clone();
-                let session_id = h.session_id.clone();
-                let label = format!("turn: {turn_id}");
-                move || {
-                    if let Ok(objects) = core.objects()
-                        && let Ok((cp, _stats)) = checkpoints::capture(
-                            &core.inner.cwd,
-                            &core.scope(),
-                            objects.as_ref(),
-                            &session_id,
-                            seq,
-                            &label,
-                        )
-                    {
-                        let _ = checkpoints::store(&core.scope(), objects.as_ref(), &cp);
-                    }
-                }
-            };
             if seq == 0 {
-                capture();
+                self.capture_checkpoint(
+                    &h.session_id,
+                    &self.inner.cwd,
+                    seq,
+                    &format!("turn: {turn_id}"),
+                )?;
             } else {
-                cfg.before_effect = Some(std::sync::Arc::new(capture));
+                cfg.before_effect = Some(self.checkpoint_before_effect(
+                    h.session_id.clone(),
+                    self.inner.cwd.clone(),
+                    Some(seq),
+                    format!("turn: {turn_id}"),
+                ));
             }
         }
 
@@ -11361,6 +11352,61 @@ mod route_control_tests {
             header.agent.as_ref().map(|agent| agent.id.as_str()),
             Some("vak")
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod required_checkpoint_tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_store_error_is_returned_to_required_caller() {
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
+        let core = Core::new(dir.path().join("workspace")).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
+        let scope = core.scope();
+        let manifest_dir = scope.checkpoints().join("checkpoint-store-failure");
+        std::fs::create_dir_all(scope.checkpoints()).unwrap();
+        std::fs::write(&manifest_dir, b"block directory creation").unwrap();
+
+        let error = core
+            .capture_checkpoint(
+                "checkpoint-store-failure",
+                &core.inner.cwd,
+                0,
+                "required baseline",
+            )
+            .expect_err("a failed manifest store must reach the caller");
+        assert!(matches!(error, vak_session::SessionError::Io(_)));
+    }
+
+    #[test]
+    fn child_effect_checkpoint_keeps_its_start_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
+        let core = Core::new(dir.path().join("workspace")).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
+        let baseline_seq = core.next_checkpoint_seq("child-checkpoint");
+        core.capture_checkpoint(
+            "child-checkpoint",
+            &core.inner.cwd,
+            baseline_seq,
+            "child run start",
+        )
+        .unwrap();
+        let before_effect = core.checkpoint_before_effect(
+            "child-checkpoint".into(),
+            core.inner.cwd.clone(),
+            None,
+            "child workspace change".into(),
+        );
+        before_effect().unwrap();
+        let manifests = checkpoints::list(&core.scope(), "child-checkpoint").unwrap();
+        assert_eq!(manifests.len(), 2);
+        assert_eq!(manifests[0].label, "child run start");
+        assert_eq!(manifests[1].label, "child workspace change");
     }
 }
 

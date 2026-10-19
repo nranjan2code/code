@@ -9,6 +9,13 @@ incomplete history. Abandonment recovery reads the full history before appending
 any transitions, so a read failure records no abandonment. This does not yet
 replace full-history folding with an indexed run projection.
 
+## Required workspace checkpoint
+
+Parent and child workspace-changing calls require successful checkpoint
+capture/store before dispatch. The callback returns a typed error, propagated
+to the turn; failure leaves the per-run captured marker unset. Read-only batches
+do not capture. Initial parent/child baselines also propagate failure.
+
 ## Required assistant recording and compaction failures
 
 An assistant message must be appended successfully before any tool call

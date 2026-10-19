@@ -12,6 +12,11 @@ conversation, so equal contents are stored once (data-architecture plan, M3b
 slice 2). A manifest that does not deserialize is simply not read (AGENTS.md
 invariant 29): never partially read, never migrated.
 
+- **Required before mutation**: parent and child callbacks report capture and
+  object-storage and manifest-store errors. A failure stops tool dispatch and does not mark the
+  run's pre-mutation checkpoint complete. The parent's initial baseline is
+  required too. Child mutation capture uses a fresh sequence after its baseline.
+  This does not claim power-loss durability of manifest publication.
 - **Incremental capture**: a file whose `(size, mtime)` match its entry in
   the immediately preceding manifest is assumed unchanged and its hash is
   reused without being re-read (the standard rsync/make-style

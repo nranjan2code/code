@@ -636,6 +636,51 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod growth_measurement {
+    use super::*;
+
+    #[test]
+    #[ignore = "manual history-growth measurement"]
+    #[allow(clippy::unwrap_used, clippy::disallowed_macros)]
+    fn run_lookup_growth_100_1000_10000() {
+        vak_config::paths::isolate_home_for_tests();
+        for count in [100, 1_000, 10_000] {
+            let dir = tempfile::tempdir().unwrap();
+            let tenant = tempfile::tempdir().unwrap();
+            let runs = Runs::at(dir.path().join("runs"), tenant.path());
+            let holder = ProcessId::new();
+            let events: Vec<_> = (0..count)
+                .map(|_| RunEvent {
+                    run: RunId::new(),
+                    at: Utc::now(),
+                    trace: None,
+                    actor: None,
+                    step: RunStep::Opened {
+                        work: None,
+                        trigger: None,
+                        slot: None,
+                        attempt: 1,
+                        holder,
+                    },
+                })
+                .collect();
+            runs.chain.append_all(&events).unwrap();
+            let target = events.last().unwrap().run;
+            assert!(runs.get(target).unwrap().is_some());
+            let start = std::time::Instant::now();
+            for _ in 0..5 {
+                assert!(runs.get(target).unwrap().is_some());
+            }
+            // Synthetic records only; no conversation content is emitted.
+            eprintln!(
+                "runs={count} warm_get_ms={:.3}",
+                start.elapsed().as_secs_f64() * 200.0
+            );
+        }
+    }
+}
+
 /// What a trigger's claim ref holds: the newest schedule slot spent, and
 /// the run that holds the trigger now.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

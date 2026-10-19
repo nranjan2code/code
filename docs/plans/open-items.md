@@ -97,7 +97,9 @@ overlapping fixes should close their original entries as well.
   factory regression verifies artifact agent/session attribution. The optional aggregate dispatch cap is now shared and durable; the per-step
   retry ceiling remains separate. Required framing, authorization, receipts
   and successful endings now propagate append failures. Card acceptance
-  verdicts also require persistence; the wider auxiliary audit remains open.
+  verdicts also require persistence. Parent/child pre-mutation checkpoint
+  capture/store failures now stop dispatch (2026-10-19); the wider auxiliary
+  audit remains open.
 - [ ] S3: scalar fidelity, composed answer content, delegated graph identity,
   actual outline attribution and typed cleanup (P01–P03, P13, P14).
   P01 chart categories retain lexical text and ambiguous y strings are

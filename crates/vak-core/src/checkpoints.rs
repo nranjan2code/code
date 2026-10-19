@@ -383,9 +383,9 @@ pub fn capture(
 
         match std::fs::read(entry.path()) {
             Ok(content) => {
-                let Ok(object) = objects.put(&content, &conversation_scope(session_id)) else {
-                    continue;
-                };
+                let object = objects
+                    .put(&content, &conversation_scope(session_id))
+                    .map_err(std::io::Error::other)?;
                 files.push(ManifestEntry {
                     rel_path: rel_str,
                     hash: object.id,
@@ -736,6 +736,38 @@ mod tests {
         let target = p.join(rel);
         std::fs::create_dir_all(target.parent().unwrap()).unwrap();
         std::fs::write(target, content).unwrap();
+    }
+
+    #[test]
+    fn capture_refuses_an_object_store_that_cannot_preserve_contents() {
+        vak_config::paths::isolate_home_for_tests();
+        let workspace = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        write(workspace.path(), "work.txt", "original contents");
+        let objects = vak_session::objects::TenantObjects::for_tenant(
+            &vak_config::paths::local_tenant_home(),
+        )
+        .unwrap();
+        let session = uuid::Uuid::now_v7().to_string();
+        let scope = conversation_scope(&session);
+        objects.put(b"seed", &scope).unwrap();
+        objects.destroy_scope_key(&scope).unwrap();
+
+        assert!(
+            capture(
+                workspace.path(),
+                &vak_config::scope::AgentScope::new(home.path()),
+                objects.as_ref(),
+                &session,
+                0,
+                "required snapshot",
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join("work.txt")).unwrap(),
+            "original contents"
+        );
     }
 
     #[test]

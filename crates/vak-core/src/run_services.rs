@@ -10,6 +10,39 @@ use std::sync::Arc;
 type HistoryRefresh = Arc<dyn Fn() + Send + Sync>;
 
 impl Core {
+    pub(crate) fn checkpoint_before_effect(
+        &self,
+        session_id: String,
+        cwd: std::path::PathBuf,
+        seq: Option<u32>,
+        label: String,
+    ) -> vak_agent::BeforeEffect {
+        let core = self.clone();
+        Arc::new(move || {
+            let seq = seq.unwrap_or_else(|| core.next_checkpoint_seq(&session_id));
+            core.capture_checkpoint(&session_id, &cwd, seq, &label)
+        })
+    }
+
+    pub(crate) fn capture_checkpoint(
+        &self,
+        session_id: &str,
+        cwd: &std::path::Path,
+        seq: u32,
+        label: &str,
+    ) -> Result<(), vak_session::SessionError> {
+        vak_session::fence::check()?;
+        let scope = self.scope();
+        let objects = self.objects().map_err(|error| {
+            vak_session::SessionError::Objects(format!("checkpoint objects unavailable: {error}"))
+        })?;
+        let (checkpoint, _) =
+            checkpoints::capture(cwd, &scope, objects.as_ref(), session_id, seq, label)?;
+        vak_session::fence::check()?;
+        checkpoints::store(&scope, objects.as_ref(), &checkpoint)?;
+        Ok(())
+    }
+
     pub(crate) fn presentation_rebuilder(&self) -> vak_agent::PresentationRebuild {
         let skills = vak_delivery::built_in_skill_registry();
         let packs = self.pack_kinds();
@@ -117,37 +150,15 @@ impl Core {
                 cwd: context.cwd.clone(),
             });
             if seq == 0 {
-                let (checkpoint, _) = checkpoints::capture(
-                    &context.cwd,
-                    &core.scope(),
-                    objects.as_ref(),
-                    &context.session_id,
-                    seq,
-                    "child run start",
-                )
-                .map_err(|_| "child_checkpoint_unavailable".to_string())?;
-                checkpoints::store(&core.scope(), objects.as_ref(), &checkpoint)
+                core.capture_checkpoint(&context.session_id, &context.cwd, seq, "child run start")
                     .map_err(|_| "child_checkpoint_unavailable".to_string())?;
             }
-            let checkpoint_core = core.clone();
-            let checkpoint_sid = context.session_id.clone();
-            let checkpoint_cwd = context.cwd.clone();
-            let before_effect = Arc::new(move || {
-                let effect_seq = checkpoint_core.next_checkpoint_seq(&checkpoint_sid);
-                if let Ok(objects) = checkpoint_core.objects()
-                    && let Ok((checkpoint, _)) = checkpoints::capture(
-                        &checkpoint_cwd,
-                        &checkpoint_core.scope(),
-                        objects.as_ref(),
-                        &checkpoint_sid,
-                        effect_seq,
-                        "child workspace change",
-                    )
-                {
-                    let _ =
-                        checkpoints::store(&checkpoint_core.scope(), objects.as_ref(), &checkpoint);
-                }
-            });
+            let before_effect = core.checkpoint_before_effect(
+                context.session_id.clone(),
+                context.cwd.clone(),
+                None,
+                "child workspace change".into(),
+            );
             let (history_recall, history_refresh) =
                 core.history_services(context.session_id.clone(), reach.clone());
             let presentation_rebuild = core.presentation_rebuilder();

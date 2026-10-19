@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Parent and child runs stop before workspace-changing tools when their
+  required checkpoint cannot be captured or stored. Failed capture does not
+  mark the checkpoint as complete. Failure to preserve file contents in the
+  object store is reported too.
+
 - Run status and crash-recovery queries report corrupt history instead of
   silently skipping it. Abandonment recovery stops before writing on a read error.
 - Tool wrappers preserve card declarations and workspace-change overrides; a

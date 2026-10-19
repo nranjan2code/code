@@ -519,6 +519,9 @@ pub enum FileQuery<'a> {
 /// The lookup `AgentConfig::file_note` holds: what a call asked in, the
 /// note about the record's files out.
 pub type FileNote = Arc<dyn Fn(FileQuery<'_>) -> Result<Option<String>, String> + Send + Sync>;
+/// Required checkpoint before mutation. Failure stops dispatch and leaves the
+/// callback eligible to run again; success is remembered for the current run.
+pub type BeforeEffect = Arc<dyn Fn() -> Result<(), vak_session::SessionError> + Send + Sync>;
 
 /// Context supplied only after a child has its own durable session identity.
 #[derive(Clone)]
@@ -535,7 +538,7 @@ pub struct ChildServiceContext {
 pub struct ChildBoundServices {
     pub artifacts: Option<Arc<dyn vak_tools::ArtifactSink>>,
     pub file_note: Option<FileNote>,
-    pub before_effect: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub before_effect: Option<BeforeEffect>,
     pub presentation_rebuild: Option<PresentationRebuild>,
     pub history_recall: Option<HistoryRecall>,
     pub history_refresh: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -627,9 +630,9 @@ pub struct AgentConfig {
     /// delegated it, so a step of cards never ends its turn on its own.
     pub reports_to_parent: bool,
     /// Run once per run, when the first call that may change the workspace
-    /// is accepted and before it runs (`Tool::changes_workspace`): the host
-    /// checkpoints the workspace here.
-    pub before_effect: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// is accepted and before it runs (`Tool::changes_workspace`). A failed
+    /// checkpoint aborts the batch before any tool dispatch.
+    pub before_effect: Option<BeforeEffect>,
     /// Writes a `Presentation` ledger entry at the moment a card validates.
     /// See `PresentationRebuild`. `None` disables the write (the ack stays
     /// the tool's own generic text — no id to embed).
@@ -6366,7 +6369,7 @@ impl Agent {
             loop_call_ended(events, &call, &output).await;
             results.push((call.id, output));
         }
-        results.extend(self.execute_batch_inner(calls, cancel, events).await);
+        results.extend(self.execute_batch_inner(calls, cancel, events).await?);
         Ok((results, history_misses))
     }
 
@@ -6677,7 +6680,7 @@ impl Agent {
         calls: Vec<PendingToolCall>,
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
-    ) -> Vec<(String, ToolRunOutput)> {
+    ) -> Result<Vec<(String, ToolRunOutput)>, vak_session::SessionError> {
         let key = |call: &PendingToolCall| {
             format!(
                 "{}\u{0}{}",
@@ -6730,7 +6733,7 @@ impl Agent {
             drop(deliveries);
             live.push(call);
         }
-        let mut results = self.execute_batch_calls(live, cancel, events).await;
+        let mut results = self.execute_batch_calls(live, cancel, events).await?;
         {
             let mut deliveries = self
                 .deliveries
@@ -6748,7 +6751,7 @@ impl Agent {
             }
         }
         results.extend(answered);
-        results
+        Ok(results)
     }
 
     /// Writes again, under each tool's own schema, the arguments of every
@@ -7452,7 +7455,7 @@ impl Agent {
         calls: Vec<PendingToolCall>,
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
-    ) -> Vec<(String, ToolRunOutput)> {
+    ) -> Result<Vec<(String, ToolRunOutput)>, vak_session::SessionError> {
         let index = self
             .config
             .mcp_tool_index
@@ -7543,7 +7546,7 @@ impl Agent {
             authz.push(verdict.map_err(|(by, message)| (vak_judge::call::fault_of(by), message)));
         }
         if let Err(error) = self.record_decisions(verdicts).await {
-            return calls
+            return Ok(calls
                 .into_iter()
                 .map(|call| {
                     (
@@ -7554,7 +7557,7 @@ impl Agent {
                         ),
                     )
                 })
-                .collect();
+                .collect());
         }
         let changes = calls.iter().zip(&authz).any(|(call, verdict)| {
             verdict.is_ok()
@@ -7581,10 +7584,15 @@ impl Agent {
         if changes
             && !self
                 .effect_announced
-                .swap(true, std::sync::atomic::Ordering::Relaxed)
+                .load(std::sync::atomic::Ordering::Relaxed)
             && let Some(before_effect) = &self.config.before_effect
         {
-            before_effect();
+            before_effect()?;
+            self.effect_announced
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        } else if changes {
+            self.effect_announced
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         let ids: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
 
@@ -7694,7 +7702,7 @@ impl Agent {
                     }
                 }
             }
-            return out;
+            return Ok(out);
         }
 
         // Greedy wave scheduling: every call is placed using its declared
@@ -7803,7 +7811,7 @@ impl Agent {
                 ordered[idx] = Some((ids[idx].clone(), ToolRunOutput::Err(fault, reason)));
             }
         }
-        ordered.into_iter().flatten().collect()
+        Ok(ordered.into_iter().flatten().collect())
     }
 
     /// A call that would touch paths a live background writer holds is
@@ -10686,6 +10694,208 @@ mod compaction_error_tests {
                 .objective,
             original.objective
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod checkpoint_dispatch_tests {
+    use super::{Agent, AgentConfig, PendingToolCall};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use vak_tools::{Tool, ToolContext, ToolOutput};
+
+    struct UnusedProvider;
+    #[async_trait::async_trait]
+    impl vak_llm::Provider for UnusedProvider {
+        fn name(&self) -> &str {
+            "unused"
+        }
+        async fn stream(
+            &self,
+            _request: vak_llm::types::ChatRequest,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<vak_llm::EventStream, vak_llm::LlmError> {
+            Err(vak_llm::LlmError::Parse("unused".into()))
+        }
+    }
+
+    struct CountTool(Arc<AtomicUsize>, bool);
+
+    #[async_trait::async_trait]
+    impl Tool for CountTool {
+        fn name(&self) -> &str {
+            "count"
+        }
+        fn description(&self) -> &str {
+            "test"
+        }
+        fn schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+        async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            ToolOutput::ok("ran")
+        }
+        fn changes_workspace(&self, _args: &serde_json::Value) -> bool {
+            self.1
+        }
+    }
+
+    fn log(dir: &std::path::Path, id: &str) -> vak_session::SessionLog {
+        vak_config::paths::isolate_home_for_tests();
+        vak_session::SessionLog::create(
+            dir.join("session"),
+            vak_session::types::SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
+                agent: None,
+                session_id: id.into(),
+                created_at: chrono::Utc::now(),
+                cwd: dir.into(),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: vak_session::types::FrozenContract {
+                    app_version: "test".into(),
+                    provider: "unused".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "test".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .unwrap()
+    }
+
+    fn calls(count: usize, start: usize) -> Vec<PendingToolCall> {
+        (start..start + count)
+            .map(|i| PendingToolCall {
+                id: format!("call-{i}"),
+                name: "count".into(),
+                input: serde_json::json!({}),
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn failed_checkpoint_blocks_serial_and_parallel_dispatch_and_retry() {
+        for (parallel, n) in [(false, 1), (true, 2)] {
+            let dir = tempfile::tempdir().unwrap();
+            let executed = Arc::new(AtomicUsize::new(0));
+            let checkpoint_attempts = Arc::new(AtomicUsize::new(0));
+            let mut config = AgentConfig::new("sys");
+            config.parallel_tools = parallel;
+            config.tools = vec![Arc::new(CountTool(executed.clone(), true))];
+            let attempts = checkpoint_attempts.clone();
+            config.before_effect = Some(Arc::new(move || {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Err(vak_session::SessionError::Objects(
+                    "injected checkpoint failure".into(),
+                ))
+            }));
+            let agent = Agent::new(
+                Arc::new(UnusedProvider),
+                log(dir.path(), "checkpoint"),
+                config,
+            );
+            let (events, _rx) = tokio::sync::mpsc::channel(8);
+            assert!(
+                agent
+                    .execute_batch_calls(
+                        calls(n, 0),
+                        &tokio_util::sync::CancellationToken::new(),
+                        &events
+                    )
+                    .await
+                    .is_err()
+            );
+            assert!(
+                agent
+                    .execute_batch_calls(
+                        calls(n, 10),
+                        &tokio_util::sync::CancellationToken::new(),
+                        &events
+                    )
+                    .await
+                    .is_err()
+            );
+            assert_eq!(executed.load(Ordering::SeqCst), 0);
+            assert_eq!(checkpoint_attempts.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn read_only_batch_does_not_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let executed = Arc::new(AtomicUsize::new(0));
+        let checkpoint_attempts = Arc::new(AtomicUsize::new(0));
+        let mut config = AgentConfig::new("sys");
+        config.tools = vec![Arc::new(CountTool(executed.clone(), false))];
+        let attempts = checkpoint_attempts.clone();
+        config.before_effect = Some(Arc::new(move || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Err(vak_session::SessionError::Objects("must not run".into()))
+        }));
+        let agent = Agent::new(
+            Arc::new(UnusedProvider),
+            log(dir.path(), "read-only"),
+            config,
+        );
+        let (events, _rx) = tokio::sync::mpsc::channel(8);
+        let result = agent
+            .execute_batch_calls(
+                calls(1, 0),
+                &tokio_util::sync::CancellationToken::new(),
+                &events,
+            )
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(executed.load(Ordering::SeqCst), 1);
+        assert_eq!(checkpoint_attempts.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn successful_checkpoint_is_captured_once_for_the_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let executed = Arc::new(AtomicUsize::new(0));
+        let checkpoint_attempts = Arc::new(AtomicUsize::new(0));
+        let mut config = AgentConfig::new("sys");
+        config.tools = vec![Arc::new(CountTool(executed.clone(), true))];
+        let attempts = checkpoint_attempts.clone();
+        config.before_effect = Some(Arc::new(move || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }));
+        let agent = Agent::new(
+            Arc::new(UnusedProvider),
+            log(dir.path(), "checkpoint-once"),
+            config,
+        );
+        let (events, _rx) = tokio::sync::mpsc::channel(16);
+        for first in [0, 10] {
+            assert!(
+                agent
+                    .execute_batch_calls(
+                        calls(1, first),
+                        &tokio_util::sync::CancellationToken::new(),
+                        &events
+                    )
+                    .await
+                    .is_ok()
+            );
+        }
+        assert_eq!(executed.load(Ordering::SeqCst), 2);
+        assert_eq!(checkpoint_attempts.load(Ordering::SeqCst), 1);
     }
 }
 
