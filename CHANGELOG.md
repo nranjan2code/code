@@ -1,4 +1,4 @@
-## Unreleased
+## 8.14.0 — 2026-10-19
 
 - Blueprint adds a Storage tab to explore months of conversation, card and
   artifact growth, temporary retention, backup capacity and recovery estimates
