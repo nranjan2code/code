@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "49755dd58",
+  "revision": "18d13835d",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 335188,
+   "rust_src": 335993,
    "rust_tests": 85835,
    "ts_src": 62480,
    "routes": 396,
    "forms": 20,
    "worker_tasks": 14,
-   "state_paths": 77,
+   "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2375,
+   "total_commits": 2376,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -95,11 +95,6 @@
     "id": "F3",
     "verdict": "Defects found by review",
     "title": "Storage's guarantees are not tested in the shapes that broke them"
-   },
-   {
-    "id": "F5",
-    "verdict": "Measured linear growth",
-    "title": "Budget admission decodes settled reservation history"
    }
   ],
   "health": [
@@ -253,19 +248,19 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 510,
+  "commits": 511,
   "areas": [
    [
     "docs",
-    436
+    437
    ],
    [
     "(root)",
-    268
+    269
    ],
    [
     "vak-core",
-    223
+    224
    ],
    [
     "vak-server",
@@ -297,7 +292,7 @@
    ],
    [
     "vak-config",
-    57
+    58
    ],
    [
     "vak-control",
@@ -348,7 +343,7 @@
    [
     "config",
     "Configuration and secrets",
-    57
+    58
    ],
    [
     "control",
@@ -358,7 +353,7 @@
    [
     "state",
     "State registry and baseline",
-    46
+    47
    ],
    [
     "library",
@@ -376,13 +371,13 @@
     34
    ],
    [
-    "automations",
-    "Automations and triggers",
-    33
-   ],
-   [
     "engineering",
     "Build, gate and release",
+    34
+   ],
+   [
+    "automations",
+    "Automations and triggers",
     33
    ],
    [
@@ -526,13 +521,13 @@
     8
    ],
    [
-    "mcp",
-    "MCP integrations",
-    7
-   ],
-   [
     "finops",
     "Cost and budgets",
+    8
+   ],
+   [
+    "mcp",
+    "MCP integrations",
     7
    ],
    [
@@ -622,6 +617,18 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "18d13835d",
+    "date": "2026-10-19",
+    "subject": "Index financial history without weakening accounting guarantees",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs",
+     "vak-config",
+     "vak-core"
+    ]
+   },
    {
     "hash": "49755dd58",
     "date": "2026-10-19",
@@ -791,18 +798,10 @@
     "areas": [
      "docs"
     ]
-   },
-   {
-    "hash": "6e872fcfd",
-    "date": "2026-10-18",
-    "subject": "Record the workers direction: design, plan, decision, aligned docs",
-    "areas": [
-     "(root)",
-     "docs"
-    ]
    }
   ],
   "unreleased": [
+   "Capped budget admission uses encrypted indexed totals and reservation lookups instead of decoding settled history.",
    "Relocating an embedded Core's data home no longer reuses budget gates bound to its prior home.",
    "Effect detail, filtered history and sendable-work reads use an encrypted row index instead of decoding the whole history.",
    "Card calls fail the turn if their acceptance decision cannot be recorded, and close their live call indicator with an error.",
@@ -1323,7 +1322,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 64909,
+   "lines": 65704,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1374,7 +1373,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 35930,
+   "lines": 35940,
    "crates": [
     "vak-session",
     "vak-config",
@@ -10864,6 +10863,16 @@
      ]
     },
     {
+     "from": "finops",
+     "to": "ledger",
+     "kind": "code",
+     "weight": 14,
+     "example": [
+      "crates/vak-agent/src/spend.rs",
+      "crates/vak-session/src/trace.rs"
+     ]
+    },
+    {
      "from": "library",
      "to": "ledger",
      "kind": "code",
@@ -10901,16 +10910,6 @@
      "example": [
       "crates/vak-context/src/assemble.rs",
       "crates/vak-session/src/log.rs"
-     ]
-    },
-    {
-     "from": "finops",
-     "to": "ledger",
-     "kind": "code",
-     "weight": 10,
-     "example": [
-      "crates/vak-agent/src/spend.rs",
-      "crates/vak-session/src/trace.rs"
      ]
     },
     {
@@ -12206,9 +12205,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 3526,
+   "lines": 3535,
    "largest": [
-    1705,
+    1714,
     "crates/vak-core/src/state.rs"
    ],
    "routes": [
@@ -12227,9 +12226,9 @@
     "crates/vak-core/src/state.rs",
     "crates/vak/src/data.rs"
    ],
-   "commits": 75,
+   "commits": 76,
    "fixes": 5,
-   "recent": 46,
+   "recent": 47,
    "fix_density": 1.4,
    "out": [
     {
@@ -13426,7 +13425,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 9822,
+   "lines": 9832,
    "largest": [
     6382,
     "crates/vak-config/src/lib.rs"
@@ -13455,9 +13454,9 @@
     "crates/vak-config/src/test_scope.rs",
     "crates/vak-server/src/restart.rs"
    ],
-   "commits": 204,
+   "commits": 205,
    "fixes": 31,
-   "recent": 57,
+   "recent": 58,
    "fix_density": 3.2,
    "out": [
     {
@@ -20415,11 +20414,11 @@
     "L6",
     "L7"
    ],
-   "modules": 6,
+   "modules": 7,
    "parts": [],
-   "lines": 4450,
+   "lines": 5236,
    "largest": [
-    3483,
+    3726,
     "crates/vak-core/src/finops.rs"
    ],
    "routes": [
@@ -20433,20 +20432,21 @@
     "crates/vak-agent/src/spend.rs",
     "crates/vak-client-ui/src/components/BudgetBanner.tsx",
     "crates/vak-core/src/finops.rs",
+    "crates/vak-core/src/finops/projection.rs",
     "crates/vak-core/src/model_call_budget.rs",
     "crates/vak-core/src/spend_services.rs",
     "crates/vak-server/src/budget_recovery.rs"
    ],
-   "commits": 34,
+   "commits": 35,
    "fixes": 4,
-   "recent": 7,
-   "fix_density": 0.9,
+   "recent": 8,
+   "fix_density": 0.8,
    "out": [
     {
      "from": "finops",
      "to": "ledger",
      "kind": "code",
-     "weight": 10,
+     "weight": 14,
      "example": [
       "crates/vak-agent/src/spend.rs",
       "crates/vak-session/src/trace.rs"
@@ -21337,9 +21337,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 118,
+   "commits": 119,
    "fixes": 20,
-   "recent": 33,
+   "recent": 34,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -21347,8 +21347,8 @@
   }
  ],
  "coverage": {
-  "units": 703,
-  "claimed": 703,
+  "units": 704,
+  "claimed": 704,
   "routes": 396,
   "routes_claimed": 396,
   "verbs": 35,
@@ -21529,6 +21529,16 @@
    ]
   },
   {
+   "from": "finops",
+   "to": "ledger",
+   "kind": "code",
+   "weight": 14,
+   "example": [
+    "crates/vak-agent/src/spend.rs",
+    "crates/vak-session/src/trace.rs"
+   ]
+  },
+  {
    "from": "library",
    "to": "ledger",
    "kind": "code",
@@ -21686,16 +21696,6 @@
    "example": [
     "crates/vak-eval/src/context_engine_gate.rs",
     "crates/vak-llm/src/anthropic.rs"
-   ]
-  },
-  {
-   "from": "finops",
-   "to": "ledger",
-   "kind": "code",
-   "weight": 10,
-   "example": [
-    "crates/vak-agent/src/spend.rs",
-    "crates/vak-session/src/trace.rs"
    ]
   },
   {
@@ -29974,6 +29974,17 @@
  ],
  "replay": [
   {
+   "hash": "18d13835d",
+   "date": "2026-10-19",
+   "subject": "Index financial history without weakening accounting guarantees",
+   "subsystems": [
+    "config",
+    "engineering",
+    "finops",
+    "state"
+   ]
+  },
+  {
    "hash": "49755dd58",
    "date": "2026-10-19",
    "subject": "Own budget policy state and bind cached gates to their data home",
@@ -35378,10 +35389,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Layered TOML, credentials, paths, scopes",
-   "src": 9760,
+   "src": 9770,
    "tests": 867,
    "files": 8,
-   "commits": 212,
+   "commits": 213,
    "deps": [
     "vak-control",
     "vak-llm"
@@ -35498,10 +35509,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 60359,
+   "src": 61154,
    "tests": 10049,
-   "files": 73,
-   "commits": 639,
+   "files": 74,
+   "commits": 640,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35546,6 +35557,7 @@
     "hex",
     "iana-time-zone",
     "include_dir",
+    "rusqlite",
     "semver",
     "serde",
     "serde_json",
@@ -36742,12 +36754,12 @@
     "lines": 4061
    },
    {
-    "file": "crates/vak-session/src/log.rs",
-    "lines": 3617
+    "file": "crates/vak-core/src/finops.rs",
+    "lines": 3726
    },
    {
-    "file": "crates/vak-core/src/finops.rs",
-    "lines": 3483
+    "file": "crates/vak-session/src/log.rs",
+    "lines": 3617
    },
    {
     "file": "crates/vak-ooxml/src/read.rs",
@@ -36904,8 +36916,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1350,
-  "hot": 639
+  "docs_commits": 1351,
+  "hot": 640
  },
  "findings": [
   {
@@ -36913,7 +36925,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 194 (rank 1 of 4,348 library functions) and `Core::run_turn_recorded` at 103 (rank 3); the median is 3 and the 99th percentile 24. 153 commits changed the first (6% of all) and 210 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.7 per thousand lines, against a median of 4.4 over 401 files; file size alone does not predict the rate (ρ = -0.14).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 194 (rank 1 of 4,348 library functions) and `Core::run_turn_recorded` at 103 (rank 3); the median is 3 and the 99th percentile 24. 153 commits changed the first (6% of all) and 210 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.7 per thousand lines, against a median of 4.4 over 402 files; file size alone does not predict the rate (ρ = -0.14).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
@@ -36933,20 +36945,10 @@
    "tag": "Structure",
    "verdict": "Defects found by review",
    "title": "Storage's guarantees are not tested in the shapes that broke them",
-   "evidence": "Owning the storage layer is a decision (docs/decisions.md, 2026-10-18), and it is tested for torn writes, crashes, fsync paths and injected faults, with a fuzz corpus. Nothing tests a chain's reader against a simple reference model, and few tests run two writer processes. The two P1 faults of 2026-10-18 needed exactly those shapes: a cached grant that kept authorizing because its revocation sat in an unreadable segment (A01), and a writer paused between the epoch check and the ref update (A02). A review's probes found them, not the suite.",
+   "evidence": "Owning the storage layer is a decision (docs/decisions.md, 2026-10-18), and it is tested for torn writes, crashes, fsync paths and injected faults, with a fuzz corpus. FinOps now compares its row projection with a direct fold, but the underlying chain reader still lacks an independent reference model, and few tests run two writer processes. The two P1 faults of 2026-10-18 needed exactly those shapes: a cached grant that kept authorizing because its revocation sat in an unreadable segment (A01), and a writer paused between the epoch check and the ref update (A02). A review's probes found them, not the suite.",
    "matters": "These are the guarantees authorization, erasure and sync rest on. A bug here does not show as a failed turn; it shows as access that should have ended, or a write that should have been fenced.",
    "fix": "A model-based test of each chain's reader against a reference, and multi-process interleavings of every fenced write path.",
    "sources": "[docs/audits/architecture-and-presentation-review-2026-10-18.md](../docs/audits/architecture-and-presentation-review-2026-10-18.md) (A01, A02); `crates/vak-storage`, `crates/vak-session`."
-  },
-  {
-   "id": "F5",
-   "tag": "Performance",
-   "verdict": "Measured linear growth",
-   "title": "Budget admission decodes settled reservation history",
-   "evidence": "The 2026-10-19 production-path growth probe measures warm strict cost reads at 1.44 ms for 100 rows, 9.87 ms for 1,000, and 85.40 ms for 10,000. Durable reserve/release averages rise from 67.67 to 144.99 ms. DailyCostTotals retains all settled reservation identities in one Rollup Document, decoded even when a capped admission needs only its day and session totals.",
-   "matters": "Capped per-call budget checks become slower as unrelated paid history accumulates.",
-   "fix": "Use encrypted indexed reservation rows and day/session aggregates, committing their source cursor transactionally; retain strict corrections, ownership and unresolved debt.",
-   "sources": "`crates/vak-core/src/finops.rs` (`strict_cost_totals_at`, `finops_growth_100_1000_10000`); [measured evidence](../docs/audits/finops-growth-measurement-2026-10-19.md)."
   }
  ],
  "keep": [
