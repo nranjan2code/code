@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.13.1",
-  "revision": "784ef5a07",
+  "revision": "745f0e691",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2400,
+   "total_commits": 2401,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -274,11 +274,11 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 535,
+  "commits": 536,
   "areas": [
    [
     "docs",
-    455
+    456
    ],
    [
     "(root)",
@@ -644,6 +644,14 @@
   ],
   "recent": [
    {
+    "hash": "745f0e691",
+    "date": "2026-10-19",
+    "subject": "Clarify desktop single-instance activation after install",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
     "hash": "784ef5a07",
     "date": "2026-10-19",
     "subject": "Open unreleased changes after 8.13.1",
@@ -784,14 +792,6 @@
     "subject": "Open the Unreleased section after 8.11.0",
     "areas": [
      "(root)"
-    ]
-   },
-   {
-    "hash": "c31ac501b",
-    "date": "2026-10-19",
-    "subject": "Record local 8.11.0 install",
-    "areas": [
-     "docs"
     ]
    }
   ],
@@ -29985,6 +29985,12 @@
  ],
  "replay": [
   {
+   "hash": "745f0e691",
+   "date": "2026-10-19",
+   "subject": "Clarify desktop single-instance activation after install",
+   "subsystems": []
+  },
+  {
    "hash": "784ef5a07",
    "date": "2026-10-19",
    "subject": "Open unreleased changes after 8.13.1",
@@ -37129,7 +37135,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1369,
+  "docs_commits": 1370,
   "hot": 644
  },
  "findings": [
