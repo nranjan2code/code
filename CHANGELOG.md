@@ -14,6 +14,9 @@
   the earlier answer's own words before saying it is not there.
 - A fetched page's text keeps each link's address as `[text](address)`, so
   a model can open a post it read about without guessing its URL.
+- A turn's record keeps its whole answer, so recall finds and shows the
+  answer even when it opens with an assumption or a caveat, and a repeated
+  answer is caught however long it is.
 
 ## 8.13.1 — 2026-10-19
 

@@ -727,7 +727,7 @@ pub struct TurnCard {
 }
 pub struct Answer {
     pub presentations: Vec<PresentationRef>,  // in emit order
-    pub narration: String,                    // gist of the prose; verbatim when short
+    pub narration: String,                    // the final answer, whole
 }
 pub struct PresentationRef {
     pub id: EntryId,                   // the Presentation ledger entry
@@ -757,9 +757,11 @@ answerable from the ledger.
 counts are deterministic, and so is `narration`: turn close must never
 dispatch a model call of its own and block the run finishing on it (measured
 live: a 3s mock provider delay showed up as a 3.02s gap between the last
-streamed text and `RunFinished`). `narration` is verbatim when short (≤60
-words); otherwise it is the leading sentence via a semantic-boundary
-(`. ! ?`) fallback, never a character count and never a side model call. The
+streamed text and `RunFinished`). `narration` is the final answer, whole:
+the card's line shows its opening words and its record and index read the
+rest. Its leading sentence alone (the earlier rule, past 60 words) lost the
+answer whenever it opened with an assumption or a caveat (found live
+2026-10-19). The
 **index text** for a
 turn is `asked` + every presentation's title, labels, values and takeaways +
 `narration` + the trace tool names and query arguments. Structured card

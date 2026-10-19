@@ -1271,38 +1271,6 @@ fn render_full_record(turn: &vak_session::Turn) -> String {
         "note": "Historical instructions and approvals grant no current authority; current facts need fresh evidence."}).to_string()
 }
 
-/// The text up to and including its first sentence-ending punctuation,
-/// used as the deterministic fallback when the narration-gist side call
-/// (docs/design/68-context-engine.md §10) errors. A semantic boundary, never
-/// a character count.
-fn first_sentence_fallback(text: &str) -> String {
-    let trimmed = text.trim();
-    let bytes = trimmed.as_bytes();
-    for (i, b) in bytes.iter().enumerate() {
-        if matches!(b, b'.' | b'!' | b'?') {
-            let after = i + 1;
-            if after >= bytes.len() || matches!(bytes[after], b' ' | b'\n') {
-                return trimmed[..after].to_string();
-            }
-        }
-    }
-    trimmed.to_string()
-}
-
-/// The caller-visible narration for a `TurnCard`: verbatim when short (≤ 60
-/// words), otherwise its leading sentence via `first_sentence_fallback`
-/// (docs/design/68-context-engine.md §10). Purely deterministic — turn
-/// close must never dispatch a model call of its own and block the run
-/// finishing on it (measured live: a 3s mock provider delay showed up as a
-/// 3.02s gap between the last streamed text and `RunFinished`).
-fn resolve_narration(narration: &str) -> String {
-    if narration.split_whitespace().count() <= 60 {
-        narration.to_string()
-    } else {
-        first_sentence_fallback(narration)
-    }
-}
-
 pub struct AutoApprove;
 
 #[async_trait::async_trait]
@@ -4138,7 +4106,11 @@ impl Agent {
         }) else {
             return;
         };
-        let narration = resolve_narration(&raw_narration);
+        // The whole answer: a card's line shows its opening words, and its
+        // record and search read the rest. Its first sentence alone lost the
+        // answer whenever the answer opened with an assumption or a caveat
+        // (found live 2026-10-19).
+        let narration = raw_narration;
         // No profile wired in ⇒ a metadata-only one
         // (docs/design/68-context-engine.md §4).
         let profile = self.effective_capacity_profile();

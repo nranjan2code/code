@@ -749,15 +749,15 @@ impl TurnIndex {
     /// one, in memory only, so a ledger written before cards existed (or a
     /// run that ended before its card was appended) is still costed,
     /// searchable and plannable — never silently projected at `Full` around
-    /// the budget. The provisional card's narration is the final answer's
-    /// opening sentence; nothing is written to the ledger.
+    /// the budget. The provisional card's narration is the final answer;
+    /// nothing is written to the ledger.
     pub fn ensure_cards(&mut self, estimate_tokens: &dyn Fn(&str) -> u64) {
         for turn in self.turns.iter_mut() {
             if turn.closed && turn.card.is_none() {
                 let narration = turn
                     .final_answer
                     .as_ref()
-                    .map(|answer| first_sentence_by_words(&answer.text_content(), 60))
+                    .map(|answer| answer.text_content().trim().to_string())
                     .unwrap_or_default();
                 turn.card = Some(turn.build_card("unrecorded", narration, estimate_tokens));
             }
@@ -1003,9 +1003,8 @@ impl Turn {
         out
     }
 
-    /// Builds this turn's closing `TurnCard`. `narration` is the caller's
-    /// already-resolved narration (verbatim when short, or a side-call gist
-    /// when long — docs/design/68 §10); `outcome` is the turn's terminal
+    /// Builds this turn's closing `TurnCard`. `narration` is the turn's
+    /// final answer, whole (docs/design/68 §10); `outcome` is the turn's terminal
     /// state; `estimate_tokens` measures a rendered text (the host's
     /// `CapacityProfile::estimate_tokens`).
     pub fn build_card(

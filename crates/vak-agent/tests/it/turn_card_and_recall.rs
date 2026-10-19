@@ -577,6 +577,33 @@ async fn turn_card_is_written_at_close() {
     assert!(cards[0].1.answered.presentations.is_empty());
 }
 
+/// A long answer that opens with an assumption keeps its answer on the
+/// card: the first sentence alone lost the version it named (found live
+/// 2026-10-19).
+#[tokio::test]
+async fn a_long_answer_keeps_its_answer_on_the_card() {
+    let dir = tempdir().unwrap();
+    let preamble = "**Assumption:** latest stable includes patch releases. ".repeat(12);
+    let answer = format!("{preamble}The latest stable release is 1.99.1, out on October 15.");
+    let mut agent = build_agent(&dir, "card-long", vec![text_msg(&answer)], vec![], false);
+    let outcome = agent
+        .run(
+            "what is the latest release",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    let session = agent.session.lock().await;
+    let cards = session.turn_cards();
+    assert!(
+        cards[0].1.answered.narration.contains("1.99.1"),
+        "{}",
+        cards[0].1.answered.narration
+    );
+}
+
 #[tokio::test]
 async fn fence_presentation_is_written_once() {
     let dir = tempdir().unwrap();
