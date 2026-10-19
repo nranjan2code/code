@@ -419,6 +419,10 @@ impl Tool for BrokeredTool {
         self.inner.output_of_command()
     }
 
+    fn changes_made(&self) -> Option<crate::ChangesMade> {
+        self.inner.changes_made()
+    }
+
     fn data_of_call(&self) -> Option<crate::CallData> {
         self.inner.data_of_call()
     }

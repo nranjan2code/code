@@ -1,5 +1,11 @@
 ## Unreleased
 
+- A card may be part of any entry of the answer's plan, so a diff of a planned
+  change or a test report of a planned check is shown instead of refused.
+- The changes card shows what this turn's writes really changed in each file,
+  taken from the file before and after; it no longer shows lines or counts
+  the model wrote.
+
 ## 8.13.1 — 2026-10-19
 
 - File previews that match a delivered file share its compact result card.

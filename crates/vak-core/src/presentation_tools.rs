@@ -37,6 +37,8 @@ struct CardShape {
     fill: fn(&mut Map<String, Value>),
     /// A card that shows what a command printed (`Tool::output_of_command`).
     output_of_command: Option<vak_tools::CommandOutput>,
+    /// A card that shows the files this turn changed (`Tool::changes_made`).
+    changes_made: Option<vak_tools::ChangesMade>,
     /// A card that shows what an ability answered (`Tool::data_of_call`)
     /// and how its records become the filled arguments.
     data_of_call: Option<(vak_tools::CallData, FillFromData)>,
@@ -1618,22 +1620,18 @@ fn build_markup_preview(args: &Map<String, Value>) -> Result<Value, String> {
 fn diff_fields() -> Value {
     fields(
         serde_json::json!({
-            "files": list_of(
-                "One entry per changed file.",
-                serde_json::json!({
-                    "filename": string("The file's workspace path."),
-                    "additions": integer("Lines added, 0 or more."),
-                    "deletions": integer("Lines removed, 0 or more."),
-                    "hunks": string("Unified diff hunk text for this file.")
-                }),
-                &["filename", "hunks", "additions", "deletions"],
-            )
+            "paths": texts("Optional. The changed files to show, as the calls that wrote them named them; every file this turn changed when left out.")
         }),
-        &["files"],
+        &[],
     )
 }
 
+/// `files` is never the model's: the loop fills it from the files this
+/// turn changed before the card is built.
 fn build_diff(args: &Map<String, Value>) -> Result<Value, String> {
+    if records(args, "files").is_empty() {
+        return Err("no file was changed in this turn".into());
+    }
     for file in records(args, "files") {
         for key in ["additions", "deletions"] {
             if file[key].as_u64().is_none() {
@@ -1736,6 +1734,7 @@ const fn shape(
         description,
         fill,
         output_of_command: None,
+        changes_made: None,
         data_of_call: None,
         grounded_in: None,
         fields,
@@ -2121,10 +2120,14 @@ const SHAPES: &[CardShape] = &[
     ),
     CardShape {
         grounded_in: Some(vak_tools::Grounds::Wrote),
+        changes_made: Some(vak_tools::ChangesMade {
+            paths: "paths",
+            files: "files",
+        }),
         ..shape(
             "diff",
             "emit_diff_card",
-            "The code changes you made, file by file.",
+            "The changes this turn's calls made to files, file by file; what changed in each is taken from the file itself.",
             diff_fields,
             build_diff,
             fill_nothing,
@@ -2516,6 +2519,10 @@ impl Tool for EmitCardTool {
         self.shape.output_of_command
     }
 
+    fn changes_made(&self) -> Option<vak_tools::ChangesMade> {
+        self.shape.changes_made
+    }
+
     fn data_of_call(&self) -> Option<vak_tools::CallData> {
         self.shape.data_of_call.map(|(spec, _)| spec)
     }
@@ -2653,6 +2660,9 @@ fn validate_call(
         .unwrap_or_default();
     if let Some((spec, _)) = shape.data_of_call {
         filled.extend(spec.filled);
+    }
+    if let Some(spec) = shape.changes_made {
+        filled.push(spec.files);
     }
     let unknown: Vec<String> = own
         .keys()
@@ -3060,6 +3070,9 @@ mod tests {
                     filled.map(|key| fields.remove(key));
                 }
             }
+            if let (Some(spec), Some(fields)) = (tool.changes_made(), written.as_object_mut()) {
+                fields.remove(spec.files);
+            }
             vak_tools::validate_input(&tool.call_schema(&written), &written)
                 .unwrap_or_else(|error| panic!("{form} as written: {error}"));
             let info = presentation_info(name, &args, &skills)
@@ -3434,6 +3447,14 @@ mod tests {
     #[test]
     fn a_card_that_shows_a_call_s_output_is_grounded_in_that_call() {
         for shape in SHAPES {
+            if shape.changes_made.is_some() {
+                assert_eq!(
+                    shape.grounded_in,
+                    Some(vak_tools::Grounds::Wrote),
+                    "{}",
+                    shape.name
+                );
+            }
             if shape.output_of_command.is_some() {
                 assert_eq!(
                     shape.grounded_in,

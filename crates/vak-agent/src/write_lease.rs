@@ -216,6 +216,10 @@ impl Tool for ScopedWriteTool {
         self.inner.output_of_command()
     }
 
+    fn changes_made(&self) -> Option<vak_tools::ChangesMade> {
+        self.inner.changes_made()
+    }
+
     fn data_of_call(&self) -> Option<vak_tools::CallData> {
         self.inner.data_of_call()
     }

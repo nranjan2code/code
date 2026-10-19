@@ -254,6 +254,30 @@ pub fn card_data_not_found(ability: &str, list: &str, keys: &[String]) -> String
     )
 }
 
+/// What a card that shows the files this turn changed is told when it
+/// cannot: no file changed, or it named a file that did not. `changed` is
+/// every file the turn changed, as the calls named them.
+pub fn card_files_unchanged(asked: &[String], changed: &[String]) -> String {
+    if changed.is_empty() {
+        return "Not shown: no call in this turn changed a text file. This card takes what \
+                changed from the files a call wrote; write or edit the file first."
+            .to_string();
+    }
+    let quoted = |names: &[String]| {
+        names
+            .iter()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "Not shown: no call in this turn changed {}. The files it changed are {}: name them \
+         in `paths`, or leave `paths` out to show them all.",
+        quoted(asked),
+        quoted(changed)
+    )
+}
+
 pub fn card_command_not_run(command: &str, ran: &[String]) -> String {
     let named = if ran.is_empty() {
         "No command has run in this turn yet: run it first.".to_string()
@@ -270,12 +294,18 @@ pub fn card_command_not_run(command: &str, ran: &[String]) -> String {
     )
 }
 
-/// What a card is told when its `deliverable` names a deliverable the plan
-/// does not list: the card is not shown. The plan's cards are given in two
-/// lists, those still to show and those already shown, which stay shown.
-/// Found live 2026-10-14: given every planned card under "the cards it
-/// lists", a model sent the ones already shown again.
-pub fn card_unplanned(answers: &str, open: &[String], shown: &[String]) -> String {
+/// What a card is told when its `deliverable` names nothing the plan
+/// lists: the card is not shown. A card may name any entry of the plan,
+/// whatever its form. The plan's cards are given in two lists, those still
+/// to show and those already shown, which stay shown. Found live
+/// 2026-10-14: given every planned card under "the cards it lists", a
+/// model sent the ones already shown again.
+pub fn card_unplanned(
+    answers: &str,
+    entries: &[String],
+    open: &[String],
+    shown: &[String],
+) -> String {
     let quoted = |names: &[String]| {
         names
             .iter()
@@ -283,10 +313,8 @@ pub fn card_unplanned(answers: &str, open: &[String], shown: &[String]) -> Strin
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let open = if open.is_empty() && shown.is_empty() {
-        "Your plan lists no card.".to_string()
-    } else if open.is_empty() {
-        "Every card in your plan is shown already.".to_string()
+    let open = if open.is_empty() {
+        format!("Your plan's entries are {}.", quoted(entries))
     } else {
         format!(
             "Your plan's cards not shown yet are {}: if this card is one of them, call it \
@@ -303,8 +331,9 @@ pub fn card_unplanned(answers: &str, open: &[String], shown: &[String]) -> Strin
         )
     };
     format!(
-        "[card-plan]: not shown — `deliverable` is \"{answers}\", which is not a card in your \
-         plan. {open}{shown} A card your plan does not list is called with `deliverable` left out."
+        "[card-plan]: not shown — `deliverable` is \"{answers}\", which your plan does not \
+         list. {open}{shown} A card that is part of no entry is called with `deliverable` left \
+         out."
     )
 }
 

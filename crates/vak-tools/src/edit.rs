@@ -1,7 +1,6 @@
 use crate::Fault;
 use async_trait::async_trait;
 use serde_json::Value;
-use similar::TextDiff;
 
 use crate::{Tool, ToolContext, ToolOutput};
 
@@ -199,16 +198,13 @@ impl Tool for EditTool {
         }
         crate::artifact::emit_file(ctx.sandbox_sink.as_ref(), &path, &ctx.cwd);
 
-        let diff = TextDiff::from_lines(&raw, &buf);
+        let change = crate::diff::text_change(&raw, &buf);
         let mut out = format!("edited {}", path.display());
-        let mut changed = 0usize;
-        let mut diff_text = String::new();
-        for hunk in diff.unified_diff().iter_hunks() {
-            changed += 1;
-            diff_text.push_str(&format!("{hunk}\n"));
-        }
-        if changed > 0 {
-            out.push_str(&format!(" ({changed} hunks)\n\n{diff_text}"));
+        if !change.is_empty() {
+            out.push_str(&format!(
+                " ({} hunks)\n\n{}",
+                change.hunk_count, change.hunks
+            ));
         } else {
             out.push_str(" (no changes)");
         }

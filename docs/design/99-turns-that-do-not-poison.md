@@ -76,11 +76,16 @@ line, a failed result as `{failed: true, result}`. Search hits carry
 turn id the conversation does not have is not found (it was reported as
 history still warming).
 
-### D. A card may deliver a deliverable planned as text
+### D. A card may be part of any planned deliverable
 
 The plan is the model's own declaration. A card whose `deliverable`
 names a planned deliverable of form text delivers it: shown, and covering
-it in the plan check. A name the plan does not have is still refused.
+it in the plan check. A card that names a planned change, check or file
+(a diff of the change, the report of the check) is shown and placed in
+that entry's section, and covers nothing: the entry still needs its own
+receipt. Refusing it hid a real diff behind a name the plan did have
+(found live 2026-10-19). A name the plan does not have is still refused,
+with the plan's entries.
 
 ### A2. Every admitted tool is callable on every wire
 

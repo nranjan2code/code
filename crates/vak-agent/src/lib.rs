@@ -897,6 +897,55 @@ struct RunDeliveries {
     results: HashMap<String, String>,
     /// Workspace paths delivered, as the calls named them.
     paths: std::collections::HashSet<String>,
+    /// What each workspace file a call of this run wrote held before the
+    /// first such call, by its resolved path: what a card showing the run's
+    /// changes diffs against.
+    before: std::collections::BTreeMap<std::path::PathBuf, FileBefore>,
+}
+
+/// What a file held before the run first wrote it.
+#[derive(Debug, Clone)]
+enum FileBefore {
+    Absent,
+    Text(String),
+    NotText,
+}
+
+impl FileBefore {
+    fn read(path: &std::path::Path) -> Self {
+        match std::fs::read(path) {
+            Ok(bytes) => String::from_utf8(bytes).map_or(FileBefore::NotText, FileBefore::Text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => FileBefore::Absent,
+            Err(_) => FileBefore::NotText,
+        }
+    }
+}
+
+/// The path a call names, resolved inside the workspace: its nearest
+/// existing ancestor canonicalised with the rest appended, or none when that
+/// lies outside the workspace or the rest climbs out (invariant 10).
+fn resolve_in_workspace(
+    root: &std::path::Path,
+    cwd: &std::path::Path,
+    path: &str,
+) -> Option<std::path::PathBuf> {
+    let target = cwd.join(path.trim());
+    let mut existing = target.as_path();
+    let mut rest = Vec::new();
+    let found = loop {
+        match std::fs::canonicalize(existing) {
+            Ok(found) => break found,
+            Err(_) => {
+                rest.push(existing.file_name()?.to_os_string());
+                existing = existing.parent()?;
+            }
+        }
+    };
+    let resolved = rest.iter().rev().fold(found, |mut at, part| {
+        at.push(part);
+        at
+    });
+    resolved.starts_with(root).then_some(resolved)
 }
 
 /// A path as an artifact names it: a draft's `.vak/scratch/<agent>/<run>/`
@@ -6233,6 +6282,7 @@ impl Agent {
         // to use (AGENTS.md invariant 14).
         let (recall_calls, calls): (Vec<_>, Vec<_>) =
             calls.into_iter().partition(|call| call.name == "recall");
+        self.note_files_before(&calls).await;
         // `plan` is the model's declaration of what this turn delivers; the
         // loop keeps it to check against what the turn produced
         // (docs/design/86-model-plans-runtime-checks.md §2).
@@ -6896,6 +6946,165 @@ impl Agent {
         Some(fresh)
     }
 
+    /// Keeps what each file a call in `calls` will write held before this
+    /// run first wrote it, for a card that shows the run's changes
+    /// (`Tool::changes_made`).
+    async fn note_files_before(&self, calls: &[PendingToolCall]) {
+        let named: Vec<String> = calls
+            .iter()
+            .filter_map(|call| self.tool_named(&call.name)?.file_access(&call.input))
+            .filter(|(access, _)| *access == vak_tools::FileAccess::Write)
+            .map(|(_, path)| path)
+            .collect();
+        if named.is_empty() {
+            return;
+        }
+        let cwd = self.workspace_cwd().await;
+        let taken = tokio::task::spawn_blocking(move || {
+            let Ok(root) = std::fs::canonicalize(&cwd) else {
+                return Vec::new();
+            };
+            named
+                .into_iter()
+                .filter_map(|named| {
+                    let resolved = resolve_in_workspace(&root, &cwd, &named)?;
+                    let before = FileBefore::read(&resolved);
+                    Some((resolved, before))
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default();
+        let mut deliveries = self
+            .deliveries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (resolved, before) in taken {
+            deliveries.before.entry(resolved).or_insert(before);
+        }
+    }
+
+    async fn workspace_cwd(&self) -> std::path::PathBuf {
+        self.session
+            .lock()
+            .await
+            .header()
+            .map(|header| header.contract_cwd())
+            .unwrap_or_default()
+    }
+
+    /// A card that shows the files this run changed (`Tool::changes_made`),
+    /// with each file's hunks and counts filled from the file as it was
+    /// before the run first wrote it and as it is now, never from lines the
+    /// model wrote; refused with the files that did change when it names
+    /// one that did not, or when none did. Any other card as it came.
+    async fn with_changes_made(&self, tool: &dyn Tool, mut input: Value) -> Result<Value, String> {
+        let Some(spec) = tool.changes_made() else {
+            return Ok(input);
+        };
+        let asked: Vec<String> = input
+            .get(spec.paths)
+            .and_then(Value::as_array)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let noted: Vec<(std::path::PathBuf, FileBefore)> = self
+            .deliveries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .before
+            .iter()
+            .map(|(resolved, before)| (resolved.clone(), before.clone()))
+            .collect();
+        let cwd = self.workspace_cwd().await;
+        let asked_for = asked.clone();
+        let (changed, unmatched, every) = tokio::task::spawn_blocking(move || {
+            let Ok(root) = std::fs::canonicalize(&cwd) else {
+                return (Vec::new(), asked_for, Vec::new());
+            };
+            let changed: Vec<(std::path::PathBuf, String, vak_tools::diff::TextChange)> = noted
+                .into_iter()
+                .filter_map(|(resolved, before)| {
+                    let before = match before {
+                        FileBefore::Absent => String::new(),
+                        FileBefore::Text(text) => text,
+                        FileBefore::NotText => return None,
+                    };
+                    let after = match FileBefore::read(&resolved) {
+                        FileBefore::Absent => String::new(),
+                        FileBefore::Text(text) => text,
+                        FileBefore::NotText => return None,
+                    };
+                    let change = vak_tools::diff::text_change(&before, &after);
+                    let shown = resolved
+                        .strip_prefix(&root)
+                        .ok()?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    (!change.is_empty()).then_some((resolved, shown, change))
+                })
+                .collect();
+            let every: Vec<String> = changed.iter().map(|(_, shown, _)| shown.clone()).collect();
+            let mut unmatched = Vec::new();
+            let mut chosen = Vec::new();
+            for path in &asked_for {
+                let found = resolve_in_workspace(&root, &cwd, path)
+                    .and_then(|wanted| changed.iter().position(|(at, _, _)| *at == wanted));
+                match found {
+                    Some(at) if !chosen.contains(&at) => chosen.push(at),
+                    Some(_) => {}
+                    None => unmatched.push(path.clone()),
+                }
+            }
+            let shown: Vec<(String, vak_tools::diff::TextChange)> = if asked_for.is_empty() {
+                changed
+                    .into_iter()
+                    .map(|(_, shown, change)| (shown, change))
+                    .collect()
+            } else {
+                let mut changed: Vec<Option<_>> = changed.into_iter().map(Some).collect();
+                chosen
+                    .into_iter()
+                    .filter_map(|at| changed[at].take())
+                    .map(|(_, shown, change)| (shown, change))
+                    .collect()
+            };
+            (shown, unmatched, every)
+        })
+        .await
+        .unwrap_or_default();
+        if changed.is_empty() || !unmatched.is_empty() {
+            let missing = if unmatched.is_empty() {
+                asked
+            } else {
+                unmatched
+            };
+            return Err(vak_control::card_files_unchanged(&missing, &every));
+        }
+        if let Some(fields) = input.as_object_mut() {
+            let files = changed
+                .into_iter()
+                .map(|(filename, change)| {
+                    serde_json::json!({
+                        "filename": filename,
+                        "hunks": change.hunks,
+                        "additions": change.additions,
+                        "deletions": change.deletions,
+                    })
+                })
+                .collect();
+            fields.insert(spec.files.to_string(), Value::Array(files));
+        }
+        Ok(input)
+    }
+
     /// Shows one card: the call is checked against its tool's schema, the
     /// plan, the sources this conversation retrieved and the tool's own
     /// rules, then recorded as a presentation of the call with the plan
@@ -7070,6 +7279,15 @@ impl Agent {
                 );
             }
         };
+        let input = match self.with_changes_made(tool.as_ref(), input).await {
+            Ok(input) => input,
+            Err(message) => {
+                return (
+                    ToolRunOutput::Err(Fault::Target, message),
+                    CallVerdict::Refused(Refusal::Tool),
+                );
+            }
+        };
         let input = &input;
         let answers = input
             .get("deliverable")
@@ -7077,10 +7295,10 @@ impl Agent {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(str::to_string);
-        // A card names only a card deliverable the plan has; one that names
-        // none is shown after the plan's sections, and covers no planned card
-        // in the plan check (docs/audits/cards-in-answers-2026-10-11.md, F4).
-        // A plan with no card, and no plan at all, still check the name: a
+        // A card names only an entry the plan has; one that names none is
+        // shown after the plan's sections, and covers no planned card in the
+        // plan check (docs/audits/cards-in-answers-2026-10-11.md, F4). A
+        // plan with no card, and no plan at all, still check the name: a
         // model that filled the field with its own description was shown
         // (found live 2026-10-17).
         let plan = self
@@ -7112,26 +7330,27 @@ impl Agent {
                 CallVerdict::Refused(Refusal::Tool),
             );
         }
-        // A card may deliver what the plan listed as text: the plan is the
-        // model's own, and refusing the card only pushed the content into
-        // prose (docs/design/99-turns-that-do-not-poison.md §4 D).
-        let planned_text: Vec<String> = plan
+        // A card may be part of any entry of the plan: a card delivers what
+        // the plan listed as text (docs/design/99-turns-that-do-not-poison.md
+        // §4 D), and shows a change or a check the plan listed (a diff of the
+        // change, the report of the check), which still needs its own
+        // receipt in the plan check. Refusing it hid a real diff behind a
+        // name the plan did have (found live 2026-10-19).
+        let entries: Vec<String> = plan
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .filter(|deliverable| deliverable.form == vak_intent::DeliverableForm::Text)
             .map(|deliverable| deliverable.name.trim().to_string())
             .collect();
         if let Some(name) = answers.as_deref()
-            && !planned
+            && !entries
                 .iter()
-                .chain(&planned_text)
-                .any(|planned| planned.eq_ignore_ascii_case(name.trim()))
+                .any(|entry| entry.eq_ignore_ascii_case(name.trim()))
         {
             return (
                 ToolRunOutput::Err(
                     Fault::Shape,
-                    vak_control::card_unplanned(name, &open, &shown),
+                    vak_control::card_unplanned(name, &entries, &open, &shown),
                 ),
                 CallVerdict::Refused(Refusal::Tool),
             );

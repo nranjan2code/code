@@ -60,24 +60,31 @@ pub fn verdict(gap: &Gap) -> AnswerVerdict {
 }
 
 /// Compares the plan with the receipts. A card covers the planned card or
-/// text its `answers` names, and only that one.
+/// text its `answers` names, and only that one; a card that names a planned
+/// change, check or file is part of it and covers nothing.
 pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
     let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     let mut covered = vec![false; plan.len()];
     let mut cards_unattributed = 0usize;
     for answers in produced.cards {
-        let named = answers.as_deref().and_then(|name| {
-            plan.iter().enumerate().position(|(at, deliverable)| {
-                !covered[at]
-                    && matches!(
-                        deliverable.form,
-                        DeliverableForm::Card | DeliverableForm::Text
-                    )
-                    && same(&deliverable.name, name)
-            })
+        let Some(name) = answers.as_deref() else {
+            cards_unattributed += 1;
+            continue;
+        };
+        let covers = plan.iter().enumerate().position(|(at, deliverable)| {
+            !covered[at]
+                && matches!(
+                    deliverable.form,
+                    DeliverableForm::Card | DeliverableForm::Text
+                )
+                && same(&deliverable.name, name)
         });
-        match named {
+        match covers {
             Some(at) => covered[at] = true,
+            // A card that shows a planned change, check or file is part of
+            // that entry, and covers none of it: the entry still needs its
+            // own receipt.
+            None if plan.iter().any(|deliverable| same(&deliverable.name, name)) => {}
             None => cards_unattributed += 1,
         }
     }
@@ -303,6 +310,24 @@ mod tests {
         assert_eq!(gap.cards_unattributed, 0);
         let left: Vec<&str> = gap.others.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(left, ["link"], "the card covers only the text it names");
+    }
+
+    /// Found live 2026-10-19: a diff card naming the planned change was
+    /// refused three times and never shown. It is part of the change, and
+    /// the change still needs a change.
+    #[test]
+    fn a_card_that_shows_a_planned_change_is_attributed_and_covers_nothing() {
+        let declared = plan(&[
+            ("parser fix", DeliverableForm::Change),
+            ("tests pass", DeliverableForm::Check),
+        ]);
+        let cards = [
+            Some("parser fix".to_string()),
+            Some("Tests pass".to_string()),
+        ];
+        let left = gap(&declared, &produced(&cards, ""));
+        assert_eq!(left.cards_unattributed, 0);
+        assert_eq!(left.others.len(), 2, "a card is no change and no check");
     }
 
     #[test]

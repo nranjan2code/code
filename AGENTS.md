@@ -957,7 +957,11 @@ commit (invariant 30).
     its exit code and its duration
     from the call that ran it, never from words the model wrote, and a
     call refused before anything ran is not one: a tool says a process ran
-    (`ToolOutput::ran`), recorded as `CallEffect::Ran`, failed or not. Every correction goes through the one ladder
+    (`ToolOutput::ran`), recorded as `CallEffect::Ran`, failed or not. A
+    card that shows what files changed (the diff card;
+    `Tool::changes_made`) takes each file's hunks and counts from the file
+    as it was before the turn first wrote it and as it is now, never from
+    lines the model wrote. Every correction goes through the one ladder
     (`vak_control::Ladder`: told once with the evidence, then the frame
     changes or the answer stands);
     a thinking-only step is one `[empty-step]` redo unless a card
@@ -2158,7 +2162,7 @@ effect) states its reach where it checks. Add no table of tool names to
 either: a tool declares what it is (`permission`, `provenance`,
 `leaves_machine`, `prompt_contract`,
 `file_access`, `delivered_file`, `presents_cards`, `output_of_command`,
-`fill_defaults` for a
+`changes_made`, `fill_defaults` for a
 name it accepts for an argument), and a wrapper forwards every
 declaration. Only the loop's own tools (`plan`, `recall`, `task`, `work`,
 the card calls) are recognised by name, because the loop defines them.

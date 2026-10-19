@@ -160,6 +160,61 @@ impl Tool for FakeTerminalCard {
     }
 }
 
+/// Writes a workspace file, declaring it as a file tool does.
+struct FakeWriter;
+
+#[async_trait::async_trait]
+impl Tool for FakeWriter {
+    fn name(&self) -> &str {
+        "put"
+    }
+    fn description(&self) -> &str {
+        "write a file"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn file_access(&self, args: &serde_json::Value) -> Option<(vak_tools::FileAccess, String)> {
+        Some((
+            vak_tools::FileAccess::Write,
+            args["path"].as_str()?.to_string(),
+        ))
+    }
+    async fn execute(&self, args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+        let path = ctx.cwd.join(args["path"].as_str().unwrap_or_default());
+        std::fs::write(&path, args["content"].as_str().unwrap_or_default()).unwrap();
+        ToolOutput::ok("wrote")
+    }
+}
+
+/// Shows the files this turn changed; what it is handed is echoed back.
+struct FakeDiffCard;
+
+#[async_trait::async_trait]
+impl Tool for FakeDiffCard {
+    fn name(&self) -> &str {
+        "emit_diff_card"
+    }
+    fn description(&self) -> &str {
+        "show the changes"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    fn changes_made(&self) -> Option<vak_tools::ChangesMade> {
+        Some(vak_tools::ChangesMade {
+            paths: "paths",
+            files: "files",
+        })
+    }
+    async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok(format!("shown: {}", args["files"]))
+    }
+}
+
 /// An ability whose program answers 300 records.
 struct FakeAbility;
 
@@ -369,6 +424,8 @@ async fn build_agent(
                 Arc::new(FailingFetch),
                 Arc::new(FakeShell),
                 Arc::new(FakeTerminalCard),
+                Arc::new(FakeWriter),
+                Arc::new(FakeDiffCard),
                 Arc::new(FakeAbility),
                 Arc::new(FakeAbilityTable),
             ];
@@ -399,6 +456,16 @@ async fn build_agent(
                 ),
                 vak_llm::ToolDefinition::new(
                     "emit_terminal_card",
+                    "test stand-in",
+                    serde_json::json!({"type": "object"}),
+                ),
+                vak_llm::ToolDefinition::new(
+                    "put",
+                    "test stand-in",
+                    serde_json::json!({"type": "object"}),
+                ),
+                vak_llm::ToolDefinition::new(
+                    "emit_diff_card",
                     "test stand-in",
                     serde_json::json!({"type": "object"}),
                 ),
@@ -578,6 +645,96 @@ async fn a_terminal_card_shows_what_its_command_really_printed() {
     let (refused, failed) = result("t3");
     assert!(failed, "{refused}");
     assert!(refused.contains("ran `ls missing`"), "{refused}");
+}
+
+/// A diff card shows what the turn's writes really changed, taken from the
+/// files before and after, never hunks or counts the model wrote; one
+/// before any write, or naming a file nothing changed, is refused with the
+/// files that did change (found live 2026-10-19: a model wrote prose as
+/// a hunk).
+#[tokio::test]
+async fn a_diff_card_shows_what_the_turn_s_writes_really_changed() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
+    let (mut agent, _) = build_agent(
+        &dir,
+        "pc-diff",
+        vec![
+            tool_call_msg("d0", "emit_diff_card", serde_json::json!({})),
+            tool_call_msg(
+                "w1",
+                "put",
+                serde_json::json!({"path": "a.txt", "content": "one\nTWO\n"}),
+            ),
+            tool_call_msg(
+                "w2",
+                "put",
+                serde_json::json!({"path": "new.txt", "content": "x\n"}),
+            ),
+            tool_call_msg(
+                "d1",
+                "emit_diff_card",
+                serde_json::json!({"paths": ["nope.txt"]}),
+            ),
+            tool_call_msg(
+                "d2",
+                "emit_diff_card",
+                serde_json::json!({
+                    "paths": ["./a.txt"],
+                    "files": [{"filename": "a.txt", "hunks": "made up", "additions": 9, "deletions": 9}],
+                    "then": "done"
+                }),
+            ),
+        ],
+    )
+    .await;
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let result = |id: &str| {
+        session
+            .message_chain()
+            .iter()
+            .flat_map(|(_, message)| message.content.iter())
+            .find_map(|block| match block {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } if tool_use_id == id => Some((content.clone(), *is_error)),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let (refused, failed) = result("d0");
+    assert!(
+        failed && refused.contains("no call in this turn changed"),
+        "{refused}"
+    );
+    let (refused, failed) = result("d1");
+    assert!(failed, "{refused}");
+    assert!(
+        refused.contains("`nope.txt`") && refused.contains("`a.txt`, `new.txt`"),
+        "{refused}"
+    );
+    let (shown, failed) = result("d2");
+    assert!(!failed, "{shown}");
+    assert!(!shown.contains("made up"), "{shown}");
+    assert!(
+        shown.contains("-two") && shown.contains("+TWO"),
+        "the real hunk: {shown}"
+    );
+    assert!(
+        shown.contains("\"additions\":1") && shown.contains("\"deletions\":1"),
+        "{shown}"
+    );
+    assert!(
+        !shown.contains("new.txt"),
+        "only the file it named: {shown}"
+    );
 }
 
 /// A call by a name Vak retired reaches no other tool: it is told what

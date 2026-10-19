@@ -261,6 +261,10 @@ docs/design/92-card-forms.md). The behaviors are unchanged:
 - **`terminal`**: Authentic dark terminal container with prompt line, how the
   run ended (`Exit 1 · 4 ms`, `Stopped · 5.0 s`) and its output, all taken from
   the call that ran the command (`Tool::output_of_command`, invariant 36).
+- **`diff`**: each file this turn's calls changed, with its hunks and the
+  lines added and removed taken from the file as it was before the turn first
+  wrote it and as it is now (`Tool::changes_made`); the model names only
+  which changed files to show.
 - **`recipe`**: Dynamic servings scaler (`-` 2 `+`) that recalculates
   ingredient weights and measurements, paired with live countdown step timers.
 - **`ui_preview`**: Live interactive sandboxed iframe for React and web UI

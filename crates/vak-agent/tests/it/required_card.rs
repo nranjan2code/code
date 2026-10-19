@@ -387,7 +387,7 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
         results[1].1
             && results[1]
                 .2
-                .contains("\"morning routine\", which is not a card in your plan"),
+                .contains("\"morning routine\", which your plan does not list"),
         "{results:?}"
     );
     assert!(
@@ -402,7 +402,7 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
         results[3].1
             && results[3]
                 .2
-                .contains("Every card in your plan is shown already")
+                .contains("Your plan's entries are \"watering\"")
             && results[3]
                 .2
                 .contains("\"watering\" are shown already and stay shown"),
@@ -415,7 +415,7 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
 }
 
 /// A plan with no card still checks a card's `deliverable`: a name it does
-/// not list is refused with "your plan lists no card", and the card sent
+/// not list is refused with the plan's entries, and the card sent
 /// again without one is shown (found live 2026-10-17: a model filled the
 /// field with its description and the card was shown).
 #[tokio::test]
@@ -460,7 +460,10 @@ async fn a_plan_with_no_card_refuses_a_named_deliverable() {
         .collect();
     assert_eq!(results.len(), 2, "{results:?}");
     assert!(
-        results[0].0 && results[0].1.contains("Your plan lists no card"),
+        results[0].0
+            && results[0]
+                .1
+                .contains("Your plan's entries are \"watering\""),
         "{results:?}"
     );
     assert!(!results[1].0, "{results:?}");
@@ -538,6 +541,43 @@ async fn a_card_delivers_a_deliverable_planned_as_text() {
             matches!(block, ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "a1")
         });
     assert!(!refused, "the card is shown");
+}
+
+/// A card that shows a planned change or check is part of it: shown, not
+/// refused (found live 2026-10-19: a diff card naming the planned change
+/// was refused three times and never shown).
+#[tokio::test]
+async fn a_card_may_show_a_planned_change_or_check() {
+    for form in ["change", "check"] {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut agent, _) = agent(
+            &dir,
+            &format!("{form}-plan-card"),
+            vec![
+                plan(form),
+                call(
+                    "a1",
+                    "steps_block",
+                    serde_json::json!({"deliverable": "Watering", "steps": ["Wake"]}),
+                ),
+                text("Water on Monday."),
+            ],
+        );
+        agent.config.tools = vec![
+            Arc::new(vak_tools::PlanTool::default()),
+            Arc::new(StepsBlock),
+        ];
+        run(&mut agent).await;
+        let session = agent.session.lock().await;
+        let refused = session
+            .derive_messages()
+            .iter()
+            .flat_map(|message| message.content.clone())
+            .any(|block| {
+                matches!(block, ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "a1")
+            });
+        assert!(!refused, "{form}: the card is shown");
+    }
 }
 
 /// With no plan at all, a card that names a `deliverable` is refused and
@@ -643,7 +683,7 @@ async fn a_card_beside_its_plan_is_checked_against_it() {
         "{results:?}"
     );
     assert!(
-        of("a1").1 && of("a1").2.contains("not a card in your plan"),
+        of("a1").1 && of("a1").2.contains("your plan does not list"),
         "{results:?}"
     );
     assert!(!of("a2").1, "{results:?}");

@@ -12,6 +12,7 @@ pub mod broker;
 pub mod capability;
 pub mod context;
 pub mod contract;
+pub mod diff;
 pub mod doc_read;
 pub mod drafts;
 pub mod edit;
@@ -236,6 +237,17 @@ pub trait ArtifactSink: Send + Sync {
     );
 }
 
+/// See [`Tool::changes_made`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangesMade {
+    /// The argument listing the changed files to show, as the calls that
+    /// wrote them named them; every changed file when it is left out.
+    pub paths: &'static str,
+    /// The argument the loop fills: one record per file, with its
+    /// `filename`, `hunks`, `additions` and `deletions`.
+    pub files: &'static str,
+}
+
 /// See [`Tool::output_of_command`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandOutput {
@@ -444,6 +456,15 @@ pub trait Tool: Send + Sync {
     /// command really printed, never words the model wrote for it. A card
     /// naming a command no call in the conversation ran is refused.
     fn output_of_command(&self) -> Option<CommandOutput> {
+        None
+    }
+
+    /// For a card tool that shows the files this turn changed: the
+    /// argument naming which of them to show, and the argument the loop
+    /// fills with each one's change, taken from the file as it was before
+    /// the turn first wrote it and as it is now, never from lines the model
+    /// wrote for it. A card when no file changed is refused.
+    fn changes_made(&self) -> Option<ChangesMade> {
         None
     }
 
