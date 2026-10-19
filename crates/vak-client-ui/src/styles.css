@@ -3189,8 +3189,9 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .result-card-problem { margin: var(--space-1) 0 0; color: var(--red); font-size: var(--fs-meta); }
 .result-card-actions { grid-area: actions; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
 .result-card-actions .btn { min-height: 30px; padding: 0 10px; font-size: var(--fs-control); }
-.result-card-link { padding: 0 var(--space-2); color: var(--accent); font-size: var(--fs-control); font-weight: 500; }
-.result-card-link:hover { text-decoration: underline; }
+.file-action-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 36px; height: 36px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
+.file-action-icon:hover, .file-action-icon.active { background: var(--surface-hover); color: var(--accent); }
+.file-action-icon:focus-visible, .ui-preview-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Narrow column (a phone, or the conversation beside Canvas): a smaller
  * preview, and the actions on their own row. */
 @container (max-width: 520px) {
@@ -6286,43 +6287,6 @@ html[data-reduce-motion="true"] .artifact-canvas-backdrop {
   animation: none;
 }
 
-/* --- Open Canvas button on inline UIPreviewCard ------------------------- */
-.open-canvas-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  border-radius: 9px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--accent-bright) 14%, transparent),
-    color-mix(in srgb, var(--accent-bright) 6%, transparent)
-  );
-  color: var(--accent-bright);
-  font-size: var(--fs-meta);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--dur), border-color var(--dur), transform var(--dur-fast), box-shadow var(--dur);
-}
-.open-canvas-btn:hover {
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--accent-bright) 22%, transparent),
-    color-mix(in srgb, var(--accent-bright) 12%, transparent)
-  );
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 18%, transparent);
-}
-.open-canvas-btn:active {
-  transform: translateY(0);
-  box-shadow: none;
-}
-.open-canvas-btn .icon {
-  width: 14px;
-  height: 14px;
-}
-
 /* Interactive code paths in Markdown */
 code.ic[data-path="true"] {
   cursor: pointer;
@@ -6603,7 +6567,11 @@ code.ic[data-previewable="true"]:hover {
 .test-mark.is-fail { color: var(--rose-bright); }
 .test-name { color: var(--text); }
 
-.ui-preview-title { font-size: var(--fs-control); color: var(--text); }
+.ui-preview-card > .card-header { border-bottom: 0; }
+.ui-preview-toggle { display: flex; align-items: center; gap: var(--space-3); flex: 1 1 12rem; min-width: 0; padding: var(--space-2) 0; text-align: start; color: var(--accent); }
+.ui-preview-chevron { display: inline-flex; flex: none; transition: transform var(--dur-fast); color: var(--muted); }
+.ui-preview-chevron.expanded { transform: rotate(90deg); }
+.ui-preview-title { font-size: var(--fs-control); color: var(--text); overflow-wrap: anywhere; }
 .ui-preview-actions { display: flex; gap: var(--space-2); align-items: center; }
 .ui-preview-state { padding: var(--space-5); text-align: center; color: var(--muted); font-size: var(--fs-meta); }
 .ui-preview-state.is-error { padding: var(--space-4); text-align: start; color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }

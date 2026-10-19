@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { answerDocument, answerSegments, groupAnswerEntries } from "../src/answerComposition.ts";
+import { answerDocument, answerSegments, consolidateFilePreviews, groupAnswerEntries } from "../src/answerComposition.ts";
 const document = text => ({ source_markdown: text, metadata: {} });
 const prose = (id, text = id, result = "r1") => ({ item: { id, role: "assistant", kind: "outcome", content: { type: "document", document: document(text) }, outcome: { result_id: result } } });
 const card = (id, result = "r1", type = "structured") => ({ item: { id, role: "tool", kind: "card", content: { type }, outcome: { result_id: result } } });
@@ -30,3 +30,17 @@ assert.equal(answerDocument({role:"assistant",content:{type:"outcome",document:d
 assert.equal(answerDocument(user.item), undefined);
 assert.deepEqual(groupAnswerEntries([]), []);
 console.log("answer composition order and boundaries ok");
+
+const artifact = (id, path, savedPath) => ({ item: { id, status: "succeeded", kind: "artifact", content: { type: "artifact", artifact: { path, status: savedPath ? { state: "draft", saved_as: { path: savedPath } } : { state: "in_folder" } } } } });
+const preview = (id, path, block = "file_preview", html) => ({ item: { id, status: "succeeded", kind: "card", content: { type: "structured", output: { block, payload: { artifact_path: path, html } } } } });
+const delivered = artifact("delivered", "report.html");
+const duplicate = preview("duplicate", "report.html");
+assert.deepEqual(ids(consolidateFilePreviews([duplicate, delivered])), ["delivered"]);
+assert.deepEqual(ids(consolidateFilePreviews([delivered, duplicate])), ["delivered"]);
+assert.deepEqual(ids(consolidateFilePreviews([preview("saved", "review.html"), artifact("draft", "scratch/review.html", "review.html")])), ["draft"]);
+assert.deepEqual(ids(consolidateFilePreviews([preview("other", "other/report.html"), delivered])), ["other", "delivered"]);
+assert.deepEqual(ids(consolidateFilePreviews([duplicate, delivered, artifact("ambiguous", "report.html")])), ["duplicate", "delivered", "ambiguous"]);
+assert.deepEqual(ids(consolidateFilePreviews([preview("markup", "report.html", "markup_preview", "<h1>Different content</h1>"), delivered])), ["markup", "delivered"]);
+assert.deepEqual(ids(consolidateFilePreviews([duplicate])), ["duplicate"]);
+assert.deepEqual(ids(consolidateFilePreviews([{ item: { ...duplicate.item, status: "failed" } }, delivered])), ["duplicate", "delivered"]);
+console.log("exact file previews consolidate; standalone, markup and ambiguous previews survive");

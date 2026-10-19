@@ -47,7 +47,15 @@ and shared result actions. It preserves each assistant document and each
 prose/card boundary in timeline order; it never selects only the final
 assistant document or hides prose because a card exists. Adjacent cards may
 use the outline's sections/layout, but a prose document is a boundary that
-card layout cannot cross. Files remain in the result's file area.
+card layout cannot cross. Files remain in the result's file area. In the
+everyday view, a successful `file_preview` with exactly one matching file
+path (including its saved draft path) in that result is represented by the
+file's compact result card and Open action. Ambiguous matches, previews in
+other results and inline markup remain independent. Standalone file and
+markup previews start collapsed and mount their isolated frame only when
+expanded; source and reload controls appear with the expanded preview.
+Open and Review keep short labels; secondary file actions and preview
+controls use icons with accessible names and tooltips.
 
 Known distinct result ids and non-result items split composition groups.
 The server's typed PlanCheck/rejected-draft filters remain the authority

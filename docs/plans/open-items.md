@@ -17,6 +17,11 @@ across them. Nothing here is started unless it says so.
 
 ## Answer composition (2026-10-19)
 
+- [x] Compact file previews: fold an unambiguous matching file preview into
+  its result card, collapse standalone file/markup previews, and use icons
+  for secondary actions with accessible names/tooltips. Result-card browser
+  checks cover drafts, folder files, multiple files and detail-view changes.
+
 - [ ] Conversation/evidence contract acceptance: coherent snapshot and
   applied-state hydration are implemented, with a real ChatPane regression
   (22 checks before the snapshot endpoint change). Final mobile/dark and

@@ -95,6 +95,11 @@ comes before its file. The words and the newest-draft rule are
 `tests/result-card.mjs`; the status itself is derived on the server
 (`draft_status_follows_saved_versions_and_acceptance`).
 
+Add `?run` to run the checks automatically and display the report. The
+fixture also covers consolidation of matching draft and folder file
+previews, independent collapsed markup/file previews, on-demand file
+reads and sandboxed expansion/collapse. `?run&theme=dark` selects dark mode.
+
 # Undo after a reload
 
 `promotion-undo.html` mounts the real Workbench over a session's durable

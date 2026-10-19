@@ -1,5 +1,9 @@
 # Decisions
 
+- 2026-10-19: Keep conversation previews compact: a single file card where
+  possible, otherwise a collapsed preview, with short primary labels and
+  icons for secondary actions. See [composed answers](design/87-composed-answers.md).
+
 - 2026-10-19: For the requested next release, fix the sync takeover/catalog
   encryption blocker and require the full gate to pass; do not reuse the
   previous release's waiver. The shared import boundary resets encrypted

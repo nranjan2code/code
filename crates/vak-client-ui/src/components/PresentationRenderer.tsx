@@ -1,6 +1,6 @@
 import { validateAdaptiveTree } from "../adaptiveValidation";
 import AnswerValuesScope, { conversationValuesKey } from "./AnswerValuesScope";
-import { answerDocument, answerSegments, groupAnswerEntries } from "../answerComposition";
+import { answerDocument, answerSegments, consolidateFilePreviews, groupAnswerEntries } from "../answerComposition";
 import { createContext, createEffect, createMemo, createResource, createSignal, ErrorBoundary, For, onCleanup, Show, useContext } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
@@ -904,18 +904,18 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
       </div>
       <div class="result-card-actions">
         <Show when={review()}>
-          {(action) => <button type="button" class={primary() ? "btn primary" : "btn"} onClick={() => openCandidateReview(action().data.execution_id, props.sessionId, action().data.candidate_id)}>Review changes</button>}
+          {(action) => <button type="button" class={primary() ? "btn primary" : "btn"} aria-label="Review changes" onClick={() => openCandidateReview(action().data.execution_id, props.sessionId, action().data.candidate_id)}>Review</button>}
         </Show>
         <Show when={file.path() && !pageResources}><button type="button" class="btn" onClick={() => openFile(props.item, props.sessionId)}>Open</button></Show>
-        <Show when={!words()?.waiting && file.path()}>{(value) => <button type="button" class="btn" onClick={() => void file.download(value())}>Download</button>}</Show>
-        <Show when={file.canOpenWith() && file.path()}>{(value) => <button type="button" class="btn" onClick={() => void file.openWith(value())}>Open with…</button>}</Show>
+        <Show when={!words()?.waiting && file.path()}>{(value) => <button type="button" class="file-action-icon" aria-label="Download" title="Download" onClick={() => void file.download(value())}><Icon name="download" size={17} /></button>}</Show>
+        <Show when={file.canOpenWith() && file.path()}>{(value) => <button type="button" class="file-action-icon" aria-label="Open with another app" title="Open with another app" onClick={() => void file.openWith(value())}><Icon name="monitor" size={17} /></button>}</Show>
         <Show
           when={live()}
-          fallback={<Show when={file.inLibrary}>{(open) => <button type="button" class="btn" onClick={open()}>Open in Library</button>}</Show>}
+          fallback={<Show when={file.inLibrary}>{(open) => <button type="button" class="file-action-icon" aria-label="Open in Library" title="Open in Library" onClick={open()}><Icon name="history" size={17} /></button>}</Show>}
         >
-          {(made) => <button type="button" class="btn" onClick={() => openInLibrary(made().artifact)}>Open history</button>}
+          {(made) => <button type="button" class="file-action-icon" aria-label="Open history" title="Open history" onClick={() => openInLibrary(made().artifact)}><Icon name="history" size={17} /></button>}
         </Show>
-        <Show when={props.askForChanges && props.resultId}><button type="button" class="result-card-link" onClick={askForChanges}>Ask for changes</button></Show>
+        <Show when={props.askForChanges && props.resultId}><button type="button" class="file-action-icon" aria-label="Ask for changes" title="Ask for changes" onClick={askForChanges}><Icon name="pencil" size={17} /></button></Show>
       </div>
     </article>
   );
@@ -1442,7 +1442,12 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
     }
     return <div class="semantic-source">{cleanFallback}</div>;
   };
-  const visible = createMemo(() => ordered().map((item) => ({ item, node: OrderedItem(item) })).filter((entry) => entry.node !== null));
+  const visible = createMemo(() => {
+    // Card-only turns also need fresh nodes when the layout changes;
+    // the prior layout disposed their reactive bodies.
+    void showOperatorChrome();
+    return ordered().map((item) => ({ item, node: OrderedItem(item) })).filter((entry) => entry.node !== null);
+  });
   // Keep one author header and one set of result actions, while preserving
   // every projected prose/card boundary in source order.
   const blocks = createMemo(() => {
@@ -1450,7 +1455,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
     if (showOperatorChrome()) return entries.map((entry) => entry.node);
     return groupAnswerEntries(entries).map((group) => {
       if (group.kind === "item") return group.entry.node;
-      const material = group.entries;
+      const material = consolidateFilePreviews(group.entries);
       const anchor = [...material].reverse().find((entry) => answerDocument(entry.item))?.item
         ?? material.find((entry) => entry.item.outcome?.result_id)?.item ?? material[0].item;
       const resultId = group.resultId ?? uniqueResultId();

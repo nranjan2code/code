@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, useContext } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, useContext } from "solid-js";
 import type { AdaptiveRenderNode } from "../../types";
 import { previewSandbox, safeUrl, sandboxedSrcdoc } from "../../safeUrl";
 import { activeId, openInEditor, openArtifactCanvas, openArtifactFile, uiPreferences } from "../../store";
@@ -339,16 +339,12 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
   );
 }
 
-/**
- * `ui_preview` primitive. A direct port of the legacy UIPreviewCard: the same
- * preview/source toggle, reload, dock and canvas actions, and the same
- * quarantine pipeline — inline HTML or a workspace file read through
- * `api.readFile`, then always passed through `artifactPreviewHtml` /
- * `sandboxedSrcdoc` before it reaches the sandboxed iframe's srcdoc. Those
- * sandboxing calls are unchanged, as is the `sandbox` attribute default.
- */
+/** File and markup previews open on demand, through the same isolation
+ * pipeline as Canvas. A collapsed card never mounts an interactive frame. */
 function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
   const compact = surface === "compact";
+  const [expanded, setExpanded] = createSignal(false);
+  const bodyId = createUniqueId();
   const pageReader = useContext(PresentationPageResourceContext);
   const session = pageReader ? undefined : useContext(PresentationSessionContext) ?? activeId() ?? undefined;
   const reader = pageReader ?? api.workspaceReader(session);
@@ -392,7 +388,7 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
 
   createEffect(() => {
     void path();
-    void loadContent();
+    if (expanded()) void loadContent();
   });
 
   const reloadPreview = () => {
@@ -418,73 +414,81 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
     }
   };
 
-  const title = () => str(node.props, "title")?.trim() ?? "";
+  const title = () => str(node.props, "title")?.trim() || "Web preview";
 
   return (
     <div class="canvas-card ui-preview-card" classList={{ "ui-preview-card-compact": compact }}>
       <div class="card-header">
-        <div class="card-title-group">
-          <Show when={title()}><strong class="ui-preview-title">{title()}</strong></Show>
-
-        </div>
+        <button type="button" class="ui-preview-toggle" aria-label={`${title()}: ${expanded() ? "Hide preview" : "Show preview"}`} title={expanded() ? "Hide preview" : "Show preview"} aria-expanded={expanded()} aria-controls={bodyId} onClick={() => setExpanded(!expanded())}>
+          <span class="ui-preview-chevron" classList={{ expanded: expanded() }}><Icon name="chevron" size={16} /></span>
+          <strong class="ui-preview-title">{title()}</strong>
+        </button>
         <div class="card-actions ui-preview-actions">
-          <button
-            class="pill-action-btn"
-            classList={{ active: viewMode() === "source" }}
-            onClick={() => setViewMode((m) => (m === "preview" ? "source" : "preview"))}
-            title={viewMode() === "preview" ? "Show the code" : "Show the page"}
-          >
-            {viewMode() === "preview" ? "Source" : "Preview"}
-          </button>
-          <button class="pill-action-btn" onClick={reloadPreview} title="Reload the page">
-            Reload
-          </button>
-          <button class="open-canvas-btn" onClick={openInCanvas} title="Open in Canvas">
-            <Icon name="preview" size={14} /> Open Canvas
+          <Show when={expanded()}>
+            <button
+              type="button"
+              class="file-action-icon"
+              classList={{ active: viewMode() === "source" }}
+              onClick={() => setViewMode((m) => (m === "preview" ? "source" : "preview"))}
+              aria-label={viewMode() === "preview" ? "Show source" : "Show preview"}
+              title={viewMode() === "preview" ? "Show the code" : "Show the page"}
+            >
+              <Icon name={viewMode() === "preview" ? "code" : "preview"} size={17} />
+            </button>
+            <button type="button" class="file-action-icon" onClick={reloadPreview} aria-label="Reload preview" title="Reload preview">
+              <Icon name="sync" size={17} />
+            </button>
+          </Show>
+          <button type="button" class="btn" onClick={openInCanvas} title="Open in Canvas">
+            Open
           </button>
         </div>
       </div>
 
-      <Show when={loading()}>
-        <div class="ui-preview-state">
-          Loading sandboxed preview artifact…
-        </div>
-      </Show>
-
-      <Show when={error()}>
-        <div class="ui-preview-state is-error">
-          Failed to load preview: {error()}
-        </div>
-      </Show>
-
-      <Show when={!loading() && !error()}>
-        <Show when={viewMode() === "preview"}>
-          <div class="ui-preview-stage">
-            <iframe
-              srcdoc={themedPreview(previewHtml())}
-              title={title()}
-              sandbox={previewSandbox("static")}
-              class="ui-preview-frame"
-            />
-          </div>
-        </Show>
-
-        <Show when={viewMode() === "source"}>
-          <div class="ui-preview-source">
-            <div class="ui-preview-source-head">
-              <span class="ui-preview-path">
-                Quarantined: {path()}
-              </span>
-              <button type="button" class="pill-action-btn" onClick={handleCopySource}>
-                {copied() ? "✓ Copied" : copyFailed() ? "Copy failed" : "Copy Source"}
-              </button>
+      <div id={bodyId}>
+        <Show when={expanded()}>
+          <Show when={loading()}>
+            <div class="ui-preview-state">
+              Loading preview…
             </div>
-            <pre class="ui-preview-code">
-              <code>{htmlContent()}</code>
-            </pre>
-          </div>
+          </Show>
+
+          <Show when={error()}>
+            <div class="ui-preview-state is-error">
+              Failed to load preview: {error()}
+            </div>
+          </Show>
+
+          <Show when={!loading() && !error()}>
+            <Show when={viewMode() === "preview"}>
+              <div class="ui-preview-stage">
+                <iframe
+                  srcdoc={themedPreview(previewHtml())}
+                  title={title()}
+                  sandbox={previewSandbox("static")}
+                  class="ui-preview-frame"
+                />
+              </div>
+            </Show>
+
+            <Show when={viewMode() === "source"}>
+              <div class="ui-preview-source">
+                <div class="ui-preview-source-head">
+                  <span class="ui-preview-path">
+                    Page source
+                  </span>
+                  <button type="button" class="pill-action-btn" onClick={handleCopySource}>
+                    {copied() ? "✓ Copied" : copyFailed() ? "Copy failed" : "Copy Source"}
+                  </button>
+                </div>
+                <pre class="ui-preview-code">
+                  <code>{htmlContent()}</code>
+                </pre>
+              </div>
+            </Show>
+          </Show>
         </Show>
-      </Show>
+      </div>
     </div>
   );
 }

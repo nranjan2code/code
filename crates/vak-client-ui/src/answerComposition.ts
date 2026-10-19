@@ -15,6 +15,24 @@ function isResultPart(item: OutputItem): boolean {
 
 export type AnswerGroup<T> = { kind: "result"; entries: T[]; resultId?: string } | { kind: "item"; entry: T };
 
+/** A delivered file already has a thumbnail and an Open action. Fold only
+ * its exact file-preview duplicate into that card, within one result group.
+ * Inline markup and ambiguous file identities remain independent content. */
+export function consolidateFilePreviews<T extends { item: OutputItem }>(entries: readonly T[]): T[] {
+  return entries.filter(({ item }) => {
+    if (item.status !== "succeeded" || item.content.type !== "structured" || item.content.output.block !== "file_preview") return true;
+    const payload = item.content.output.payload;
+    if (payload.html != null || typeof payload.artifact_path !== "string" || !payload.artifact_path) return true;
+    const matches = entries.filter(({ item: file }) => {
+      if (file.status !== "succeeded" || file.content.type !== "artifact") return false;
+      const artifact = file.content.artifact;
+      const saved = artifact.status?.state !== "in_folder" ? artifact.status?.saved_as : undefined;
+      return artifact.path === payload.artifact_path || saved?.path === payload.artifact_path;
+    });
+    return matches.length !== 1;
+  });
+}
+
 /** Group adjacent result material without moving or dropping any projected
  * prose. A known result id or a non-result item is a composition boundary. */
 export function groupAnswerEntries<T extends { item: OutputItem }>(entries: readonly T[]): AnswerGroup<T>[] {

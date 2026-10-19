@@ -1,5 +1,10 @@
 ## Unreleased
 
+- File previews that match a delivered file share its compact result card.
+  Standalone file and HTML previews start collapsed and expand on request,
+  with Open still available for Canvas. Secondary file actions use labelled
+  icons, and previews remain visible after switching technical details.
+
 ## 8.13.0 — 2026-10-19
 
 - Restore and sync pull reset encrypted projections declared in the state
