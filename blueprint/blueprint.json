@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.13.1",
-  "revision": "745f0e691",
+  "revision": "641ed5eab",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -11,19 +11,19 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 337567,
-   "rust_tests": 86250,
+   "rust_src": 338293,
+   "rust_tests": 86570,
    "ts_src": 62551,
    "routes": 397,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2401,
+   "total_commits": 2412,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
-   "agents_words": 20185,
+   "agents_words": 20243,
    "subsystems": 64,
    "connections": 814,
    "flows": 11
@@ -119,6 +119,24 @@
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "The product from the model's side (review, 2026-10-19)",
+    "open": 4,
+    "items": [
+     "The 13 card tools still go in full on every turn (about 31k of the 55k characters of schemas on the Responses wire).",
+     "A turn of another conversation cannot be reopened by `recall` (only when a file attached here came from it), so an answer about an earlier conversation rests on search snippets.",
+     "A link-heavy index page now reads about 2.5 times longer (the Rust blog:",
+     "A model still guesses a URL first (two 404s on the Rust question) when no search tool is configured;"
+    ]
+   },
+   {
+    "section": "Storage planning (2026-10-19)",
+    "open": 2,
+    "items": [
+     "Calibrate against content-free per-class physical byte/segment/object measurements through supported administration paths, including existing data, checkpoints, WAL, holds and effective retention.",
+     "Benchmark long conversations and remaining history consumers at scale, including peak RSS, seal manifests, verification, index catch-up and full supported restore/rebuild time."
+    ]
+   },
    {
     "section": "Answer composition (2026-10-19)",
     "open": 5,
@@ -268,29 +286,29 @@
     ]
    }
   ],
-  "open_total": 70,
+  "open_total": 76,
   "measures_revision": "6fa02ac29"
  },
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 536,
+  "commits": 547,
   "areas": [
    [
     "docs",
-    456
+    467
    ],
    [
     "(root)",
-    289
+    299
    ],
    [
     "vak-core",
-    233
+    238
    ],
    [
     "vak-server",
-    184
+    185
    ],
    [
     "vak-client-ui",
@@ -298,15 +316,15 @@
    ],
    [
     "vak-agent",
-    110
+    113
    ],
    [
     "vak-session",
-    94
+    95
    ],
    [
     "vak-tools",
-    88
+    91
    ],
    [
     "vak",
@@ -322,7 +340,7 @@
    ],
    [
     "vak-control",
-    39
+    40
    ]
   ],
   "by_subsystem": [
@@ -334,7 +352,7 @@
    [
     "turn",
     "Turn admission",
-    112
+    113
    ],
    [
     "client",
@@ -342,24 +360,24 @@
     103
    ],
    [
-    "cards",
-    "Cards and presentation",
-    100
-   ],
-   [
     "loop",
     "Agent loop",
-    98
+    101
+   ],
+   [
+    "cards",
+    "Cards and presentation",
+    101
    ],
    [
     "ledger",
     "Ledgers and records",
-    80
+    81
    ],
    [
     "tools",
     "Built-in tools and the worker",
-    68
+    71
    ],
    [
     "admin",
@@ -374,7 +392,7 @@
    [
     "control",
     "Control plane and judges",
-    49
+    51
    ],
    [
     "state",
@@ -394,7 +412,12 @@
    [
     "engineering",
     "Build, gate and release",
-    36
+    37
+   ],
+   [
+    "catalog",
+    "Catalog and search",
+    34
    ],
    [
     "lifecycle",
@@ -407,14 +430,9 @@
     34
    ],
    [
-    "catalog",
-    "Catalog and search",
-    32
-   ],
-   [
     "workers",
     "Workers and delegation",
-    31
+    32
    ],
    [
     "delivery",
@@ -434,12 +452,12 @@
    [
     "capabilities",
     "Capability registry",
-    23
+    24
    ],
    [
     "llm",
     "Model providers and routing",
-    22
+    23
    ],
    [
     "mail",
@@ -462,6 +480,11 @@
     21
    ],
    [
+    "abilities",
+    "Self-evolving abilities",
+    20
+   ],
+   [
     "sandbox",
     "Sandbox and execution",
     20
@@ -472,19 +495,14 @@
     20
    ],
    [
-    "abilities",
-    "Self-evolving abilities",
+    "context",
+    "Context engine",
     19
    ],
    [
     "memory",
     "Memory and learning",
     19
-   ],
-   [
-    "context",
-    "Context engine",
-    18
    ],
    [
     "eval",
@@ -542,6 +560,11 @@
     9
    ],
    [
+    "intake",
+    "Intake and feeds",
+    9
+   ],
+   [
     "prompt",
     "Prompt layers",
     8
@@ -549,11 +572,6 @@
    [
     "mcp",
     "MCP integrations",
-    8
-   ],
-   [
-    "intake",
-    "Intake and feeds",
     8
    ],
    [
@@ -644,6 +662,125 @@
   ],
   "recent": [
    {
+    "hash": "641ed5eab",
+    "date": "2026-10-19",
+    "subject": "Record the model-side review and what it leaves open",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
+    "hash": "13e5e1324",
+    "date": "2026-10-19",
+    "subject": "Add a Storage tab to the blueprint",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs"
+    ]
+   },
+   {
+    "hash": "6560bc38f",
+    "date": "2026-10-19",
+    "subject": "Send a deferred tool as a stub on wires that need every tool listed",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-core",
+     "vak-llm"
+    ]
+   },
+   {
+    "hash": "01131d133",
+    "date": "2026-10-19",
+    "subject": "Index what a turn's cards said, so search finds the answer",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-catalog"
+    ]
+   },
+   {
+    "hash": "c25ebdbaa",
+    "date": "2026-10-19",
+    "subject": "Keep tool caches out of the workspace; name what is installed",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-tools"
+    ]
+   },
+   {
+    "hash": "56ad9d1e9",
+    "date": "2026-10-19",
+    "subject": "Plan the leading summary card like any other part",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-core"
+    ]
+   },
+   {
+    "hash": "a53c3823c",
+    "date": "2026-10-19",
+    "subject": "Keep the whole answer on a turn's card",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-session"
+    ]
+   },
+   {
+    "hash": "5419b3725",
+    "date": "2026-10-19",
+    "subject": "Keep link addresses in a fetched page's text",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-intake",
+     "vak-server",
+     "vak-tools"
+    ]
+   },
+   {
+    "hash": "2bbac5091",
+    "date": "2026-10-19",
+    "subject": "Find a question asked in other words across conversations",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-catalog",
+     "vak-core"
+    ]
+   },
+   {
+    "hash": "a9c0ad125",
+    "date": "2026-10-19",
+    "subject": "Infer source support only when the planned answer makes claims",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-core",
+     "vak-judge"
+    ]
+   },
+   {
+    "hash": "04e902065",
+    "date": "2026-10-19",
+    "subject": "Show cards for any plan entry; take the diff card from the files",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-control",
+     "vak-core",
+     "vak-judge",
+     "vak-tools"
+    ]
+   },
+   {
     "hash": "745f0e691",
     "date": "2026-10-19",
     "subject": "Clarify desktop single-instance activation after install",
@@ -675,127 +812,22 @@
      "(root)",
      "docs"
     ]
-   },
-   {
-    "hash": "c51b75181",
-    "date": "2026-10-19",
-    "subject": "Consolidate file previews and simplify card actions",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-client-ui"
-    ]
-   },
-   {
-    "hash": "384b0a478",
-    "date": "2026-10-19",
-    "subject": "Record 8.13.0 installation and acceptance",
-    "areas": [
-     "(root)",
-     "docs"
-    ]
-   },
-   {
-    "hash": "f785596e4",
-    "date": "2026-10-19",
-    "subject": "Resolve integration worker from the active Cargo build",
-    "areas": [
-     "docs",
-     "vak-core"
-    ]
-   },
-   {
-    "hash": "afdfb0161",
-    "date": "2026-10-19",
-    "subject": "Release 8.13.0",
-    "areas": [
-     "(root)"
-    ]
-   },
-   {
-    "hash": "6fa02ac29",
-    "date": "2026-10-19",
-    "subject": "Fix conversation, evidence and import projection contracts",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "vak",
-     "vak-agent",
-     "vak-catalog",
-     "vak-client-ui",
-     "vak-core",
-     "vak-intent",
-     "vak-judge",
-     "vak-mcp",
-     "vak-server",
-     "vak-session",
-     "vak-tools"
-    ]
-   },
-   {
-    "hash": "9fd336ee0",
-    "date": "2026-10-19",
-    "subject": "Record local 8.12.0 install and open Unreleased",
-    "areas": [
-     "(root)",
-     "docs"
-    ]
-   },
-   {
-    "hash": "e2d28913d",
-    "date": "2026-10-19",
-    "subject": "Release 8.12.0",
-    "areas": [
-     "(root)"
-    ]
-   },
-   {
-    "hash": "d35adb482",
-    "date": "2026-10-19",
-    "subject": "Hold a conversation's writer lock only while writing it",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-core",
-     "vak-server",
-     "vak-session"
-    ]
-   },
-   {
-    "hash": "6d36146df",
-    "date": "2026-10-19",
-    "subject": "Revert carried-turn wording: it did not change the case it was for",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-core",
-     "vak-session"
-    ]
-   },
-   {
-    "hash": "12ad6f124",
-    "date": "2026-10-19",
-    "subject": "Carry what a turn left undelivered as that turn's history",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-core",
-     "vak-session"
-    ]
-   },
-   {
-    "hash": "8aa3eb554",
-    "date": "2026-10-19",
-    "subject": "Open the Unreleased section after 8.11.0",
-    "areas": [
-     "(root)"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "Blueprint adds a Storage tab to explore months of conversation, card and artifact growth, temporary retention, backup capacity and recovery estimates with editable assumptions and exportable scenarios.",
+   "A card may be part of any entry of the answer's plan, so a diff of a planned change or a test report of a planned check is shown instead of refused.",
+   "The changes card shows what this turn's writes really changed in each file, taken from the file before and after;",
+   "A coding turn whose plan is changes, checks and call-filled cards (a diff, a terminal, a test report) is no longer marked a partial result just because it read the file it fixed.",
+   "Search, and recall across conversations, find a question asked in other words:",
+   "A fetched page's text keeps each link's address as `[text](address)`, so a model can open a post it read about without guessing its URL.",
+   "A turn's record keeps its whole answer, so recall finds and shows the answer even when it opens with an assumption or a caveat, and a repeated answer is caught however long it is.",
+   "A multi-part answer plans its leading summary like any other part, so the summary card no longer borrows the next part's place.",
+   "pytest, mypy and ruff keep their caches outside the workspace;",
+   "A command that fails because its program is not installed says what is installed under that name (`python` → `python3`), and the shell's tool description names `$TMPDIR` for temporary files, as the prompt does.",
+   "Search finds an answer by what its cards said, not only by the question and the pages read;",
+   "On OpenAI, Anthropic and Gemini, a tool the turn has not used yet is sent as its name and one line until it is called, instead of its whole schema:"
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1272,7 +1304,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 66111,
+   "lines": 66141,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1282,7 +1314,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 54938,
+   "lines": 55379,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -1296,7 +1328,7 @@
   {
    "id": "L3",
    "name": "Decision and policy",
-   "lines": 21033,
+   "lines": 21124,
    "crates": [
     "vak-intent",
     "vak-sandbox",
@@ -1309,7 +1341,7 @@
   {
    "id": "L2",
    "name": "Domain engines",
-   "lines": 59136,
+   "lines": 59171,
    "crates": [
     "vak-mail-calendar",
     "vak-ooxml",
@@ -1323,7 +1355,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 36122,
+   "lines": 36251,
    "crates": [
     "vak-session",
     "vak-config",
@@ -4254,9 +4286,9 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 14283,
+   "lines": 14290,
    "largest": [
-    12434,
+    12441,
     "crates/vak-core/src/lib.rs"
    ],
    "routes": [
@@ -4287,9 +4319,9 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 382,
+   "commits": 383,
    "fixes": 59,
-   "recent": 112,
+   "recent": 113,
    "fix_density": 4.1,
    "out": [
     {
@@ -5080,9 +5112,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 12551,
+   "lines": 12756,
    "largest": [
-    11540,
+    11745,
     "crates/vak-agent/src/lib.rs"
    ],
    "routes": [],
@@ -5098,11 +5130,21 @@
     "crates/vak-agent/src/stop_policy.rs",
     "crates/vak-agent/src/workspace.rs"
    ],
-   "commits": 296,
+   "commits": 299,
    "fixes": 56,
-   "recent": 98,
-   "fix_density": 4.5,
+   "recent": 101,
+   "fix_density": 4.4,
    "out": [
+    {
+     "from": "loop",
+     "to": "tools",
+     "kind": "code",
+     "weight": 8,
+     "example": [
+      "crates/vak-agent/src/lib.rs",
+      "crates/vak-core/src/reach.rs"
+     ]
+    },
     {
      "from": "loop",
      "to": "ledger",
@@ -5121,16 +5163,6 @@
      "example": [
       "crates/vak-agent/src/lib.rs",
       "crates/vak-llm/src/anthropic.rs"
-     ]
-    },
-    {
-     "from": "loop",
-     "to": "tools",
-     "kind": "code",
-     "weight": 7,
-     "example": [
-      "crates/vak-agent/src/lib.rs",
-      "crates/vak-core/src/reach.rs"
      ]
     },
     {
@@ -5443,7 +5475,7 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 3400,
+   "lines": 3404,
    "largest": [
     1871,
     "crates/vak-agent/src/task.rs"
@@ -5471,9 +5503,9 @@
     "crates/vak-agent/src/write_lease.rs",
     "crates/vak-client-ui/src/components/WorkersPanel.tsx"
    ],
-   "commits": 86,
+   "commits": 87,
    "fixes": 9,
-   "recent": 31,
+   "recent": 32,
    "fix_density": 2.6,
    "out": [
     {
@@ -5865,7 +5897,7 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 4039,
+   "lines": 4047,
    "largest": [
     1530,
     "crates/vak-context/src/planner.rs"
@@ -5885,9 +5917,9 @@
     "crates/vak-context/src/planner.rs",
     "crates/vak-core/src/indexed_history.rs"
    ],
-   "commits": 40,
+   "commits": 41,
    "fixes": 3,
-   "recent": 18,
+   "recent": 19,
    "fix_density": 0.7,
    "out": [
     {
@@ -6608,7 +6640,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 3907,
+   "lines": 3998,
    "largest": [
     1000,
     "crates/vak-control/src/lib.rs"
@@ -6634,9 +6666,9 @@
     "crates/vak-judge/src/plan.rs",
     "crates/vak-tools/src/plan.rs"
    ],
-   "commits": 49,
+   "commits": 51,
    "fixes": 5,
-   "recent": 49,
+   "recent": 51,
    "fix_density": 1.3,
    "out": [
     {
@@ -7040,7 +7072,7 @@
    ],
    "modules": 23,
    "parts": [],
-   "lines": 15197,
+   "lines": 15227,
    "largest": [
     1818,
     "crates/vak-llm/src/rate_limit.rs"
@@ -7084,9 +7116,9 @@
     "crates/vak-llm/src/types.rs",
     "crates/vak-llm/src/work.rs"
    ],
-   "commits": 98,
+   "commits": 99,
    "fixes": 12,
-   "recent": 22,
+   "recent": 23,
    "fix_density": 0.8,
    "out": [
     {
@@ -7419,11 +7451,11 @@
     "L5",
     "L6"
    ],
-   "modules": 18,
+   "modules": 19,
    "parts": [],
-   "lines": 8660,
+   "lines": 8864,
    "largest": [
-    2170,
+    2174,
     "crates/vak-tools/src/broker.rs"
    ],
    "routes": [],
@@ -7441,6 +7473,7 @@
     "crates/vak-tools/src/broker.rs",
     "crates/vak-tools/src/context.rs",
     "crates/vak-tools/src/contract.rs",
+    "crates/vak-tools/src/diff.rs",
     "crates/vak-tools/src/edit.rs",
     "crates/vak-tools/src/egress.rs",
     "crates/vak-tools/src/glob.rs",
@@ -7453,10 +7486,10 @@
     "crates/vak-tools/src/window.rs",
     "crates/vak-tools/src/write.rs"
    ],
-   "commits": 171,
+   "commits": 174,
    "fixes": 23,
-   "recent": 68,
-   "fix_density": 2.7,
+   "recent": 71,
+   "fix_density": 2.6,
    "out": [
     {
      "from": "tools",
@@ -7631,6 +7664,16 @@
      ]
     },
     {
+     "from": "loop",
+     "to": "tools",
+     "kind": "code",
+     "weight": 8,
+     "example": [
+      "crates/vak-agent/src/lib.rs",
+      "crates/vak-core/src/reach.rs"
+     ]
+    },
+    {
      "from": "office",
      "to": "tools",
      "kind": "code",
@@ -7648,16 +7691,6 @@
      "example": [
       "crates/vak-agent/src/questions.rs",
       "crates/vak-tools/src/context.rs"
-     ]
-    },
-    {
-     "from": "loop",
-     "to": "tools",
-     "kind": "code",
-     "weight": 7,
-     "example": [
-      "crates/vak-agent/src/lib.rs",
-      "crates/vak-core/src/reach.rs"
      ]
     },
     {
@@ -8083,7 +8116,7 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 4361,
+   "lines": 4355,
    "largest": [
     1123,
     "crates/vak-core/src/skills.rs"
@@ -8114,9 +8147,9 @@
     "crates/vak-core/src/packages.rs",
     "crates/vak-core/src/skills.rs"
    ],
-   "commits": 76,
+   "commits": 77,
    "fixes": 16,
-   "recent": 23,
+   "recent": 24,
    "fix_density": 3.7,
    "out": [
     {
@@ -8401,9 +8434,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 3846,
+   "lines": 3844,
    "largest": [
-    1648,
+    1646,
     "crates/vak-tools/src/capability.rs"
    ],
    "routes": [
@@ -8425,9 +8458,9 @@
     "crates/vak-core/src/skill_programs.rs",
     "crates/vak-tools/src/capability.rs"
    ],
-   "commits": 19,
+   "commits": 20,
    "fixes": 1,
-   "recent": 19,
+   "recent": 20,
    "fix_density": 0.3,
    "out": [
     {
@@ -10608,7 +10641,7 @@
    ],
    "modules": 17,
    "parts": [],
-   "lines": 12026,
+   "lines": 12025,
    "largest": [
     3649,
     "crates/vak-session/src/log.rs"
@@ -10645,9 +10678,9 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 193,
+   "commits": 194,
    "fixes": 18,
-   "recent": 80,
+   "recent": 81,
    "fix_density": 1.5,
    "out": [
     {
@@ -11863,9 +11896,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 4466,
+   "lines": 4596,
    "largest": [
-    1281,
+    1304,
     "crates/vak-catalog/src/ingest.rs"
    ],
    "routes": [
@@ -11889,9 +11922,9 @@
     "crates/vak-core/src/catalog.rs",
     "crates/vak-server/src/catalog_api.rs"
    ],
-   "commits": 37,
+   "commits": 39,
    "fixes": 2,
-   "recent": 32,
+   "recent": 34,
    "fix_density": 0.4,
    "out": [
     {
@@ -14428,7 +14461,7 @@
    ],
    "modules": 26,
    "parts": [],
-   "lines": 19066,
+   "lines": 19087,
    "largest": [
     6385,
     "crates/vak-server/src/projection.rs"
@@ -14496,9 +14529,9 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 301,
+   "commits": 302,
    "fixes": 53,
-   "recent": 100,
+   "recent": 101,
    "fix_density": 2.8,
    "out": [
     {
@@ -16441,7 +16474,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 3417,
+   "lines": 3452,
    "largest": [
     735,
     "crates/vak-server/src/intake.rs"
@@ -16473,9 +16506,9 @@
     "crates/vak-intake/src/text.rs",
     "crates/vak-server/src/intake.rs"
    ],
-   "commits": 8,
+   "commits": 9,
    "fixes": 0,
-   "recent": 8,
+   "recent": 9,
    "fix_density": 0.0,
    "out": [
     {
@@ -21328,9 +21361,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 121,
+   "commits": 122,
    "fixes": 21,
-   "recent": 36,
+   "recent": 37,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -21338,8 +21371,8 @@
   }
  ],
  "coverage": {
-  "units": 704,
-  "claimed": 704,
+  "units": 705,
+  "claimed": 705,
   "routes": 397,
   "routes_claimed": 397,
   "verbs": 35,
@@ -21940,6 +21973,16 @@
    ]
   },
   {
+   "from": "loop",
+   "to": "tools",
+   "kind": "code",
+   "weight": 8,
+   "example": [
+    "crates/vak-agent/src/lib.rs",
+    "crates/vak-core/src/reach.rs"
+   ]
+  },
+  {
    "from": "office",
    "to": "tools",
    "kind": "code",
@@ -22077,16 +22120,6 @@
    "example": [
     "crates/vak-agent/src/lib.rs",
     "crates/vak-llm/src/anthropic.rs"
-   ]
-  },
-  {
-   "from": "loop",
-   "to": "tools",
-   "kind": "code",
-   "weight": 7,
-   "example": [
-    "crates/vak-agent/src/lib.rs",
-    "crates/vak-core/src/reach.rs"
    ]
   },
   {
@@ -29985,6 +30018,101 @@
  ],
  "replay": [
   {
+   "hash": "641ed5eab",
+   "date": "2026-10-19",
+   "subject": "Record the model-side review and what it leaves open",
+   "subsystems": []
+  },
+  {
+   "hash": "13e5e1324",
+   "date": "2026-10-19",
+   "subject": "Add a Storage tab to the blueprint",
+   "subsystems": [
+    "engineering"
+   ]
+  },
+  {
+   "hash": "6560bc38f",
+   "date": "2026-10-19",
+   "subject": "Send a deferred tool as a stub on wires that need every tool listed",
+   "subsystems": [
+    "capabilities",
+    "llm",
+    "loop"
+   ]
+  },
+  {
+   "hash": "01131d133",
+   "date": "2026-10-19",
+   "subject": "Index what a turn's cards said, so search finds the answer",
+   "subsystems": [
+    "catalog"
+   ]
+  },
+  {
+   "hash": "c25ebdbaa",
+   "date": "2026-10-19",
+   "subject": "Keep tool caches out of the workspace; name what is installed",
+   "subsystems": [
+    "abilities",
+    "tools"
+   ]
+  },
+  {
+   "hash": "56ad9d1e9",
+   "date": "2026-10-19",
+   "subject": "Plan the leading summary card like any other part",
+   "subsystems": []
+  },
+  {
+   "hash": "a53c3823c",
+   "date": "2026-10-19",
+   "subject": "Keep the whole answer on a turn's card",
+   "subsystems": [
+    "ledger",
+    "loop"
+   ]
+  },
+  {
+   "hash": "5419b3725",
+   "date": "2026-10-19",
+   "subject": "Keep link addresses in a fetched page's text",
+   "subsystems": [
+    "intake",
+    "tools"
+   ]
+  },
+  {
+   "hash": "2bbac5091",
+   "date": "2026-10-19",
+   "subject": "Find a question asked in other words across conversations",
+   "subsystems": [
+    "catalog",
+    "context"
+   ]
+  },
+  {
+   "hash": "a9c0ad125",
+   "date": "2026-10-19",
+   "subject": "Infer source support only when the planned answer makes claims",
+   "subsystems": [
+    "control",
+    "turn"
+   ]
+  },
+  {
+   "hash": "04e902065",
+   "date": "2026-10-19",
+   "subject": "Show cards for any plan entry; take the diff card from the files",
+   "subsystems": [
+    "cards",
+    "control",
+    "loop",
+    "tools",
+    "workers"
+   ]
+  },
+  {
    "hash": "745f0e691",
    "date": "2026-10-19",
    "subject": "Clarify desktop single-instance activation after install",
@@ -35383,10 +35511,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 16531,
-   "tests": 19580,
+   "src": 16740,
+   "tests": 19804,
    "files": 13,
-   "commits": 349,
+   "commits": 352,
    "deps": [
     "vak-config",
     "vak-context",
@@ -35424,7 +35552,7 @@
     "uuid"
    ],
    "largest": [
-    11540,
+    11745,
     "crates/vak-agent/src/lib.rs"
    ],
    "subsystems": [
@@ -35478,10 +35606,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "SQLite catalog: nodes, lineage, FTS5",
-   "src": 3941,
+   "src": 4071,
    "tests": 0,
    "files": 5,
-   "commits": 32,
+   "commits": 34,
    "deps": [
     "vak-config",
     "vak-llm",
@@ -35505,7 +35633,7 @@
     "tracing"
    ],
    "largest": [
-    1281,
+    1304,
     "crates/vak-catalog/src/ingest.rs"
    ],
    "subsystems": [
@@ -35691,10 +35819,10 @@
    "layer": "L3",
    "kind": "rust",
    "role": "Decision points, step contracts, verdicts, the correction ladder",
-   "src": 1856,
+   "src": 1885,
    "tests": 0,
    "files": 3,
-   "commits": 39,
+   "commits": 40,
    "deps": [],
    "used_by": [
     "vak",
@@ -35728,10 +35856,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 61561,
-   "tests": 10158,
+   "src": 61591,
+   "tests": 10251,
    "files": 74,
-   "commits": 649,
+   "commits": 654,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35791,7 +35919,7 @@
     "walkdir"
    ],
    "largest": [
-    12434,
+    12441,
     "crates/vak-core/src/lib.rs"
    ],
    "subsystems": [
@@ -36045,10 +36173,10 @@
    "layer": "L2",
    "kind": "rust",
    "role": "Feed connectors, bounded parsers, HTML reader",
-   "src": 1703,
+   "src": 1738,
    "tests": 0,
    "files": 5,
-   "commits": 2,
+   "commits": 3,
    "deps": [
     "vak-ooxml"
    ],
@@ -36068,7 +36196,7 @@
     "url"
    ],
    "largest": [
-    674,
+    709,
     "crates/vak-intake/src/html.rs"
    ],
    "subsystems": [
@@ -36118,10 +36246,10 @@
    "layer": "L3",
    "kind": "rust",
    "role": "Receipts to verdicts: call, plan check, outcome",
-   "src": 1937,
+   "src": 1999,
    "tests": 159,
    "files": 6,
-   "commits": 13,
+   "commits": 15,
    "deps": [
     "vak-control",
     "vak-intent"
@@ -36177,10 +36305,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Provider wires, SSE, model discovery, route ladder, receipts",
-   "src": 14053,
+   "src": 14083,
    "tests": 1886,
    "files": 22,
-   "commits": 97,
+   "commits": 98,
    "deps": [
     "vak-control"
    ],
@@ -36566,9 +36694,9 @@
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
    "src": 74814,
-   "tests": 23934,
+   "tests": 23937,
    "files": 52,
-   "commits": 840,
+   "commits": 841,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -36669,10 +36797,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 16042,
+   "src": 16041,
    "tests": 4852,
    "files": 25,
-   "commits": 210,
+   "commits": 211,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36833,10 +36961,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Built-in tools, argument reader, broker worker protocol, egress proxy",
-   "src": 16011,
+   "src": 16213,
    "tests": 1209,
-   "files": 28,
-   "commits": 207,
+   "files": 29,
+   "commits": 210,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36888,7 +37016,7 @@
     "walkdir"
    ],
    "largest": [
-    2170,
+    2174,
     "crates/vak-tools/src/broker.rs"
    ],
    "subsystems": [
@@ -36942,11 +37070,11 @@
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12434
+    "lines": 12441
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
-    "lines": 11540
+    "lines": 11745
    },
    {
     "file": "crates/vak-mail-calendar/src/provider.rs",
@@ -36970,7 +37098,7 @@
    },
    {
     "file": "crates/vak-core/src/presentation_tools.rs",
-    "lines": 4063
+    "lines": 4084
    },
    {
     "file": "crates/vak-core/src/finops.rs",
@@ -36989,14 +37117,14 @@
    {
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 1850,
+    "line": 1881,
     "lines": 1884
    },
    {
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
     "line": 6636,
-    "lines": 1638
+    "lines": 1645
    },
    {
     "name": "snapshot_inner",
@@ -37037,7 +37165,7 @@
    {
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5648,
+    "line": 5683,
     "lines": 564
    },
    {
@@ -37135,7 +37263,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1370,
+  "docs_commits": 1381,
   "hot": 644
  },
  "findings": [
@@ -37144,7 +37272,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 193 (rank 1 of 4,414 library functions) and `Core::run_turn_recorded` at 106 (rank 3); the median is 3 and the 99th percentile 24. 153 commits changed the first (6% of all) and 212 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.7 per thousand lines, against a median of 4.5 over 402 files; file size alone does not predict the rate (ρ = -0.13).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 193 (rank 1 of 4,414 library functions) and `Core::run_turn_recorded` at 106 (rank 3); the median is 3 and the 99th percentile 24. 153 commits changed the first (6% of all) and 213 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.5 per thousand lines, against a median of 4.4 over 403 files; file size alone does not predict the rate (ρ = -0.13).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
@@ -37776,5 +37904,58 @@
    "eval": "Evaluation",
    "engineering": "Build, gate and release"
   }
+ },
+ "storage": {
+  "facts": [
+   {
+    "key": "rotation",
+    "file": "crates/vak-session/src/chain.rs",
+    "line": 18,
+    "meaning": "Side chains rotate at 256 KiB plus a crossing frame; seal manifests still grow."
+   },
+   {
+    "key": "kept",
+    "file": "crates/vak-lifecycle/src/lib.rs",
+    "line": 90,
+    "meaning": "Conversation records, their objects and run records have no default expiry."
+   },
+   {
+    "key": "encrypted",
+    "file": "crates/vak-storage/src/segments.rs",
+    "line": 346,
+    "meaning": "Sealing encrypted frames copies ciphertext; it does not compress it."
+   },
+   {
+    "key": "grace",
+    "file": "crates/vak-core/src/lifecycle.rs",
+    "line": 187,
+    "meaning": "Document object collection has a one-hour grace and only releases unreachable objects."
+   },
+   {
+    "key": "segments",
+    "file": "crates/vak-core/src/lifecycle.rs",
+    "line": 191,
+    "meaning": "Expiring side chains seal aged segments after 30 days; the newest sealed segment stays."
+   },
+   {
+    "key": "scan",
+    "file": "crates/vak-session/src/log.rs",
+    "line": 578,
+    "meaning": "Cold session reads scan segments; bounded model context is not a bounded cold read."
+   }
+  ],
+  "default_days": {
+   "Trash": 30,
+   "Checkpoint": 30,
+   "Execution": 7,
+   "Environment": 7,
+   "DraftVersion": 60,
+   "DocumentHistory": 90,
+   "InboxEntry": 90,
+   "ActivitySegment": 400,
+   "Incident": 400,
+   "Telemetry": 14
+  },
+  "scope": "Synthetic empty-home forecast; 30-day months. No private data read. No settings changed."
  }
 }
