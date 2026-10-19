@@ -16,6 +16,36 @@ struct BudgetDocument {
 }
 
 impl Core {
+    /// Bind a standalone flow's shared cap before its executor opens the run.
+    /// Durable state is first touched at dispatch, after that admission.
+    pub fn deferred_model_call_budget(
+        &self,
+        run: RunId,
+        limit: u32,
+    ) -> Arc<vak_agent::ModelCallBudget> {
+        let core = self.clone();
+        let initialized = std::sync::Mutex::new(None::<Arc<vak_agent::ModelCallBudget>>);
+        let claim = Arc::new(move |_live_limit| {
+            let budget = {
+                let mut cached = initialized
+                    .lock()
+                    .map_err(|_| "model-call budget lock failed".to_string())?;
+                match cached.as_ref() {
+                    Some(budget) => budget.clone(),
+                    None => {
+                        let budget = core.model_call_budget(run, limit)?;
+                        *cached = Some(budget.clone());
+                        budget
+                    }
+                }
+            };
+            budget.claim().map_err(|error| error.to_string())
+        });
+        Arc::new(vak_agent::ModelCallBudget::with_durable_claim(
+            run, limit, 0, claim,
+        ))
+    }
+
     pub(crate) fn model_call_budget(
         &self,
         run: RunId,
@@ -117,6 +147,44 @@ impl Core {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deferred_flow_budget_writes_only_at_dispatch_and_keeps_durable_count() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let trace = core.mint_trace(None);
+        let budget = core.deferred_model_call_budget(trace.run, 2);
+        let path = core
+            .shared_scope()
+            .model_call_budgets()
+            .join(trace.run.to_string());
+        assert!(vak_session::documents::read(&path).unwrap().is_none());
+        core.runs().open(&trace, None, None, 1).unwrap();
+        assert_eq!(budget.claim().unwrap(), 1);
+        let recreated = core.deferred_model_call_budget(trace.run, 2);
+        assert_eq!(recreated.claim().unwrap(), 2);
+        assert!(budget.claim().is_err());
+        assert!(recreated.claim().is_err());
+    }
+
+    #[test]
+    fn initialized_deferred_budget_never_recreates_a_missing_document() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let trace = core.mint_trace(None);
+        core.runs().open(&trace, None, None, 1).unwrap();
+        let budget = core.deferred_model_call_budget(trace.run, 3);
+        assert_eq!(budget.claim().unwrap(), 1);
+        let path = core
+            .shared_scope()
+            .model_call_budgets()
+            .join(trace.run.to_string());
+        vak_session::documents::forget(&path).unwrap();
+        assert!(budget.claim().is_err());
+        assert!(vak_session::documents::read(&path).unwrap().is_none());
+    }
 
     #[test]
     fn claims_survive_budget_recreation_and_coordinate_independent_handles() {

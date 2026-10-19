@@ -1298,6 +1298,9 @@ async fn run_flow_exec(
         }
     };
     let deps = vak_flow::ExecutorDeps {
+        model_call_budget: core
+            .effective_max_model_calls()
+            .map(|limit| core.deferred_model_call_budget(trace.run, limit)),
         control_limits: core.control_limits(),
         steps: core.step_defaults(),
         objects,
@@ -2197,6 +2200,9 @@ async fn run_plan(
         return 2;
     }
     let deps = vak_flow::ExecutorDeps {
+        model_call_budget: core
+            .effective_max_model_calls()
+            .map(|limit| core.deferred_model_call_budget(plan_trace.run, limit)),
         control_limits: core.control_limits(),
         steps: core.step_defaults(),
         objects,

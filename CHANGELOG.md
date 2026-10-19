@@ -1,5 +1,8 @@
 ## 8.10.0 — 2026-10-19
 
+- Standalone CLI flows and planning share the configured optional model-call
+  cap, with durable accounting initialized after run admission.
+
 - Parent and child runs stop before workspace-changing tools when their
   required checkpoint cannot be captured or stored. Failed capture does not
   mark the checkpoint as complete. Failure to preserve file contents in the
