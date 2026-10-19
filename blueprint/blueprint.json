@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.13.0",
-  "revision": "afdfb0161",
+  "revision": "f785596e4",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -12,14 +12,14 @@
    "rust_crates": 35,
    "ts_crates": 2,
    "rust_src": 337567,
-   "rust_tests": 86248,
+   "rust_tests": 86250,
    "ts_src": 62524,
    "routes": 397,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2394,
+   "total_commits": 2395,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -274,11 +274,11 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 529,
+  "commits": 530,
   "areas": [
    [
     "docs",
-    450
+    451
    ],
    [
     "(root)",
@@ -286,7 +286,7 @@
    ],
    [
     "vak-core",
-    232
+    233
    ],
    [
     "vak-server",
@@ -644,6 +644,15 @@
   ],
   "recent": [
    {
+    "hash": "f785596e4",
+    "date": "2026-10-19",
+    "subject": "Resolve integration worker from the active Cargo build",
+    "areas": [
+     "docs",
+     "vak-core"
+    ]
+   },
+   {
     "hash": "afdfb0161",
     "date": "2026-10-19",
     "subject": "Release 8.13.0",
@@ -792,17 +801,6 @@
     "areas": [
      "(root)",
      "docs"
-    ]
-   },
-   {
-    "hash": "4315e3137",
-    "date": "2026-10-19",
-    "subject": "Bind standalone CLI flows to shared durable call limits",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak",
-     "vak-core"
     ]
    }
   ],
@@ -29996,6 +29994,12 @@
  ],
  "replay": [
   {
+   "hash": "f785596e4",
+   "date": "2026-10-19",
+   "subject": "Resolve integration worker from the active Cargo build",
+   "subsystems": []
+  },
+  {
    "hash": "afdfb0161",
    "date": "2026-10-19",
    "subject": "Release 8.13.0",
@@ -35695,9 +35699,9 @@
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
    "src": 61561,
-   "tests": 10156,
+   "tests": 10158,
    "files": 74,
-   "commits": 648,
+   "commits": 649,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -37101,7 +37105,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1364,
+  "docs_commits": 1365,
   "hot": 643
  },
  "findings": [
