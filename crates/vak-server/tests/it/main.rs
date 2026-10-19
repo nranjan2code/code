@@ -10,6 +10,7 @@ mod capability_worker;
 mod card_kinds_sync;
 mod channel_office_round_trip;
 mod chat_bridges;
+mod coding_turn_outcome;
 mod control_vocabulary_sync;
 mod doc_read_worker;
 mod feed_pipeline_is_gone;
