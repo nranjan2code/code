@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.12.0",
-  "revision": "6fa02ac29",
+  "version": "8.13.0",
+  "revision": "afdfb0161",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2393,
+   "total_commits": 2394,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -274,7 +274,7 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 528,
+  "commits": 529,
   "areas": [
    [
     "docs",
@@ -282,7 +282,7 @@
    ],
    [
     "(root)",
-    284
+    285
    ],
    [
     "vak-core",
@@ -644,6 +644,14 @@
   ],
   "recent": [
    {
+    "hash": "afdfb0161",
+    "date": "2026-10-19",
+    "subject": "Release 8.13.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "6fa02ac29",
     "date": "2026-10-19",
     "subject": "Fix conversation, evidence and import projection contracts",
@@ -796,22 +804,9 @@
      "vak",
      "vak-core"
     ]
-   },
-   {
-    "hash": "8a9f4b9f5",
-    "date": "2026-10-19",
-    "subject": "Release 8.10.0",
-    "areas": [
-     "(root)",
-     "docs"
-    ]
    }
   ],
-  "unreleased": [
-   "Restore and sync pull reset encrypted projections declared in the state registry before rebuilding from imported records and keys.",
-   "Conversation history and answer cards reconcile from one server snapshot;",
-   "Plans can declare evidence questions."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30000,6 +29995,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "afdfb0161",
+   "date": "2026-10-19",
+   "subject": "Release 8.13.0",
+   "subsystems": []
+  },
   {
    "hash": "6fa02ac29",
    "date": "2026-10-19",
