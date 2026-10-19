@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.9.0",
-  "revision": "a93d74192",
+  "revision": "aef6b82e9",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -11,7 +11,7 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 336127,
+   "rust_src": 336471,
    "rust_tests": 85902,
    "ts_src": 62480,
    "routes": 396,
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2377,
+   "total_commits": 2378,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -242,19 +242,19 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 512,
+  "commits": 513,
   "areas": [
    [
     "docs",
-    438
+    439
    ],
    [
     "(root)",
-    270
+    271
    ],
    [
     "vak-core",
-    224
+    225
    ],
    [
     "vak-server",
@@ -266,11 +266,11 @@
    ],
    [
     "vak-agent",
-    105
+    106
    ],
    [
     "vak-session",
-    88
+    89
    ],
    [
     "vak-tools",
@@ -302,7 +302,7 @@
    [
     "turn",
     "Turn admission",
-    108
+    109
    ],
    [
     "client",
@@ -312,7 +312,7 @@
    [
     "loop",
     "Agent loop",
-    96
+    97
    ],
    [
     "cards",
@@ -397,7 +397,7 @@
    [
     "runs",
     "Runs, effects and cursors",
-    25
+    26
    ],
    [
     "capabilities",
@@ -525,6 +525,11 @@
     7
    ],
    [
+    "checkpoints",
+    "Checkpoints and worktrees",
+    6
+   ],
+   [
     "coworking",
     "Shared conversations",
     6
@@ -537,11 +542,6 @@
    [
     "sync",
     "Sync",
-    5
-   ],
-   [
-    "checkpoints",
-    "Checkpoints and worktrees",
     5
    ],
    [
@@ -611,6 +611,18 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "aef6b82e9",
+    "date": "2026-10-19",
+    "subject": "Require workspace checkpoint storage before tool dispatch",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-core",
+     "vak-session"
+    ]
+   },
    {
     "hash": "a93d74192",
     "date": "2026-10-19",
@@ -788,18 +800,10 @@
      "docs",
      "vak-client-ui"
     ]
-   },
-   {
-    "hash": "dc5ac2b34",
-    "date": "2026-10-18",
-    "subject": "Defer the workers work (doc 100)",
-    "areas": [
-     "(root)",
-     "docs"
-    ]
    }
   ],
   "unreleased": [
+   "Parent and child runs stop before workspace-changing tools when their required checkpoint cannot be captured or stored.",
    "Run status and crash-recovery queries report corrupt history instead of silently skipping it.",
    "Tool wrappers preserve card declarations and workspace-change overrides;",
    "Capped budget admission uses encrypted indexed totals and reservation lookups instead of decoding settled history.",
@@ -1323,7 +1327,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 65704,
+   "lines": 65793,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1333,7 +1337,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 54526,
+   "lines": 54736,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -1374,7 +1378,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 36001,
+   "lines": 36046,
    "crates": [
     "vak-session",
     "vak-config",
@@ -4295,9 +4299,9 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 14188,
+   "lines": 14245,
    "largest": [
-    12350,
+    12396,
     "crates/vak-core/src/lib.rs"
    ],
    "routes": [
@@ -4328,16 +4332,16 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 378,
+   "commits": 379,
    "fixes": 58,
-   "recent": 108,
+   "recent": 109,
    "fix_density": 4.1,
    "out": [
     {
      "from": "turn",
      "to": "ledger",
      "kind": "code",
-     "weight": 20,
+     "weight": 23,
      "example": [
       "crates/vak-core/src/admission.rs",
       "crates/vak-session/src/ids.rs"
@@ -5121,9 +5125,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 12332,
+   "lines": 12542,
    "largest": [
-    11321,
+    11531,
     "crates/vak-agent/src/lib.rs"
    ],
    "routes": [],
@@ -5139,10 +5143,10 @@
     "crates/vak-agent/src/stop_policy.rs",
     "crates/vak-agent/src/workspace.rs"
    ],
-   "commits": 294,
+   "commits": 295,
    "fixes": 55,
-   "recent": 96,
-   "fix_density": 4.5,
+   "recent": 97,
+   "fix_density": 4.4,
    "out": [
     {
      "from": "loop",
@@ -10827,7 +10831,7 @@
      "from": "turn",
      "to": "ledger",
      "kind": "code",
-     "weight": 20,
+     "weight": 23,
      "example": [
       "crates/vak-core/src/admission.rs",
       "crates/vak-session/src/ids.rs"
@@ -11525,7 +11529,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 4488,
+   "lines": 4533,
    "largest": [
     1532,
     "crates/vak-session/src/effects.rs"
@@ -11554,9 +11558,9 @@
     "crates/vak/src/effects.rs",
     "crates/vak/src/runs.rs"
    ],
-   "commits": 25,
+   "commits": 26,
    "fixes": 1,
-   "recent": 25,
+   "recent": 26,
    "fix_density": 0.2,
    "out": [
     {
@@ -13266,9 +13270,9 @@
    ],
    "modules": 6,
    "parts": [],
-   "lines": 1894,
+   "lines": 1926,
    "largest": [
-    1180,
+    1212,
     "crates/vak-core/src/checkpoints.rs"
    ],
    "routes": [
@@ -13291,9 +13295,9 @@
     "crates/vak-core/src/checkpoints.rs",
     "crates/vak-core/src/worktree.rs"
    ],
-   "commits": 23,
+   "commits": 24,
    "fixes": 3,
-   "recent": 5,
+   "recent": 6,
    "fix_density": 1.6,
    "out": [
     {
@@ -21410,6 +21414,16 @@
    ]
   },
   {
+   "from": "turn",
+   "to": "ledger",
+   "kind": "code",
+   "weight": 23,
+   "example": [
+    "crates/vak-core/src/admission.rs",
+    "crates/vak-session/src/ids.rs"
+   ]
+  },
+  {
    "from": "ledger",
    "to": "storage",
    "kind": "code",
@@ -21427,16 +21441,6 @@
    "example": [
     "crates/vak-core/src/reach.rs",
     "crates/vak-permission/src/engine.rs"
-   ]
-  },
-  {
-   "from": "turn",
-   "to": "ledger",
-   "kind": "code",
-   "weight": 20,
-   "example": [
-    "crates/vak-core/src/admission.rs",
-    "crates/vak-session/src/ids.rs"
    ]
   },
   {
@@ -29975,6 +29979,17 @@
  ],
  "replay": [
   {
+   "hash": "aef6b82e9",
+   "date": "2026-10-19",
+   "subject": "Require workspace checkpoint storage before tool dispatch",
+   "subsystems": [
+    "checkpoints",
+    "loop",
+    "runs",
+    "turn"
+   ]
+  },
+  {
    "hash": "a93d74192",
    "date": "2026-10-19",
    "subject": "Enforce strict run decisions and preserve tool wrapper declarations",
@@ -35176,10 +35191,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 16285,
+   "src": 16495,
    "tests": 19546,
    "files": 13,
-   "commits": 344,
+   "commits": 345,
    "deps": [
     "vak-config",
     "vak-context",
@@ -35217,7 +35232,7 @@
     "uuid"
    ],
    "largest": [
-    11321,
+    11531,
     "crates/vak-agent/src/lib.rs"
    ],
    "subsystems": [
@@ -35521,10 +35536,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 61154,
+   "src": 61243,
    "tests": 10049,
    "files": 74,
-   "commits": 640,
+   "commits": 641,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35584,7 +35599,7 @@
     "walkdir"
    ],
    "largest": [
-    12350,
+    12396,
     "crates/vak-core/src/lib.rs"
    ],
    "subsystems": [
@@ -36462,10 +36477,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 15961,
+   "src": 16006,
    "tests": 4808,
    "files": 25,
-   "commits": 204,
+   "commits": 205,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36735,11 +36750,11 @@
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12350
+    "lines": 12396
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
-    "lines": 11321
+    "lines": 11531
    },
    {
     "file": "crates/vak-mail-calendar/src/provider.rs",
@@ -36782,14 +36797,14 @@
    {
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 1847,
+    "line": 1850,
     "lines": 1884
    },
    {
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
     "line": 6626,
-    "lines": 1622
+    "lines": 1613
    },
    {
     "name": "snapshot_inner",
@@ -36830,7 +36845,7 @@
    {
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5645,
+    "line": 5648,
     "lines": 564
    },
    {
@@ -36928,8 +36943,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1352,
-  "hot": 640
+  "docs_commits": 1353,
+  "hot": 641
  },
  "findings": [
   {
@@ -36937,7 +36952,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 194 (rank 1 of 4,348 library functions) and `Core::run_turn_recorded` at 103 (rank 3); the median is 3 and the 99th percentile 24. 153 commits changed the first (6% of all) and 210 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.7 per thousand lines, against a median of 4.4 over 402 files; file size alone does not predict the rate (ρ = -0.14).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 194 (rank 1 of 4,348 library functions) and `Core::run_turn_recorded` at 103 (rank 3); the median is 3 and the 99th percentile 24. 153 commits changed the first (6% of all) and 211 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.6 per thousand lines, against a median of 4.4 over 402 files; file size alone does not predict the rate (ρ = -0.14).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
