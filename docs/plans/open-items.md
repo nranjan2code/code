@@ -411,6 +411,13 @@ unless it says so.
 
 ## Before the next release
 
+- [ ] macOS bundle resource signing: the local 8.10.0 build/install passes
+  managed digests and live health, but `scripts/verify-macos-release.sh`
+  rejects `/Applications/Vakyartha.app` with "code has no resources but
+  signature indicates they must be present". Repair signing in the managed
+  packaging/install owner, accounting for its mutable install manifest;
+  preserve digest verification. No signing/notarization success is claimed.
+
 - [ ] zip 4.6.1 to 9: RUSTSEC-2026-0367, 0368 and 0369 are ignored in
   `.cargo/audit.toml` because Vak never calls `extract`. Upgrading the
   pinned hostile-input boundary (docs/design/72-openxml-documents.md) is a
