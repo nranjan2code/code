@@ -195,7 +195,17 @@ pub(crate) async fn post(
             )
                 .into_response();
         };
-        record(session, &body)
+        let mut session = match crate::writing(session) {
+            Ok(session) => session,
+            Err(error) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({"error": crate::writer_refused(error)})),
+                )
+                    .into_response();
+            }
+        };
+        record(&mut session, &body)
     };
     let recorded = match recorded {
         Ok(recorded) => recorded,

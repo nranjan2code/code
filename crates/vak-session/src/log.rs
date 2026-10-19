@@ -649,6 +649,38 @@ impl SessionLog {
         self.ledger.writer.is_none()
     }
 
+    /// Gives up the writer and its single-writer lock, keeping what was read
+    /// and attached: the log reads as read-only, so another process may write
+    /// the ledger until [`Self::reacquire_writer`]. What was appended is synced
+    /// first.
+    pub fn release_writer(&mut self) -> Result<(), SessionError> {
+        if let Some((_, mut writer)) = self.ledger.writer.take() {
+            writer.sync().map_err(storage_error)?;
+        }
+        self.ledger.lock = None;
+        Ok(())
+    }
+
+    /// Takes the writer and its lock again, reading what another process
+    /// appended meanwhile and keeping what this log had attached (its object
+    /// store, bodies already read, pending account results, a reserved turn).
+    /// Writable already: nothing to do. Another holder: `Locked`, and the log
+    /// is left as it was.
+    pub fn reacquire_writer(&mut self) -> Result<(), SessionError> {
+        if !self.is_read_only() {
+            return Ok(());
+        }
+        let mut fresh = Self::open(self.path.clone())?;
+        fresh.objects = self.objects.take();
+        fresh.fetched = std::mem::take(&mut self.fetched);
+        fresh.account_results = std::mem::take(&mut self.account_results);
+        if fresh.reserved_turn.is_none() {
+            fresh.reserved_turn = self.reserved_turn.take();
+        }
+        *self = fresh;
+        Ok(())
+    }
+
     /// Non-fatal problems seen while opening the ledger.
     pub fn warnings(&self) -> &[String] {
         &self.warnings

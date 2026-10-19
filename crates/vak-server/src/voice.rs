@@ -47,6 +47,7 @@ fn record_voice_dispatch(
     if let Some(handle) = state.get(session_id)
         && let Ok(mut session) = handle.session.lock()
         && let Some(session) = session.as_mut()
+        && let Ok(mut session) = crate::writing(session)
     {
         let _ = session.append_receipt(receipt.clone());
     }
@@ -1072,6 +1073,7 @@ async fn drive(mut socket: WebSocket, state: AppState, session_id: String) {
                             Outcome::Transcript(text) => {
                                 if let Ok(mut log) = handle.session.lock()
                                     && let Some(log) = log.as_mut()
+                                    && let Ok(mut log) = crate::writing(log)
                                 {
                                     let _ = log.append_voice_transcript(
                                         format!("voice:{utterance_id}"),
@@ -1113,6 +1115,7 @@ async fn drive(mut socket: WebSocket, state: AppState, session_id: String) {
                     } => {
                         if let Ok(mut log) = handle.session.lock()
                             && let Some(log) = log.as_mut()
+                            && let Ok(mut log) = crate::writing(log)
                         {
                             let _ = log.append_voice_playback(
                                 format!("voice:{utterance_id}"),

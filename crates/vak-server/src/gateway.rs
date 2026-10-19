@@ -3262,6 +3262,7 @@ async fn gateway_inbound(
         if let crate::voice::VoiceNote::Heard(transcript) = note
             && let Ok(mut session) = handle.session.lock()
             && let Some(session) = session.as_mut()
+            && let Ok(mut session) = crate::writing(session)
         {
             let _ = session.append_voice_transcript(
                 format!("voice:{request_id}"),
@@ -3873,7 +3874,7 @@ async fn recover_ledger(core: &Core, session_id: &str) -> Option<vak_session::Se
     if session_id.is_empty() {
         return None;
     }
-    core.open_session(session_id).await.ok()
+    core.open_session_read_only(session_id).await.ok()
 }
 
 /// The text sent back to a Telegram/Slack/Discord user as the bot's reply

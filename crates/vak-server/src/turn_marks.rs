@@ -84,10 +84,20 @@ pub(crate) async fn put(
         )
             .into_response();
     };
-    match mark(session, &turn, body.aside) {
+    let mut session = match crate::writing(session) {
+        Ok(session) => session,
+        Err(error) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": crate::writer_refused(error)})),
+            )
+                .into_response();
+        }
+    };
+    match mark(&mut session, &turn, body.aside) {
         Ok(()) => (
             StatusCode::OK,
-            Json(serde_json::json!({ "set_aside": set_aside_list(session) })),
+            Json(serde_json::json!({ "set_aside": set_aside_list(&session) })),
         )
             .into_response(),
         Err(Refused::NoTurn) => StatusCode::NOT_FOUND.into_response(),
@@ -176,7 +186,7 @@ pub(crate) async fn retry(
             *handle
                 .session
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(taken));
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };

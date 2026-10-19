@@ -6506,6 +6506,10 @@ impl Core {
         work_mode: Option<WorkMode>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
         use tracing::Instrument as _;
+        // A conversation at rest holds no writer lock (docs/design/02); every
+        // turn takes it here, and whoever keeps the log gives it up after.
+        let mut session = session;
+        session.reacquire_writer()?;
         let runs = self.runs();
         let opened: Arc<std::sync::OnceLock<vak_session::ids::RunId>> = Arc::default();
         // The turn's spans open before its work and learn their ids once the

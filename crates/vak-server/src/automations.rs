@@ -1526,7 +1526,10 @@ pub(crate) async fn deliver_home(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(log) = guard.as_mut() {
-                let turn = vak_core::scheduled::deliver(log, &delivery);
+                let turn = match crate::writing(log) {
+                    Ok(mut log) => vak_core::scheduled::deliver(&mut log, &delivery),
+                    Err(error) => Err(error),
+                };
                 let session_id = handle.id.clone();
                 *handle
                     .presentation

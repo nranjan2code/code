@@ -255,6 +255,16 @@ inspection while another process owns the writable session. The lock is
 explicitly released when the writable handle drops; relying on descriptor
 close would keep the lock alive while duplicated descriptors remain open in
 spawned child processes.
+A conversation at rest holds no writer lock. A writable log gives up its
+writer and lock with `SessionLog::release_writer`, keeping what it read and
+attached, and takes them back with `reacquire_writer`, which re-reads what
+another process appended meanwhile. Every turn takes the writer when it
+starts (`Core::run_turn_inner`); a server gives it up when it holds a
+conversation without running it (`register_handle`, a settled turn, a
+recovered one), and its other writers take it only for their write
+(`vak-server`'s `writing`). Before 2026-10-19 a server that had run one turn
+in a conversation held its lock until the process ended, so another process
+could not run or retry a turn there.
 Every file lock Vak holds follows the same rule: a ledger's writer lock
 (`segments::WriterLock`), a workspace acceptance (`vak_sandbox`'s
 `AcceptanceLock`) and a mail account's refresh lease

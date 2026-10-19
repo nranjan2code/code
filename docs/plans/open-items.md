@@ -40,6 +40,15 @@ Measured in [the answer-composition audit](../audits/answer-composition-2026-10-
 - [ ] A shape-named layout guide for explaining a subject across several
   angles in `packages/answer-layouts` (optional, data only).
 
+## Conversations shared between processes (2026-10-19)
+
+- [ ] A conversation at rest no longer holds its writer lock
+  (docs/design/02-sessions.md), so two processes can take turns in one
+  conversation. A process that only holds it shows what it last read until
+  it next writes (seen live: the second server's transcript lacked the
+  first server's newest turn). Decide how a resting handle learns the
+  ledger moved (its tail, read on demand), without a timer.
+
 ## Failing tests found 2026-10-19 (pre-existing on main, under the gate waiver)
 
 - [ ] `vak` sync tests (`sync_lease`, `sync_erasure`,

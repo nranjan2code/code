@@ -120,3 +120,47 @@ fn a_torn_tail_does_not_make_the_session_unreadable() {
     assert_eq!(reopened.chain_to_root().len(), 4);
     assert!(reopened.warnings().is_empty(), "{:?}", reopened.warnings());
 }
+
+/// A log gives up its single-writer lock and takes it back: while released,
+/// another holder may write; taking it back reads what that holder wrote.
+#[test]
+fn a_released_writer_lets_another_holder_write_and_is_taken_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = ledger(dir.path(), &["a"]);
+    let mut log = SessionLog::open(path.clone()).unwrap();
+    assert!(matches!(
+        SessionLog::open(path.clone()),
+        Err(vak_session::SessionError::Locked(_))
+    ));
+
+    log.release_writer().unwrap();
+    assert!(log.is_read_only());
+    assert!(
+        log.append_activity(activity("refused")).is_err(),
+        "a released log does not write"
+    );
+    let mut other = SessionLog::open(path.clone()).expect("the lock was given up");
+    other.append_activity(activity("b")).unwrap();
+    assert!(matches!(
+        log.reacquire_writer(),
+        Err(vak_session::SessionError::Locked(_))
+    ));
+    assert!(
+        log.is_read_only(),
+        "a refused take-back leaves the log as it was"
+    );
+    drop(other);
+
+    log.reacquire_writer().unwrap();
+    assert!(!log.is_read_only());
+    log.append_activity(activity("c")).unwrap();
+    let labels: Vec<String> = log
+        .chain_to_root()
+        .iter()
+        .filter_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Activity(record) => Some(record.label.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(labels, ["a", "b", "c"]);
+}

@@ -4295,7 +4295,7 @@ pub(crate) fn register_handle(
         id: id.clone(),
         core,
         cwd,
-        session: Arc::new(Mutex::new(Some(session))),
+        session: Arc::new(Mutex::new(Some(rest(session)))),
         intent: Arc::new(Mutex::new(latest_intent)),
         steering: Arc::new(SteeringQueues::new()),
         cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
@@ -5218,7 +5218,7 @@ fn continue_or_release(
     let queued = handle.steering.drain(vak_agent::DrainMode::All);
     match SteeringQueues::merge_prompt(queued) {
         None => {
-            *slot = Some(ledger);
+            *slot = Some(rest(ledger));
             None
         }
         Some(merged) => Some((ledger, merged)),
@@ -5468,35 +5468,81 @@ fn spawn_http_turn_chain(
     });
 }
 
-/// The taken ledger, reopened for writing when the handle held it read-only.
-/// A ledger another process holds is put back and refused.
+/// The taken ledger with its writer taken back (it rests read-only,
+/// docs/design/02-sessions.md). A ledger another process is writing is put
+/// back and refused.
 fn writable(
     handle: &SessionHandle,
-    taken: SessionLog,
+    mut taken: SessionLog,
 ) -> Result<SessionLog, Box<axum::response::Response>> {
     use axum::response::IntoResponse;
-    if !taken.is_read_only() {
-        return Ok(taken);
-    }
-    match vak_session::SessionLog::open(taken.path().to_path_buf()) {
-        Ok(writable) => Ok(writable),
+    match taken.reacquire_writer() {
+        Ok(()) => Ok(taken),
         Err(error) => {
             *handle
                 .session
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
-            let message = match error {
-                vak_session::SessionError::Locked(_) => "This conversation is currently active in Vakyartha Desktop. Close or finish the task in Desktop before continuing here.".to_string(),
-                error => error.to_string(),
-            };
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(taken));
             Err(Box::new(
                 (
                     StatusCode::CONFLICT,
-                    Json(serde_json::json!({ "error": message })),
+                    Json(serde_json::json!({ "error": writer_refused(error) })),
                 )
                     .into_response(),
             ))
         }
+    }
+}
+
+/// What a person is told when a conversation's ledger could not be taken
+/// for writing.
+pub(crate) fn writer_refused(error: vak_session::SessionError) -> String {
+    match error {
+        vak_session::SessionError::Locked(_) => "This conversation is being answered somewhere else right now. Try again when that reply finishes.".to_string(),
+        error => error.to_string(),
+    }
+}
+
+/// A conversation's ledger taken for one write. It holds the single-writer
+/// lock only while it lives, so a process that is not writing a
+/// conversation never keeps another from writing it (docs/design/02-sessions.md).
+pub(crate) struct Writing<'a>(&'a mut SessionLog);
+
+/// Takes `log`'s writer for as long as the returned value lives.
+pub(crate) fn writing(log: &mut SessionLog) -> Result<Writing<'_>, vak_session::SessionError> {
+    log.reacquire_writer()?;
+    Ok(Writing(log))
+}
+
+impl std::ops::Deref for Writing<'_> {
+    type Target = SessionLog;
+    fn deref(&self) -> &SessionLog {
+        self.0
+    }
+}
+
+impl std::ops::DerefMut for Writing<'_> {
+    fn deref_mut(&mut self) -> &mut SessionLog {
+        self.0
+    }
+}
+
+impl Drop for Writing<'_> {
+    fn drop(&mut self) {
+        give_up_writer(self.0);
+    }
+}
+
+/// `log` with its writer given up, for a handle that holds a conversation
+/// it is not writing.
+pub(crate) fn rest(mut log: SessionLog) -> SessionLog {
+    give_up_writer(&mut log);
+    log
+}
+
+fn give_up_writer(log: &mut SessionLog) {
+    if let Err(error) = log.release_writer() {
+        tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a conversation's writer was not given up");
     }
 }
 
@@ -5807,7 +5853,7 @@ async fn run_prompt(
         *handle
             .session
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(taken));
         return (
             StatusCode::ACCEPTED,
             Json(serde_json::json!({"request_id": request_id, "state": "duplicate"})),
@@ -5834,7 +5880,7 @@ async fn run_prompt(
             *handle
                 .session
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(taken));
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 axum::Json(
@@ -5951,6 +5997,10 @@ async fn compact_session(
         )
             .into_response();
     };
+    let log = match writable(&handle, log) {
+        Ok(log) => log,
+        Err(response) => return *response,
+    };
     let (log, outcome) = handle
         .core
         .compact_session_now(log, CancellationToken::new())
@@ -5958,7 +6008,7 @@ async fn compact_session(
     *handle
         .session
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(log));
     if let Some(error) = outcome.error {
         return (
             StatusCode::BAD_GATEWAY,
@@ -6524,6 +6574,7 @@ async fn plan_change(
     if evaluation.decision == vak_intent::InterventionDecision::Queued
         && let Ok(mut guard) = handle.session.lock()
         && let Some(session) = guard.as_mut()
+        && let Ok(mut session) = crate::writing(session)
         && let Some(record) = session.chain_to_root().iter().rev().find_map(|entry| {
             if let vak_session::EntryPayload::Intent(record) = &entry.payload {
                 Some(record.as_ref())
@@ -6654,6 +6705,7 @@ pub(crate) fn record_control_activity(handle: &SessionHandle, label: &str, contr
 fn record_activity_or_buffer(handle: &SessionHandle, activity: vak_session::ActivityRecord) {
     if let Ok(mut session) = handle.session.lock()
         && let Some(session) = session.as_mut()
+        && let Ok(mut session) = crate::writing(session)
     {
         let _ = session.append_activity(activity);
     } else if let Ok(mut activities) = handle.activity_buffer.lock() {
@@ -6871,6 +6923,16 @@ async fn record_outcome_review(
     };
     let Some(session) = guard.as_mut() else {
         return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut session = match crate::writing(session) {
+        Ok(session) => session,
+        Err(error) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": crate::writer_refused(error) })),
+            )
+                .into_response();
+        }
     };
     // The turns that have an outcome evaluation, newest last; a review is
     // written into the turn it reviews (`Entry::at_turn`), never by number.
@@ -7318,6 +7380,16 @@ async fn session_work_command(
             Json(serde_json::json!({ "error": "session is still running" })),
         )
             .into_response();
+    };
+    let mut session = match crate::writing(session) {
+        Ok(session) => session,
+        Err(error) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": crate::writer_refused(error) })),
+            )
+                .into_response();
+        }
     };
     let Ok(Some(projection)) = session.work_projection() else {
         return (
@@ -8827,7 +8899,10 @@ async fn create_coworking_message(
     let result = if let Some(handle) = state.get(&conversation_id) {
         let result = match handle.session.lock() {
             Ok(mut guard) => match guard.as_mut() {
-                Some(session) => append(session),
+                Some(session) => match crate::writing(session) {
+                    Ok(mut session) => append(&mut session),
+                    Err(error) => Err(error),
+                },
                 None => {
                     return (
                         StatusCode::CONFLICT,
@@ -9421,7 +9496,7 @@ pub(crate) fn read_historical_header(
 /// session does not stay wedged as "run in progress" forever.
 fn reopen_ledger(core: &vak_core::Core, id: &str) -> Option<vak_session::SessionLog> {
     let path = core.scope().session_file(core.cwd(), id);
-    vak_session::SessionLog::open(path).ok()
+    vak_session::SessionLog::open_read_only(path).ok()
 }
 
 // ---- Personal-OS surfaces (docs/design/29-personal-os.md P1–P4) -------------
@@ -14551,12 +14626,9 @@ fn append_candidate_revision_activity(
     };
     match handle.session.lock() {
         Ok(mut session) => match session.as_mut() {
-            Some(session) if session.is_read_only() => {
-                vak_session::SessionLog::open(session.path().to_path_buf())
-                    .and_then(|mut writable| writable.append_activity(activity))
-                    .is_ok()
-            }
-            Some(session) => session.append_activity(activity).is_ok(),
+            Some(session) => crate::writing(session)
+                .and_then(|mut session| session.append_activity(activity))
+                .is_ok(),
             None => handle
                 .activity_buffer
                 .lock()
@@ -14834,7 +14906,7 @@ async fn dispatch_candidate_revision(
             Ok((vak_agent::TurnOutcome::Completed { response }, log)) => {
                 let drafts = revision_office_drafts(&log, &task_root, &state.core.agent_tools());
                 if let Ok(mut slot) = child.session.lock() {
-                    *slot = Some(log);
+                    *slot = Some(crate::rest(log));
                 }
                 let id = uuid::Uuid::now_v7().to_string();
                 let frozen_root = sandbox_candidates_root(&state, &saved.session_id).join(&id);
@@ -14918,7 +14990,7 @@ async fn dispatch_candidate_revision(
             }
             Ok((outcome, log)) => {
                 if let Ok(mut slot) = child.session.lock() {
-                    *slot = Some(log);
+                    *slot = Some(crate::rest(log));
                 }
                 detail = Some(format!(
                     "Agent revision ended without a completed result: {outcome:?}"
@@ -15145,6 +15217,10 @@ fn record_promoted_files(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(session) = guard.as_mut() else {
         tracing::info!(session = %session_id, "a session is running; promoted files were not linked");
+        return;
+    };
+    let Ok(mut session) = crate::writing(session) else {
+        tracing::info!(session = %session_id, "another process is writing the session; promoted files were not linked");
         return;
     };
     // The drafting call's turn, from the ledger entry that holds the call.
@@ -19810,7 +19886,7 @@ async fn side_chat(
     let Some(handle) = state.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(mut taken) = handle
+    let Some(taken) = handle
         .session
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -19822,9 +19898,13 @@ async fn side_chat(
         *handle
             .session
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(taken));
         return provider_unavailable(e);
     }
+    let mut taken = match writable(&handle, taken) {
+        Ok(taken) => taken,
+        Err(response) => return *response,
+    };
 
     let tail_main = taken.tail_id().cloned();
     if let Err(_e) = taken.append_message(vak_session::MessageRecord {
@@ -19834,7 +19914,7 @@ async fn side_chat(
         *handle
             .session
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(taken);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(taken));
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let side_tx = handle.side_events_tx.clone();
@@ -19906,7 +19986,7 @@ async fn side_chat(
             *handle
                 .session
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(restored));
         }
         let _ = side_tx.send(AgentEvent::RunFinished {
             outcome: agent_outcome,
@@ -19919,7 +19999,7 @@ async fn side_chat(
             *handle
                 .session
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(log));
         }
     });
 
@@ -20355,7 +20435,8 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
                     crate::projection::snapshot(&turn_session_id, &restored);
                 *h2.session
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(restored);
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some(crate::rest(restored));
                 // A turn that ended without its answer says how it ended.
                 let summary = match outcome.run_outcome() {
                     vak_session::runs::RunOutcome::Completed => "completed".to_string(),
@@ -20373,7 +20454,8 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
                 if let Some(log) = reopen_ledger(&core, &turn_session_id) {
                     *h2.session
                         .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        Some(crate::rest(log));
                 }
                 let _ = h2.events_tx.send(AgentEvent::RunFinished {
                     outcome: vak_agent::AgentRunOutcome::Failed,

@@ -272,3 +272,110 @@ async fn a_retried_turn_is_answered_again_and_the_next_turn_follows_it() {
     // Recall searched and found nothing of the original answer.
     assert!(!requests[4].contains("quarry"), "{}", requests[4]);
 }
+
+/// A conversation at rest holds no writer lock (docs/design/02-sessions.md).
+/// After a turn settles another holder may write its ledger; while one does,
+/// a turn here is refused and nothing is lost; once it lets go, a turn and a
+/// write between turns (setting a turn aside) each take the lock and give it
+/// up again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_settled_conversation_holds_no_writer_lock() {
+    vak_config::paths::isolate_home_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("work");
+    std::fs::create_dir_all(&cwd).unwrap();
+    vak_config::spaces::bind(&cwd).unwrap();
+    let core = vak_core::Core::new(cwd).unwrap();
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_tool_worker_exe(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_vak-tool-worker"
+    )));
+    let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
+        responses: Mutex::new(VecDeque::from(vec![
+            text("The first answer."),
+            text("The second answer."),
+        ])),
+        requests: Mutex::new(Vec::new()),
+    });
+    core.set_provider_instance(provider.clone());
+    let scope = core.scope();
+    let ledger_cwd = core.cwd().clone();
+    std::mem::forget(dir);
+
+    let (router, token) = vak_server::secured_router(core);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let http = reqwest::Client::new();
+    let base = format!("http://{addr}");
+    let session = http
+        .post(format!("{base}/sessions"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let ledger = scope.session_file(&ledger_cwd, &session);
+    let client = Client {
+        http,
+        base,
+        token,
+        session,
+    };
+
+    client.run("first question").await;
+    client.settled("first answer").await;
+    let other = vak_session::SessionLog::open(ledger.clone())
+        .expect("a settled conversation holds no writer lock");
+
+    let refused = client
+        .http
+        .post(format!("{}/sessions/{}/run", client.base, client.session))
+        .bearer_auth(&client.token)
+        .json(&serde_json::json!({ "prompt": "second question" }))
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(refused, 409, "a turn waits for the other writer");
+    drop(other);
+
+    client.run("second question").await;
+    client.settled("second answer").await;
+    drop(
+        vak_session::SessionLog::open(ledger.clone())
+            .expect("the lock is given up after the second turn too"),
+    );
+
+    let turns = client.turns().await;
+    let first = turns[0]["turn_id"].as_str().unwrap().to_string();
+    let aside = client
+        .http
+        .put(format!(
+            "{}/sessions/{}/turns/{first}/aside",
+            client.base, client.session
+        ))
+        .bearer_auth(&client.token)
+        .json(&serde_json::json!({ "aside": true }))
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(aside, 200, "a write between turns takes the lock");
+    drop(vak_session::SessionLog::open(ledger).expect("and gives it up when the write is done"));
+    assert_eq!(provider.requests.lock().unwrap().len(), 2);
+}

@@ -1,5 +1,11 @@
 ## Unreleased
 
+- A conversation is only locked while something is writing it. Before, once
+  the app had answered a turn in a conversation it kept it locked until the
+  app restarted, so the command line, a second server or a retry elsewhere
+  was refused with "currently active in Vakyartha Desktop". The message for
+  a conversation really being answered elsewhere now says so plainly.
+
 ## 8.11.0 — 2026-10-19
 
 - A plan entry can be shown as several cards, and the plan can say which
