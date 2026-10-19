@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.13.0",
-  "revision": "c51b75181",
+  "version": "8.13.1",
+  "revision": "166bd7ed8",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2397,
+   "total_commits": 2398,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -274,15 +274,15 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 532,
+  "commits": 533,
   "areas": [
    [
     "docs",
-    453
+    454
    ],
    [
     "(root)",
-    287
+    288
    ],
    [
     "vak-core",
@@ -644,6 +644,15 @@
   ],
   "recent": [
    {
+    "hash": "166bd7ed8",
+    "date": "2026-10-19",
+    "subject": "Release 8.13.1",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "c51b75181",
     "date": "2026-10-19",
     "subject": "Consolidate file previews and simplify card actions",
@@ -789,25 +798,9 @@
      "vak-server",
      "vak-session"
     ]
-   },
-   {
-    "hash": "357e8e0b2",
-    "date": "2026-10-19",
-    "subject": "Let a plan entry take several cards and name its card form",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-config",
-     "vak-core",
-     "vak-llm",
-     "vak-tools"
-    ]
    }
   ],
-  "unreleased": [
-   "File previews that match a delivered file share its compact result card."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -29997,6 +29990,12 @@
  ],
  "replay": [
   {
+   "hash": "166bd7ed8",
+   "date": "2026-10-19",
+   "subject": "Release 8.13.1",
+   "subsystems": []
+  },
+  {
    "hash": "c51b75181",
    "date": "2026-10-19",
    "subject": "Consolidate file previews and simplify card actions",
@@ -37123,7 +37122,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1367,
+  "docs_commits": 1368,
   "hot": 644
  },
  "findings": [
