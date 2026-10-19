@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.14.0",
-  "revision": "319ad55bf",
+  "revision": "a045409c2",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -12,14 +12,14 @@
    "rust_crates": 35,
    "ts_crates": 2,
    "rust_src": 338293,
-   "rust_tests": 86570,
+   "rust_tests": 86647,
    "ts_src": 62551,
    "routes": 397,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2413,
+   "total_commits": 2414,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -292,7 +292,7 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 548,
+  "commits": 549,
   "areas": [
    [
     "docs",
@@ -304,11 +304,11 @@
    ],
    [
     "vak-core",
-    238
+    239
    ],
    [
     "vak-server",
-    185
+    186
    ],
    [
     "vak-client-ui",
@@ -662,6 +662,15 @@
   ],
   "recent": [
    {
+    "hash": "a045409c2",
+    "date": "2026-10-19",
+    "subject": "Run the coding-turn outcome test with the real worker",
+    "areas": [
+     "vak-core",
+     "vak-server"
+    ]
+   },
+   {
     "hash": "319ad55bf",
     "date": "2026-10-19",
     "subject": "Release 8.14.0",
@@ -802,14 +811,6 @@
     "subject": "Open unreleased changes after 8.13.1",
     "areas": [
      "(root)"
-    ]
-   },
-   {
-    "hash": "2b7f01cb1",
-    "date": "2026-10-19",
-    "subject": "Record 8.13.1 release and local installation",
-    "areas": [
-     "docs"
     ]
    }
   ],
@@ -30004,6 +30005,12 @@
  ],
  "replay": [
   {
+   "hash": "a045409c2",
+   "date": "2026-10-19",
+   "subject": "Run the coding-turn outcome test with the real worker",
+   "subsystems": []
+  },
+  {
    "hash": "319ad55bf",
    "date": "2026-10-19",
    "subject": "Release 8.14.0",
@@ -35849,9 +35856,9 @@
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
    "src": 61591,
-   "tests": 10251,
+   "tests": 10158,
    "files": 74,
-   "commits": 654,
+   "commits": 655,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -36686,9 +36693,9 @@
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
    "src": 74814,
-   "tests": 23937,
+   "tests": 24107,
    "files": 52,
-   "commits": 841,
+   "commits": 842,
    "deps": [
     "vak-agent",
     "vak-bus",
