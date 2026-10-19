@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.10.0",
-  "revision": "8a9f4b9f5",
+  "revision": "4315e3137",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -11,7 +11,7 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 336471,
+   "rust_src": 336545,
    "rust_tests": 85902,
    "ts_src": 62480,
    "routes": 396,
@@ -19,13 +19,13 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2379,
+   "total_commits": 2380,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
    "agents_words": 20175,
    "subsystems": 64,
-   "connections": 812,
+   "connections": 813,
    "flows": 11
   },
   "tools": [
@@ -242,19 +242,19 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 514,
+  "commits": 515,
   "areas": [
    [
     "docs",
-    440
+    441
    ],
    [
     "(root)",
-    272
+    273
    ],
    [
     "vak-core",
-    225
+    226
    ],
    [
     "vak-server",
@@ -278,7 +278,7 @@
    ],
    [
     "vak",
-    72
+    73
    ],
    [
     "vak-admin-ui",
@@ -357,7 +357,7 @@
    [
     "cli",
     "Command line",
-    42
+    43
    ],
    [
     "engineering",
@@ -500,6 +500,11 @@
     9
    ],
    [
+    "finops",
+    "Cost and budgets",
+    9
+   ],
+   [
     "prompt",
     "Prompt layers",
     8
@@ -512,11 +517,6 @@
    [
     "intake",
     "Intake and feeds",
-    8
-   ],
-   [
-    "finops",
-    "Cost and budgets",
     8
    ],
    [
@@ -611,6 +611,17 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "4315e3137",
+    "date": "2026-10-19",
+    "subject": "Bind standalone CLI flows to shared durable call limits",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak",
+     "vak-core"
+    ]
+   },
    {
     "hash": "8a9f4b9f5",
     "date": "2026-10-19",
@@ -785,19 +796,6 @@
      "vak-session",
      "vak-storage",
      "vak-tools"
-    ]
-   },
-   {
-    "hash": "a0d1ae9a0",
-    "date": "2026-10-18",
-    "subject": "Recover unsent Canvas edits from encrypted same-tab checkpoints",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-client-ui",
-     "vak-config",
-     "vak-core",
-     "vak-server"
     ]
    }
   ],
@@ -1256,7 +1254,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 83718,
+   "lines": 83724,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1278,7 +1276,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 65793,
+   "lines": 65861,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -3801,9 +3799,9 @@
    ],
    "modules": 4,
    "parts": [],
-   "lines": 5071,
+   "lines": 5077,
    "largest": [
-    2798,
+    2804,
     "crates/vak/src/main.rs"
    ],
    "routes": [],
@@ -3817,9 +3815,9 @@
     "crates/vak/src/main.rs",
     "crates/vak/src/question_prompt.rs"
    ],
-   "commits": 132,
+   "commits": 133,
    "fixes": 10,
-   "recent": 42,
+   "recent": 43,
    "fix_density": 2.0,
    "out": [
     {
@@ -4030,6 +4028,16 @@
      "example": [
       "crates/vak/src/main.rs",
       "crates/vak-delivery/src/lib.rs"
+     ]
+    },
+    {
+     "from": "cli",
+     "to": "finops",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak/src/main.rs",
+      "crates/vak-core/src/model_call_budget.rs"
      ]
     },
     {
@@ -20372,7 +20380,7 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 5236,
+   "lines": 5304,
    "largest": [
     3726,
     "crates/vak-core/src/finops.rs"
@@ -20393,9 +20401,9 @@
     "crates/vak-core/src/spend_services.rs",
     "crates/vak-server/src/budget_recovery.rs"
    ],
-   "commits": 35,
+   "commits": 36,
    "fixes": 4,
-   "recent": 8,
+   "recent": 9,
    "fix_density": 0.8,
    "out": [
     {
@@ -20518,6 +20526,16 @@
      "example": [
       "crates/vak-admin-ui/src/api.ts",
       "/finops"
+     ]
+    },
+    {
+     "from": "cli",
+     "to": "finops",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak/src/main.rs",
+      "crates/vak-core/src/model_call_budget.rs"
      ]
     },
     {
@@ -26846,6 +26864,16 @@
   },
   {
    "from": "cli",
+   "to": "finops",
+   "kind": "code",
+   "weight": 1,
+   "example": [
+    "crates/vak/src/main.rs",
+    "crates/vak-core/src/model_call_budget.rs"
+   ]
+  },
+  {
+   "from": "cli",
    "to": "intent",
    "kind": "code",
    "weight": 1,
@@ -29929,6 +29957,15 @@
   }
  ],
  "replay": [
+  {
+   "hash": "4315e3137",
+   "date": "2026-10-19",
+   "subject": "Bind standalone CLI flows to shared durable call limits",
+   "subsystems": [
+    "cli",
+    "finops"
+   ]
+  },
   {
    "hash": "8a9f4b9f5",
    "date": "2026-10-19",
@@ -35031,10 +35068,10 @@
    "layer": "L7",
    "kind": "rust",
    "role": "The CLI binary and every subcommand",
-   "src": 14389,
+   "src": 14395,
    "tests": 1517,
    "files": 31,
-   "commits": 211,
+   "commits": 212,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35083,7 +35120,7 @@
     "uuid"
    ],
    "largest": [
-    2798,
+    2804,
     "crates/vak/src/main.rs"
    ],
    "subsystems": [
@@ -35493,10 +35530,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 61243,
+   "src": 61311,
    "tests": 10049,
    "files": 74,
-   "commits": 641,
+   "commits": 642,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -36900,7 +36937,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1354,
+  "docs_commits": 1355,
   "hot": 641
  },
  "findings": [
