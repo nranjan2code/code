@@ -15,6 +15,33 @@ item says what is missing and what closes it. A design doc's own Status
 line says what of that doc is built; this file lists only what is open
 across them. Nothing here is started unless it says so.
 
+## The product from the model's side (review, 2026-10-19)
+
+Six real turns on the installed route found nine faults; fixed and
+measured live the same day: cards may name any plan entry, the diff card
+is filled from the files, search matches any word with stems and indexes
+what cards said, page text keeps link addresses, a turn's record keeps
+its whole answer, the summary is planned, tool caches leave the
+workspace, a missing program names what is installed, and deferred tools
+are stubs on wires that need every tool listed.
+
+- [ ] The 13 card tools still go in full on every turn (about 31k of the
+  55k characters of schemas on the Responses wire). AGENTS.md loads card
+  schemas from the first call on every provider; whether a card could be
+  a stub until called needs the same per-route measurement as the stub
+  change (calls that must still happen: a card-heavy answer).
+- [ ] A turn of another conversation cannot be reopened by `recall`
+  (only when a file attached here came from it), so an answer about an
+  earlier conversation rests on search snippets. Now that a card's words
+  are indexed the snippet usually holds the answer; decide whether a
+  reopen of a hit, under the same audience check, should be allowed.
+- [ ] A link-heavy index page now reads about 2.5 times longer (the Rust
+  blog: 17k to 42k characters) because each link carries its address.
+  Measure whether a page's own repeated navigation-like links inside
+  `main` are worth leaving as text.
+- [ ] A model still guesses a URL first (two 404s on the Rust question)
+  when no search tool is configured; the installed home has none.
+
 ## Storage planning (2026-10-19)
 
 Study and model: [storage growth](../research/storage-growth-2026-10-19.md).
