@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.11.0",
-  "revision": "c31ac501b",
+  "revision": "8aa3eb554",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2386,
+   "total_commits": 2387,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -95,11 +95,8 @@
   "health": [
    {
     "check": "records",
-    "ok": false,
-    "problems": [
-     "FAIL: 1 record problem(s):",
-     "CHANGELOG.md: 8.11.0 is released; start a `## Unreleased` section"
-    ]
+    "ok": true,
+    "problems": []
    },
    {
     "check": "doc paths",
@@ -264,7 +261,7 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 521,
+  "commits": 522,
   "areas": [
    [
     "docs",
@@ -272,7 +269,7 @@
    ],
    [
     "(root)",
-    277
+    278
    ],
    [
     "vak-core",
@@ -634,6 +631,14 @@
   ],
   "recent": [
    {
+    "hash": "8aa3eb554",
+    "date": "2026-10-19",
+    "subject": "Open the Unreleased section after 8.11.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "c31ac501b",
     "date": "2026-10-19",
     "subject": "Record local 8.11.0 install",
@@ -792,17 +797,6 @@
      "vak-flow",
      "vak-server",
      "vak-session"
-    ]
-   },
-   {
-    "hash": "689c7a1ba",
-    "date": "2026-10-18",
-    "subject": "Verify account-erasure preconditions and disclose historical limits",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-core",
-     "vak-mail-calendar"
     ]
    }
   ],
@@ -29964,6 +29958,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "8aa3eb554",
+   "date": "2026-10-19",
+   "subject": "Open the Unreleased section after 8.11.0",
+   "subsystems": []
+  },
   {
    "hash": "c31ac501b",
    "date": "2026-10-19",
