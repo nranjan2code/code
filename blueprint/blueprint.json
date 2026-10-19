@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.11.0",
-  "revision": "8aa3eb554",
+  "revision": "12ad6f124",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 336643,
-   "rust_tests": 85964,
+   "rust_src": 336646,
+   "rust_tests": 85965,
    "ts_src": 62484,
    "routes": 396,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2387,
+   "total_commits": 2388,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -117,10 +117,11 @@
   "open_items": [
    {
     "section": "Answer composition (2026-10-19)",
-    "open": 3,
+    "open": 4,
     "items": [
      "Search as a stated capability:",
      "Measure the act step's reasoning depth now that receipts carry `reasoning_tokens`;",
+     "A repeatable case for an unmet deliverable carried into an unrelated turn (doc 99 §4 B, 2026-10-19):",
      "A shape-named layout guide for explaining a subject across several angles in `packages/answer-layouts` (optional, data only)."
     ]
    },
@@ -255,25 +256,25 @@
     ]
    }
   ],
-  "open_total": 67,
+  "open_total": 68,
   "measures_revision": "825b18564"
  },
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 522,
+  "commits": 523,
   "areas": [
    [
     "docs",
-    445
+    446
    ],
    [
     "(root)",
-    278
+    279
    ],
    [
     "vak-core",
-    228
+    229
    ],
    [
     "vak-server",
@@ -285,11 +286,11 @@
    ],
    [
     "vak-agent",
-    107
+    108
    ],
    [
     "vak-session",
-    90
+    91
    ],
    [
     "vak-tools",
@@ -341,7 +342,7 @@
    [
     "ledger",
     "Ledgers and records",
-    76
+    77
    ],
    [
     "tools",
@@ -631,6 +632,18 @@
   ],
   "recent": [
    {
+    "hash": "12ad6f124",
+    "date": "2026-10-19",
+    "subject": "Carry what a turn left undelivered as that turn's history",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-core",
+     "vak-session"
+    ]
+   },
+   {
     "hash": "8aa3eb554",
     "date": "2026-10-19",
     "subject": "Open the Unreleased section after 8.11.0",
@@ -781,26 +794,11 @@
      "vak-session",
      "vak-storage"
     ]
-   },
-   {
-    "hash": "49b489e23",
-    "date": "2026-10-18",
-    "subject": "Add verified charge recovery and durable shared model-call limits",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "vak-admin-ui",
-     "vak-agent",
-     "vak-config",
-     "vak-core",
-     "vak-flow",
-     "vak-server",
-     "vak-session"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "A request on a new subject no longer finishes something an earlier turn left undelivered, such as making a Word file again, unless it asks to."
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1328,7 +1326,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 36048,
+   "lines": 36051,
    "crates": [
     "vak-session",
     "vak-config",
@@ -10613,7 +10611,7 @@
    ],
    "modules": 17,
    "parts": [],
-   "lines": 11991,
+   "lines": 11994,
    "largest": [
     3617,
     "crates/vak-session/src/log.rs"
@@ -10650,9 +10648,9 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 189,
+   "commits": 190,
    "fixes": 17,
-   "recent": 76,
+   "recent": 77,
    "fix_density": 1.4,
    "out": [
     {
@@ -29959,6 +29957,14 @@
  ],
  "replay": [
   {
+   "hash": "12ad6f124",
+   "date": "2026-10-19",
+   "subject": "Carry what a turn left undelivered as that turn's history",
+   "subsystems": [
+    "ledger"
+   ]
+  },
+  {
    "hash": "8aa3eb554",
    "date": "2026-10-19",
    "subject": "Open the Unreleased section after 8.11.0",
@@ -35242,9 +35248,9 @@
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
    "src": 16518,
-   "tests": 19579,
+   "tests": 19580,
    "files": 13,
-   "commits": 346,
+   "commits": 347,
    "deps": [
     "vak-config",
     "vak-context",
@@ -35589,7 +35595,7 @@
    "src": 61313,
    "tests": 10051,
    "files": 74,
-   "commits": 644,
+   "commits": 645,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -36527,10 +36533,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 16007,
+   "src": 16010,
    "tests": 4808,
    "files": 25,
-   "commits": 206,
+   "commits": 207,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36993,7 +36999,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1359,
+  "docs_commits": 1360,
   "hot": 642
  },
  "findings": [
