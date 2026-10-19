@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.10.0",
-  "revision": "4315e3137",
+  "revision": "db89e9e98",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2380,
+   "total_commits": 2381,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -170,8 +170,9 @@
    },
    {
     "section": "Before the next release",
-    "open": 5,
+    "open": 6,
     "items": [
+     "macOS bundle resource signing:",
      "zip 4.6.1 to 9:",
      "The maintainer ran `vak setup` on this home (the installed route is recorded in `9ab30dd8a`);",
      "AWS:",
@@ -236,21 +237,21 @@
     ]
    }
   ],
-  "open_total": 60,
+  "open_total": 61,
   "measures_revision": "825b18564"
  },
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 515,
+  "commits": 516,
   "areas": [
    [
     "docs",
-    441
+    442
    ],
    [
     "(root)",
-    273
+    274
    ],
    [
     "vak-core",
@@ -612,6 +613,15 @@
   ],
   "recent": [
    {
+    "hash": "db89e9e98",
+    "date": "2026-10-19",
+    "subject": "Record local 8.10.0 install and macOS signing limitation",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "4315e3137",
     "date": "2026-10-19",
     "subject": "Bind standalone CLI flows to shared durable call limits",
@@ -775,27 +785,6 @@
      "vak-core",
      "vak-delivery",
      "vak-server"
-    ]
-   },
-   {
-    "hash": "2c824de10",
-    "date": "2026-10-18",
-    "subject": "Harden catalog encryption, recorded resources and execution contracts",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-catalog",
-     "vak-client-ui",
-     "vak-config",
-     "vak-core",
-     "vak-delivery",
-     "vak-eval",
-     "vak-presentation",
-     "vak-server",
-     "vak-session",
-     "vak-storage",
-     "vak-tools"
     ]
    }
   ],
@@ -29958,6 +29947,12 @@
  ],
  "replay": [
   {
+   "hash": "db89e9e98",
+   "date": "2026-10-19",
+   "subject": "Record local 8.10.0 install and macOS signing limitation",
+   "subsystems": []
+  },
+  {
    "hash": "4315e3137",
    "date": "2026-10-19",
    "subject": "Bind standalone CLI flows to shared durable call limits",
@@ -36937,7 +36932,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1355,
+  "docs_commits": 1356,
   "hot": 641
  },
  "findings": [
