@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.13.1",
-  "revision": "166bd7ed8",
+  "revision": "2b7f01cb1",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2398,
+   "total_commits": 2399,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -95,8 +95,11 @@
   "health": [
    {
     "check": "records",
-    "ok": true,
-    "problems": []
+    "ok": false,
+    "problems": [
+     "FAIL: 1 record problem(s):",
+     "CHANGELOG.md: 8.13.1 is released; start a `## Unreleased` section"
+    ]
    },
    {
     "check": "doc paths",
@@ -274,11 +277,11 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 533,
+  "commits": 534,
   "areas": [
    [
     "docs",
-    454
+    455
    ],
    [
     "(root)",
@@ -644,6 +647,14 @@
   ],
   "recent": [
    {
+    "hash": "2b7f01cb1",
+    "date": "2026-10-19",
+    "subject": "Record 8.13.1 release and local installation",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
     "hash": "166bd7ed8",
     "date": "2026-10-19",
     "subject": "Release 8.13.1",
@@ -784,19 +795,6 @@
     "subject": "Release 8.11.0",
     "areas": [
      "(root)"
-    ]
-   },
-   {
-    "hash": "96b1218fc",
-    "date": "2026-10-19",
-    "subject": "Clear newer clippy lints and record the failing sync, vocabulary and delivery tests",
-    "areas": [
-     "docs",
-     "vak-catalog",
-     "vak-core",
-     "vak-presentation",
-     "vak-server",
-     "vak-session"
     ]
    }
   ],
@@ -29990,6 +29988,12 @@
  ],
  "replay": [
   {
+   "hash": "2b7f01cb1",
+   "date": "2026-10-19",
+   "subject": "Record 8.13.1 release and local installation",
+   "subsystems": []
+  },
+  {
    "hash": "166bd7ed8",
    "date": "2026-10-19",
    "subject": "Release 8.13.1",
@@ -37122,7 +37126,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1368,
+  "docs_commits": 1369,
   "hot": 644
  },
  "findings": [
