@@ -34,6 +34,8 @@ overlapping fixes should close their original entries as well.
   establish a lifecycle/surface matrix; determine blob API reachability.
 - [ ] S1: authoritative reads and atomic fencing, catalog confidentiality
   decision/protection, shared blob ownership (A01, A02, A10, A12).
+  Run status and abandonment decisions also refuse corrupt frames instead
+  of skipping them (2026-10-19); the broader reader audit remains open.
   First slice implements strict grant/effect/connection reads and verified
   conditional-append checks plus transactional epoch/ref/commit updates.
   The full repository gate passed, including the new regressions.
@@ -389,8 +391,11 @@ unless it says so.
   checked against a measured connection, and the Plant tab draws them as an
   animated plant diagram with an operations screen. The other sheets show
   commits, recent work and connections by subsystem.
-- [ ] Blueprint F2: a test that fails when a wrapping `Tool` leaves a
-  defaulted method unforwarded (or a delegation macro).
+- [x] Blueprint F2: both existing Tool wrappers explicitly forward every
+  declaration, including card metadata and workspace-change overrides. A
+  source contract test compares their members to the live trait and checks
+  delegation; removing a forwarding member was verified to fail the test
+  (2026-10-19). Execution remains the wrapper-specific boundary.
 - [ ] Blueprint F1: the turn's state as one type, each decision a pure
   function of it (as `948ece43d` did for two of them), and the end-of-turn
   checks (among them goal mode's audit, the managed-work gate and the

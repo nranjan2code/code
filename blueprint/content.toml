@@ -62,30 +62,6 @@ combine. Context planning and the model call can stay as they are.
 sources = "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
 
 [[finding]]
-id = "F2"
-tag = "Structure"
-verdict = "Caused a defect"
-title = "The rule that wrappers forward every Tool declaration is enforced by nothing"
-evidence = """
-The trait's width is deliberate: a tool declares what it is \
-({{e:tool.methods}} methods, {{e:tool.defaults}} with a default) so that \
-nothing decides by a tool's name. AGENTS.md then requires that "a wrapper \
-forwards every declaration", and no test checks it. {{e:tool.wrappers}} \
-wrappers forward by hand, and one that forgets compiles cleanly and answers \
-with the default:
-
-{{list:wrappers}}
-"""
-matters = """
-`fill_defaults` joined the trait on 2026-10-07 (`fb981ed3d`), and both \
-wrappers began forwarding it only on 2026-10-12 (`53dbc16f8`): for five days \
-every brokered tool lost its argument aliases. The gaps listed above answer \
-correctly today only because no wrapped tool overrides those methods.
-"""
-fix = "A test that fails when a wrapper leaves a defaulted method unforwarded, or a delegation macro that forwards them all."
-sources = "`crates/vak-tools/src/lib.rs` (`pub trait Tool`); AGENTS.md; `git log -S` per method; `evidence.py` `tool_wrappers`."
-
-[[finding]]
 id = "F3"
 tag = "Structure"
 verdict = "Defects found by review"

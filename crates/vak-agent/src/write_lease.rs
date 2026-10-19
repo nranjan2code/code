@@ -152,6 +152,22 @@ impl Tool for ScopedWriteTool {
         self.inner.schema()
     }
 
+    fn presents_cards(&self) -> bool {
+        self.inner.presents_cards()
+    }
+
+    fn card_block(&self) -> Option<&str> {
+        self.inner.card_block()
+    }
+
+    fn card_kinds(&self) -> Vec<String> {
+        self.inner.card_kinds()
+    }
+
+    fn changes_workspace(&self, args: &Value) -> bool {
+        self.inner.changes_workspace(args)
+    }
+
     fn claims(&self, args: &Value) -> ResourceClaims {
         self.inner.claims(args)
     }
@@ -272,6 +288,51 @@ impl Tool for ScopedWriteTool {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    struct CardTool;
+
+    #[async_trait::async_trait]
+    impl Tool for CardTool {
+        fn name(&self) -> &str {
+            "card-fixture"
+        }
+        fn description(&self) -> &str {
+            "wrapper declaration fixture"
+        }
+        fn schema(&self) -> Value {
+            serde_json::json!({})
+        }
+        fn presents_cards(&self) -> bool {
+            true
+        }
+        fn card_block(&self) -> Option<&str> {
+            Some("table")
+        }
+        fn card_kinds(&self) -> Vec<String> {
+            vec!["fixture-kind".into()]
+        }
+        // Deliberately differs from the conservative default derived from claims.
+        fn changes_workspace(&self, _args: &Value) -> bool {
+            false
+        }
+        async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+            panic!("declaration inspection must not execute a tool")
+        }
+    }
+
+    #[test]
+    fn nested_wrappers_preserve_overridden_card_and_workspace_declarations() {
+        let broker = vak_tools::broker::BrokeredTool::new(
+            Arc::new(CardTool),
+            "missing-worker".into(),
+            Vec::new(),
+        );
+        let scoped = ScopedWriteTool::new(Arc::new(broker), vec!["src".into()]);
+        assert!(scoped.presents_cards());
+        assert_eq!(scoped.card_block(), Some("table"));
+        assert_eq!(scoped.card_kinds(), vec!["fixture-kind"]);
+        assert!(!scoped.changes_workspace(&serde_json::json!({})));
+    }
 
     fn scopes(items: &[&str]) -> Vec<String> {
         normalize_scopes(&items.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap()

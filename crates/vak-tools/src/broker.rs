@@ -359,6 +359,18 @@ impl Tool for BrokeredTool {
         self.inner.schema()
     }
 
+    fn presents_cards(&self) -> bool {
+        self.inner.presents_cards()
+    }
+
+    fn card_block(&self) -> Option<&str> {
+        self.inner.card_block()
+    }
+
+    fn card_kinds(&self) -> Vec<String> {
+        self.inner.card_kinds()
+    }
+
     fn claims(&self, args: &Value) -> crate::ResourceClaims {
         self.inner.claims(args)
     }

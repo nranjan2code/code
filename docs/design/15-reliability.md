@@ -1,6 +1,14 @@
 # 15 — Reliability: QoS, crash, recovery, start/stop/resume
 Status: implemented in 2.0.0
 
+## Run history decisions
+
+Run events, status queries and abandonment recovery use verified RecordChain
+reads. Malformed rows and corrupt frames return errors instead of yielding an
+incomplete history. Abandonment recovery reads the full history before appending
+any transitions, so a read failure records no abandonment. This does not yet
+replace full-history folding with an indexed run projection.
+
 ## Required assistant recording and compaction failures
 
 An assistant message must be appended successfully before any tool call

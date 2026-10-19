@@ -1341,3 +1341,27 @@ warnings denied; formatting, record, path and version checks pass. Independent
 read-only review found no concrete regression in the selected transaction,
 correction, liability and bit-preservation paths. No full workspace gate,
 manual app acceptance, release or installation ran.
+
+
+### Run decisions and wrapper declarations (2026-10-19)
+
+The authoritative-reader audit found `Runs::events` using best-effort chain
+reads despite its strict contract. It now uses `try_read`; get/list and
+abandonment sweep propagate malformed-row and frame errors. Regression tests
+check that recovery appends nothing on error. Restoring the old reader made
+the corrupt-frame regression fail, confirming the observed gap. Run reads
+still fold history; run indexing and broader A01/A09 coverage remain open.
+
+Blueprint F2 is closed for the two existing wrappers. BrokeredTool now forwards
+card presentation, form and kinds; ScopedWriteTool also forwards the explicit
+workspace-change override. A source contract regression compares every member
+of the current Tool trait with both wrappers and requires inner delegation for
+declarations, excluding their intentionally distinct execution. Removing a
+forwarded declaration was verified to fail. This test follows rustfmt source
+layout; new wrapper types must join its explicit inventory.
+
+Focused verification: 96 Session unit tests passed (one ignored benchmark),
+four write-lease tests including nested card/workspace metadata preservation,
+and the source contract guard passed. Session/Tools/Agent library Clippy with
+warnings denied, formatting, record/path/version and diff checks passed. No full
+workspace gate, browser acceptance, release or installation ran.

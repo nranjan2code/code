@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Run status and crash-recovery queries report corrupt history instead of
+  silently skipping it. Abandonment recovery stops before writing on a read error.
+- Tool wrappers preserve card declarations and workspace-change overrides; a
+  contract regression detects newly omitted Tool declarations.
+
 - Capped budget admission uses encrypted indexed totals and reservation
   lookups instead of decoding settled history. Verified corrections and
   unresolved charges keep their existing accounting rules; cached monetary

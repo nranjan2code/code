@@ -13,6 +13,12 @@ tool also declares whether a call may change the workspace
 workspace is checkpointed when the first such call of a turn is accepted.
 `ToolContext` carries cwd, cancellation child-token, output limits.
 
+The broker and scoped-write wrappers forward every Tool declaration, including
+card form/kinds, answer presentation and workspace-change overrides. The
+`wrapper_contract` source regression compares both wrapper implementations
+against the current trait and checks delegation. Their execution methods retain
+the broker boundary and write-lease enforcement respectively.
+
 ## Concurrent execution claims
 
 Every call goes through resource-conflict placement. An absent footprint

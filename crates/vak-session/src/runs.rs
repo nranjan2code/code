@@ -491,16 +491,7 @@ impl Runs {
     /// never skipped: a status folded with one missing would be a
     /// confident wrong answer.
     pub fn events(&self) -> Result<Vec<RunEvent>, SessionError> {
-        self.chain
-            .read::<serde_json::Value>()
-            .into_iter()
-            .map(|row| {
-                serde_json::from_value(row).map_err(|error| SessionError::Corrupt {
-                    line: 0,
-                    message: format!("run record: {error}"),
-                })
-            })
-            .collect()
+        self.chain.try_read()
     }
 
     /// Every run, newest first.
@@ -572,6 +563,76 @@ impl Runs {
             abandoned.push(record.id);
         }
         Ok(abandoned)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn opened(run: RunId, holder: ProcessId) -> RunEvent {
+        RunEvent {
+            run,
+            at: Utc::now(),
+            trace: None,
+            actor: None,
+            step: RunStep::Opened {
+                work: None,
+                trigger: None,
+                slot: None,
+                attempt: 1,
+                holder,
+            },
+        }
+    }
+
+    #[test]
+    fn run_decisions_refuse_malformed_history_and_sweep_does_not_append() {
+        let dir = tempfile::tempdir().unwrap();
+        let tenant = tempfile::tempdir().unwrap();
+        let holder = ProcessId::new();
+        let runs = Runs::at(dir.path().join("runs"), tenant.path());
+        let run = RunId::new();
+        runs.chain.append(&opened(run, holder)).unwrap();
+        // Valid JSON, but not a RunEvent: strict reads must still reject it.
+        runs.chain
+            .append(&serde_json::json!({"run": "invalid"}))
+            .unwrap();
+
+        assert!(runs.get(run).is_err());
+        assert!(runs.list().is_err());
+        let segment = runs.path().join("seg-00000001.log");
+        let before = std::fs::read(&segment).unwrap();
+        assert!(
+            runs.sweep_abandoned(Utc::now() + chrono::Duration::days(1))
+                .is_err()
+        );
+        assert_eq!(std::fs::read(segment).unwrap(), before);
+        assert_eq!(runs.chain.try_read::<serde_json::Value>().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn run_decisions_refuse_unreadable_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let tenant = tempfile::tempdir().unwrap();
+        let runs = Runs::at(dir.path().join("runs"), tenant.path());
+        runs.chain
+            .append(&opened(RunId::new(), ProcessId::new()))
+            .unwrap();
+        let segment = runs.path().join("seg-00000001.log");
+        let mut bytes = std::fs::read(&segment).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        std::fs::write(&segment, &bytes).unwrap();
+
+        assert!(runs.events().is_err());
+        assert!(runs.get(RunId::new()).is_err());
+        assert!(runs.list().is_err());
+        assert!(
+            runs.sweep_abandoned(Utc::now() + chrono::Duration::days(1))
+                .is_err()
+        );
     }
 }
 
