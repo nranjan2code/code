@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.11.0",
-  "revision": "6d36146df",
+  "revision": "d35adb482",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 336643,
-   "rust_tests": 85964,
+   "rust_src": 336788,
+   "rust_tests": 86115,
    "ts_src": 62484,
    "routes": 396,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2389,
+   "total_commits": 2390,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -123,6 +123,13 @@
      "Measure the act step's reasoning depth now that receipts carry `reasoning_tokens`;",
      "An earlier request carried into an unrelated turn (2026-10-19):",
      "A shape-named layout guide for explaining a subject across several angles in `packages/answer-layouts` (optional, data only)."
+    ]
+   },
+   {
+    "section": "Conversations shared between processes (2026-10-19)",
+    "open": 1,
+    "items": [
+     "A conversation at rest no longer holds its writer lock (docs/design/02-sessions.md), so two processes can take turns in one conversation."
     ]
    },
    {
@@ -256,29 +263,29 @@
     ]
    }
   ],
-  "open_total": 68,
+  "open_total": 69,
   "measures_revision": "825b18564"
  },
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 524,
+  "commits": 525,
   "areas": [
    [
     "docs",
-    447
+    448
    ],
    [
     "(root)",
-    280
+    281
    ],
    [
     "vak-core",
-    230
+    231
    ],
    [
     "vak-server",
-    182
+    183
    ],
    [
     "vak-client-ui",
@@ -290,7 +297,7 @@
    ],
    [
     "vak-session",
-    92
+    93
    ],
    [
     "vak-tools",
@@ -317,12 +324,12 @@
    [
     "server",
     "HTTP service",
-    120
+    121
    ],
    [
     "turn",
     "Turn admission",
-    110
+    111
    ],
    [
     "client",
@@ -330,19 +337,19 @@
     101
    ],
    [
+    "cards",
+    "Cards and presentation",
+    98
+   ],
+   [
     "loop",
     "Agent loop",
     97
    ],
    [
-    "cards",
-    "Cards and presentation",
-    97
-   ],
-   [
     "ledger",
     "Ledgers and records",
-    78
+    79
    ],
    [
     "tools",
@@ -392,7 +399,7 @@
    [
     "automations",
     "Automations and triggers",
-    33
+    34
    ],
    [
     "catalog",
@@ -435,6 +442,11 @@
     22
    ],
    [
+    "gateway",
+    "Gateway and channels",
+    22
+   ],
+   [
     "canvas",
     "Canvas and previews",
     21
@@ -442,11 +454,6 @@
    [
     "office",
     "Office and PDF documents",
-    21
-   ],
-   [
-    "gateway",
-    "Gateway and channels",
     21
    ],
    [
@@ -550,6 +557,11 @@
     6
    ],
    [
+    "voice",
+    "Voice",
+    6
+   ],
+   [
     "coworking",
     "Shared conversations",
     6
@@ -562,11 +574,6 @@
    [
     "sync",
     "Sync",
-    5
-   ],
-   [
-    "voice",
-    "Voice",
     5
    ],
    [
@@ -631,6 +638,18 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "d35adb482",
+    "date": "2026-10-19",
+    "subject": "Hold a conversation's writer lock only while writing it",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-core",
+     "vak-server",
+     "vak-session"
+    ]
+   },
    {
     "hash": "6d36146df",
     "date": "2026-10-19",
@@ -780,20 +799,11 @@
      "vak-config",
      "vak-core"
     ]
-   },
-   {
-    "hash": "49755dd58",
-    "date": "2026-10-19",
-    "subject": "Own budget policy state and bind cached gates to their data home",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "vak-core"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "A conversation is only locked while something is writing it."
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1260,7 +1270,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 78567,
+   "lines": 78676,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1270,7 +1280,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 65863,
+   "lines": 65867,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1321,7 +1331,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 36048,
+   "lines": 36080,
    "crates": [
     "vak-session",
     "vak-config",
@@ -4252,9 +4262,9 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 14247,
+   "lines": 14251,
    "largest": [
-    12398,
+    12402,
     "crates/vak-core/src/lib.rs"
    ],
    "routes": [
@@ -4285,9 +4295,9 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 380,
+   "commits": 381,
    "fixes": 58,
-   "recent": 110,
+   "recent": 111,
    "fix_density": 4.1,
    "out": [
     {
@@ -10606,9 +10616,9 @@
    ],
    "modules": 17,
    "parts": [],
-   "lines": 11991,
+   "lines": 12023,
    "largest": [
-    3617,
+    3649,
     "crates/vak-session/src/log.rs"
    ],
    "routes": [
@@ -10643,9 +10653,9 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 191,
+   "commits": 192,
    "fixes": 17,
-   "recent": 78,
+   "recent": 79,
    "fix_density": 1.4,
    "out": [
     {
@@ -14406,7 +14416,7 @@
    ],
    "modules": 26,
    "parts": [],
-   "lines": 18847,
+   "lines": 18857,
    "largest": [
     6217,
     "crates/vak-server/src/projection.rs"
@@ -14474,9 +14484,9 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 298,
+   "commits": 299,
    "fixes": 52,
-   "recent": 97,
+   "recent": 98,
    "fix_density": 2.8,
    "out": [
     {
@@ -16840,9 +16850,9 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 2793,
+   "lines": 2796,
    "largest": [
-    1275,
+    1278,
     "crates/vak-server/src/voice.rs"
    ],
    "routes": [
@@ -16869,9 +16879,9 @@
     "crates/vak-voice/src/provider.rs",
     "crates/vak-voice/src/vad.rs"
    ],
-   "commits": 44,
+   "commits": 45,
    "fixes": 3,
-   "recent": 5,
+   "recent": 6,
    "fix_density": 1.1,
    "out": [
     {
@@ -17309,7 +17319,7 @@
    ],
    "modules": 10,
    "parts": [],
-   "lines": 5340,
+   "lines": 5343,
    "largest": [
     1942,
     "crates/vak-core/src/triggers.rs"
@@ -17338,9 +17348,9 @@
     "crates/vak-server/src/automations.rs",
     "crates/vak/src/triggers.rs"
    ],
-   "commits": 33,
+   "commits": 34,
    "fixes": 1,
-   "recent": 33,
+   "recent": 34,
    "fix_density": 0.2,
    "out": [
     {
@@ -18541,9 +18551,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 32203,
+   "lines": 32295,
    "largest": [
-    28420,
+    28502,
     "crates/vak-server/src/lib.rs"
    ],
    "routes": [
@@ -18580,9 +18590,9 @@
     "crates/vak-server/src/web.rs",
     "crates/vak-session/src/turn_marks.rs"
    ],
-   "commits": 547,
+   "commits": 548,
    "fixes": 84,
-   "recent": 120,
+   "recent": 121,
    "fix_density": 2.6,
    "out": [
     {
@@ -19373,9 +19383,9 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 9023,
+   "lines": 9024,
    "largest": [
-    5559,
+    5560,
     "crates/vak-server/src/gateway.rs"
    ],
    "routes": [
@@ -19413,9 +19423,9 @@
     "crates/vak-server/src/surfaces/slack.rs",
     "crates/vak-server/src/surfaces/telegram.rs"
    ],
-   "commits": 137,
+   "commits": 138,
    "fixes": 21,
-   "recent": 21,
+   "recent": 22,
    "fix_density": 2.3,
    "out": [
     {
@@ -29952,6 +29962,20 @@
  ],
  "replay": [
   {
+   "hash": "d35adb482",
+   "date": "2026-10-19",
+   "subject": "Hold a conversation's writer lock only while writing it",
+   "subsystems": [
+    "automations",
+    "cards",
+    "gateway",
+    "ledger",
+    "server",
+    "turn",
+    "voice"
+   ]
+  },
+  {
    "hash": "6d36146df",
    "date": "2026-10-19",
    "subject": "Revert carried-turn wording: it did not change the case it was for",
@@ -35595,10 +35619,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 61313,
+   "src": 61317,
    "tests": 10051,
    "files": 74,
-   "commits": 646,
+   "commits": 647,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35658,7 +35682,7 @@
     "walkdir"
    ],
    "largest": [
-    12398,
+    12402,
     "crates/vak-core/src/lib.rs"
    ],
    "subsystems": [
@@ -36432,10 +36456,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 74398,
-   "tests": 23806,
+   "src": 74507,
+   "tests": 23913,
    "files": 52,
-   "commits": 838,
+   "commits": 839,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -36498,7 +36522,7 @@
     "zeroize"
    ],
    "largest": [
-    28420,
+    28502,
     "crates/vak-server/src/lib.rs"
    ],
    "subsystems": [
@@ -36536,10 +36560,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 16007,
-   "tests": 4808,
+   "src": 16039,
+   "tests": 4852,
    "files": 25,
-   "commits": 208,
+   "commits": 209,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36580,7 +36604,7 @@
     "uuid"
    ],
    "largest": [
-    3617,
+    3649,
     "crates/vak-session/src/log.rs"
    ],
    "subsystems": [
@@ -36805,11 +36829,11 @@
   "files": [
    {
     "file": "crates/vak-server/src/lib.rs",
-    "lines": 28420
+    "lines": 28502
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12398
+    "lines": 12402
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
@@ -36829,7 +36853,7 @@
    },
    {
     "file": "crates/vak-server/src/gateway.rs",
-    "lines": 5559
+    "lines": 5560
    },
    {
     "file": "crates/vak-server/src/mail_calendar.rs",
@@ -36845,7 +36869,7 @@
    },
    {
     "file": "crates/vak-session/src/log.rs",
-    "lines": 3617
+    "lines": 3649
    },
    {
     "file": "crates/vak-ooxml/src/read.rs",
@@ -36862,7 +36886,7 @@
    {
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6628,
+    "line": 6632,
     "lines": 1613
    },
    {
@@ -36881,7 +36905,7 @@
     "name": "gateway_inbound",
     "file": "crates/vak-server/src/gateway.rs",
     "line": 2679,
-    "lines": 745
+    "lines": 746
    },
    {
     "name": "router_with_state",
@@ -37002,7 +37026,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1361,
+  "docs_commits": 1362,
   "hot": 642
  },
  "findings": [
