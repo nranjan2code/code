@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.11.0",
-  "revision": "d35adb482",
+  "version": "8.12.0",
+  "revision": "e2d28913d",
   "first_date": "2026-08-21",
   "last_date": "2026-10-19",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2390,
+   "total_commits": 2391,
    "days": 60,
    "peak_day": 174,
    "design_docs": 96,
@@ -269,7 +269,7 @@
  "activity": {
   "since": "2026-10-05",
   "until": "2026-10-19",
-  "commits": 525,
+  "commits": 526,
   "areas": [
    [
     "docs",
@@ -277,7 +277,7 @@
    ],
    [
     "(root)",
-    281
+    282
    ],
    [
     "vak-core",
@@ -639,6 +639,14 @@
   ],
   "recent": [
    {
+    "hash": "e2d28913d",
+    "date": "2026-10-19",
+    "subject": "Release 8.12.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "d35adb482",
     "date": "2026-10-19",
     "subject": "Hold a conversation's writer lock only while writing it",
@@ -787,23 +795,9 @@
      "vak-session",
      "vak-tools"
     ]
-   },
-   {
-    "hash": "18d13835d",
-    "date": "2026-10-19",
-    "subject": "Index financial history without weakening accounting guarantees",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "vak-config",
-     "vak-core"
-    ]
    }
   ],
-  "unreleased": [
-   "A conversation is only locked while something is writing it."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -29961,6 +29955,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "e2d28913d",
+   "date": "2026-10-19",
+   "subject": "Release 8.12.0",
+   "subsystems": []
+  },
   {
    "hash": "d35adb482",
    "date": "2026-10-19",
