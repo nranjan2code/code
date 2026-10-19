@@ -165,8 +165,8 @@ pre.tree .c { color: var(--ink-soft) }
 .tabs button:focus-visible, .toc a:focus-visible { outline: 2px solid var(--hot); outline-offset: -2px }
 .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start }
 /* the simulator has one sheet: it takes the index's width */
-body[data-tab="simulator"] .layout { grid-template-columns: minmax(0, 1fr) }
-body[data-tab="simulator"] .toc { display: none }
+body[data-tab="simulator"] .layout, body[data-tab="storage"] .layout { grid-template-columns: minmax(0, 1fr) }
+body[data-tab="simulator"] .toc, body[data-tab="storage"] .toc { display: none }
 .sheets { display: grid; gap: 28px; min-width: 0 }
 .sheets > section.sheet { scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 60px) }
 .verdict { white-space: nowrap }
@@ -434,6 +434,19 @@ i.b-measured { color: var(--ok); border-color: var(--ok) } i.b-code { color: var
 .sim-wrap .plant-bar.flows { flex-wrap: wrap; overflow: visible }
 @media (max-width: 1100px) { .sim-layout { grid-template-columns: 1fr } .sim-rail { grid-column: 1; grid-row: 1; position: static; max-height: none } .sim-main { grid-row: 2 } }
 @media (prefers-reduced-motion: reduce) { .sim-pipe.flow, .unit.sim.bad .u-led, .sim-plant .unit[data-sp="fail"] .u-led { animation: none } }
+/* Storage planning uses the blueprint theme and remains usable on narrow screens. */
+.storage-layout { display:grid; grid-template-columns:minmax(220px, 300px) minmax(0, 1fr); gap:24px }
+#storage-controls { display:grid; gap:14px; align-content:start }
+#storage-controls fieldset { min-width:0; border:1px solid var(--line-faint); padding:12px; display:grid; gap:10px }
+#storage-controls legend { font-weight:600; font-size:14px }
+#storage-controls label { display:grid; gap:4px; font-size:14px }
+#storage-controls input { width:100%; min-width:0; font:inherit; color:var(--ink); background:var(--box); border:1px solid var(--line); padding:6px }
+.storage-results { min-width:0; display:grid; grid-template-columns:minmax(0,1fr); gap:16px; align-content:start; overflow-wrap:anywhere }
+.storage-axis { display:flex; justify-content:space-between; gap:12px; font-size:14px }
+.storage-chart { width:100%; height:auto; font-size:14px }
+.storage-bar { display:grid; grid-template-columns:minmax(100px, 1fr) minmax(40px, 1fr) auto; gap:10px; align-items:center; font-size:14px }
+.storage-bar meter { width:100% }
+@media(max-width:760px) { .storage-layout { grid-template-columns:minmax(0,1fr) } }
 </style>
 </head>
 <body>
@@ -560,6 +573,8 @@ i.b-measured { color: var(--ok); border-color: var(--ok) } i.b-code { color: var
   <header><span class="sno">Sheet</span><h2>Connections</h2><span class="muted">What each subsystem uses and what uses it, measured from the code (<code>harness/connections.py</code>). Pick a subsystem; select a neighbour to follow it.</span></header>
 %%CONNECTIONS%%
 </section>
+
+%%STORAGE_SECTION%%
 
 <section class="sheet" id="speed">
   <header><span class="sno">Sheet</span><h2>Speed simulator</h2><span class="muted">Move the model's speed from 0 to 20,000 tokens a second and see what a turn costs, what slows it, what Vak's infrastructure has to carry and what breaks. Today's turn shape is measured; the per-token paths, fixed waits and limits are read from the code on every build (<code>harness/simulator.py</code>); everything marked estimate is one.</span></header>
@@ -1025,7 +1040,7 @@ i.b-measured { color: var(--ok); border-color: var(--ok) } i.b-code { color: var
   }
 })();
 (function () {
-  var buttons = document.querySelectorAll('.filters button');
+  var buttons = document.querySelectorAll('.filters button[data-f]');
   var rows = document.querySelectorAll('#bom-body tr');
   buttons.forEach(function (b) {
     b.addEventListener('click', function () {

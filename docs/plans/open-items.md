@@ -15,6 +15,22 @@ item says what is missing and what closes it. A design doc's own Status
 line says what of that doc is built; this file lists only what is open
 across them. Nothing here is started unless it says so.
 
+## Storage planning (2026-10-19)
+
+Study and model: [storage growth](../research/storage-growth-2026-10-19.md).
+
+- [x] Add a Blueprint Storage scenario model with explicit assumptions,
+  repository evidence, monthly growth, temporary expiry comparison, copy
+  budgets, context traffic and recovery estimates; no runtime policy change.
+- [ ] Calibrate against content-free per-class physical byte/segment/object
+  measurements through supported administration paths, including existing
+  data, checkpoints, WAL, holds and effective retention. Close with measured
+  scenarios and comparison to actual growth; no private-ledger file reads.
+- [ ] Benchmark long conversations and remaining history consumers at scale,
+  including peak RSS, seal manifests, verification, index catch-up and full
+  supported restore/rebuild time. Close with reproducible isolated-home
+  measurements and explicit capacity/recovery decisions.
+
 ## Answer composition (2026-10-19)
 
 - [x] Compact file previews: fold an unambiguous matching file preview into

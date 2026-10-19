@@ -1,0 +1,34 @@
+<section class="sheet" id="storage-growth">
+  <header><span class="sno">Sheet</span><h2>Storage over time</h2><span class="muted">Decision model · synthetic assumptions, not a measurement of your install</span></header>
+  <p>Explore months of turns, prompts, cards and file versions. Starts from an empty home; months are 30 days. All sizes are incremental physical bytes after existing object reuse. Nothing reads private data, changes retention or removes records.</p>
+  <div class="storage-layout">
+    <form id="storage-controls" aria-label="Storage assumptions"></form>
+    <div class="storage-results">
+      <div class="filters"><button type="button" id="storage-reset">Reset assumptions</button><button type="button" id="storage-export">Export scenario JSON</button></div>
+      <p id="storage-summary" role="status" aria-live="polite"></p>
+      <h3>Primary disk growth</h3>
+      <p class="muted">Solid: temporary expiry model. Dashed: keep all temporary bytes. Permanent history is retained in both.</p>
+      <p id="storage-chart-max" class="muted"></p>
+      <svg class="storage-chart" viewBox="0 0 800 240" role="img" aria-labelledby="storage-chart-title">
+        <title id="storage-chart-title">Storage forecast</title>
+        <path d="M50,25 V200 H750" class="wire"/>
+        <path id="storage-curve-all" class="wire dash"/>
+        <path id="storage-curve-kept" class="wire hot"/>
+      </svg>
+      <div class="storage-axis"><span>Month 1</span><span>End of horizon</span></div>
+      <h3>End-of-horizon breakdown</h3><div id="storage-breakdown"></div>
+      <h3>Impact and decisions</h3><ul id="storage-decisions" class="plain"></ul>
+      <details><summary>Monthly values · GiB</summary><div class="scroll"><table><thead><tr><th>Month</th><th>Turns</th><th>Primary</th><th>No temporary cleanup</th><th>Backup equivalents</th></tr></thead><tbody id="storage-months"></tbody></table></div></details>
+      <details><summary>Code evidence and boundaries</summary>
+        <ul id="storage-facts" class="plain"></ul>
+        <p>Retention fields start from the repository's shipped defaults, not this install's effective label. They are planning knobs. Actual removal belongs only to the lifecycle reconciler, under the effective label and its holds and guards. The temporary pool approximates scratch and environments; saved Library versions stay in permanent storage. Index overhead is an assumption on metadata, not a measured catalog size.</p>
+        <p>Backups are full-payload equivalents across other locations; primary capacity excludes those copies. Real snapshot schedules, incremental reuse, erasure history and remote garbage collection differ. Initial data, filesystem allocation overhead, WAL peaks, checkpoints, attachments outside the modeled objects and unrelated workspace files are excluded. Recovery estimates are lower-bound work estimates, not promised timings.</p>
+        <p>Full history repeated within one growing conversation makes cumulative input grow quadratically; resetting conversation length bounds that case. Disk growth follows new retained bytes, usually linearly at constant workload. Prompt caches affect billing, not the ledger retention contract.</p>
+        <p><a href="../docs/research/storage-growth-2026-10-19.md">Study, formulas, recommendations and measurement plan</a></p>
+      </details>
+    </div>
+  </div>
+  <noscript>Enable JavaScript to run scenarios. Repository evidence is also in blueprint.json under storage.</noscript>
+</section>
+<script id="storage-data" type="application/json">%%STORAGE_DATA%%</script>
+<script>%%STORAGE_JS%%</script>

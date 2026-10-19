@@ -7,10 +7,12 @@ import html
 import json
 import re
 from collections import Counter
+from pathlib import Path
 
 import measure as ms
 import plant
 import simulator
+import storage
 
 
 # ---- Markdown helpers -------------------------------------------------------
@@ -79,6 +81,9 @@ def markdown(model):
     ]
     if model["review"]:
         out += ["> **Needs review:** " + "; ".join(model["review"]) + ". See AGENTS.md, \"Needs review\".", ""]
+    out += ["## Storage planning", "",
+            "Open the **Storage** tab in [blueprint.html](blueprint.html#storage-growth) for a monthly forecast of retained history, objects, cards, artifact versions, temporary data, indexes and backup equivalents. Inputs are editable synthetic assumptions; the harness reads code evidence and shipped default retention rules, never private install data. Export a scenario for review.", "",
+            "Context compaction bounds model input, not retained ledger bytes. Permanent records and saved versions continue growing; encrypted segment sealing does not compress ciphertext. Recovery estimates are lower-bound work models, not benchmarks. The [study and measurement plan](../docs/research/storage-growth-2026-10-19.md) explain decisions and limitations.", ""]
     out += ["## What it is", "", model["summary"]["text"], "",
             "| | |", "|---|---|",
             f"| Crates | {st['rust_crates']} Rust, {st['ts_crates']} TypeScript |",
@@ -431,6 +436,7 @@ TABS = [
     ("overview", "Overview", ["summary", "attention", "happening", "record"]),
     ("plant", "Plant", ["plant", "flows", "connections"]),
     ("simulator", "Simulator", ["speed"]),
+    ("storage", "Storage", ["storage-growth"]),
     ("system", "System", ["layers", "subsystems", "processes", "turn", "data"]),
     ("inventory", "Inventory", ["bom", "size", "work"]),
     ("findings", "Findings", ["findings", "target"]),
@@ -469,6 +475,9 @@ def logo_uri(variant):
 
 def page(model, resolve):
     template = open(ms.TEMPLATE, encoding="utf-8").read()
+    harness = Path(ms.TEMPLATE).parent
+    template = template.replace("%%STORAGE_SECTION%%", (harness / "storage.html").read_text())
+    template = template.replace("%%STORAGE_JS%%", (harness / "storage.js").read_text())
     template = template.replace("../docs/brand/exports/vakyartha-songbird-reverse.svg", logo_uri("reverse"))
     template = template.replace("../docs/brand/exports/vakyartha-songbird-colour.svg", logo_uri("colour"))
     files, fns, cc = size_tables(model)
@@ -494,6 +503,7 @@ def page(model, resolve):
     # data, inserted after placeholders resolve: commit subjects may quote one
     template = template.replace("%%PLANT_DATA%%", plant.data(model))
     template = template.replace("%%SIM_DATA%%", simulator.data(model))
+    template = template.replace("%%STORAGE_DATA%%", storage.data(model))
     # sheets are numbered in page order, and the title block lists them
     n = iter(range(1, 100))
     template = re.sub(r'<span class="sno">Sheet</span>', lambda _: f'<span class="sno">Sheet {next(n):02d}</span>', template)

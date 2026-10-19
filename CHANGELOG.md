@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Blueprint adds a Storage tab to explore months of conversation, card and
+  artifact growth, temporary retention, backup capacity and recovery estimates
+  with editable assumptions and exportable scenarios.
 - A card may be part of any entry of the answer's plan, so a diff of a planned
   change or a test report of a planned check is shown instead of refused.
 - The changes card shows what this turn's writes really changed in each file,

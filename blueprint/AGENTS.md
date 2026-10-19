@@ -53,6 +53,7 @@ last release tag; run `deep` before a release.
 | The plant diagram and the operations screen | `plant.py` draws them from the model, on the layer stack's layers |
 | The speed simulator (Simulator tab) | `simulator.py`: today's turn shape as a dated measurement (`MEASURED`, from content-free span durations), the constants and per-token paths it rests on read from the code every build (`CODE`), and what drives each subsystem's work as the model gets faster, by hand with its reason (`SPEED`); the page draws the plant again and computes the rest, labelling every estimate |
 | What lies outside the repository (model APIs, chat platforms, mail providers, the OS sandbox, …) and which subsystems reach it | `EXTERNAL` in `harness/subsystems.py`, by hand |
+| Storage planning (Storage tab) | `storage.py` reads source evidence and default retention rules; `storage.js` computes synthetic cohorts and request/recovery estimates; `storage.html` is the sheet. Never confuse forecasts with install measurements or apply retention here. |
 | The summary, findings, what to keep, the target shape | `content.toml` |
 | The process topology, the turn sequence and the data tree | drawn by hand in `harness/template.html` |
 
