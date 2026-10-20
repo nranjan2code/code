@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.15.0",
-  "revision": "c9f680e33",
+  "revision": "16ff14fb9",
   "first_date": "2026-08-21",
   "last_date": "2026-10-20",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -13,19 +13,19 @@
    "ts_crates": 2,
    "rust_src": 338319,
    "rust_tests": 86647,
-   "ts_src": 62557,
+   "ts_src": 62680,
    "routes": 397,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2418,
+   "total_commits": 2419,
    "days": 61,
    "peak_day": 174,
    "design_docs": 96,
    "agents_words": 20243,
    "subsystems": 64,
-   "connections": 814,
+   "connections": 815,
    "flows": 11
   },
   "tools": [
@@ -119,6 +119,13 @@
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "Library previews and controls (2026-10-20)",
+    "open": 1,
+    "items": [
+     "Release/install the rebuilt client bundles;"
+    ]
+   },
    {
     "section": "Admin theme and style review (2026-10-20)",
     "open": 1,
@@ -293,21 +300,21 @@
     ]
    }
   ],
-  "open_total": 77,
+  "open_total": 78,
   "measures_revision": "6fa02ac29"
  },
  "activity": {
   "since": "2026-10-06",
   "until": "2026-10-20",
-  "commits": 534,
+  "commits": 535,
   "areas": [
    [
     "docs",
-    449
+    450
    ],
    [
     "(root)",
-    290
+    291
    ],
    [
     "vak-core",
@@ -319,7 +326,7 @@
    ],
    [
     "vak-client-ui",
-    119
+    120
    ],
    [
     "vak-agent",
@@ -364,7 +371,7 @@
    [
     "client",
     "Workspace client",
-    100
+    101
    ],
    [
     "loop",
@@ -404,7 +411,7 @@
    [
     "library",
     "Library and file state",
-    44
+    45
    ],
    [
     "state",
@@ -669,6 +676,16 @@
   ],
   "recent": [
    {
+    "hash": "16ff14fb9",
+    "date": "2026-10-20",
+    "subject": "Improve Library previews and controls",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-client-ui"
+    ]
+   },
+   {
     "hash": "c9f680e33",
     "date": "2026-10-20",
     "subject": "Bump version to 8.15.0",
@@ -802,20 +819,12 @@
      "vak-server",
      "vak-tools"
     ]
-   },
-   {
-    "hash": "2bbac5091",
-    "date": "2026-10-19",
-    "subject": "Find a question asked in other words across conversations",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-catalog",
-     "vak-core"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "Library files open as readable, interactive previews:",
+   "Library content now has its own reading area, separate History and Comments views, a version picker, clearer file types and grouped actions."
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1270,7 +1279,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 83801,
+   "lines": 83924,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1463,9 +1472,9 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 506,
+   "commits": 507,
    "fixes": 74,
-   "recent": 100,
+   "recent": 101,
    "fix_density": 4.1,
    "out": [
     {
@@ -2174,7 +2183,7 @@
      "from": "library",
      "to": "client",
      "kind": "code",
-     "weight": 18,
+     "weight": 22,
      "example": [
       "crates/vak-client-ui/src/candidateVersions.ts",
       "crates/vak-client-ui/src/api.ts"
@@ -15388,6 +15397,16 @@
       "crates/vak-terminal/src/api.rs",
       "/sessions/{id}/launch"
      ]
+    },
+    {
+     "from": "library",
+     "to": "canvas",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-client-ui/src/components/LibraryPreview.tsx",
+      "crates/vak-client-ui/src/previewTheme.ts"
+     ]
     }
    ],
    "layer": "L7"
@@ -15409,9 +15428,9 @@
     "L6",
     "L7"
    ],
-   "modules": 12,
+   "modules": 13,
    "parts": [],
-   "lines": 7896,
+   "lines": 8019,
    "largest": [
     3117,
     "crates/vak-server/src/library.rs"
@@ -15450,6 +15469,7 @@
    "units": [
     "crates/vak-client-ui/src/candidateVersions.ts",
     "crates/vak-client-ui/src/components/LibraryPage.tsx",
+    "crates/vak-client-ui/src/components/LibraryPreview.tsx",
     "crates/vak-client-ui/src/components/PageKeeper.tsx",
     "crates/vak-client-ui/src/components/PageView.tsx",
     "crates/vak-client-ui/src/components/SharedArtifact.tsx",
@@ -15461,16 +15481,16 @@
     "crates/vak-server/src/library.rs",
     "crates/vak-tools/src/artifact.rs"
    ],
-   "commits": 49,
+   "commits": 50,
    "fixes": 4,
-   "recent": 44,
+   "recent": 45,
    "fix_density": 0.5,
    "out": [
     {
      "from": "library",
      "to": "client",
      "kind": "code",
-     "weight": 18,
+     "weight": 22,
      "example": [
       "crates/vak-client-ui/src/candidateVersions.ts",
       "crates/vak-client-ui/src/api.ts"
@@ -15594,6 +15614,16 @@
      "example": [
       "crates/vak-client-ui/src/components/PageKeeper.tsx",
       "crates/vak-client-ui/src/components/SchedulePicker.tsx"
+     ]
+    },
+    {
+     "from": "library",
+     "to": "canvas",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-client-ui/src/components/LibraryPreview.tsx",
+      "crates/vak-client-ui/src/previewTheme.ts"
      ]
     },
     {
@@ -21359,8 +21389,8 @@
   }
  ],
  "coverage": {
-  "units": 705,
-  "claimed": 705,
+  "units": 706,
+  "claimed": 706,
   "routes": 397,
   "routes_claimed": 397,
   "verbs": 35,
@@ -21431,6 +21461,16 @@
    ]
   },
   {
+   "from": "library",
+   "to": "client",
+   "kind": "code",
+   "weight": 22,
+   "example": [
+    "crates/vak-client-ui/src/candidateVersions.ts",
+    "crates/vak-client-ui/src/api.ts"
+   ]
+  },
+  {
    "from": "ledger",
    "to": "storage",
    "kind": "code",
@@ -21448,16 +21488,6 @@
    "example": [
     "crates/vak-core/src/reach.rs",
     "crates/vak-permission/src/engine.rs"
-   ]
-  },
-  {
-   "from": "library",
-   "to": "client",
-   "kind": "code",
-   "weight": 18,
-   "example": [
-    "crates/vak-client-ui/src/candidateVersions.ts",
-    "crates/vak-client-ui/src/api.ts"
    ]
   },
   {
@@ -28142,6 +28172,16 @@
   },
   {
    "from": "library",
+   "to": "canvas",
+   "kind": "code",
+   "weight": 1,
+   "example": [
+    "crates/vak-client-ui/src/components/LibraryPreview.tsx",
+    "crates/vak-client-ui/src/previewTheme.ts"
+   ]
+  },
+  {
+   "from": "library",
    "to": "capabilities",
    "kind": "code",
    "weight": 1,
@@ -30005,6 +30045,15 @@
   }
  ],
  "replay": [
+  {
+   "hash": "16ff14fb9",
+   "date": "2026-10-20",
+   "subject": "Improve Library previews and controls",
+   "subsystems": [
+    "client",
+    "library"
+   ]
+  },
   {
    "hash": "c9f680e33",
    "date": "2026-10-20",
@@ -35445,10 +35494,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 37739,
+   "src": 37862,
    "tests": 324,
-   "files": 187,
-   "commits": 644,
+   "files": 188,
+   "commits": 645,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -37063,8 +37112,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1382,
-  "hot": 644
+  "docs_commits": 1383,
+  "hot": 645
  },
  "findings": [
   {
