@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.16.0",
-  "revision": "3213a256f",
+  "version": "8.16.1",
+  "revision": "b8a967534",
   "first_date": "2026-08-21",
   "last_date": "2026-10-20",
   "prose_reviewed": "8.16.0 · 2026-10-20"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2424,
+   "total_commits": 2425,
    "days": 61,
    "peak_day": 174,
    "design_docs": 96,
@@ -317,47 +317,47 @@
  "activity": {
   "since": "2026-10-06",
   "until": "2026-10-20",
-  "commits": 540,
+  "commits": 541,
   "areas": [
    [
     "docs",
-    452
+    453
    ],
    [
     "(root)",
-    295
+    296
    ],
    [
     "vak-core",
-    231
+    232
    ],
    [
     "vak-server",
-    176
+    177
    ],
    [
     "vak-client-ui",
-    121
+    122
    ],
    [
     "vak-agent",
-    112
+    113
    ],
    [
     "vak-tools",
-    91
+    92
    ],
    [
     "vak-session",
-    85
+    86
    ],
    [
     "vak",
-    67
+    68
    ],
    [
     "vak-admin-ui",
-    59
+    60
    ],
    [
     "vak-config",
@@ -365,49 +365,49 @@
    ],
    [
     "vak-control",
-    40
+    41
    ]
   ],
   "by_subsystem": [
    [
     "server",
     "HTTP service",
-    113
+    114
    ],
    [
     "turn",
     "Turn admission",
-    107
+    108
    ],
    [
     "client",
     "Workspace client",
-    102
+    103
    ],
    [
     "loop",
     "Agent loop",
-    100
+    101
    ],
    [
     "cards",
     "Cards and presentation",
-    100
+    101
    ],
    [
     "ledger",
     "Ledgers and records",
-    74
+    75
    ],
    [
     "tools",
     "Built-in tools and the worker",
-    71
+    72
    ],
    [
     "admin",
     "Admin console",
-    57
+    58
    ],
    [
     "config",
@@ -427,7 +427,7 @@
    [
     "state",
     "State registry and baseline",
-    43
+    44
    ],
    [
     "cli",
@@ -437,16 +437,16 @@
    [
     "engineering",
     "Build, gate and release",
-    37
-   ],
-   [
-    "catalog",
-    "Catalog and search",
-    34
+    38
    ],
    [
     "lifecycle",
     "Lifecycle and erasure",
+    35
+   ],
+   [
+    "catalog",
+    "Catalog and search",
     34
    ],
    [
@@ -485,14 +485,19 @@
     20
    ],
    [
-    "office",
-    "Office and PDF documents",
+    "sandbox",
+    "Sandbox and execution",
     20
    ],
    [
-    "sandbox",
-    "Sandbox and execution",
-    19
+    "canvas",
+    "Canvas and previews",
+    20
+   ],
+   [
+    "office",
+    "Office and PDF documents",
+    20
    ],
    [
     "storage",
@@ -502,11 +507,6 @@
    [
     "runs",
     "Runs, effects and cursors",
-    19
-   ],
-   [
-    "canvas",
-    "Canvas and previews",
     19
    ],
    [
@@ -555,6 +555,11 @@
     12
    ],
    [
+    "permission",
+    "Permissions and provenance",
+    10
+   ],
+   [
     "finops",
     "Cost and budgets",
     10
@@ -565,13 +570,13 @@
     9
    ],
    [
-    "plugins",
-    "Plugins and packages",
+    "mcp",
+    "MCP integrations",
     9
    ],
    [
-    "permission",
-    "Permissions and provenance",
+    "plugins",
+    "Plugins and packages",
     9
    ],
    [
@@ -582,11 +587,6 @@
    [
     "prompt",
     "Prompt layers",
-    8
-   ],
-   [
-    "mcp",
-    "MCP integrations",
     8
    ],
    [
@@ -635,6 +635,11 @@
     5
    ],
    [
+    "desktop",
+    "Desktop shell",
+    4
+   ],
+   [
     "goal",
     "Goals and managed work",
     4
@@ -643,11 +648,6 @@
     "grants",
     "Grants and sharing",
     4
-   ],
-   [
-    "desktop",
-    "Desktop shell",
-    3
    ],
    [
     "terminal",
@@ -686,6 +686,28 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "b8a967534",
+    "date": "2026-10-20",
+    "subject": "Harden data integrity and hostile prompt boundaries",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs",
+     "vak",
+     "vak-admin-ui",
+     "vak-agent",
+     "vak-client-ui",
+     "vak-control",
+     "vak-core",
+     "vak-desktop",
+     "vak-mcp",
+     "vak-sandbox",
+     "vak-server",
+     "vak-session",
+     "vak-tools"
+    ]
+   },
    {
     "hash": "3213a256f",
     "date": "2026-10-20",
@@ -814,30 +836,9 @@
      "blueprint",
      "docs"
     ]
-   },
-   {
-    "hash": "6560bc38f",
-    "date": "2026-10-19",
-    "subject": "Send a deferred tool as a stub on wires that need every tool listed",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-core",
-     "vak-llm"
-    ]
    }
   ],
-  "unreleased": [
-   "Automatic document previews block arbitrary scripts, which can send WebRTC traffic around fetch CSP.",
-   "Answer images, audio, video and link thumbnails no longer contact remote sites automatically.",
-   "Restricted turns conservatively label owner input and editable context, and ask before mutations or outbound actions after private and untrusted material meet.",
-   "Real tool workers protect workspace secrets and control files independently of telemetry context, including computed shell paths.",
-   "Fetch connections screen their actual DNS addresses, and rendered browsing confines every connection to a screened proxy.",
-   "Voice settings and Admin offer an everyday listening/speaking setup from your connected account, save voice and speaking style with the Agent, and preview before enabling microphone conversations.",
-   "Gemini's dedicated transcription models use their current speech endpoint in verbatim mode.",
-   "OpenRouter voice support discovers its separate speech/transcription catalogues, offers vendor presets and model-specific voices, and links current prices and languages."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1486,9 +1487,9 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 508,
+   "commits": 509,
    "fixes": 74,
-   "recent": 102,
+   "recent": 103,
    "fix_density": 4.1,
    "out": [
     {
@@ -2475,9 +2476,9 @@
     "crates/vak-desktop/src/main.rs",
     "crates/vak-desktop/src/pty.rs"
    ],
-   "commits": 60,
+   "commits": 61,
    "fixes": 16,
-   "recent": 3,
+   "recent": 4,
    "fix_density": 8.1,
    "out": [
     {
@@ -2902,9 +2903,9 @@
     "crates/vak-server/src/client_ui.rs",
     "crates/vak-server/src/embedded_ui.rs"
    ],
-   "commits": 279,
+   "commits": 280,
    "fixes": 48,
-   "recent": 57,
+   "recent": 58,
    "fix_density": 2.1,
    "out": [
     {
@@ -4330,9 +4331,9 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 384,
+   "commits": 385,
    "fixes": 59,
-   "recent": 107,
+   "recent": 108,
    "fix_density": 4.1,
    "out": [
     {
@@ -5141,9 +5142,9 @@
     "crates/vak-agent/src/stop_policy.rs",
     "crates/vak-agent/src/workspace.rs"
    ],
-   "commits": 299,
+   "commits": 300,
    "fixes": 56,
-   "recent": 100,
+   "recent": 101,
    "fix_density": 4.4,
    "out": [
     {
@@ -7497,9 +7498,9 @@
     "crates/vak-tools/src/window.rs",
     "crates/vak-tools/src/write.rs"
    ],
-   "commits": 174,
+   "commits": 175,
    "fixes": 23,
-   "recent": 71,
+   "recent": 72,
    "fix_density": 2.5,
    "out": [
     {
@@ -8807,9 +8808,9 @@
     "crates/vak-mcp/src/tool.rs",
     "crates/vak-mcp/src/validate.rs"
    ],
-   "commits": 37,
+   "commits": 38,
    "fixes": 7,
-   "recent": 8,
+   "recent": 9,
    "fix_density": 4.4,
    "out": [
     {
@@ -9481,9 +9482,9 @@
     "crates/vak-permission/src/reach.rs",
     "crates/vak-permission/src/rules.rs"
    ],
-   "commits": 47,
+   "commits": 48,
    "fixes": 5,
-   "recent": 9,
+   "recent": 10,
    "fix_density": 3.3,
    "out": [
     {
@@ -9869,9 +9870,9 @@
     "crates/vak-tools/src/sandbox.rs",
     "crates/vak-tools/src/sandbox_events.rs"
    ],
-   "commits": 130,
+   "commits": 131,
    "fixes": 19,
-   "recent": 19,
+   "recent": 20,
    "fix_density": 2.8,
    "out": [
     {
@@ -10689,9 +10690,9 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 194,
+   "commits": 195,
    "fixes": 18,
-   "recent": 74,
+   "recent": 75,
    "fix_density": 1.5,
    "out": [
     {
@@ -12240,9 +12241,9 @@
     "crates/vak-core/src/state.rs",
     "crates/vak/src/data.rs"
    ],
-   "commits": 77,
+   "commits": 78,
    "fixes": 6,
-   "recent": 43,
+   "recent": 44,
    "fix_density": 1.6,
    "out": [
     {
@@ -12531,9 +12532,9 @@
     "crates/vak-lifecycle/src/lib.rs",
     "crates/vak-session/src/conversation_state.rs"
    ],
-   "commits": 37,
+   "commits": 38,
    "fixes": 1,
-   "recent": 34,
+   "recent": 35,
    "fix_density": 0.2,
    "out": [
     {
@@ -14540,9 +14541,9 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 302,
+   "commits": 303,
    "fixes": 53,
-   "recent": 100,
+   "recent": 101,
    "fix_density": 2.8,
    "out": [
     {
@@ -15235,9 +15236,9 @@
     "crates/vak-server/src/canvas.rs",
     "crates/vak-server/src/preview.rs"
    ],
-   "commits": 67,
+   "commits": 68,
    "fixes": 5,
-   "recent": 19,
+   "recent": 20,
    "fix_density": 1.0,
    "out": [
     {
@@ -18669,9 +18670,9 @@
     "crates/vak-server/src/web.rs",
     "crates/vak-session/src/turn_marks.rs"
    ],
-   "commits": 550,
+   "commits": 551,
    "fixes": 85,
-   "recent": 113,
+   "recent": 114,
    "fix_density": 2.6,
    "out": [
     {
@@ -21394,9 +21395,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 123,
+   "commits": 124,
    "fixes": 21,
-   "recent": 37,
+   "recent": 38,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -30061,6 +30062,29 @@
  ],
  "replay": [
   {
+   "hash": "b8a967534",
+   "date": "2026-10-20",
+   "subject": "Harden data integrity and hostile prompt boundaries",
+   "subsystems": [
+    "admin",
+    "canvas",
+    "cards",
+    "client",
+    "desktop",
+    "engineering",
+    "ledger",
+    "lifecycle",
+    "loop",
+    "mcp",
+    "permission",
+    "sandbox",
+    "server",
+    "state",
+    "tools",
+    "turn"
+   ]
+  },
+  {
    "hash": "3213a256f",
    "date": "2026-10-20",
    "subject": "Improve voice setup and add discovered multi-provider speech packs",
@@ -35302,7 +35326,7 @@
    "src": 14401,
    "tests": 1528,
    "files": 31,
-   "commits": 213,
+   "commits": 214,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35382,7 +35406,7 @@
    "src": 24874,
    "tests": 0,
    "files": 31,
-   "commits": 262,
+   "commits": 263,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35419,7 +35443,7 @@
    "src": 16751,
    "tests": 19883,
    "files": 13,
-   "commits": 352,
+   "commits": 353,
    "deps": [
     "vak-config",
     "vak-context",
@@ -35553,7 +35577,7 @@
    "src": 37954,
    "tests": 324,
    "files": 189,
-   "commits": 646,
+   "commits": 647,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35727,7 +35751,7 @@
    "src": 1880,
    "tests": 0,
    "files": 3,
-   "commits": 40,
+   "commits": 41,
    "deps": [],
    "used_by": [
     "vak",
@@ -35764,7 +35788,7 @@
    "src": 61686,
    "tests": 10210,
    "files": 74,
-   "commits": 656,
+   "commits": 657,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35913,7 +35937,7 @@
    "src": 1793,
    "tests": 0,
    "files": 2,
-   "commits": 130,
+   "commits": 131,
    "deps": [
     "vak-config",
     "vak-core",
@@ -36315,7 +36339,7 @@
    "src": 1592,
    "tests": 503,
    "files": 5,
-   "commits": 40,
+   "commits": 41,
    "deps": [
     "vak-config",
     "vak-permission",
@@ -36557,7 +36581,7 @@
    "src": 4515,
    "tests": 0,
    "files": 5,
-   "commits": 49,
+   "commits": 50,
    "deps": [
     "vak-config",
     "vak-ooxml",
@@ -36601,7 +36625,7 @@
    "src": 75159,
    "tests": 24361,
    "files": 52,
-   "commits": 843,
+   "commits": 844,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -36705,7 +36729,7 @@
    "src": 16071,
    "tests": 4917,
    "files": 25,
-   "commits": 211,
+   "commits": 212,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36869,7 +36893,7 @@
    "src": 16485,
    "tests": 1217,
    "files": 29,
-   "commits": 210,
+   "commits": 211,
    "deps": [
     "vak-config",
     "vak-control",
@@ -37168,8 +37192,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1385,
-  "hot": 646
+  "docs_commits": 1386,
+  "hot": 647
  },
  "findings": [
   {
@@ -37177,7 +37201,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 193 (rank 1 of 4,414 library functions) and `Core::run_turn_recorded` at 106 (rank 3); the median is 3 and the 99th percentile 24. 153 commits changed the first (6% of all) and 213 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.5 per thousand lines, against a median of 4.4 over 403 files; file size alone does not predict the rate (ρ = -0.13).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 193 (rank 1 of 4,414 library functions) and `Core::run_turn_recorded` at 106 (rank 3); the median is 3 and the 99th percentile 24. 154 commits changed the first (6% of all) and 214 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.5 per thousand lines, against a median of 4.4 over 403 files; file size alone does not predict the rate (ρ = -0.13).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."

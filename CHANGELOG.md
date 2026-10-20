@@ -1,4 +1,4 @@
-## Unreleased
+## 8.16.1 — 2026-10-20
 
 - Automatic document previews block arbitrary scripts, which can send WebRTC
   traffic around fetch CSP. Origin-served previews retain only the fixed theme
