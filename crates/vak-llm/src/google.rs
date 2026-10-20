@@ -845,6 +845,17 @@ mod build_body_tests {
         assert!(matches!(error, LlmError::QuotaExhausted(_)));
         assert!(!error.is_retryable());
 
+        let per_minute = r#"{"error":{"code":429,"message":"You exceeded your current quota. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 5","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"GenerateRequestsPerMinutePerProjectPerModel-FreeTier","quotaValue":"5"}]},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"19s"}]}}"#;
+        let error = map_status_error(429, per_minute, None);
+        assert!(matches!(
+            error,
+            LlmError::RateLimit {
+                retry_after_secs: Some(19),
+                ..
+            }
+        ));
+        assert!(error.is_retryable());
+
         let short = r#"{"error":{"message":"too many requests"}}"#;
         let error = map_status_error(429, short, Some(5));
         assert!(matches!(error, LlmError::RateLimit { .. }));

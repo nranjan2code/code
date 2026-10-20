@@ -1,4 +1,8 @@
 ## Unreleased
+- A Gemini free-tier turn that reaches the per-minute request limit now
+  waits as long as Google says and carries on, instead of failing: a rate
+  limit is retried whatever its message says, and only a quota the provider
+  reports as daily or billing-bound ends the turn.
 - Admin pages and nested tabs consistently use the shared theme colors, fonts,
   cards, controls and status styling. Conversation summaries, filters and detail
   headers regain their missing styles; narrow tables and the operations diagram

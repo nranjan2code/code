@@ -162,6 +162,9 @@ impl LlmError {
         Self::InvalidRequest(message)
     }
 
+    /// A rate limit, an overload or a lost connection passes; a quota that
+    /// will not recover during the run is typed `QuotaExhausted` by the
+    /// adapter that read the provider's own answer, never by its wording.
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
@@ -169,35 +172,7 @@ impl LlmError {
                 | LlmError::Overloaded(_)
                 | LlmError::OverloadedWithRetryAfter { .. }
                 | LlmError::Network(_)
-        ) && !self.is_terminal_quota()
-    }
-
-    /// Some gateways use HTTP 429 for a quota or billing ceiling that will
-    /// not recover during this run. Retrying those errors burns a dispatch
-    /// budget and delays a usable fallback without changing the outcome.
-    pub fn is_terminal_quota(&self) -> bool {
-        let LlmError::RateLimit { message, .. } = self else {
-            return matches!(self, LlmError::QuotaExhausted(_));
-        };
-        let message = message.to_ascii_lowercase();
-        [
-            "free-models-per-day",
-            "insufficient_quota",
-            "perday",
-            "per_day",
-            "requestsperday",
-            "tokensperday",
-            "daily quota",
-            "monthly quota",
-            "quota exceeded",
-            "spend limit",
-            "credit limit",
-            "insufficient credits",
-            "insufficient_quota",
-            "billing limit",
-        ]
-        .iter()
-        .any(|marker| message.contains(marker))
+        )
     }
 
     /// Server-advised wait for RateLimit; None otherwise.
@@ -261,23 +236,13 @@ mod tests {
     }
 
     #[test]
-    fn terminal_quota_429_is_not_retried() {
+    fn a_rate_limit_is_retried_whatever_its_words_say() {
         let error = LlmError::RateLimit {
-            message: "Rate limit exceeded: free-models-per-day".into(),
-            retry_after_secs: None,
+            message: "Quota exceeded for metric: free_tier_requests, limit: 5".into(),
+            retry_after_secs: Some(20),
         };
-        assert!(error.is_terminal_quota());
-        assert!(!error.is_retryable());
-    }
-
-    #[test]
-    fn ordinary_rate_limit_remains_retryable() {
-        let error = LlmError::RateLimit {
-            message: "too many requests".into(),
-            retry_after_secs: Some(2),
-        };
-        assert!(!error.is_terminal_quota());
         assert!(error.is_retryable());
+        assert_eq!(error.retry_after_secs(), Some(20));
     }
 
     #[test]
