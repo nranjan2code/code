@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.15.0",
-  "revision": "16ff14fb9",
+  "version": "8.16.0",
+  "revision": "40bd481e9",
   "first_date": "2026-08-21",
   "last_date": "2026-10-20",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2419,
+   "total_commits": 2421,
    "days": 61,
    "peak_day": 174,
    "design_docs": 96,
@@ -306,7 +306,7 @@
  "activity": {
   "since": "2026-10-06",
   "until": "2026-10-20",
-  "commits": 535,
+  "commits": 537,
   "areas": [
    [
     "docs",
@@ -314,7 +314,7 @@
    ],
    [
     "(root)",
-    291
+    292
    ],
    [
     "vak-core",
@@ -426,7 +426,7 @@
    [
     "engineering",
     "Build, gate and release",
-    36
+    37
    ],
    [
     "catalog",
@@ -676,6 +676,22 @@
   ],
   "recent": [
    {
+    "hash": "40bd481e9",
+    "date": "2026-10-20",
+    "subject": "Bump version to 8.16.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "02a8b7b93",
+    "date": "2026-10-20",
+    "subject": "Refresh blueprint for Library previews",
+    "areas": [
+     "blueprint"
+    ]
+   },
+   {
     "hash": "16ff14fb9",
     "date": "2026-10-20",
     "subject": "Improve Library previews and controls",
@@ -795,29 +811,6 @@
      "(root)",
      "docs",
      "vak-core"
-    ]
-   },
-   {
-    "hash": "a53c3823c",
-    "date": "2026-10-19",
-    "subject": "Keep the whole answer on a turn's card",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-session"
-    ]
-   },
-   {
-    "hash": "5419b3725",
-    "date": "2026-10-19",
-    "subject": "Keep link addresses in a fetched page's text",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-intake",
-     "vak-server",
-     "vak-tools"
     ]
    }
   ],
@@ -21379,9 +21372,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 122,
+   "commits": 123,
    "fixes": 21,
-   "recent": 36,
+   "recent": 37,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -30045,6 +30038,20 @@
   }
  ],
  "replay": [
+  {
+   "hash": "40bd481e9",
+   "date": "2026-10-20",
+   "subject": "Bump version to 8.16.0",
+   "subsystems": []
+  },
+  {
+   "hash": "02a8b7b93",
+   "date": "2026-10-20",
+   "subject": "Refresh blueprint for Library previews",
+   "subsystems": [
+    "engineering"
+   ]
+  },
   {
    "hash": "16ff14fb9",
    "date": "2026-10-20",
