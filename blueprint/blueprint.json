@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.16.0",
-  "revision": "40bd481e9",
+  "revision": "c4013b521",
   "first_date": "2026-08-21",
   "last_date": "2026-10-20",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2421,
+   "total_commits": 2422,
    "days": 61,
    "peak_day": 174,
    "design_docs": 96,
@@ -306,7 +306,7 @@
  "activity": {
   "since": "2026-10-06",
   "until": "2026-10-20",
-  "commits": 537,
+  "commits": 538,
   "areas": [
    [
     "docs",
@@ -314,7 +314,7 @@
    ],
    [
     "(root)",
-    292
+    293
    ],
    [
     "vak-core",
@@ -676,6 +676,14 @@
   ],
   "recent": [
    {
+    "hash": "c4013b521",
+    "date": "2026-10-20",
+    "subject": "Prepare 8.16.0 release notes",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "40bd481e9",
     "date": "2026-10-20",
     "subject": "Bump version to 8.16.0",
@@ -802,22 +810,9 @@
      "docs",
      "vak-tools"
     ]
-   },
-   {
-    "hash": "56ad9d1e9",
-    "date": "2026-10-19",
-    "subject": "Plan the leading summary card like any other part",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-core"
-    ]
    }
   ],
-  "unreleased": [
-   "Library files open as readable, interactive previews:",
-   "Library content now has its own reading area, separate History and Comments views, a version picker, clearer file types and grouped actions."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30038,6 +30033,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "c4013b521",
+   "date": "2026-10-20",
+   "subject": "Prepare 8.16.0 release notes",
+   "subsystems": []
+  },
   {
    "hash": "40bd481e9",
    "date": "2026-10-20",
