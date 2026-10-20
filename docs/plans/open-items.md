@@ -4,10 +4,10 @@
   content, history and comments. Preserve interactive controls and the existing
   sharing, comparison and comment flows. Browser acceptance covers desktop and
   phone in light/dark; see [the review](../audits/library-preview-review-2026-10-20.md).
-- [ ] Release/install the rebuilt client bundles; checkout acceptance does not
-  certify the installed desktop app. Multi-file HTML dependency packaging is
-  outside this preview change; linked resources may be unavailable and are
-  identified in the preview.
+- [x] Released and installed with `8.16.0` on 2026-10-20; the managed desktop
+  install verifies cleanly and both gateway and desktop services run the new
+  build. Multi-file HTML dependency packaging remains outside this preview;
+  linked resources may be unavailable and are identified in the preview.
 
 ## Admin theme and style review (2026-10-20)
 
@@ -16,9 +16,8 @@
   nested form layout, focus bindings and narrow-screen overflow. Coverage and
   the distinction between live data and synthetic states are recorded in
   [the acceptance review](../audits/admin-style-review-2026-10-20.md).
-- [ ] Install the rebuilt server bundle in a subsequent release. The reviewed
-  checkout runs against the installed service from `~/vak-home` through the
-  local admin preview; the installed binary has not been replaced by this review.
+- [x] Installed the rebuilt server bundle with `8.16.0` on 2026-10-20; the
+  managed install verifies cleanly and the gateway service runs the new build.
 
 - [x] Live, dev route (2026-10-15): "Pause my morning line." was
   answered "The morning line is paused" with no call. Cause: the set of

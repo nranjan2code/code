@@ -1,3 +1,5 @@
+## Unreleased
+
 ## 8.16.0 — 2026-10-20
 - Library files open as readable, interactive previews: HTML pages, formatted
   Markdown, CSV/TSV tables, images, audio and video, alongside the existing
