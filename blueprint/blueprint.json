@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.16.0",
-  "revision": "64ecdcfe1",
+  "revision": "3213a256f",
   "first_date": "2026-08-21",
   "last_date": "2026-10-20",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 338319,
-   "rust_tests": 86647,
-   "ts_src": 62680,
-   "routes": 397,
+   "rust_src": 338943,
+   "rust_tests": 86733,
+   "ts_src": 62752,
+   "routes": 398,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2423,
+   "total_commits": 2424,
    "days": 61,
    "peak_day": 174,
    "design_docs": 96,
@@ -119,6 +119,17 @@
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "Voice setup and current providers (2026-10-20)",
+    "open": 5,
+    "items": [
+     "Native-speaker acceptance across the requested Indian languages, including the Kannada Flash-Lite error and natural code-switching;",
+     "Quiet-room physical-microphone acceptance and a real channel voice note;",
+     "Streaming transcription/synthesis adapters remain doc 49's open work.",
+     "Provider/model metadata does not establish every speech capability or latency:",
+     "Persist/session-account previews in shared voice accounting:"
+    ]
+   },
    {
     "section": "The product from the model's side (review, 2026-10-19)",
     "open": 4,
@@ -286,33 +297,33 @@
     ]
    }
   ],
-  "open_total": 76,
+  "open_total": 81,
   "measures_revision": "6fa02ac29"
  },
  "activity": {
   "since": "2026-10-06",
   "until": "2026-10-20",
-  "commits": 539,
+  "commits": 540,
   "areas": [
    [
     "docs",
-    451
+    452
    ],
    [
     "(root)",
-    294
+    295
    ],
    [
     "vak-core",
-    230
+    231
    ],
    [
     "vak-server",
-    175
+    176
    ],
    [
     "vak-client-ui",
-    120
+    121
    ],
    [
     "vak-agent",
@@ -332,11 +343,11 @@
    ],
    [
     "vak-admin-ui",
-    58
+    59
    ],
    [
     "vak-config",
-    51
+    52
    ],
    [
     "vak-control",
@@ -347,17 +358,17 @@
    [
     "server",
     "HTTP service",
-    112
+    113
    ],
    [
     "turn",
     "Turn admission",
-    106
+    107
    ],
    [
     "client",
     "Workspace client",
-    101
+    102
    ],
    [
     "loop",
@@ -382,16 +393,16 @@
    [
     "admin",
     "Admin console",
-    56
-   ],
-   [
-    "control",
-    "Control plane and judges",
-    51
+    57
    ],
    [
     "config",
     "Configuration and secrets",
+    52
+   ],
+   [
+    "control",
+    "Control plane and judges",
     51
    ],
    [
@@ -442,7 +453,7 @@
    [
     "llm",
     "Model providers and routing",
-    25
+    26
    ],
    [
     "delivery",
@@ -495,13 +506,13 @@
     18
    ],
    [
-    "context",
-    "Context engine",
-    17
-   ],
-   [
     "gateway",
     "Gateway and channels",
+    18
+   ],
+   [
+    "context",
+    "Context engine",
     17
    ],
    [
@@ -572,7 +583,7 @@
    [
     "voice",
     "Voice",
-    6
+    7
    ],
    [
     "operations",
@@ -661,6 +672,22 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "3213a256f",
+    "date": "2026-10-20",
+    "subject": "Improve voice setup and add discovered multi-provider speech packs",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-admin-ui",
+     "vak-client-ui",
+     "vak-config",
+     "vak-core",
+     "vak-llm",
+     "vak-server",
+     "vak-voice"
+    ]
+   },
    {
     "hash": "64ecdcfe1",
     "date": "2026-10-20",
@@ -785,19 +812,13 @@
      "vak-core",
      "vak-llm"
     ]
-   },
-   {
-    "hash": "01131d133",
-    "date": "2026-10-19",
-    "subject": "Index what a turn's cards said, so search finds the answer",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-catalog"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "Voice settings and Admin offer an everyday listening/speaking setup from your connected account, save voice and speaking style with the Agent, and preview before enabling microphone conversations.",
+   "Gemini's dedicated transcription models use their current speech endpoint in verbatim mode.",
+   "OpenRouter voice support discovers its separate speech/transcription catalogues, offers vendor presets and model-specific voices, and links current prices and languages."
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1042,7 +1063,7 @@
     "links": []
    }
   ],
-  "total": 46
+  "total": 47
  },
  "specs": {
   "counts": {
@@ -1252,7 +1273,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 83924,
+   "lines": 83996,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1264,7 +1285,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 78983,
+   "lines": 79236,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1274,7 +1295,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 66141,
+   "lines": 66151,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1284,7 +1305,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 55405,
+   "lines": 55567,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -1311,7 +1332,7 @@
   {
    "id": "L2",
    "name": "Domain engines",
-   "lines": 59171,
+   "lines": 59327,
    "crates": [
     "vak-mail-calendar",
     "vak-ooxml",
@@ -1325,7 +1346,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 36251,
+   "lines": 36294,
    "crates": [
     "vak-session",
     "vak-config",
@@ -1350,9 +1371,9 @@
    ],
    "modules": 63,
    "parts": [],
-   "lines": 18084,
+   "lines": 18104,
    "largest": [
-    3163,
+    3170,
     "crates/vak-client-ui/src/api.ts"
    ],
    "routes": [
@@ -1445,9 +1466,9 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 507,
+   "commits": 508,
    "fixes": 74,
-   "recent": 101,
+   "recent": 102,
    "fix_density": 4.1,
    "out": [
     {
@@ -1722,6 +1743,16 @@
     },
     {
      "from": "client",
+     "to": "voice",
+     "kind": "http",
+     "weight": 3,
+     "example": [
+      "crates/vak-client-ui/src/api.ts",
+      "/voice/models"
+     ]
+    },
+    {
+     "from": "client",
      "to": "abilities",
      "kind": "code",
      "weight": 2,
@@ -1858,16 +1889,6 @@
      "example": [
       "crates/vak-client-ui/src/api.ts",
       "/data/keys"
-     ]
-    },
-    {
-     "from": "client",
-     "to": "voice",
-     "kind": "http",
-     "weight": 2,
-     "example": [
-      "crates/vak-client-ui/src/api.ts",
-      "/voice/providers"
      ]
     },
     {
@@ -2822,9 +2843,9 @@
    ],
    "modules": 21,
    "parts": [],
-   "lines": 23105,
+   "lines": 23157,
    "largest": [
-    7954,
+    8000,
     "crates/vak-admin-ui/src/App.tsx"
    ],
    "routes": [
@@ -2861,9 +2882,9 @@
     "crates/vak-server/src/client_ui.rs",
     "crates/vak-server/src/embedded_ui.rs"
    ],
-   "commits": 278,
+   "commits": 279,
    "fixes": 48,
-   "recent": 56,
+   "recent": 57,
    "fix_density": 2.1,
    "out": [
     {
@@ -3064,6 +3085,16 @@
      "example": [
       "crates/vak-admin-ui/src/api.ts",
       "/sync"
+     ]
+    },
+    {
+     "from": "admin",
+     "to": "voice",
+     "kind": "http",
+     "weight": 3,
+     "example": [
+      "crates/vak-admin-ui/src/api.ts",
+      "/voice/models"
      ]
     },
     {
@@ -3274,16 +3305,6 @@
      "example": [
       "crates/vak-server/src/admin.rs",
       "crates/vak-core/src/lib.rs"
-     ]
-    },
-    {
-     "from": "admin",
-     "to": "voice",
-     "kind": "http",
-     "weight": 2,
-     "example": [
-      "crates/vak-admin-ui/src/api.ts",
-      "/voice/providers"
      ]
     },
     {
@@ -4256,9 +4277,9 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 14290,
+   "lines": 14300,
    "largest": [
-    12441,
+    12451,
     "crates/vak-core/src/lib.rs"
    ],
    "routes": [
@@ -4289,9 +4310,9 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 383,
+   "commits": 384,
    "fixes": 59,
-   "recent": 106,
+   "recent": 107,
    "fix_density": 4.1,
    "out": [
     {
@@ -7042,7 +7063,7 @@
    ],
    "modules": 23,
    "parts": [],
-   "lines": 15253,
+   "lines": 15415,
    "largest": [
     1846,
     "crates/vak-llm/src/rate_limit.rs"
@@ -7086,9 +7107,9 @@
     "crates/vak-llm/src/types.rs",
     "crates/vak-llm/src/work.rs"
    ],
-   "commits": 101,
+   "commits": 102,
    "fixes": 12,
-   "recent": 25,
+   "recent": 26,
    "fix_density": 0.8,
    "out": [
     {
@@ -7204,6 +7225,16 @@
      ]
     },
     {
+     "from": "voice",
+     "to": "llm",
+     "kind": "code",
+     "weight": 6,
+     "example": [
+      "crates/vak-server/src/voice.rs",
+      "crates/vak-llm/src/anthropic.rs"
+     ]
+    },
+    {
      "from": "flows",
      "to": "llm",
      "kind": "code",
@@ -7211,16 +7242,6 @@
      "example": [
       "crates/vak-flow/src/exec.rs",
       "crates/vak-llm/src/lib.rs"
-     ]
-    },
-    {
-     "from": "voice",
-     "to": "llm",
-     "kind": "code",
-     "weight": 5,
-     "example": [
-      "crates/vak-server/src/voice.rs",
-      "crates/vak-llm/src/anthropic.rs"
      ]
     },
     {
@@ -13408,9 +13429,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 9833,
+   "lines": 9876,
    "largest": [
-    6382,
+    6425,
     "crates/vak-config/src/lib.rs"
    ],
    "routes": [
@@ -13437,10 +13458,10 @@
     "crates/vak-config/src/test_scope.rs",
     "crates/vak-server/src/restart.rs"
    ],
-   "commits": 206,
+   "commits": 207,
    "fixes": 31,
-   "recent": 51,
-   "fix_density": 3.2,
+   "recent": 52,
+   "fix_density": 3.1,
    "out": [
     {
      "from": "config",
@@ -16886,12 +16907,13 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 2796,
+   "lines": 3163,
    "largest": [
-    1278,
+    1489,
     "crates/vak-server/src/voice.rs"
    ],
    "routes": [
+    "/voice/models",
     "/voice/providers",
     "/voice/session",
     "/voice/speak"
@@ -16915,10 +16937,10 @@
     "crates/vak-voice/src/provider.rs",
     "crates/vak-voice/src/vad.rs"
    ],
-   "commits": 45,
+   "commits": 46,
    "fixes": 3,
-   "recent": 6,
-   "fix_density": 1.1,
+   "recent": 7,
+   "fix_density": 0.9,
    "out": [
     {
      "from": "voice",
@@ -16934,7 +16956,7 @@
      "from": "voice",
      "to": "llm",
      "kind": "code",
-     "weight": 5,
+     "weight": 6,
      "example": [
       "crates/vak-server/src/voice.rs",
       "crates/vak-llm/src/anthropic.rs"
@@ -17036,10 +17058,20 @@
      "from": "admin",
      "to": "voice",
      "kind": "http",
-     "weight": 2,
+     "weight": 3,
      "example": [
       "crates/vak-admin-ui/src/api.ts",
-      "/voice/providers"
+      "/voice/models"
+     ]
+    },
+    {
+     "from": "client",
+     "to": "voice",
+     "kind": "http",
+     "weight": 3,
+     "example": [
+      "crates/vak-client-ui/src/api.ts",
+      "/voice/models"
      ]
     },
     {
@@ -17050,16 +17082,6 @@
      "example": [
       "crates/vak-client-ui/src/components/AgentCreateWizard.tsx",
       "crates/vak-client-ui/src/soundCues.ts"
-     ]
-    },
-    {
-     "from": "client",
-     "to": "voice",
-     "kind": "http",
-     "weight": 2,
-     "example": [
-      "crates/vak-client-ui/src/api.ts",
-      "/voice/providers"
      ]
     },
     {
@@ -18587,9 +18609,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 32434,
+   "lines": 32464,
    "largest": [
-    28641,
+    28671,
     "crates/vak-server/src/lib.rs"
    ],
    "routes": [
@@ -18627,9 +18649,9 @@
     "crates/vak-server/src/web.rs",
     "crates/vak-session/src/turn_marks.rs"
    ],
-   "commits": 549,
+   "commits": 550,
    "fixes": 85,
-   "recent": 112,
+   "recent": 113,
    "fix_density": 2.6,
    "out": [
     {
@@ -19420,7 +19442,7 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 9024,
+   "lines": 9036,
    "largest": [
     5560,
     "crates/vak-server/src/gateway.rs"
@@ -19460,9 +19482,9 @@
     "crates/vak-server/src/surfaces/slack.rs",
     "crates/vak-server/src/surfaces/telegram.rs"
    ],
-   "commits": 138,
+   "commits": 139,
    "fixes": 21,
-   "recent": 17,
+   "recent": 18,
    "fix_density": 2.3,
    "out": [
     {
@@ -21364,8 +21386,8 @@
  "coverage": {
   "units": 706,
   "claimed": 706,
-  "routes": 397,
-  "routes_claimed": 397,
+  "routes": 398,
+  "routes_claimed": 398,
   "verbs": 35,
   "verbs_claimed": 35,
   "docs_uncited": [
@@ -22444,6 +22466,16 @@
    ]
   },
   {
+   "from": "voice",
+   "to": "llm",
+   "kind": "code",
+   "weight": 6,
+   "example": [
+    "crates/vak-server/src/voice.rs",
+    "crates/vak-llm/src/anthropic.rs"
+   ]
+  },
+  {
    "from": "admin",
    "to": "gateway",
    "kind": "http",
@@ -22771,16 +22803,6 @@
    "example": [
     "crates/vak-core/src/lib.rs",
     "crates/vak-core/src/reach.rs"
-   ]
-  },
-  {
-   "from": "voice",
-   "to": "llm",
-   "kind": "code",
-   "weight": 5,
-   "example": [
-    "crates/vak-server/src/voice.rs",
-    "crates/vak-llm/src/anthropic.rs"
    ]
   },
   {
@@ -23434,6 +23456,16 @@
    ]
   },
   {
+   "from": "admin",
+   "to": "voice",
+   "kind": "http",
+   "weight": 3,
+   "example": [
+    "crates/vak-admin-ui/src/api.ts",
+    "/voice/models"
+   ]
+  },
+  {
    "from": "agents",
    "to": "turn",
    "kind": "code",
@@ -23671,6 +23703,16 @@
    "example": [
     "crates/vak-client-ui/src/api.ts",
     "/sync"
+   ]
+  },
+  {
+   "from": "client",
+   "to": "voice",
+   "kind": "http",
+   "weight": 3,
+   "example": [
+    "crates/vak-client-ui/src/api.ts",
+    "/voice/models"
    ]
   },
   {
@@ -24544,16 +24586,6 @@
    ]
   },
   {
-   "from": "admin",
-   "to": "voice",
-   "kind": "http",
-   "weight": 2,
-   "example": [
-    "crates/vak-admin-ui/src/api.ts",
-    "/voice/providers"
-   ]
-  },
-  {
    "from": "agents",
    "to": "lifecycle",
    "kind": "code",
@@ -25001,16 +25033,6 @@
    "example": [
     "crates/vak-client-ui/src/api.ts",
     "/data/keys"
-   ]
-  },
-  {
-   "from": "client",
-   "to": "voice",
-   "kind": "http",
-   "weight": 2,
-   "example": [
-    "crates/vak-client-ui/src/api.ts",
-    "/voice/providers"
    ]
   },
   {
@@ -30018,6 +30040,21 @@
   }
  ],
  "replay": [
+  {
+   "hash": "3213a256f",
+   "date": "2026-10-20",
+   "subject": "Improve voice setup and add discovered multi-provider speech packs",
+   "subsystems": [
+    "admin",
+    "client",
+    "config",
+    "gateway",
+    "llm",
+    "server",
+    "turn",
+    "voice"
+   ]
+  },
   {
    "hash": "64ecdcfe1",
    "date": "2026-10-20",
@@ -35322,10 +35359,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS admin console at /admin",
-   "src": 24818,
+   "src": 24870,
    "tests": 0,
    "files": 31,
-   "commits": 261,
+   "commits": 262,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35335,7 +35372,7 @@
     "solid-js"
    ],
    "largest": [
-    7954,
+    8000,
     "crates/vak-admin-ui/src/App.tsx"
    ],
    "subsystems": [
@@ -35493,10 +35530,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 37862,
+   "src": 37882,
    "tests": 324,
    "files": 188,
-   "commits": 645,
+   "commits": 646,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35512,7 +35549,7 @@
     "solid-js"
    ],
    "largest": [
-    3163,
+    3170,
     "crates/vak-client-ui/src/api.ts"
    ],
    "subsystems": [
@@ -35584,10 +35621,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Layered TOML, credentials, paths, scopes",
-   "src": 9771,
+   "src": 9814,
    "tests": 867,
    "files": 8,
-   "commits": 214,
+   "commits": 215,
    "deps": [
     "vak-control",
     "vak-llm"
@@ -35622,7 +35659,7 @@
     "uuid"
    ],
    "largest": [
-    6382,
+    6425,
     "crates/vak-config/src/lib.rs"
    ],
    "subsystems": [
@@ -35704,10 +35741,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 61591,
+   "src": 61601,
    "tests": 10158,
    "files": 74,
-   "commits": 655,
+   "commits": 656,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35767,7 +35804,7 @@
     "walkdir"
    ],
    "largest": [
-    12441,
+    12451,
     "crates/vak-core/src/lib.rs"
    ],
    "subsystems": [
@@ -36153,10 +36190,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Provider wires, SSE, model discovery, route ladder, receipts",
-   "src": 14109,
+   "src": 14271,
    "tests": 1886,
    "files": 22,
-   "commits": 100,
+   "commits": 101,
    "deps": [
     "vak-control"
    ],
@@ -36541,10 +36578,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 74814,
-   "tests": 24107,
+   "src": 75067,
+   "tests": 24193,
    "files": 52,
-   "commits": 842,
+   "commits": 843,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -36607,7 +36644,7 @@
     "zeroize"
    ],
    "largest": [
-    28641,
+    28671,
     "crates/vak-server/src/lib.rs"
    ],
    "subsystems": [
@@ -36883,10 +36920,10 @@
    "layer": "L2",
    "kind": "rust",
    "role": "Voice provider vocabulary and session protocol",
-   "src": 900,
+   "src": 1056,
    "tests": 0,
    "files": 6,
-   "commits": 12,
+   "commits": 13,
    "deps": [],
    "used_by": [
     "vak-core",
@@ -36914,11 +36951,11 @@
   "files": [
    {
     "file": "crates/vak-server/src/lib.rs",
-    "lines": 28641
+    "lines": 28671
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12441
+    "lines": 12451
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
@@ -36929,12 +36966,12 @@
     "lines": 7839
    },
    {
-    "file": "crates/vak-server/src/projection.rs",
-    "lines": 6385
+    "file": "crates/vak-config/src/lib.rs",
+    "lines": 6425
    },
    {
-    "file": "crates/vak-config/src/lib.rs",
-    "lines": 6382
+    "file": "crates/vak-server/src/projection.rs",
+    "lines": 6385
    },
    {
     "file": "crates/vak-server/src/gateway.rs",
@@ -36971,7 +37008,7 @@
    {
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6636,
+    "line": 6646,
     "lines": 1645
    },
    {
@@ -36996,7 +37033,7 @@
     "name": "router_with_state",
     "file": "crates/vak-server/src/lib.rs",
     "line": 899,
-    "lines": 719
+    "lines": 720
    },
    {
     "name": "execute",
@@ -37007,7 +37044,7 @@
    {
     "name": "load_with_trust",
     "file": "crates/vak-config/src/lib.rs",
-    "line": 2994,
+    "line": 3009,
     "lines": 649
    },
    {
@@ -37029,10 +37066,10 @@
     "lines": 504
    },
    {
-    "name": "add_slide_from_layout",
-    "file": "crates/vak-ooxml/src/edit/deck.rs",
-    "line": 727,
-    "lines": 478
+    "name": "patch_config_scope",
+    "file": "crates/vak-server/src/lib.rs",
+    "line": 18018,
+    "lines": 483
    }
   ],
   "complexity": [
@@ -37111,8 +37148,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1384,
-  "hot": 645
+  "docs_commits": 1385,
+  "hot": 646
  },
  "findings": [
   {
@@ -37262,7 +37299,7 @@
    },
    "day_cap": {
     "file": "crates/vak-config/src/lib.rs",
-    "line": 565,
+    "line": 571,
     "what": "The operator's day budget; admission stops when it is spent",
     "value": null
    },
