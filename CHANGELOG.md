@@ -1,3 +1,23 @@
+## Unreleased
+- Admin pages and nested tabs consistently use the shared theme colors, fonts,
+  cards, controls and status styling. Conversation summaries, filters and detail
+  headers regain their missing styles; narrow tables and the operations diagram
+  scroll within their panels, chart labels stay readable, and the Songbird uses
+  the appropriate light or dark artwork.
+- Admin diagnostics and memory confirmation dialogs open correctly and retain
+  keyboard focus. Full-access conversations show their unsandboxed warning,
+  memory inheritance badges show one state, and aggregate voice settings no
+  longer request a nonexistent Agent.
+
+
+- OpenRouter turns no longer stop the moment they start: checking the
+  account's free-model allowance released its admission by cancelling the
+  turn itself, so a turn ended "Stopped" with nothing sent. An admission now
+  ends only its own work.
+- The OpenRouter Responses route no longer fails with "store: true is not
+  supported on this proxy": a stateless endpoint is sent the whole
+  conversation and never asked to keep a response.
+
 ## 8.14.0 — 2026-10-19
 
 - Blueprint adds a Storage tab to explore months of conversation, card and

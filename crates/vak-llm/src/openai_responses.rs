@@ -28,6 +28,10 @@ pub struct OpenAiResponsesConfig {
     /// When true, also send OpenRouter's `session_id` alongside
     /// `prompt_cache_key` (for the `openrouter-responses` route).
     pub openrouter: bool,
+    /// Whether the endpoint retains a response (`store: true`) so a later
+    /// `previous_response_id` resolves against it. A stateless endpoint
+    /// refuses `store: true`, so it is never sent one and never chained.
+    pub retains_responses: bool,
 }
 
 #[derive(Clone)]
@@ -82,7 +86,11 @@ pub fn build_body(
     request: &ChatRequest,
     settings: vak_control::StepSettings,
 ) -> Result<Value, LlmError> {
-    let messages: &[Message] = match &request.previous_response_id {
+    let previous = request
+        .previous_response_id
+        .as_ref()
+        .filter(|_| config.retains_responses);
+    let messages: &[Message] = match previous {
         Some(_) => messages_since_last_assistant(&request.messages),
         None => &request.messages,
     };
@@ -92,10 +100,10 @@ pub fn build_body(
     }
 
     // `previous_response_id` only resolves against a response the provider
-    // actually retained, so a request that is (or may become) a chain link
-    // must opt into `store`. A plain one-shot request with neither cache
-    // hints nor a chain to continue keeps the old `store: false` default.
-    let store = request.cache.is_some() || request.previous_response_id.is_some();
+    // actually retained, so on an endpoint that retains responses a request
+    // that is (or may become) a chain link opts into `store`. A stateless
+    // endpoint is sent the whole conversation and `store: false`.
+    let store = config.retains_responses && (request.cache.is_some() || previous.is_some());
     let mut body = serde_json::json!({
         "model": request.model,
         "input": input,
@@ -105,7 +113,7 @@ pub fn build_body(
     if let Some(system) = &request.system {
         body["instructions"] = Value::String(system.clone());
     }
-    if let Some(previous) = &request.previous_response_id {
+    if let Some(previous) = previous {
         body["previous_response_id"] = Value::String(previous.clone());
     }
     if let Some(cache) = &request.cache {
@@ -715,6 +723,7 @@ mod build_body_tests {
         });
         let cfg = OpenAiResponsesConfig {
             cache_key: true,
+            retains_responses: true,
             ..config()
         };
         let body = build_body(&cfg, &req, req.settings).unwrap();
@@ -739,6 +748,12 @@ mod build_body_tests {
         };
         let body = build_body(&cfg, &req, req.settings).unwrap();
         assert_eq!(body["session_id"], "sess-1");
+        // A stateless endpoint refuses `store: true` and cannot resolve a chain.
+        assert_eq!(body["store"], false);
+        req.previous_response_id = Some("resp_1".into());
+        let body = build_body(&cfg, &req, req.settings).unwrap();
+        assert_eq!(body["store"], false);
+        assert!(body.get("previous_response_id").is_none());
     }
 
     #[test]
@@ -766,8 +781,13 @@ mod build_body_tests {
             },
         ];
         req.previous_response_id = Some("resp_abc".into());
-        let body = build_body(&config(), &req, req.settings).unwrap();
+        let cfg = OpenAiResponsesConfig {
+            retains_responses: true,
+            ..config()
+        };
+        let body = build_body(&cfg, &req, req.settings).unwrap();
         assert_eq!(body["previous_response_id"], "resp_abc");
+        assert_eq!(body["store"], true);
         let input = body["input"].as_array().unwrap();
         // Only the tool-result message (after the last assistant turn) is
         // sent; the earlier user/assistant exchange is already server-side.

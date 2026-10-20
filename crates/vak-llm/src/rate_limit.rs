@@ -366,6 +366,8 @@ pub struct RequestAdmission {
     account: Option<QuotaPermit>,
     _dispatch: DispatchPermit,
     bedrock_mantle: bool,
+    /// The admission's own token, a child of the caller's: settling,
+    /// releasing or dropping the admission cancels it, never the caller's.
     dispatch_cancel: CancellationToken,
     deadline_task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -401,7 +403,7 @@ impl RequestAdmission {
             account,
             _dispatch: dispatch,
             bedrock_mantle: false,
-            dispatch_cancel: cancel.clone(),
+            dispatch_cancel: cancel.child_token(),
             deadline_task: None,
         })
     }
@@ -537,7 +539,7 @@ impl RequestAdmission {
             account,
             _dispatch: dispatch,
             bedrock_mantle,
-            dispatch_cancel: cancel.clone(),
+            dispatch_cancel: cancel.child_token(),
             deadline_task: None,
         })
     }
@@ -1659,6 +1661,32 @@ mod tests {
 
     use super::{RateLimitGate, State, TrafficSnapshot, has_live_capacity_state};
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn ending_an_admission_never_cancels_the_callers_work() {
+        let provider = crate::openai_responses::OpenAiResponsesProvider::new(
+            crate::openai_responses::OpenAiResponsesConfig {
+                api_key: "synthetic-admission-scope".into(),
+                base_url: "https://admission.invalid/v1".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let run = tokio_util::sync::CancellationToken::new();
+        let mut released =
+            super::RequestAdmission::acquire_account_request(&provider, "openrouter", &run)
+                .await
+                .unwrap();
+        let admission_token = released.cancellation_token();
+        released.release();
+        assert!(admission_token.is_cancelled());
+        drop(
+            super::RequestAdmission::acquire_account_request(&provider, "openrouter", &run)
+                .await
+                .unwrap(),
+        );
+        assert!(!run.is_cancelled());
+    }
 
     #[test]
     fn traffic_snapshot_serialization_exposes_aggregate_fields_only() {
