@@ -603,12 +603,15 @@ unless it says so.
 
 ## Before the next release
 
-- [ ] macOS bundle resource signing: the local 8.10.0 build/install passes
-  managed digests and live health, but `scripts/verify-macos-release.sh`
-  rejects `/Applications/Vakyartha.app` with "code has no resources but
-  signature indicates they must be present". Repair signing in the managed
-  packaging/install owner, accounting for its mutable install manifest;
-  preserve digest verification. No signing/notarization success is claimed.
+- [ ] macOS bundle resource signing: reconfirmed with local `8.16.1` on
+  2026-10-20. The managed install and both services verify, but
+  `scripts/verify-macos-release.sh` rejects `/Applications/Vakyartha.app`
+  with "code has no resources but signature indicates they must be present".
+  Deep ad-hoc signing fixes the bundle check while changing `vak-desktop`'
+  component digest, so `vak self verify` then reports drift. Repair signing
+  in the managed packaging/install owner, accounting for its mutable install
+  manifest; preserve digest verification. No signing/notarization success is
+  claimed.
 
 - [ ] zip 4.6.1 to 9: RUSTSEC-2026-0367, 0368 and 0369 are ignored in
   `.cargo/audit.toml` because Vak never calls `extract`. Upgrading the

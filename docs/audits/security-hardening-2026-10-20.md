@@ -124,6 +124,21 @@ integration tests and tool Clippy pass after those fixture corrections.
   smoke remains a separately measured compatibility failure as described above.
   See `security-hardening-2026-10-20/verification.txt` for the compact result.
 
+## Local 8.16.1 release and install
+
+The local release gate passed for `8.16.1` on `macos/aarch64`; its three
+component checksums verify, the local `v8.16.1` tag points at commit
+`2f87c1d07`, and the managed install at `/Applications/Vakyartha.app`
+verifies cleanly. Gateway and desktop services run that version.
+
+The separate macOS bundle check remains open: `scripts/verify-macos-release.sh`
+rejects the bundle because the linker signature has no sealed resources.
+Deep ad-hoc bundle signing makes that structural check pass but changes
+`vak-desktop` after the managed installer recorded its component digest, so
+`vak self verify` then detects drift. The final local install prioritizes the
+clean managed manifest; do not claim the GUI bundle seal or Gatekeeper launch
+was verified. The release artifacts and annotated tag remain local.
+
 ## Limits
 
 The secure rendered browser is currently unavailable in the measured local
