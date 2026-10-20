@@ -80,17 +80,6 @@ impl Tool for BashTool {
         let Some(command) = args.get("command").and_then(|c| c.as_str()) else {
             return ToolOutput::error(Fault::Shape, "missing required parameter: command");
         };
-        if ctx
-            .sandbox_sink
-            .as_ref()
-            .is_some_and(|sink| sink.is_runtime_call())
-            && references_control_file(command)
-        {
-            return ToolOutput::error(
-                Fault::Refused,
-                "sandbox denied access to workspace control files (.env and .vak/config.toml)",
-            );
-        }
         let timeout_ms = args
             .get("timeout_ms")
             .and_then(|t| t.as_u64())
@@ -587,7 +576,7 @@ fn shell_command(command: &str) -> tokio::process::Command {
     }
 }
 
-fn shell_quote(value: &str) -> String {
+pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
@@ -804,16 +793,6 @@ fn interrupted_output(stdout: &str, stderr: &str, reason: &str) -> String {
     text.push_str(reason);
     text.push(']');
     text
-}
-
-fn references_control_file(command: &str) -> bool {
-    [
-        ".env",
-        vak_config::scope::PROJECT_CONFIG,
-        vak_config::scope::PROJECT_CONFIG_STEM,
-    ]
-    .iter()
-    .any(|needle| command.contains(needle))
 }
 
 fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
@@ -1195,13 +1174,6 @@ mod tests {
         .expect("the group kill missed the background sleep")
         .unwrap();
         child.wait().await.unwrap();
-    }
-
-    #[test]
-    fn control_files_are_not_available_to_sandbox_commands() {
-        assert!(super::references_control_file("cat .env"));
-        assert!(super::references_control_file("cp result .vak/config.toml"));
-        assert!(!super::references_control_file("echo ok > result.txt"));
     }
 
     #[tokio::test]

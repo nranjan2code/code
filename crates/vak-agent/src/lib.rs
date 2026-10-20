@@ -1918,6 +1918,7 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             vak_control::Held::starting_with(self.config.inherited_provenance);
+        self.note_held("request", vak_control::Provenance::PRIVATE);
         self.effect_announced
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.ladder = vak_control::Ladder::default();
@@ -2096,6 +2097,7 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             vak_control::Held::starting_with(self.config.inherited_provenance);
+        self.note_held("request", vak_control::Provenance::PRIVATE);
         self.plan_unmet.clear();
         *self
             .declared_plan
@@ -9731,7 +9733,16 @@ fn provenance_gate(
     // this gate holds only in the sandboxed modes (maintainer, 2026-10-14).
     if matches!(config.mode, Mode::FullAccess)
         || !held.labels().gates_exits()
-        || !leaves_machine(config, call, tool)
+        || !(leaves_machine(config, call, tool)
+            || tool.is_some_and(|tool| {
+                matches!(
+                    tool.permission().for_call(&call.input).reach,
+                    vak_permission::Reach::WritePath
+                        | vak_permission::Reach::Learning
+                        | vak_permission::Reach::Command
+                        | vak_permission::Reach::Other
+                )
+            }))
     {
         return decision;
     }

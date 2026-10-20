@@ -1,12 +1,7 @@
-//! What a tool result holds, and the gate it sets on calls that leave the
-//! machine (docs/design/08-permissions.md "Provenance").
-//!
-//! A request that carries both the owner's data and words someone else wrote
-//! is the one in which an injected instruction can carry that data off the
-//! machine. Neither alone is: research that only reads the web holds nothing
-//! of the owner's, and work on the owner's files holds no stranger's words.
-//! So nothing here reads a word of the content; the labels come from what
-//! each tool declares, and the gate is the two together.
+//! Source labels for approval of mixed-context mutations and outbound calls.
+//! Owner requests are private; unknown authorship in stored or editable input
+//! is conservatively both private and untrusted. Nothing inspects wording to
+//! grant authority (docs/design/08-permissions.md "Provenance").
 
 use std::collections::BTreeSet;
 
@@ -61,7 +56,7 @@ impl Provenance {
         !self.private && !self.untrusted
     }
 
-    /// Both together: a call that leaves the machine now goes to a person.
+    /// Both together: mutation and outbound calls now go to a person.
     pub fn gates_exits(&self) -> bool {
         self.private && self.untrusted
     }
@@ -108,7 +103,7 @@ impl Held {
             |sources: &BTreeSet<String>| sources.iter().cloned().collect::<Vec<_>>().join(", ");
         format!(
             "this turn holds private data (from {}) and words written by others (from {}), \
-             and this call can send them off this machine",
+             and this call can change stored data or send data off this machine",
             list(&self.private_from),
             list(&self.untrusted_from),
         )
@@ -118,8 +113,8 @@ impl Held {
 /// The source name for what a request carried from earlier turns.
 pub const EARLIER_TURNS: &str = "earlier turns";
 
-/// The source name for what a delegated worker's parent held.
-pub const DELEGATED_FROM: &str = "the delegating turn";
+/// The source name for inherited admission or delegated-parent context.
+pub const DELEGATED_FROM: &str = "inherited run context";
 
 #[cfg(test)]
 mod tests {

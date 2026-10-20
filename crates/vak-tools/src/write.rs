@@ -155,19 +155,14 @@ pub(crate) fn protected_control_path(path: &std::path::Path, ctx: &ToolContext) 
     if !runtime_call {
         return None;
     }
-    let root = ctx.cwd.canonicalize().ok()?;
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
+    let root = match ctx.cwd.canonicalize() {
+        Ok(root) => root,
+        Err(_) => return Some("sandbox cannot resolve the workspace".into()),
     };
-    let resolved = if candidate.exists() {
-        candidate.canonicalize().ok()?
-    } else {
-        let parent = candidate.parent()?;
-        let canonical_parent = parent.canonicalize().ok()?;
-        canonical_parent.join(candidate.file_name()?)
-    };
+    if !vak_permission::path_in_workspace(path, &root) {
+        return Some("sandbox denied access outside the workspace".into());
+    }
+    let resolved = crate::context::resolved(path);
     if !resolved.starts_with(&root) {
         return Some("sandbox denied access outside the workspace".into());
     }
@@ -177,8 +172,7 @@ pub(crate) fn protected_control_path(path: &std::path::Path, ctx: &ToolContext) 
     if text == ".env"
         || text.starts_with(".env.")
         || relative == scope.config_file()
-        || relative == scope.permissions_local()
-        || relative.starts_with(scope.project_dir().join("config"))
+        || relative.starts_with(scope.project_dir())
     {
         Some("sandbox denied writes to workspace control files".into())
     } else {

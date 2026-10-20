@@ -11,6 +11,22 @@ use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider}; // keep types import path stable for future edits
 
+#[derive(Default)]
+struct ApproveLearning {
+    asked: Mutex<Vec<(String, String)>>,
+}
+
+#[async_trait::async_trait]
+impl vak_agent::Approver for ApproveLearning {
+    async fn approve(&self, tool: &str, _: &str, reason: &str, _: Option<&str>) -> bool {
+        self.asked
+            .lock()
+            .unwrap()
+            .push((tool.into(), reason.into()));
+        matches!(tool, "remember" | "propose_skill")
+    }
+}
+
 struct Scripted {
     capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
@@ -110,6 +126,8 @@ async fn remember_propose_recall_promote_loop() {
         ])),
     }));
 
+    let approvals = Arc::new(ApproveLearning::default());
+
     // ---- Run A: remember + propose --------------------------------------
     let s_a = core.start_session().await.unwrap();
     let sid_a = s_a.header().unwrap().session_id.clone();
@@ -119,7 +137,7 @@ async fn remember_propose_recall_promote_loop() {
             s_a,
             "save what we learned",
             CancellationToken::new(),
-            None,
+            Some(approvals.clone()),
             None,
             None,
             tx_a,
@@ -130,6 +148,24 @@ async fn remember_propose_recall_promote_loop() {
         outcome_a,
         vak_agent::TurnOutcome::Completed { .. }
     ));
+
+    // The editable admission context gates learning mutations before any read;
+    // this lifecycle fixture explicitly answers the two intended approvals.
+    {
+        let asked = approvals.asked.lock().unwrap();
+        assert_eq!(
+            asked
+                .iter()
+                .map(|(tool, _)| tool.as_str())
+                .collect::<Vec<_>>(),
+            vec!["remember", "propose_skill"]
+        );
+        assert!(
+            asked
+                .iter()
+                .all(|(_, reason)| reason.contains("inherited run context"))
+        );
+    }
 
     // Notes landed in this Agent's own memory, with provenance...
     let notes = vak_core::memory::list_notes(&core.scope().into_root(), &cwd);

@@ -6,6 +6,11 @@ import AppErrorBoundary from "./components/AppErrorBoundary";
 import SharedConversation from "./components/SharedConversation";
 import SharedArtifact from "./components/SharedArtifact";
 
+import { host } from "./host";
+import { installExternalLinks } from "./externalLinks";
+
+installExternalLinks(document, host.openExternalUrl);
+
 const shared = new URLSearchParams(window.location.search).get("shared");
 
 render(

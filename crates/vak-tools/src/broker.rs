@@ -220,6 +220,9 @@ pub async fn spawn_persistent_worker(
             worker_exe.display()
         ));
     }
+    if sandbox.is_some_and(|sandbox| !sandbox.protects_workspace_control()) {
+        return Err("the selected sandbox cannot isolate workspace control files".into());
+    }
     let worker_command = format!(
         "{} {}",
         shell_quote(&worker_exe.display().to_string()),
@@ -524,6 +527,16 @@ async fn execute(
         shell_quote(&worker_exe.display().to_string()),
         WORKER_SUBCOMMAND
     );
+    if ctx
+        .sandbox
+        .as_ref()
+        .is_some_and(|sandbox| !sandbox.protects_workspace_control())
+    {
+        return ToolOutput::error(
+            Fault::Refused,
+            "the selected sandbox cannot isolate workspace control files; restricted tool execution is refused",
+        );
+    }
     let mut request_args = args.clone();
     let effective = resolve_worker_command(
         ctx.sandbox.as_deref(),
@@ -570,6 +583,12 @@ pub async fn run_capability(
     run: CapabilityRun,
     ctx: &ToolContext,
 ) -> ToolOutput {
+    if !sandbox.protects_workspace_control() {
+        return ToolOutput::error(
+            Fault::Refused,
+            "the selected sandbox cannot isolate workspace control files",
+        );
+    }
     if !worker_exe.is_file() {
         return ToolOutput::error(
             Fault::Tool,
@@ -1058,6 +1077,7 @@ pub async fn worker_main() -> i32 {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let (mut sink, mut rx) =
                 crate::sandbox_events::SandboxEventSink::new_with_id(execution_id);
+            sink = sink.admitted();
             if let Some(trace) = trace.clone() {
                 sink = sink.with_trace(trace);
             }
@@ -1805,9 +1825,21 @@ async fn run_task(
         shell_quote(&worker_exe.display().to_string()),
         WORKER_SUBCOMMAND
     );
-    let effective = match verification_sandbox(roots, writes_first, worker_exe) {
-        Some(sandbox) => sandbox.wrap(&worker_command),
-        None => worker_command,
+    let runtime = vak_config::paths::runtime_dir();
+    std::fs::create_dir_all(&runtime)
+        .map_err(|_| "parser runtime directory is unavailable".to_string())?;
+    let empty_root = tempfile::Builder::new()
+        .prefix("parser-")
+        .tempdir_in(runtime)
+        .map_err(|_| "parser workspace is unavailable".to_string())?;
+    let guarded_roots = if roots.is_empty() {
+        vec![empty_root.path()]
+    } else {
+        roots.to_vec()
+    };
+    let effective = match verification_sandbox(&guarded_roots, writes_first, worker_exe) {
+        Some(sandbox) if sandbox.protects_workspace_control() => sandbox.wrap(&worker_command),
+        _ => return Err("a sandbox that isolates control files is required for parsing".into()),
     };
     let mut command = tokio::process::Command::new(crate::bash::POSIX_SHELL);
     command
@@ -1977,6 +2009,28 @@ mod tests {
     use serde_json::json;
     use vak_session::ids::{AgentId, SpaceId, TenantId};
     use vak_session::trace::{Cause, TraceKey};
+
+    #[tokio::test]
+    async fn an_unqualified_sandbox_cannot_run_a_restricted_worker() {
+        let workspace = tempfile::tempdir().unwrap();
+        let executable = tempfile::NamedTempFile::new().unwrap();
+        let tool = BrokeredTool::new(
+            Arc::new(crate::read::ReadTool),
+            executable.path().to_path_buf(),
+            vec![],
+        );
+        let mut ctx = ToolContext::new(workspace.path().to_path_buf());
+        ctx.sandbox = Some(Arc::new(DockerStub {
+            target: SandboxTarget::ToolCommand,
+            wrap_fn: str::to_string,
+        }));
+        let out = tool.execute(&json!({"path":"notes.txt"}), &ctx).await;
+        assert!(out.is_error());
+        assert!(
+            out.content
+                .contains("cannot isolate workspace control files")
+        );
+    }
 
     #[test]
     fn broker_protocol_carries_trace() {

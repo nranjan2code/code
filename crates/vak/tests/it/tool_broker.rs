@@ -22,6 +22,11 @@ fn tool(name: &str) -> Arc<dyn vak_tools::Tool> {
 struct CommandSandbox;
 
 impl Sandbox for CommandSandbox {
+    // This deterministic fixture exercises command routing, not containment.
+    fn protects_workspace_control(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> &str {
         "test-command"
     }

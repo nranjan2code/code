@@ -642,3 +642,26 @@ history readers. An unreadable projection returns an error from the sandbox
 records route, rather than an empty artifact list. Review-note bookkeeping
 stops and reports a diagnostic if it cannot verify its version; it does not
 turn optional note persistence into transactional promotion rollback.
+
+## Revision approvals — 2026-10-20
+
+A comment-driven revision stays in its isolated child working copy with
+Workspace Write. Its mutation approvals use the parent's existing HTTP
+approval channel, pending map and activity buffer, so the person can answer
+in the conversation they were reviewing. The child does not use automatic
+denial or a new approval queue. Silence or refusal still denies the mutation;
+accepting a revised version remains a separate review action before the
+original workspace changes. Text and Office revision tests answer that real
+parent approval and verify that the original workspace stays unchanged.
+
+### Automatic preview scripts — 2026-10-20
+
+Document previews no longer execute arbitrary page code. WebRTC can bypass
+fetch CSP, as the synthetic loopback STUN probe demonstrated. Static previews
+block scripts, and origin-served document previews permit only the fixed
+hash-authorized theme bridge. Result thumbnails, Workbench and document
+popouts retain these restrictions. Script-powered HTML interaction is limited
+until an enforceable network boundary is available; layout, native form
+controls and local media remain. Explicitly started live dev servers are a
+separate capability. The [security acceptance](../audits/security-hardening-2026-10-20.md)
+records the probe and regression.

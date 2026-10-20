@@ -4,16 +4,16 @@
   "revision": "3213a256f",
   "first_date": "2026-08-21",
   "last_date": "2026-10-20",
-  "prose_reviewed": "8.9.0 · 2026-10-19"
+  "prose_reviewed": "8.16.0 · 2026-10-20"
  },
  "summary": {
   "text": "Vakyartha (`vak`) is a local-first agent harness for one owner: agents that work on code, documents, research and everyday tasks, reached from a desktop app, the browser, a terminal and chat apps, with every model input and tool result kept in an append-only record. Its thesis is strong safety, transparent operation, extensible integrations and a simple core.\n\nThe lower layers (storage, permission, the pure deciders, the document engines) are well shaped and change rarely. Above them, three large crates (`vak-core`, `vak-agent`, `vak-server`) hold the turn and most features, and that is where most of the work and most of the risk sit.",
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 338943,
-   "rust_tests": 86733,
-   "ts_src": 62752,
+   "rust_src": 339645,
+   "rust_tests": 87110,
+   "ts_src": 62828,
    "routes": 398,
    "forms": 20,
    "worker_tasks": 14,
@@ -23,7 +23,7 @@
    "days": 61,
    "peak_day": 174,
    "design_docs": 96,
-   "agents_words": 20243,
+   "agents_words": 20261,
    "subsystems": 64,
    "connections": 815,
    "flows": 11
@@ -90,6 +90,11 @@
     "id": "F3",
     "verdict": "Defects found by review",
     "title": "Storage's guarantees are not tested in the shapes that broke them"
+   },
+   {
+    "id": "F5",
+    "verdict": "Live smoke fails closed",
+    "title": "The securely confined rendered browser does not launch local Chrome"
    }
   ],
   "health": [
@@ -119,6 +124,15 @@
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "Data integrity and hostile prompts (2026-10-20)",
+    "open": 3,
+    "items": [
+     "Restore rendered-browser compatibility under the screened proxy and native confinement.",
+     "Qualify Linux Landlock and Docker for mandatory control-file exclusions.",
+     "Independent reference readers and multi-process storage interleavings, complete rollback/deletion detection, and descriptor-relative filesystem operations remain broader assurance work."
+    ]
+   },
    {
     "section": "Voice setup and current providers (2026-10-20)",
     "open": 5,
@@ -297,7 +311,7 @@
     ]
    }
   ],
-  "open_total": 81,
+  "open_total": 84,
   "measures_revision": "6fa02ac29"
  },
  "activity": {
@@ -815,6 +829,11 @@
    }
   ],
   "unreleased": [
+   "Automatic document previews block arbitrary scripts, which can send WebRTC traffic around fetch CSP.",
+   "Answer images, audio, video and link thumbnails no longer contact remote sites automatically.",
+   "Restricted turns conservatively label owner input and editable context, and ask before mutations or outbound actions after private and untrusted material meet.",
+   "Real tool workers protect workspace secrets and control files independently of telemetry context, including computed shell paths.",
+   "Fetch connections screen their actual DNS addresses, and rendered browsing confines every connection to a screened proxy.",
    "Voice settings and Admin offer an everyday listening/speaking setup from your connected account, save voice and speaking style with the Agent, and preview before enabling microphone conversations.",
    "Gemini's dedicated transcription models use their current speech endpoint in verbatim mode.",
    "OpenRouter voice support discovers its separate speech/transcription catalogues, offers vendor presets and model-specific voices, and links current prices and languages."
@@ -1273,7 +1292,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 83996,
+   "lines": 84132,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1285,7 +1304,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 79236,
+   "lines": 79328,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1295,7 +1314,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 66151,
+   "lines": 66236,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1305,7 +1324,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 55567,
+   "lines": 55858,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -1319,7 +1338,7 @@
   {
    "id": "L3",
    "name": "Decision and policy",
-   "lines": 21124,
+   "lines": 21268,
    "crates": [
     "vak-intent",
     "vak-sandbox",
@@ -1346,7 +1365,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 36294,
+   "lines": 36324,
    "crates": [
     "vak-session",
     "vak-config",
@@ -1369,9 +1388,9 @@
    "layers": [
     "L7"
    ],
-   "modules": 63,
+   "modules": 64,
    "parts": [],
-   "lines": 18104,
+   "lines": 18174,
    "largest": [
     3170,
     "crates/vak-client-ui/src/api.ts"
@@ -1437,6 +1456,7 @@
     "crates/vak-client-ui/src/components/WorkspaceHeader.tsx",
     "crates/vak-client-ui/src/controlsExpression.ts",
     "crates/vak-client-ui/src/delimitedPreview.ts",
+    "crates/vak-client-ui/src/externalLinks.ts",
     "crates/vak-client-ui/src/focusTrap.ts",
     "crates/vak-client-ui/src/highlight.ts",
     "crates/vak-client-ui/src/host/index.ts",
@@ -2440,9 +2460,9 @@
    ],
    "modules": 3,
    "parts": [],
-   "lines": 1910,
+   "lines": 1964,
    "largest": [
-    1567,
+    1621,
     "crates/vak-desktop/src/main.rs"
    ],
    "routes": [
@@ -2458,7 +2478,7 @@
    "commits": 60,
    "fixes": 16,
    "recent": 3,
-   "fix_density": 8.4,
+   "fix_density": 8.1,
    "out": [
     {
      "from": "desktop",
@@ -2843,7 +2863,7 @@
    ],
    "modules": 21,
    "parts": [],
-   "lines": 23157,
+   "lines": 23177,
    "largest": [
     8000,
     "crates/vak-admin-ui/src/App.tsx"
@@ -4277,9 +4297,9 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 14300,
+   "lines": 14304,
    "largest": [
-    12451,
+    12455,
     "crates/vak-core/src/lib.rs"
    ],
    "routes": [
@@ -4377,22 +4397,22 @@
     },
     {
      "from": "turn",
+     "to": "permission",
+     "kind": "code",
+     "weight": 6,
+     "example": [
+      "crates/vak-core/src/lib.rs",
+      "crates/vak-control/src/provenance.rs"
+     ]
+    },
+    {
+     "from": "turn",
      "to": "context",
      "kind": "code",
      "weight": 5,
      "example": [
       "crates/vak-core/src/lib.rs",
       "crates/vak-context/src/assemble.rs"
-     ]
-    },
-    {
-     "from": "turn",
-     "to": "permission",
-     "kind": "code",
-     "weight": 5,
-     "example": [
-      "crates/vak-core/src/lib.rs",
-      "crates/vak-core/src/trust.rs"
      ]
     },
     {
@@ -5103,9 +5123,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 12756,
+   "lines": 12767,
    "largest": [
-    11745,
+    11756,
     "crates/vak-agent/src/lib.rs"
    ],
    "routes": [],
@@ -7444,9 +7464,9 @@
    ],
    "modules": 19,
    "parts": [],
-   "lines": 8864,
+   "lines": 9128,
    "largest": [
-    2174,
+    2228,
     "crates/vak-tools/src/broker.rs"
    ],
    "routes": [],
@@ -7480,7 +7500,7 @@
    "commits": 174,
    "fixes": 23,
    "recent": 71,
-   "fix_density": 2.6,
+   "fix_density": 2.5,
    "out": [
     {
      "from": "tools",
@@ -7506,7 +7526,7 @@
      "from": "tools",
      "to": "sandbox",
      "kind": "code",
-     "weight": 9,
+     "weight": 11,
      "example": [
       "crates/vak-tools/src/bash.rs",
       "crates/vak-sandbox/src/backend.rs"
@@ -7516,7 +7536,7 @@
      "from": "tools",
      "to": "config",
      "kind": "code",
-     "weight": 6,
+     "weight": 7,
      "example": [
       "crates/vak-tools/src/bash.rs",
       "crates/vak-config/src/paths.rs"
@@ -8764,9 +8784,9 @@
    ],
    "modules": 6,
    "parts": [],
-   "lines": 1599,
+   "lines": 1607,
    "largest": [
-    574,
+    582,
     "crates/vak-mcp/src/client.rs"
    ],
    "routes": [
@@ -9436,7 +9456,7 @@
    ],
    "modules": 6,
    "parts": [],
-   "lines": 1529,
+   "lines": 1524,
    "largest": [
     597,
     "crates/vak-permission/src/engine.rs"
@@ -9519,6 +9539,16 @@
      ]
     },
     {
+     "from": "turn",
+     "to": "permission",
+     "kind": "code",
+     "weight": 6,
+     "example": [
+      "crates/vak-core/src/lib.rs",
+      "crates/vak-control/src/provenance.rs"
+     ]
+    },
+    {
      "from": "agents",
      "to": "permission",
      "kind": "code",
@@ -9535,16 +9565,6 @@
      "weight": 5,
      "example": [
       "crates/vak-server/src/core_pool.rs",
-      "crates/vak-core/src/trust.rs"
-     ]
-    },
-    {
-     "from": "turn",
-     "to": "permission",
-     "kind": "code",
-     "weight": 5,
-     "example": [
-      "crates/vak-core/src/lib.rs",
       "crates/vak-core/src/trust.rs"
      ]
     },
@@ -9812,7 +9832,7 @@
    ],
    "modules": 13,
    "parts": [],
-   "lines": 6683,
+   "lines": 6840,
    "largest": [
     2569,
     "crates/vak-sandbox/src/lib.rs"
@@ -9940,7 +9960,7 @@
      "from": "tools",
      "to": "sandbox",
      "kind": "code",
-     "weight": 9,
+     "weight": 11,
      "example": [
       "crates/vak-tools/src/bash.rs",
       "crates/vak-sandbox/src/backend.rs"
@@ -10632,7 +10652,7 @@
    ],
    "modules": 17,
    "parts": [],
-   "lines": 12025,
+   "lines": 12055,
    "largest": [
     3649,
     "crates/vak-session/src/log.rs"
@@ -12199,7 +12219,7 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 3656,
+   "lines": 3720,
    "largest": [
     1835,
     "crates/vak-core/src/state.rs"
@@ -12469,9 +12489,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 4718,
+   "lines": 4743,
    "largest": [
-    1969,
+    1994,
     "crates/vak-core/src/erasure.rs"
    ],
    "routes": [
@@ -13676,6 +13696,16 @@
      ]
     },
     {
+     "from": "tools",
+     "to": "config",
+     "kind": "code",
+     "weight": 7,
+     "example": [
+      "crates/vak-tools/src/bash.rs",
+      "crates/vak-config/src/paths.rs"
+     ]
+    },
+    {
      "from": "memory",
      "to": "config",
      "kind": "code",
@@ -13703,16 +13733,6 @@
      "example": [
       "crates/vak-server/src/social.rs",
       "crates/vak-config/src/lib.rs"
-     ]
-    },
-    {
-     "from": "tools",
-     "to": "config",
-     "kind": "code",
-     "weight": 6,
-     "example": [
-      "crates/vak-tools/src/bash.rs",
-      "crates/vak-config/src/paths.rs"
      ]
     },
     {
@@ -14452,7 +14472,7 @@
    ],
    "modules": 26,
    "parts": [],
-   "lines": 19087,
+   "lines": 19090,
    "largest": [
     6385,
     "crates/vak-server/src/projection.rs"
@@ -15156,9 +15176,9 @@
    ],
    "modules": 35,
    "parts": [],
-   "lines": 4823,
+   "lines": 4841,
    "largest": [
-    775,
+    794,
     "crates/vak-server/src/preview.rs"
    ],
    "routes": [
@@ -18609,9 +18629,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 32464,
+   "lines": 32519,
    "largest": [
-    28671,
+    28726,
     "crates/vak-server/src/lib.rs"
    ],
    "routes": [
@@ -21384,8 +21404,8 @@
   }
  ],
  "coverage": {
-  "units": 706,
-  "claimed": 706,
+  "units": 707,
+  "claimed": 707,
   "routes": 398,
   "routes_claimed": 398,
   "verbs": 35,
@@ -21696,6 +21716,16 @@
    ]
   },
   {
+   "from": "tools",
+   "to": "sandbox",
+   "kind": "code",
+   "weight": 11,
+   "example": [
+    "crates/vak-tools/src/bash.rs",
+    "crates/vak-sandbox/src/backend.rs"
+   ]
+  },
+  {
    "from": "turn",
    "to": "config",
    "kind": "code",
@@ -21843,16 +21873,6 @@
    "example": [
     "crates/vak-server/src/core_pool.rs",
     "crates/vak-config/src/lib.rs"
-   ]
-  },
-  {
-   "from": "tools",
-   "to": "sandbox",
-   "kind": "code",
-   "weight": 9,
-   "example": [
-    "crates/vak-tools/src/bash.rs",
-    "crates/vak-sandbox/src/backend.rs"
    ]
   },
   {
@@ -22216,6 +22236,16 @@
    ]
   },
   {
+   "from": "tools",
+   "to": "config",
+   "kind": "code",
+   "weight": 7,
+   "example": [
+    "crates/vak-tools/src/bash.rs",
+    "crates/vak-config/src/paths.rs"
+   ]
+  },
+  {
    "from": "turn",
    "to": "intent",
    "kind": "code",
@@ -22437,22 +22467,22 @@
   },
   {
    "from": "tools",
-   "to": "config",
-   "kind": "code",
-   "weight": 6,
-   "example": [
-    "crates/vak-tools/src/bash.rs",
-    "crates/vak-config/src/paths.rs"
-   ]
-  },
-  {
-   "from": "tools",
    "to": "ledger",
    "kind": "code",
    "weight": 6,
    "example": [
     "crates/vak-core/src/reach.rs",
     "crates/vak-session/src/types.rs"
+   ]
+  },
+  {
+   "from": "turn",
+   "to": "permission",
+   "kind": "code",
+   "weight": 6,
+   "example": [
+    "crates/vak-core/src/lib.rs",
+    "crates/vak-control/src/provenance.rs"
    ]
   },
   {
@@ -22783,16 +22813,6 @@
    "example": [
     "crates/vak-core/src/lib.rs",
     "crates/vak-context/src/assemble.rs"
-   ]
-  },
-  {
-   "from": "turn",
-   "to": "permission",
-   "kind": "code",
-   "weight": 5,
-   "example": [
-    "crates/vak-core/src/lib.rs",
-    "crates/vak-core/src/trust.rs"
    ]
   },
   {
@@ -35279,8 +35299,8 @@
    "layer": "L7",
    "kind": "rust",
    "role": "The CLI binary and every subcommand",
-   "src": 14395,
-   "tests": 1523,
+   "src": 14401,
+   "tests": 1528,
    "files": 31,
    "commits": 213,
    "deps": [
@@ -35359,7 +35379,7 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS admin console at /admin",
-   "src": 24870,
+   "src": 24874,
    "tests": 0,
    "files": 31,
    "commits": 262,
@@ -35396,8 +35416,8 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 16740,
-   "tests": 19804,
+   "src": 16751,
+   "tests": 19883,
    "files": 13,
    "commits": 352,
    "deps": [
@@ -35437,7 +35457,7 @@
     "uuid"
    ],
    "largest": [
-    11745,
+    11756,
     "crates/vak-agent/src/lib.rs"
    ],
    "subsystems": [
@@ -35530,9 +35550,9 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 37882,
+   "src": 37954,
    "tests": 324,
-   "files": 188,
+   "files": 189,
    "commits": 646,
    "deps": [],
    "used_by": [],
@@ -35704,7 +35724,7 @@
    "layer": "L3",
    "kind": "rust",
    "role": "Decision points, step contracts, verdicts, the correction ladder",
-   "src": 1885,
+   "src": 1880,
    "tests": 0,
    "files": 3,
    "commits": 40,
@@ -35741,8 +35761,8 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 61601,
-   "tests": 10158,
+   "src": 61686,
+   "tests": 10210,
    "files": 74,
    "commits": 656,
    "deps": [
@@ -35804,7 +35824,7 @@
     "walkdir"
    ],
    "largest": [
-    12451,
+    12455,
     "crates/vak-core/src/lib.rs"
    ],
    "subsystems": [
@@ -35890,7 +35910,7 @@
    "layer": "L7",
    "kind": "rust",
    "role": "Tauri 2 shell around an embedded server router",
-   "src": 1739,
+   "src": 1793,
    "tests": 0,
    "files": 2,
    "commits": 130,
@@ -35924,7 +35944,7 @@
     "uuid"
    ],
    "largest": [
-    1567,
+    1621,
     "crates/vak-desktop/src/main.rs"
    ],
    "subsystems": [
@@ -36292,7 +36312,7 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Lazy MCP client pool behind one meta-tool",
-   "src": 1584,
+   "src": 1592,
    "tests": 503,
    "files": 5,
    "commits": 40,
@@ -36317,7 +36337,7 @@
     "tracing"
    ],
    "largest": [
-    574,
+    582,
     "crates/vak-mcp/src/client.rs"
    ],
    "subsystems": [
@@ -36534,7 +36554,7 @@
    "layer": "L3",
    "kind": "rust",
    "role": "Seatbelt, Landlock, seccomp, Docker; candidate promotion",
-   "src": 4366,
+   "src": 4515,
    "tests": 0,
    "files": 5,
    "commits": 49,
@@ -36578,8 +36598,8 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 75067,
-   "tests": 24193,
+   "src": 75159,
+   "tests": 24361,
    "files": 52,
    "commits": 843,
    "deps": [
@@ -36644,7 +36664,7 @@
     "zeroize"
    ],
    "largest": [
-    28671,
+    28726,
     "crates/vak-server/src/lib.rs"
    ],
    "subsystems": [
@@ -36682,8 +36702,8 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 16041,
-   "tests": 4852,
+   "src": 16071,
+   "tests": 4917,
    "files": 25,
    "commits": 211,
    "deps": [
@@ -36846,8 +36866,8 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Built-in tools, argument reader, broker worker protocol, egress proxy",
-   "src": 16213,
-   "tests": 1209,
+   "src": 16485,
+   "tests": 1217,
    "files": 29,
    "commits": 210,
    "deps": [
@@ -36901,7 +36921,7 @@
     "walkdir"
    ],
    "largest": [
-    2174,
+    2228,
     "crates/vak-tools/src/broker.rs"
    ],
    "subsystems": [
@@ -36951,15 +36971,15 @@
   "files": [
    {
     "file": "crates/vak-server/src/lib.rs",
-    "lines": 28671
+    "lines": 28726
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12451
+    "lines": 12455
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
-    "lines": 11745
+    "lines": 11756
    },
    {
     "file": "crates/vak-mail-calendar/src/provider.rs",
@@ -37003,13 +37023,13 @@
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
     "line": 1881,
-    "lines": 1884
+    "lines": 1886
    },
    {
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
     "line": 6646,
-    "lines": 1645
+    "lines": 1649
    },
    {
     "name": "snapshot_inner",
@@ -37021,7 +37041,7 @@
     "name": "run_data",
     "file": "crates/vak/src/data.rs",
     "line": 31,
-    "lines": 750
+    "lines": 756
    },
    {
     "name": "gateway_inbound",
@@ -37050,7 +37070,7 @@
    {
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5683,
+    "line": 5685,
     "lines": 564
    },
    {
@@ -37068,7 +37088,7 @@
    {
     "name": "patch_config_scope",
     "file": "crates/vak-server/src/lib.rs",
-    "line": 18018,
+    "line": 18027,
     "lines": 483
    }
   ],
@@ -37167,10 +37187,20 @@
    "tag": "Structure",
    "verdict": "Defects found by review",
    "title": "Storage's guarantees are not tested in the shapes that broke them",
-   "evidence": "Owning the storage layer is a decision (docs/decisions.md, 2026-10-18), and it is tested for torn writes, crashes, fsync paths and injected faults, with a fuzz corpus. FinOps now compares its row projection with a direct fold, but the underlying chain reader still lacks an independent reference model, and few tests run two writer processes. The two P1 faults of 2026-10-18 needed exactly those shapes: a cached grant that kept authorizing because its revocation sat in an unreadable segment (A01), and a writer paused between the epoch check and the ref update (A02). A review's probes found them, not the suite. Repeated takeover tests now expose and cover import invalidation of encrypted projections: a standby catalog cannot outlive the imported keys. The broader interleaving gap remains.",
+   "evidence": "Owning the storage layer is a decision (docs/decisions.md, 2026-10-18), and it is tested for torn writes, crashes, fsync paths and injected faults, with a fuzz corpus. FinOps now compares its row projection with a direct fold, but the underlying chain reader still lacks an independent reference model, and few tests run two writer processes. The two P1 faults of 2026-10-18 needed exactly those shapes: a cached grant that kept authorizing because its revocation sat in an unreadable segment (A01), and a writer paused between the epoch check and the ref update (A02). A review's probes found them, not the suite. Repeated takeover tests now expose and cover import invalidation of encrypted projections: a standby catalog cannot outlive the imported keys. The seal-manifest verifier blind spot found on 2026-10-20 is fixed; broader interleaving and independent-reader gaps remain.",
    "matters": "These are the guarantees authorization, erasure and sync rest on. A bug here does not show as a failed turn; it shows as access that should have ended, or a write that should have been fenced.",
    "fix": "A model-based test of each chain's reader against a reference, and multi-process interleavings of every fenced write path.",
    "sources": "[docs/audits/architecture-and-presentation-review-2026-10-18.md](../docs/audits/architecture-and-presentation-review-2026-10-18.md) (A01, A02); [conversation/evidence and import checks](../docs/audits/conversation-evidence-contract-2026-10-19.md); `crates/vak-storage`, `crates/vak-session`."
+  },
+  {
+   "id": "F5",
+   "tag": "Compatibility",
+   "verdict": "Live smoke fails closed",
+   "title": "The securely confined rendered browser does not launch local Chrome",
+   "evidence": "The public example.com smoke on 2026-10-20 exits without a DOM under the new screened-proxy and native filesystem policy. Private-profile Unix IPC and private-destination rejection tests pass, but neither establishes working page rendering. The tool returns a typed error and recommends ordinary fetch; it never retries unconfined. Restricted Landlock and Docker workers also refuse until their backends enforce control-file exclusions.",
+   "matters": "Script-built pages currently lose rendered browsing on the measured Mac, and unqualified restricted backends lose worker/parser/MCP availability. Safe refusal closes the unsafe execution path but does not establish feature parity.",
+   "fix": "Qualify browser launch and backend control-file enforcement with real process tests, preserving proxy-only TCP, private profile state and mandatory secret/control exclusions.",
+   "sources": "[Security hardening acceptance](../docs/audits/security-hardening-2026-10-20.md); the ignored public-page browser smoke and native IPC tests."
   }
  ],
  "keep": [
@@ -37200,7 +37230,7 @@
   },
   {
    "name": "The provenance gate",
-   "text": "Private data plus someone else's words means a human approves anything that leaves the machine."
+   "text": "Owner input and unknown editable context carry conservative provenance; private plus untrusted content requires unpreauthorizable approval for mutations and outbound tool calls in restricted modes. Remote answer media stay inert until a person follows a link."
   },
   {
    "name": "The completion judges",

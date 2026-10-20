@@ -14,7 +14,7 @@ export type MediaSource =
 export function mediaSource(address: string): MediaSource {
   const value = address.trim();
   if (!value) return { kind: "refused" };
-  if (safeUrl(value, true)) return { kind: "web", url: value };
+  if (safeUrl(value, true) || /^https?:\/\//i.test(value)) return { kind: "web", url: value };
   if (value.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(value)) return { kind: "refused" };
   return { kind: "workspace", path: value };
 }

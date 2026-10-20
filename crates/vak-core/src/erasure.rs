@@ -320,6 +320,31 @@ impl Core {
         receipts
     }
 
+    pub(crate) fn try_erasure_receipts(&self) -> Result<Vec<Receipt>, ErasureError> {
+        let failed = || ErasureError::Failed("erasure receipts could not be verified".into());
+        let mut receipts = Vec::new();
+        match std::fs::read_dir(self.shared_scope().install_receipts()) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = entry.map_err(|_| failed())?;
+                    if !entry.file_type().map_err(|_| failed())?.is_file() {
+                        return Err(failed());
+                    }
+                    let bytes = std::fs::read(entry.path()).map_err(|_| failed())?;
+                    receipts.push(serde_json::from_slice(&bytes).map_err(|_| failed())?);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(failed()),
+        }
+        receipts.extend(
+            vak_session::chain::RecordChain::at(self.shared_scope().erasures())
+                .try_read::<Receipt>()
+                .map_err(|_| failed())?,
+        );
+        Ok(receipts)
+    }
+
     fn reach(&self, session_id: &str) -> Result<Reach, ErasureError> {
         let failed = |error: String| ErasureError::Failed(error);
         let shared = self.shared_scope();

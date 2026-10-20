@@ -1607,6 +1607,8 @@ export interface DataIntegrity {
   segments: number;
   records: number;
   torn_tails: number;
+  unreadable: string[];
+  unchecked_classes: string[];
   broken: { at: string; segment: number }[];
   keys: number;
   keys_destroyed: number;

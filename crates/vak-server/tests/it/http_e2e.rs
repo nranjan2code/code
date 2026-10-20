@@ -3005,8 +3005,32 @@ async fn a_versions_title_and_the_request_that_made_it_are_shown() {
         .unwrap();
     assert_eq!(run.status(), 202);
 
+    let mut approvals = 0;
     let mut artifact = None;
     for _ in 0..200 {
+        let pending: serde_json::Value = client
+            .get(format!("{base}/sessions/{session_id}/approvals"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        for request in pending["approvals"].as_array().unwrap() {
+            assert_eq!(request["tool"], "write");
+            assert!(request["reason"].as_str().unwrap().contains("private data"));
+            let approved = client
+                .post(format!(
+                    "{base}/sessions/{session_id}/approvals/{}",
+                    request["id"].as_str().unwrap()
+                ))
+                .json(&serde_json::json!({"approve":true}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(approved.status(), 200);
+            approvals += 1;
+        }
         let listed: serde_json::Value = client
             .get(format!("{base}/library"))
             .send()
@@ -3026,6 +3050,7 @@ async fn a_versions_title_and_the_request_that_made_it_are_shown() {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    assert_eq!(approvals, 1, "Library write must receive human approval");
     let artifact = artifact.expect("the written file is in the Library");
     let detail: serde_json::Value = client
         .get(format!("{base}/library/{artifact}"))
@@ -3118,8 +3143,32 @@ async fn comparing_a_word_version_with_the_folder_lists_its_changes() {
         .await
         .unwrap();
     assert_eq!(run.status(), 202);
+    let mut approvals = 0;
     let mut artifact = None;
     for _ in 0..400 {
+        let pending: serde_json::Value = client
+            .get(format!("{base}/sessions/{session_id}/approvals"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        for request in pending["approvals"].as_array().unwrap() {
+            assert_eq!(request["tool"], "office_apply");
+            assert!(request["reason"].as_str().unwrap().contains("private data"));
+            let approved = client
+                .post(format!(
+                    "{base}/sessions/{session_id}/approvals/{}",
+                    request["id"].as_str().unwrap()
+                ))
+                .json(&serde_json::json!({"approve":true}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(approved.status(), 200);
+            approvals += 1;
+        }
         let listed: serde_json::Value = client
             .get(format!("{base}/library"))
             .send()
@@ -3139,6 +3188,7 @@ async fn comparing_a_word_version_with_the_folder_lists_its_changes() {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    assert_eq!(approvals, 1, "Office draft must receive human approval");
     let artifact = artifact.expect("the draft is in the Library");
     std::fs::write(folder.join(&name), vak_ooxml::fixtures::docx()).unwrap();
     let detail: serde_json::Value = client

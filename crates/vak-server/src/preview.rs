@@ -263,13 +263,13 @@ async fn read_file(path: &std::path::Path) -> Result<Vec<u8>, StatusCode> {
     }
 }
 
-/// What a page may do. It can load its own files and run its own script; it
-/// cannot fetch from any other origin, so a preview stays offline as it is in
-/// the Canvas's single-page frame. It cannot be told where its own frame goes:
+/// A document may load its own files but may run only the fixed theme bridge.
+/// Arbitrary scripts can bypass fetch CSP using WebRTC, so document code is
+/// blocked even when the page is served from an origin of its own. It cannot be told where its own frame goes:
 /// that is the embedding app's `frame-src` (`embedded_ui.rs`). Only the app's
 /// own origins may embed it.
 const POLICY: &str = "default-src 'self' data: blob:; \
-script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; \
+script-src 'sha256-tis2GP5R8Hg8GuJuqJjbDWFONvwphpyuhUMnforMLsU='; \
 style-src 'self' 'unsafe-inline'; \
 img-src 'self' data: blob:; \
 font-src 'self' data:; \
@@ -351,6 +351,7 @@ async fn serve(
         .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
         .header(header::CACHE_CONTROL, "no-store")
         .header(header::REFERRER_POLICY, "no-referrer")
+        .header("x-dns-prefetch-control", "off")
         .header(header::CONTENT_SECURITY_POLICY, POLICY);
     if !mime.starts_with("text/html") {
         // Only a document is framed; nothing else needs the embedding rule.
@@ -370,6 +371,24 @@ async fn serve(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_fixed_theme_bridge_is_authorized_to_execute() {
+        use base64::Engine as _;
+        use sha2::Digest as _;
+        let script = THEME_SLOT
+            .split("<script data-vak-theme>")
+            .nth(1)
+            .unwrap()
+            .split("</script>")
+            .next()
+            .unwrap();
+        let digest = base64::engine::general_purpose::STANDARD
+            .encode(sha2::Sha256::digest(script.as_bytes()));
+        assert!(POLICY.contains(&format!("script-src 'sha256-{digest}';")));
+        assert!(!POLICY.contains("'unsafe-eval'"));
+        assert!(!POLICY.contains("script-src 'self'"));
+    }
 
     #[test]
     fn a_page_gets_the_theme_slot_before_its_own_markup() {

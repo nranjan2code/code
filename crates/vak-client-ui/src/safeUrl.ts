@@ -13,7 +13,9 @@
 // this list as a deliberate security decision, not routine parity work.
 export function safeUrl(value: string, media = false): boolean {
   const normalized = value.trim().toLowerCase();
-  if (media && normalized.startsWith("data:image/")) return true;
+  // A scheme check is not permission to send model-visible data in a URL.
+  // Active answer media must be self-contained; remote addresses remain links.
+  if (media) return /^data:(image\/(png|jpe?g|gif|webp|avif)|audio\/[a-z0-9.+-]+|video\/[a-z0-9.+-]+)[;,]/.test(normalized);
   return (
     normalized.startsWith("https://") ||
     normalized.startsWith("http://") ||
@@ -73,7 +75,7 @@ export function cleanArtifactPath(target: string): string {
  * own origin and, with it, the authenticated API.
  *
  * - `static` — markup from the conversation, and a page shown as one
- *   document: scripts run in an opaque origin and forms can render, and
+ *   document: scripts are blocked in an opaque origin and forms can render, and
  *   nothing else.
  * - `origin` — a page served from an origin of its own (a preview origin, or
  *   a dev server on its own port), framed under a different loopback name
@@ -83,7 +85,7 @@ export function cleanArtifactPath(target: string): string {
 export type PreviewSandbox = "static" | "origin";
 
 const PREVIEW_SANDBOX: Record<PreviewSandbox, string> = {
-  static: "allow-scripts allow-forms",
+  static: "allow-forms",
   origin: "allow-scripts allow-same-origin allow-forms allow-popups",
 };
 
@@ -95,7 +97,7 @@ const PREVIEW_POLICY = [
   "default-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
-  "script-src 'unsafe-inline' blob:",
+  "script-src 'none'",
   "style-src 'unsafe-inline' data:",
   "img-src data: blob:",
   "font-src data: blob:",
@@ -214,4 +216,11 @@ export function withCurrentTheme(page: string): string {
 export function previewWindowDocument(page: string): string {
   const attribute = page.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
   return `<!doctype html><meta charset="utf-8"><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe sandbox="${PREVIEW_SANDBOX.static}" srcdoc="${attribute}"></iframe>`;
+}
+
+/** Pop out an origin-served document inside the same non-scripted wrapper.
+ * Its parent frame policy still prevents refresh/navigation to an internet URL. */
+export function previewOriginWindowDocument(url: string): string {
+  const attribute = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  return `<!doctype html><meta charset="utf-8"><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe sandbox="${PREVIEW_SANDBOX.static}" src="${attribute}"></iframe>`;
 }

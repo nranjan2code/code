@@ -1,5 +1,30 @@
 ## Unreleased
 
+- Automatic document previews block arbitrary scripts, which can send WebRTC
+  traffic around fetch CSP. Origin-served previews retain only the fixed theme
+  bridge; HTML controls that need page scripts now require exporting/running
+  the document outside the automatic preview. Layout and native inputs remain.
+
+- Answer images, audio, video and link thumbnails no longer contact remote
+  sites automatically. External media remain deliberate links; local media
+  still render. Street-map tiles require a separate click. External hyperlinks
+  open in the system browser on desktop and a separate tab on the web.
+  Page metadata and headers disable speculative hyperlink DNS lookup.
+- Restricted turns conservatively label owner input and editable context,
+  and ask before mutations or outbound actions after private and untrusted
+  material meet. Preallowed tools cannot bypass this approval. Draft revisions
+  raise these approvals in their parent conversation before editing a copy.
+- Real tool workers protect workspace secrets and control files independently
+  of telemetry context, including computed shell paths. Restricted backends
+  that cannot enforce these exclusions refuse execution (currently Linux
+  Landlock and Docker require further work).
+- Fetch connections screen their actual DNS addresses, and rendered browsing
+  confines every connection to a screened proxy. Chrome rendering currently
+  refuses to launch in the measured Mac setup; ordinary fetch remains available.
+  Integrity checks reject
+  damaged seal manifests and incomplete inventories without repairing them,
+  and report the payload classes they do not verify.
+
 - Voice settings and Admin offer an everyday listening/speaking setup from
   your connected account, save voice and speaking style with the Agent, and
   preview before enabling microphone conversations. Provider switches clear

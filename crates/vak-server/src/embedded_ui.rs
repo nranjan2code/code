@@ -41,7 +41,7 @@ pub(crate) fn mime_for(path: &str) -> &'static str {
 /// link or a refresh), so the embedding page is what holds it to the app's own
 /// files and the loopback origins previews are served from
 /// (`preview.rs`); an internet address is refused, whatever the frame does.
-const FRAME_POLICY: &str = "frame-src 'self' blob: data: http://127.0.0.1:* http://localhost:*";
+const FRAME_POLICY: &str = "frame-src 'self' blob: data: http://127.0.0.1:* http://localhost:*; img-src 'self' data: blob:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'";
 
 /// Whether the bundler put a content hash in this file's name, which is
 /// what makes it safe to cache for good: the files it writes directly into
@@ -108,6 +108,12 @@ pub(crate) fn serve_file(dir: &'static Dir<'static>, path: &str) -> axum::respon
             )
                 .into_response();
             if path.ends_with(".html") {
+                // Link hostnames can contain private data too: speculative
+                // DNS must not turn an inert answer link into an outbound leak.
+                response.headers_mut().insert(
+                    "x-dns-prefetch-control",
+                    axum::http::HeaderValue::from_static("off"),
+                );
                 response.headers_mut().insert(
                     axum::http::header::CONTENT_SECURITY_POLICY,
                     axum::http::HeaderValue::from_static(FRAME_POLICY),

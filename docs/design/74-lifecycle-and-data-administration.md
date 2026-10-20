@@ -633,3 +633,18 @@ protection. Those bytes remain conversation-owned; account-key destruction
 cannot make them unreadable. Their conversations must be erased through the
 normal conversation-erasure flow to remove them. No append-only ledger is
 rewritten and no automatic conversation erasure is performed.
+
+## Integrity coverage clarification — 2026-10-20
+
+`verify` strictly checks the retained segment inventory, stored frame hash
+chain and complete seal manifest, including the first segment's own seal.
+Malformed inventories, manifest tails and read failures prevent a clean
+verdict; observation never repairs a manifest or creates a missing chain.
+A reported segment `0` identifies a manifest or inventory failure, rather than
+a numbered frame segment. Admin and CLI distinguish covered records passing from unchecked tenant
+object, scope-key and derived-index payloads. Receipt loading is strict,
+including kept install-erasure receipts. Registry-excluded workspace and cache
+trees are not traversed as authoritative records. Missing complete chains or
+rollback require an independently retained inventory/root to detect; this
+check is not a whole-store proof. See the
+[follow-through](../audits/security-hardening-2026-10-20.md).

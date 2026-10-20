@@ -6749,6 +6749,10 @@ impl Core {
             }
         };
         let mut cfg = AgentConfig::new(frozen_system_prompt.clone());
+        // The resolved prompt includes editable layers, workspace metadata
+        // and discovered capability descriptions. Their authorship cannot be
+        // established from reach, so protect exits before the first tool too.
+        cfg.inherited_provenance = vak_control::Provenance::BOTH;
         // The turn id is minted here, once, and opened on the session before
         // anything is written: the intent, its strands and threads, the
         // commitments keyed by them, the directive's own entry id and every

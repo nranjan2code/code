@@ -141,6 +141,46 @@ The patterns Vak takes from comparable systems:
   `no-new-privileges`. It is command-scoped until a pinned multi-architecture
   Linux worker artifact can run the complete protocol inside the image.
 
+## Boundary hardening — 2026-10-20
+
+The [security follow-through](../audits/security-hardening-2026-10-20.md)
+records the tested fixes to the five findings in the same day's audit.
+
+- Every built-in worker marks its invocation admitted independently of its
+  optional owner-session telemetry field. File and grep checks refuse project
+  `.vak` controls and `.env` variants. Seatbelt denies content reads and writes
+  to these paths, including shell-computed paths, and prevents renaming the
+  workspace root. Substring matching is not the security boundary.
+- A restricted worker, parser, persistent capability or MCP process requires
+  `Sandbox::protects_workspace_control`. Seatbelt qualifies; Landlock and
+  Docker currently do not. Their earlier confinement features described above
+  remain implementations, but no longer qualify them to execute these paths.
+  Unqualified backends refuse rather than silently run less confined.
+- Owner requests are private, unknown stored content is both, and Core's
+  editable admission context is both. Once mixed, mutation and outbound calls
+  require human approval in restricted modes. Full Access remains the explicit
+  unsandboxed trust decision and is never selected as recovery.
+- Model-controlled answer media cannot initiate external requests. Downloaded
+  workspace media and self-contained raster/audio/video remain available;
+  a remote address is a deliberate link. Map tiles require separate consent.
+  Desktop CSP and browser response CSP enforce same-origin/data/blob media.
+  Hyperlinks use a trusted user activation, no referrer, and a separate browser
+  context; the native opener revalidates schemes and rejects credentials.
+- Fetch's connector DNS resolver rejects an entire answer set containing a
+  private/special-use address and connects only to its screened sockets;
+  ambient proxy variables do not bypass screening. Rendered Chromium has a
+  private profile and an OS-constrained SOCKS proxy. Every navigation,
+  redirect and subresource connection uses destination screening; workers
+  cannot connect directly around the proxy. Dropping a proxy closes its
+  accepted tunnels too.
+
+Residual filesystem check-to-use races, complete rollback/deletion detection
+without an independently retained root, and independent model-based or
+multi-process storage assurance remain outside these fixes. Encryption is not
+a defense against a deliberately authorized tool reading data. Local media
+are still untrusted decoder input; an approved download is not proof of
+harmless content or permission to embed active HTML/SVG.
+
 ## Residual risks and roadmap
 
 ### P0 — completed local broker boundary
@@ -218,3 +258,15 @@ runtime registers its account scope before draining call effects, then seals
 the model-visible result window and any full evidence body under that scope.
 A failed effect append ends the turn before another model request or delegated
 card import; optional telemetry cannot substitute for the required record.
+
+### Automatic preview scripts — 2026-10-20
+
+Document previews no longer execute arbitrary page code. WebRTC can bypass
+fetch CSP, as the synthetic loopback STUN probe demonstrated. Static previews
+block scripts, and origin-served document previews permit only the fixed
+hash-authorized theme bridge. Result thumbnails, Workbench and document
+popouts retain these restrictions. Script-powered HTML interaction is limited
+until an enforceable network boundary is available; layout, native form
+controls and local media remain. Explicitly started live dev servers are a
+separate capability. The [security acceptance](../audits/security-hardening-2026-10-20.md)
+records the probe and regression.

@@ -49,7 +49,7 @@ pub struct WebFetchTool {
 
 const DESCRIPTION: &str = "Fetch a known URL over HTTP(S) with GET; this does not search the web or turn a search-results page into reliable facts. Blocks loopback/private/link-local targets, follows at most 3 redirects, downloads at most 8 MiB, accepts only text/json/xml content types, and never sends credentials. Returns a status line, then the body: an HTML page as its readable text (headings, paragraphs, lists, table rows, links as [text](address); scripts, navigation and forms left out and counted), or with format \"links\" its links, or with \"source\" its HTML. Other content types come back as they are.";
 
-const RENDER: &str = " With render, the page is first run in a local headless browser with a fresh profile, so content its JavaScript builds is there; the browser's own redirects and subresources are not screened.";
+const RENDER: &str = " With render, the page is first run in a local headless browser with a fresh profile, so content its JavaScript builds is there; every browser connection, redirect and subresource uses a screened network proxy.";
 
 impl WebFetchTool {
     /// `render` offers the `render` argument, run by a local headless
@@ -95,12 +95,22 @@ fn classify_v4(ip: Ipv4Addr) -> Option<&'static str> {
         Some("private RFC1918")
     } else if ip.is_link_local() {
         Some("link-local")
+    } else if ip.is_multicast()
+        || ip.is_broadcast()
+        || ip.is_documentation()
+        || ip.octets()[0] == 0
+        || ip.octets()[0] >= 240
+        || (ip.octets()[0] == 100 && (64..128).contains(&ip.octets()[1]))
+        || (ip.octets()[0] == 198 && matches!(ip.octets()[1], 18 | 19))
+        || ip.octets()[..3] == [192, 0, 0]
+    {
+        Some("special-use")
     } else {
         None
     }
 }
 
-fn classify(ip: IpAddr) -> Option<&'static str> {
+pub(crate) fn classify(ip: IpAddr) -> Option<&'static str> {
     match ip {
         IpAddr::V4(v4) => classify_v4(v4),
         IpAddr::V6(v6) => {
@@ -114,6 +124,12 @@ fn classify(ip: IpAddr) -> Option<&'static str> {
                 Some("unique-local")
             } else if v6.is_unicast_link_local() {
                 Some("link-local")
+            } else if v6.segments()[0] & 0xe000 != 0x2000
+                || v6.segments()[0] == 0x2002
+                || (v6.segments()[0] == 0x2001
+                    && (v6.segments()[1] < 0x0200 || v6.segments()[1] == 0x0db8))
+            {
+                Some("special-use")
             } else {
                 None
             }
@@ -121,10 +137,8 @@ fn classify(ip: IpAddr) -> Option<&'static str> {
     }
 }
 
-/// Pre-connect SSRF screen: resolves `host` and fails closed if ANY resolved
-/// address falls in a blocked range. v1 acknowledges the TOCTOU window of
-/// resolving here and letting the client resolve again (DNS rebinding);
-/// mitigation roadmap is single-use-resolve-then-connect pinning.
+/// An early diagnostic screen. The actual HTTP resolver also screens the
+/// returned addresses and hands those exact addresses to the connector.
 pub(crate) fn ssrf_guard(host: &str) -> Result<(), GuardRejection> {
     // URL serialization brackets IPv6 literals ("[::1]"); ToSocketAddrs
     // wants the bare address.
@@ -141,6 +155,36 @@ pub(crate) fn ssrf_guard(host: &str) -> Result<(), GuardRejection> {
         }
     }
     Ok(())
+}
+
+/// Resolve once and return only the exact addresses that passed the guard.
+pub(crate) async fn screened_addresses(
+    host: &str,
+    port: u16,
+) -> std::io::Result<Vec<std::net::SocketAddr>> {
+    let addresses: Vec<_> = tokio::net::lookup_host((host, port)).await?.collect();
+    if addresses.is_empty() {
+        return Err(std::io::Error::other("DNS returned no addresses"));
+    }
+    for address in &addresses {
+        if let Some(class) = classify(address.ip()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                blocked_message(class),
+            ));
+        }
+    }
+    Ok(addresses)
+}
+
+struct ScreenedResolver;
+impl reqwest::dns::Resolve for ScreenedResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let addresses = screened_addresses(name.as_str(), 0).await?;
+            Ok(Box::new(addresses.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
 }
 
 /// Why the SSRF screen refused a host; every variant renders as a typed,
@@ -171,6 +215,9 @@ fn parse_target(raw: &str) -> Result<reqwest::Url, String> {
     if url.host_str().is_none_or(str::is_empty) {
         return Err("invalid url: missing host".to_string());
     }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("credentials in web addresses are not allowed".into());
+    }
     Ok(url)
 }
 
@@ -196,6 +243,8 @@ fn redirect_policy() -> reqwest::redirect::Policy {
 fn build_client() -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .no_proxy()
+        .dns_resolver(std::sync::Arc::new(ScreenedResolver))
         .redirect(redirect_policy())
         .timeout(TOTAL_TIMEOUT)
         .build()
@@ -377,6 +426,8 @@ async fn guarded_get_as(
     } else {
         reqwest::Client::builder()
             .user_agent(USER_AGENT)
+            .no_proxy()
+            .dns_resolver(std::sync::Arc::new(ScreenedResolver))
             .redirect(reqwest::redirect::Policy::none())
             .timeout(TOTAL_TIMEOUT)
             .build()
@@ -755,7 +806,10 @@ mod tests {
     fn public_ranges_are_not_classified_as_internal() {
         assert_eq!(classify("8.8.8.8".parse().unwrap()), None);
         assert_eq!(classify("172.32.0.1".parse().unwrap()), None);
-        assert_eq!(classify("198.51.100.7".parse().unwrap()), None);
+        assert_eq!(
+            classify("198.51.100.7".parse().unwrap()),
+            Some("special-use")
+        );
         assert_eq!(classify("2606:4700::1111".parse().unwrap()), None);
         assert_eq!(classify("::ffff:8.8.8.8".parse().unwrap()), None);
     }
@@ -798,6 +852,29 @@ mod tests {
             assert!(
                 !content_type_allowed(rejected),
                 "expected {rejected:?} to be rejected"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn connector_dns_resolution_refuses_a_private_address() {
+        use reqwest::dns::Resolve;
+        let error = ScreenedResolver
+            .resolve("localhost".parse().unwrap())
+            .await
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("blocked"));
+        for url in [
+            "http://127.0.0.1/",
+            "http://100.64.0.1/",
+            "http://[64:ff9b::7f00:1]/",
+        ] {
+            assert!(
+                guarded_get(url, &[], 1024)
+                    .await
+                    .unwrap_err()
+                    .contains("blocked")
             );
         }
     }

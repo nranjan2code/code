@@ -73,6 +73,9 @@ impl Tool for GrepTool {
             Some(p) => ctx.resolve(Path::new(p)),
             None => ctx.cwd.clone(),
         };
+        if let Some(refusal) = crate::write::protected_control_path(&base, ctx) {
+            return ToolOutput::error(Fault::Refused, refusal);
+        }
         let include = args.get("include").and_then(|i| i.as_str());
         let include_set = match include {
             Some(glob_str) => {
@@ -98,9 +101,10 @@ impl Tool for GrepTool {
 
         // File IO + regex over whole trees is blocking; keep it off the
         // async workers that carry SSE and TUI delivery.
-        let cwd = ctx.cwd.clone();
+        let context = ctx.clone();
         let walked =
-            tokio::task::spawn_blocking(move || search_tree(&base, &re, include_set, &cwd)).await;
+            tokio::task::spawn_blocking(move || search_tree(&base, &re, include_set, &context))
+                .await;
         let out = match walked {
             Ok(out) => out,
             Err(e) => return ToolOutput::error(Fault::Tool, format!("grep task failed: {e}")),
@@ -144,8 +148,9 @@ fn search_tree(
     base: &Path,
     re: &Regex,
     include_set: Option<globset::GlobSet>,
-    cwd: &Path,
+    ctx: &ToolContext,
 ) -> SearchOutcome {
+    let cwd = &ctx.cwd;
     let mut out = String::new();
     let mut count = 0usize;
 
@@ -164,7 +169,9 @@ fn search_tree(
         .filter_entry(|e| !crate::glob::is_ignored(e.path()))
         .flatten()
     {
-        if !entry.file_type().is_file() {
+        if !entry.file_type().is_file()
+            || crate::write::protected_control_path(entry.path(), ctx).is_some()
+        {
             continue;
         }
         if let Some(gs) = &include_set {

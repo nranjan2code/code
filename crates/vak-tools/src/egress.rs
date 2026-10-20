@@ -28,11 +28,30 @@ impl Egress {
         let port = listener.local_addr()?.port();
         let hosts = Arc::new(hosts);
         let task = tokio::spawn(async move {
+            let mut connections = tokio::task::JoinSet::new();
             while let Ok((client, _)) = listener.accept().await {
                 let hosts = hosts.clone();
-                tokio::spawn(async move {
+                connections.spawn(async move {
                     let _ = serve(client, &hosts).await;
                 });
+                while connections.try_join_next().is_some() {}
+            }
+        });
+        Ok(Self { port, task })
+    }
+
+    /// A browser's sole network path: SOCKS5 with address screening and
+    /// pinned connections for every navigation, redirect and subresource.
+    pub async fn screened_browser() -> std::io::Result<Self> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+        let port = listener.local_addr()?.port();
+        let task = tokio::spawn(async move {
+            let mut connections = tokio::task::JoinSet::new();
+            while let Ok((client, _)) = listener.accept().await {
+                connections.spawn(async move {
+                    let _ = serve_socks(client).await;
+                });
+                while connections.try_join_next().is_some() {}
             }
         });
         Ok(Self { port, task })
@@ -144,6 +163,58 @@ async fn serve(mut client: TcpStream, declared: &[String]) -> std::io::Result<()
     Ok(())
 }
 
+async fn serve_socks(mut client: TcpStream) -> std::io::Result<()> {
+    let mut greeting = [0u8; 2];
+    client.read_exact(&mut greeting).await?;
+    if greeting[0] != 5 {
+        return Ok(());
+    }
+    let mut methods = vec![0; greeting[1] as usize];
+    client.read_exact(&mut methods).await?;
+    if !methods.contains(&0) {
+        client.write_all(&[5, 255]).await?;
+        return Ok(());
+    }
+    client.write_all(&[5, 0]).await?;
+    let mut request = [0u8; 4];
+    client.read_exact(&mut request).await?;
+    if request[..3] != [5, 1, 0] {
+        return Ok(());
+    }
+    let host = match request[3] {
+        1 => {
+            let mut address = [0; 4];
+            client.read_exact(&mut address).await?;
+            std::net::Ipv4Addr::from(address).to_string()
+        }
+        4 => {
+            let mut address = [0; 16];
+            client.read_exact(&mut address).await?;
+            std::net::Ipv6Addr::from(address).to_string()
+        }
+        3 => {
+            let size = client.read_u8().await? as usize;
+            let mut address = vec![0; size];
+            client.read_exact(&mut address).await?;
+            String::from_utf8(address).map_err(|_| std::io::Error::other("invalid SOCKS host"))?
+        }
+        _ => return Ok(()),
+    };
+    let port = client.read_u16().await?;
+    let addresses = match crate::webfetch::screened_addresses(&host, port).await {
+        Ok(addresses) => addresses,
+        Err(_) => {
+            client.write_all(&[5, 2, 0, 1, 0, 0, 0, 0, 0, 0]).await?;
+            return Ok(());
+        }
+    };
+    // Connecting to SocketAddr never resolves the hostname a second time.
+    let mut upstream = TcpStream::connect(addresses.as_slice()).await?;
+    client.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await?;
+    tokio::io::copy_bidirectional(&mut client, &mut upstream).await?;
+    Ok(())
+}
+
 async fn refuse(client: &mut TcpStream, status: &str) -> std::io::Result<()> {
     client
         .write_all(
@@ -239,5 +310,38 @@ mod tests {
         let mut pong = [0u8; 4];
         stream.read_exact(&mut pong).await.expect("pong");
         assert_eq!(&pong, b"pong");
+    }
+}
+
+#[cfg(test)]
+mod screened_browser_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn every_socks_connection_refuses_private_literal_and_dns_destinations() {
+        let proxy = Egress::screened_browser().await.unwrap();
+        for host in [
+            "127.0.0.1",
+            "localhost",
+            "169.254.169.254",
+            "10.0.0.1",
+            "::1",
+            "::ffff:127.0.0.1",
+        ] {
+            let mut stream = TcpStream::connect(("127.0.0.1", proxy.port()))
+                .await
+                .unwrap();
+            stream.write_all(&[5, 1, 0]).await.unwrap();
+            let mut method = [0; 2];
+            stream.read_exact(&mut method).await.unwrap();
+            assert_eq!(method, [5, 0]);
+            let mut request = vec![5, 1, 0, 3, host.len() as u8];
+            request.extend(host.as_bytes());
+            request.extend(80u16.to_be_bytes());
+            stream.write_all(&request).await.unwrap();
+            let mut reply = [0; 10];
+            stream.read_exact(&mut reply).await.unwrap();
+            assert_eq!(reply[1], 2, "{host}");
+        }
     }
 }

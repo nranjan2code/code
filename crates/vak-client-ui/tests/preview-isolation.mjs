@@ -3,7 +3,7 @@ import { previewSandbox, sandboxedSrcdoc } from "../src/safeUrl.ts";
 
 // The sandbox is a client-owned choice: only the two named kinds exist, and
 // the opaque-origin one never carries allow-same-origin.
-assert.equal(previewSandbox("static"), "allow-scripts allow-forms");
+assert.equal(previewSandbox("static"), "allow-forms");
 assert.ok(!previewSandbox("static").includes("allow-same-origin"));
 assert.ok(previewSandbox("origin").includes("allow-same-origin"));
 
@@ -11,6 +11,7 @@ const policyAt = (doc) => doc.indexOf("Content-Security-Policy");
 
 // Every network path is closed; nothing a document contains can widen it.
 const plain = sandboxedSrcdoc("<p>hi</p>");
+assert.match(plain, /script-src 'none'/);
 assert.match(plain, /connect-src 'none'/);
 assert.ok(!/https?:/.test(plain.slice(0, plain.indexOf("<p>"))));
 assert.ok(policyAt(plain) < plain.indexOf("<p>"));
@@ -34,7 +35,7 @@ console.log("preview isolation ok");
 // a blob page takes the app's origin, so the page itself can never be the preview.
 import { previewWindowDocument } from "../src/safeUrl.ts";
 const popped = previewWindowDocument(sandboxedSrcdoc('<p title="a&b">x</p><script>run()</script>'));
-assert.match(popped, /^<!doctype html><meta charset="utf-8"><style>[^<]*<\/style><iframe sandbox="allow-scripts allow-forms" srcdoc="/);
+assert.match(popped, /^<!doctype html><meta charset="utf-8"><style>[^<]*<\/style><iframe sandbox="allow-forms" srcdoc="/);
 assert.ok(!popped.replace(/srcdoc="[^"]*"/, "").includes("<script"), "the wrapper carries no script of its own");
 assert.ok(!popped.slice(popped.indexOf('srcdoc="') + 8, -"\"></iframe>".length).includes('"'), "the page cannot close the attribute");
 assert.ok(popped.includes("&amp;") && popped.includes("&quot;"));
@@ -66,3 +67,6 @@ assert.equal(withCurrentTheme(forged).match(/--vak-bg:red/g).length, 1, "only th
 delete globalThis.document;
 delete globalThis.getComputedStyle;
 console.log("preview theme ok");
+
+const { previewOriginWindowDocument } = await import('../src/safeUrl.ts');
+assert.match(previewOriginWindowDocument('http://127.0.0.1:1234/token/index.html'), /<iframe sandbox="allow-forms" src="http:/);

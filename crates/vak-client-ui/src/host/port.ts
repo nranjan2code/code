@@ -88,6 +88,8 @@ export interface Host {
   /** Open a provider authorization URL in the user's system browser. Desktop
    * validates the provider host before handing it to the OS. */
   openOAuthUrl?(url: string): Promise<void>;
+  /** Human-activated external hyperlink; never used for automatic media loads. */
+  openExternalUrl?(url: string): Promise<void>;
   /** Choose a folder: a native dialog, or a server-side browser. `null`
    *  when the operator cancelled. */
   pickWorkspace(): Promise<string | null>;

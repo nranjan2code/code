@@ -1,5 +1,5 @@
 # 08 — Permissions (vak-permission)
-Status: implemented in 2.0.0; checked against the code on 2026-10-14; declared reach replaces the name tables (2026-10-12); the provenance gate (2026-10-13)
+Status: implemented in 2.0.0; checked against the code on 2026-10-14; declared reach replaces the name tables (2026-10-12); the provenance gate (2026-10-13), source and mutation hardening (2026-10-20)
 
 ## Model
 
@@ -113,12 +113,15 @@ declaring tool against it.
 
 ## Provenance (2026-10-13)
 
-A request that carries both the owner's data and words someone else wrote is
-the one in which an injected instruction can carry that data off the
-machine: a web page or an email tells the model to put a file's contents in
-a URL. Neither alone is that risk. Research that only reads the web holds
-nothing of the owner's; work on the owner's files holds no stranger's words.
-So the gate is the two together, and nothing reads a word of the content.
+A request carrying private data and third-party words may induce disclosure
+or destructive edits. Source lineage, rather than prompt text or a model's
+judgment, determines these labels. Owner requests are private, including
+image-only input. Editable repository content has unknown authorship and is
+conservatively both private and untrusted. Core also initializes inherited
+provenance to both for its editable prompt layers, workspace metadata and
+capability descriptions, so injected prefix instructions cannot act before
+the first tool read. This deliberately adds approval friction in restricted
+modes; a model's assertion that its action is safe does not remove it.
 
 **Labels.** Every tool result holds a `vak_control::Provenance`: `private`
 (something the owner keeps in Vak: a workspace file, Vak's own records, a
@@ -129,7 +132,7 @@ read from its reach unless it says otherwise (`provenance_of_reach`):
 
 | Reach | Holds |
 |---|---|
-| `ReadPath`, `ReadStore`, `Command`, `Learning`, `Schedule` | private |
+| `ReadPath`, `ReadStore`, `Command`, `Learning`, `Schedule` | both (unknown authorship) |
 | `Network`, `Integration` | untrusted |
 | `Display`, `Coordination`, `WritePath`, `Other` | nothing |
 
@@ -149,7 +152,7 @@ success: a server's error carries its words too.
 **Where labels live.** The loop records each labelled result as
 `CallEffect::Provenance` naming its call, and joins it into what the turn
 holds (`vak_control::Held`, which names where each kind came from). A turn's
-labels are the join over its calls (`Turn::provenance`), and its card keeps
+labels join owner input and its calls (`Turn::provenance`), and its card keeps
 them (`TurnCard::provenance`). A request holds what its open turn has
 received and what every earlier turn its plan carries held, at any fidelity,
 in its packet or retrieved (`SessionLog::carried_provenance`), so an
@@ -159,12 +162,16 @@ starts holding what its parent held when it delegated
 (`AgentConfig::inherited_provenance`, from `ToolContext::provenance`),
 because its task was written from it.
 
-**The gate.** Once a turn holds both, a call that can leave the machine is
+**The gate.** Once a turn holds both, a call that can leave the machine or
+mutate stored data is
 put to the person (`AskSource::Provenance`), with the reason naming where
 each kind came from. A tool declares that it can leave with
 `Tool::leaves_machine`: true for `Network` and `Integration` by default, and
 for `flow` and the tool-less `work`, which run other tools. A shell command
-can leave only where the sandbox leaves it the network: with no sandbox. The
+can leave only where the sandbox leaves it the network: with no sandbox.
+Resolved `WritePath`, `Learning`, `Command` and unknown `Other` reaches
+are mutations for this gate; schedule operations resolve their actual reach
+before the decision, so listing is still a read. The
 gate holds in the sandboxed modes only: full-access is the owner's explicit
 trust decision (invariant 13) and asks nothing beyond the owner's own rules
 (maintainer, 2026-10-14; before, a Full-access turn that had read the web
@@ -174,6 +181,11 @@ rule raised is asked once, with both reasons. Nothing pre-authorizes it: not
 approval. On a surface nobody answers it is refused (invariant 15). The
 gate's reason replaces the mode's default ask, and sits beside a rule's
 own reason when a rule raised the ask.
+
+Comment-driven Library revisions run in isolated child copies, with their
+mutation asks routed through the parent conversation's existing HTTP approver.
+An unattended learning operation still refuses; an interactive learning
+operation can proceed after its own ask. Neither path switches to Full Access.
 
 **A person's no stands for the turn.** Once the person declines a call,
 its tool is withdrawn for the rest of the turn, as a tool whose calls keep

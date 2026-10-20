@@ -1015,13 +1015,39 @@ fn open_admin(route: String) {
     open_web_path(&format!("/admin{route}"));
 }
 
+/// The UI invokes this only for a trusted hyperlink activation. Never hand an
+/// arbitrary scheme to the operating system, or interpret the URL as a command.
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = validate_external_url(&url)?;
+    open_browser_url(&parsed)
+}
+
+fn validate_external_url(value: &str) -> Result<url::Url, String> {
+    if value.len() > 8192 || value.chars().any(char::is_control) {
+        return Err("Invalid external link".into());
+    }
+    let parsed = url::Url::parse(value).map_err(|_| "Invalid external link")?;
+    if !matches!(parsed.scheme(), "http" | "https" | "mailto")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || (parsed.scheme() != "mailto" && parsed.host_str().is_none())
+    {
+        return Err("Unsupported external link".into());
+    }
+    Ok(parsed)
+}
+
 /// Open only the two provider authorization endpoints in the system browser.
 /// The URL is supplied by the authenticated loopback API, but validate it
 /// again at the native boundary before invoking an operating-system handler.
 #[tauri::command]
 fn open_oauth_url(url: String) -> Result<(), String> {
     let parsed = validate_oauth_url(&url)?;
+    open_browser_url(&parsed)
+}
 
+fn open_browser_url(parsed: &url::Url) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let result = std::process::Command::new("open")
         .arg(parsed.as_str())
@@ -1320,6 +1346,7 @@ fn main() {
             set_desktop_autostart,
             open_admin,
             open_oauth_url,
+            open_external_url,
             review_workspace,
             title_bar_double_click,
             start_backend,
@@ -1357,7 +1384,7 @@ fn main() {
 mod tests {
     use super::{
         TRAY_FLAG, TitleBarAction, connect_gateway_backend, is_tray_launch, requested_project,
-        startup_workspace, validate_oauth_url,
+        startup_workspace, validate_external_url, validate_oauth_url,
     };
 
     #[tokio::test]
@@ -1443,6 +1470,29 @@ mod tests {
         drop(stream);
         if let Some(shutdown) = running.backend.shutdown {
             let _ = shutdown.send(true);
+        }
+    }
+
+    #[test]
+    fn external_links_reject_handlers_credentials_and_control_characters() {
+        for value in [
+            "https://example.com/path?q=a#b",
+            "http://example.com/",
+            "mailto:owner@example.com",
+        ] {
+            assert!(validate_external_url(value).is_ok(), "{value}");
+        }
+        for value in [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:text/html,x",
+            "vak://command",
+            "https://owner:secret@example.com/",
+            "https://example.com/\n",
+            "--help",
+            "//example.com/",
+        ] {
+            assert!(validate_external_url(value).is_err(), "{value}");
         }
     }
 
@@ -1542,9 +1592,8 @@ mod tests {
         );
     }
 
-    /// A media card draws what `safeUrl` admits and the "Images from the web"
-    /// setting allows, and a workspace file as a blob; the shell's policy must
-    /// not refuse either (a video had no `media-src` and fell to `'self'`).
+    /// Local and self-contained media work; model URLs cannot activate remote
+    /// requests through either native media directive.
     #[test]
     fn the_shell_policy_admits_what_a_media_card_draws() {
         let conf: serde_json::Value =
@@ -1556,12 +1605,17 @@ mod tests {
                 .map(str::trim)
                 .find_map(|d| d.strip_prefix(directive))
                 .expect("the shell policy names every media directive");
-            for source in ["'self'", "data:", "blob:", "https:", "http:"] {
+            for source in ["'self'", "data:", "blob:"] {
                 assert!(
                     sources.split_whitespace().any(|s| s == source),
                     "{directive} lacks {source}: {csp}"
                 );
             }
+            assert!(
+                !sources
+                    .split_whitespace()
+                    .any(|s| matches!(s, "https:" | "http:"))
+            );
         }
     }
 }

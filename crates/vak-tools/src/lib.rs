@@ -107,15 +107,15 @@ pub struct ToolOutput {
 pub use vak_session::types::McpSource;
 
 /// What results of a tool of this reach hold, when it declares nothing
-/// more: reading the workspace, Vak's own records or a command's output is
-/// the owner's data; the network and an integration server answer in
-/// someone else's words.
+/// more: stored data and command output may hold both private information
+/// and third-party instructions. Trust cannot be inferred from a file's
+/// location. The network and integrations carry untrusted content.
 pub fn provenance_of_reach(reach: vak_permission::Reach) -> vak_control::Provenance {
     use vak_control::Provenance;
     use vak_permission::Reach;
     match reach {
         Reach::ReadPath | Reach::ReadStore | Reach::Command | Reach::Learning | Reach::Schedule => {
-            Provenance::PRIVATE
+            Provenance::BOTH
         }
         Reach::Network | Reach::Integration => Provenance::UNTRUSTED,
         Reach::Display | Reach::Coordination | Reach::WritePath | Reach::Other => Provenance::NONE,

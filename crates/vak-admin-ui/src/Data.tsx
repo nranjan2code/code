@@ -412,7 +412,7 @@ function Integrity() {
       <div class="panel-title-row">
         <div>
           <h2>Integrity</h2>
-          <p class="dim">Every conversation and record is checked against a running fingerprint of what was written, without reading what it says. A changed, missing or reordered record is found and named.</p>
+          <p class="dim">Stored conversation and record chains are checked against their fingerprints and seal manifests, without reading their content. Damage within the retained record inventory is reported below.</p>
         </div>
         <div class="lifecycle-actions">
           <button class="ghost small" disabled={report.loading} onClick={() => void refetch()}>{report.loading ? "Checking…" : "Check again"}</button>
@@ -425,9 +425,11 @@ function Integrity() {
           {(found) => (
             <>
               <p>
-                <strong>{found().broken.length === 0 && found().receipts_unverified === 0 ? "Nothing is damaged." : "Something is damaged."}</strong>{" "}
+                <strong>{found().broken.length === 0 && found().receipts_unverified === 0 && found().unreadable.length === 0 && found().search !== "unreadable" ? "Checked records passed verification." : "Verification found damage or could not complete."}</strong>{" "}
                 {found().conversations} conversations and {found().chains} other record logs were checked: {found().records} records, as of {day(found().at)}.
               </p>
+              <p class="dim">This check covers record chains and erasure signatures. File payloads, encryption-key payloads and search databases have not been independently verified.</p>
+              <Show when={found().unreadable.length > 0}><p role="alert">Some stored data could not be checked. Resolve access or storage errors before relying on this result.</p></Show>
               <Show when={found().broken.length > 0}>
                 <div class="ops-table-wrap">
                   <table class="ops-table">

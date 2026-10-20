@@ -525,7 +525,7 @@ impl TurnIndex {
                                     evidence_bodies: HashMap::new(),
                                     reading: pending_readings.remove(&entry.id),
                                     links: pending_links.remove(&entry.id).unwrap_or_default(),
-                                    provenance: vak_control::Provenance::NONE,
+                                    provenance: vak_control::Provenance::PRIVATE,
                                     call_provenance: HashMap::new(),
                                     raw_tail: Vec::new(),
                                 });

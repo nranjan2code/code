@@ -1164,6 +1164,7 @@ async fn a_turns_file_calls_record_their_effects() {
         ],
     );
     let mut agent = h.agent;
+    agent.config.mode = vak_permission::Mode::FullAccess;
     let outcome = agent
         .run(
             "make the notes",

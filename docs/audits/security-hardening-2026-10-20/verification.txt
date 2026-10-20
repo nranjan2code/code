@@ -1,0 +1,17 @@
+Security hardening verification — 2026-10-20
+
+gate: fmt ok (3s)
+gate: clippy ok (9s)
+gate: test ok (885s)
+gate: version ok (0s)
+gate: doc-paths ok (0s)
+gate: records ok (1s)
+gate: advisories ok (6s)
+
+Rust tests: 3,883 passed; 0 failed; 24 ignored across 144 suites.
+Client desktop/web and Admin production builds: pass.
+Frontend pure-test scripts: 37 passed.
+Browser fixtures: see browser-results.json and admin-browser-results.json.
+Preview egress: see preview-network-results.jsonl.
+Live secure Chromium rendering: FAIL CLOSED; compatibility remains open.
+No release, installation, commit or push performed.

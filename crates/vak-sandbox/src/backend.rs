@@ -18,6 +18,12 @@ pub trait Sandbox: Send + Sync {
     fn name(&self) -> &str;
     fn wrap(&self, command: &str) -> String;
 
+    /// Whether the backend enforces immutable, unreadable workspace control
+    /// state independently of command text and tool-path checks.
+    fn protects_workspace_control(&self) -> bool {
+        false
+    }
+
     fn target(&self) -> SandboxTarget {
         SandboxTarget::WorkerProcess
     }
@@ -67,6 +73,9 @@ impl DenySandbox {
 }
 
 impl Sandbox for DenySandbox {
+    fn protects_workspace_control(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "unavailable-deny"
     }
@@ -85,6 +94,9 @@ impl Sandbox for DenySandbox {
 
 #[derive(Debug, Clone)]
 pub struct Seatbelt {
+    workspace: PathBuf,
+    private_ipc: bool,
+    browser_bundle: Option<PathBuf>,
     pub mode: SandboxMode,
     pub read_paths: Vec<PathBuf>,
     pub write_paths: Vec<PathBuf>,
@@ -103,6 +115,18 @@ pub struct Seatbelt {
 impl Seatbelt {
     pub fn new(mode: SandboxMode, cwd: &Path) -> Self {
         Self::build(mode, cwd, true)
+    }
+
+    /// A browser's private profile may contain its own Unix singleton socket.
+    /// TCP still requires the separately configured screened proxy port.
+    pub fn browser(cwd: &Path, executable: &Path) -> Self {
+        let mut sandbox = Self::build(SandboxMode::WorkspaceWrite, cwd, false);
+        sandbox.private_ipc = true;
+        sandbox.browser_bundle = executable
+            .ancestors()
+            .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+            .and_then(|path| path.canonicalize().ok());
+        sandbox
     }
 
     /// Contain a retained task copy, including when the original workspace
@@ -157,10 +181,13 @@ impl Seatbelt {
         let executions = executions.canonicalize().unwrap_or(executions);
         read_paths.push(executions.clone());
         let write_paths = match mode {
-            SandboxMode::WorkspaceWrite => vec![canonical, executions],
+            SandboxMode::WorkspaceWrite => vec![canonical.clone(), executions],
             _ => Vec::new(),
         };
         Seatbelt {
+            workspace: canonical,
+            private_ipc: false,
+            browser_bundle: None,
             mode,
             read_paths,
             write_paths,
@@ -219,6 +246,48 @@ impl Seatbelt {
                 }
             }
         }
+        let control = vak_config::scope::WorkspaceScope::new(&self.workspace).project_dir();
+        p.push_str(&format!(
+            "(deny file-read-data file-write* (subpath {}))\n",
+            sbpl_quote(&control.display().to_string())
+        ));
+        let escaped: String = self
+            .workspace
+            .to_string_lossy()
+            .chars()
+            .flat_map(|ch| {
+                if ".+*?()[]{}^$|\\".contains(ch) {
+                    vec!['\\', ch]
+                } else {
+                    vec![ch]
+                }
+            })
+            .collect();
+        p.push_str(&format!(
+            "(deny file-read-data file-write* (regex {}))\n",
+            sbpl_quote(&format!("^{escaped}/\\.env($|\\..*)"))
+        ));
+        p.push_str(&format!(
+            "(deny file-write-unlink (literal {}))\n",
+            sbpl_quote(&self.workspace.display().to_string())
+        ));
+        if let Some(bundle) = &self.browser_bundle {
+            // Chrome passes its already-readable bundle into its own child
+            // sandbox. Extensions grant read access to that bundle alone.
+            p.push_str(&format!("(allow file-issue-extension (require-all (extension-class \"com.apple.app-sandbox.read\") (subpath {})))\n", sbpl_quote(&bundle.display().to_string())));
+        }
+        if self.private_ipc {
+            // Chromium registers a per-process rendezvous service for children.
+            // This grants no registration outside those browser namespaces.
+            p.push_str("(allow mach-register (local-name-regex #\"^(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]google[.]chrome[.]for[.]testing)[.]MachPortRendezvousServer[.][0-9]+$\"))\n");
+            let root = sbpl_quote(&self.workspace.display().to_string());
+            p.push_str(&format!(
+                "(allow network-bind network-inbound (local unix-socket (subpath {root})))\n"
+            ));
+            p.push_str(&format!(
+                "(allow network-outbound (remote unix-socket (subpath {root})))\n"
+            ));
+        }
         if self.allow_listen {
             p.push_str("(allow network-bind (local ip \"localhost:*\"))\n");
             p.push_str("(allow network-inbound (local ip \"localhost:*\"))\n");
@@ -260,6 +329,9 @@ fn sbpl_quote(s: &str) -> String {
 }
 
 impl Sandbox for Seatbelt {
+    fn protects_workspace_control(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "seatbelt"
     }
@@ -280,6 +352,9 @@ impl Sandbox for Seatbelt {
 
     fn read_only_variant(&self) -> Option<Arc<dyn Sandbox>> {
         Some(Arc::new(Seatbelt {
+            workspace: self.workspace.clone(),
+            private_ipc: false,
+            browser_bundle: None,
             mode: SandboxMode::ReadOnly,
             read_paths: self.read_paths.clone(),
             write_paths: Vec::new(),
@@ -324,6 +399,80 @@ fn shell_quote(s: &str) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn control_state_is_unreadable_and_immutable_through_computed_shell_paths() {
+        vak_config::paths::isolate_home_for_tests();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("work(space)[x].test");
+        let control = vak_config::scope::WorkspaceScope::new(&workspace);
+        std::fs::create_dir_all(control.project_dir()).unwrap();
+        std::fs::write(control.permissions_local(), "keep").unwrap();
+        for name in [".env", ".env.local"] {
+            std::fs::write(workspace.join(name), "secret").unwrap();
+        }
+        let sandbox = Seatbelt::new(SandboxMode::WorkspaceWrite, &workspace);
+        for command in [
+            "p=$(printf '.e%s' nv); cat \"$p\"",
+            "cat .env.local",
+            "echo bad > .env.new",
+            "echo bad > .vak/permissions.local.toml",
+            "mv .vak renamed",
+            "ln .env copy && cat copy",
+        ] {
+            let output = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(sandbox.wrap(command))
+                .current_dir(&workspace)
+                .output()
+                .unwrap();
+            assert!(!output.status.success(), "{command}: {:?}", output.stdout);
+            assert!(!String::from_utf8_lossy(&output.stdout).contains("secret"));
+        }
+        assert_eq!(
+            std::fs::read_to_string(control.permissions_local()).unwrap(),
+            "keep"
+        );
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(sandbox.wrap("printf ok > ordinary.txt"))
+            .current_dir(&workspace)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output.stderr);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn browser_ipc_stays_in_its_profile_and_tcp_stays_denied() {
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("profile");
+        std::fs::create_dir(&profile).unwrap();
+        let sandbox = Seatbelt::browser(&profile, Path::new("/usr/bin/python3"));
+        let run = |body: &str| {
+            std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(sandbox.wrap(&format!("/usr/bin/python3 -c {}", shell_quote(body))))
+                .current_dir(&profile)
+                .output()
+                .unwrap()
+        };
+        let own =
+            run("import socket; s=socket.socket(socket.AF_UNIX); s.bind('own.sock'); s.listen(1)");
+        assert!(own.status.success(), "{:?}", own.stderr);
+        let outside = run(&format!(
+            "import socket; s=socket.socket(socket.AF_UNIX); s.bind({:?})",
+            root.path().join("outside.sock").display().to_string()
+        ));
+        assert!(!outside.status.success());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp = run(&format!(
+            "import socket; socket.create_connection(('127.0.0.1',{}),1)",
+            listener.local_addr().unwrap().port()
+        ));
+        assert!(!tcp.status.success());
+    }
 
     #[test]
     fn task_copy_profile_does_not_grant_host_temp_writes() {
@@ -530,7 +679,7 @@ mod tests {
             .expect("command follows profile");
         let profile = &wrapped[profile_start..profile_end];
         assert!(
-            !profile.contains("file-write*"),
+            !profile.contains("(allow file-write*"),
             "read-only variant must not grant any write allowance: {profile}"
         );
     }

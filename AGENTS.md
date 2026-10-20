@@ -1170,20 +1170,21 @@ commit (invariant 30).
     commits or erases on the operator's real data home.
 
 43. **The owner's data and someone else's words together put every exit
-    to a person** (docs/design/08-permissions.md "Provenance"). Every tool
+    and mutation to a person** (docs/design/08-permissions.md "Provenance"). Every tool
     result is labelled private, untrusted, both or neither from what its
     tool declares (`Tool::provenance`) and where it came from (a connected
     account, a worker, a recalled turn), recorded as
     `CallEffect::Provenance` and kept on the turn's card. A request holds
     what its open turn received and what every earlier turn its plan
     carries held; a delegated worker starts with what its parent held. Once
-    a request holds both, a call that can leave the machine
+    a request holds both, a call that can change stored data or leave the machine
     (`Tool::leaves_machine`; a shell command only where the sandbox leaves
     it the network) is an `AskSource::Provenance` ask that nothing
     pre-authorizes and an unanswered surface refuses, in every mode but
     FullAccess, which is the owner's explicit trust decision (invariant 13)
     and asks only what the owner's own rules ask. Labels only join
-    within a turn, and nothing reads a word of the content to set one.
+    within a turn. Owner input is private; unknown authorship in stored or
+    editable context is both. Nothing reads a word of content to set a label.
 
 ## Code rules
 

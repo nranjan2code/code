@@ -8,15 +8,15 @@
 //! reuse, no auth material.
 //!
 //! Sandbox posture: unlike Bash, no Seatbelt/Landlock command wrapper is
-//! applied — containment comes from spawning a fixed, discovered browser
+//! applied to the caller; the renderer itself runs under a private OS sandbox.
+//! Containment includes a screened SOCKS proxy and a fixed, discovered browser
 //! binary with fixed flags, a scrubbed allowlist environment, a fresh
 //! profile directory that is deleted afterwards, and its own process group
 //! killed on timeout/cancel.
 //!
-//! v1 SSRF honesty note: the guard below screens only the REQUESTED host.
-//! Once navigation is handed to Chromium, redirects and subresource fetches
-//! inside the browser resolve and connect on their own and are not
-//! re-screenable here.
+//! Every browser connection goes through a screened, pinned SOCKS proxy.
+//! The OS sandbox admits only that proxy port, including for redirects and
+//! subresources; unsupported network isolation refuses rendering.
 
 use crate::Fault;
 use std::path::{Path, PathBuf};
@@ -251,16 +251,67 @@ impl Renderer {
             }
         };
 
-        let mut cmd = tokio::process::Command::new(&browser);
-        cmd.args(assemble_args(wait_ms, url.as_str(), &profile.0))
+        let proxy = match crate::egress::Egress::screened_browser().await {
+            Ok(proxy) => proxy,
+            Err(_) => return ToolOutput::error(Fault::Tool, "browser network guard unavailable"),
+        };
+        let sandbox: Option<std::sync::Arc<dyn crate::sandbox::Sandbox>> = {
+            #[cfg(target_os = "macos")]
+            {
+                Some(std::sync::Arc::new(crate::sandbox::Seatbelt::browser(
+                    &profile.0, &browser,
+                )))
+            }
+            #[cfg(target_os = "linux")]
+            {
+                Some(std::sync::Arc::new(crate::landlock::Landlock::new(
+                    crate::sandbox::SandboxMode::WorkspaceWrite,
+                    &profile.0,
+                )))
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                None
+            }
+        };
+        let Some(sandbox) = sandbox
+            .filter(|sandbox| sandbox.protects_workspace_control())
+            .and_then(|sandbox| sandbox.proxied_variant(proxy.port()))
+        else {
+            return ToolOutput::error(
+                Fault::Refused,
+                "secure browser network isolation is unavailable on this platform",
+            );
+        };
+        let mut browser_args = assemble_args(wait_ms, url.as_str(), &profile.0);
+        browser_args.extend([
+            format!("--proxy-server=socks5://127.0.0.1:{}", proxy.port()),
+            "--proxy-bypass-list=<-loopback>".into(),
+            "--host-resolver-rules=MAP * ~NOTFOUND".into(),
+            "--disable-background-networking".into(),
+            "--disable-crashpad-for-testing".into(),
+            "--disable-quic".into(),
+        ]);
+        let command = std::iter::once(browser.to_string_lossy().into_owned())
+            .chain(browser_args)
+            .map(|arg| crate::bash::shell_quote(&arg))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut cmd = tokio::process::Command::new(crate::bash::POSIX_SHELL);
+        cmd.arg("-c")
+            .arg(sandbox.wrap(&command))
+            .current_dir(&profile.0)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::from(out_file))
             .stderr(std::process::Stdio::from(err_file))
             .kill_on_drop(true);
         crate::bash::scrub_environment(&mut cmd);
-        if std::env::var_os(crate::broker::WORKER_ENV).is_none() {
-            crate::bash::isolate_process_group(&mut cmd);
-        }
+        // Chromium creates its singleton socket under the system temporary
+        // directory by default. Keep that socket inside its private sandbox.
+        cmd.env("TMPDIR", &profile.0);
+        // Chromium uses its own hermetic temp override on macOS.
+        cmd.env("MAC_CHROMIUM_TMPDIR", &profile.0);
+        crate::bash::isolate_process_group(&mut cmd);
 
         let started = Instant::now();
         let mut child = match cmd.spawn() {
@@ -334,11 +385,16 @@ impl Renderer {
         let header = format!("{header_base} ({elapsed_ms} ms, {} bytes)", dom.len());
         let body = if dom.is_empty() {
             let tail = stderr_tail(&err);
-            if tail.is_empty() {
-                "(no DOM captured)".to_string()
-            } else {
-                format!("(no DOM captured)\nbrowser stderr: {tail}")
-            }
+            return ToolOutput::error(
+                Fault::Tool,
+                if tail.is_empty() {
+                    format!("{header}: secure browser launch produced no page; use ordinary fetch")
+                } else {
+                    format!(
+                        "{header}: secure browser launch produced no page; use ordinary fetch\nbrowser stderr: {tail}"
+                    )
+                },
+            );
         } else {
             let format = crate::webfetch::PageFormat::from_args(args)
                 .unwrap_or(crate::webfetch::PageFormat::Text);

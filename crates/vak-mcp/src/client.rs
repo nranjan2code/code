@@ -144,6 +144,14 @@ impl McpClient {
             (None, _) => None,
         };
         let command_path = resolve_command(&config.command);
+        if confined
+            .as_ref()
+            .is_some_and(|sandbox| !sandbox.protects_workspace_control())
+        {
+            return Err(McpError::Spawn(
+                "the selected sandbox cannot isolate workspace control files".into(),
+            ));
+        }
         let mut cmd = if let Some(sandbox) = confined.as_ref() {
             let command = std::iter::once(command_path.to_string_lossy().to_string())
                 .chain(config.args.iter().cloned())

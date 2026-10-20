@@ -431,6 +431,12 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
             for broken in &report.broken {
                 println!("  DAMAGED  {} (segment {})", broken.at, broken.segment);
             }
+            for path in &report.unreadable {
+                println!("  UNREADABLE  {path}");
+            }
+            println!(
+                "Coverage: record chains and erasure signatures; file/key payloads and derived databases are not independently verified."
+            );
             if report.torn_tails > 0 {
                 println!(
                     "  {} unfinished record(s) at the end of a segment, left by a stop mid-write; the next write trims them",
@@ -462,9 +468,9 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
             println!(
                 "{}",
                 if report.sound() {
-                    "Nothing is damaged."
+                    "Checked records passed verification."
                 } else {
-                    "Something is damaged: see above."
+                    "Verification found damage or could not complete: see above."
                 }
             );
             i32::from(!report.sound())

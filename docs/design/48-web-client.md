@@ -1082,3 +1082,38 @@ argument of this document in one example.
 4. **Does `Surface::Web` change the prompt layer?** Doc 45 layers by
    surface. A phone-sized reader plausibly wants shorter outcomes. Do not
    guess — measure after Phase 3.
+
+## External answer resources — 2026-10-20
+
+The shared client never activates a model-supplied remote image, audio, video
+or thumbnail URL automatically. Remote resources render as explicit links;
+self-contained supported media and authenticated workspace media keep their
+viewers. Safe inline viewing of external bytes requires a governed fetch to a
+local artifact first, with destination, redirects, size and format checked;
+this change does not add a new arbitrary-URL media proxy. Map tiles have an
+explicit per-view load control.
+
+The entry HTML and embedded response headers set DNS prefetch control to off,
+so supporting browsers do not resolve model-supplied link hostnames speculatively.
+This is separate from media CSP and referrer suppression.
+
+The document-level link handler covers streamed and settled anchors. Trusted
+clicks open external HTTP(S) addresses in the system browser on Tauri and a
+new tab on the web, with `noopener`, `noreferrer` and no referrer. Mail links
+use the OS/browser's mail handler. Same-origin app routes and downloads keep
+their own behavior. Native `open_external_url` validates schemes, control
+characters, length and absent URL credentials before passing a single URL
+argument to the OS opener. No shell interprets the address. Synthetic clicks
+cannot invoke this navigation path.
+
+### Automatic preview scripts — 2026-10-20
+
+Document previews no longer execute arbitrary page code. WebRTC can bypass
+fetch CSP, as the synthetic loopback STUN probe demonstrated. Static previews
+block scripts, and origin-served document previews permit only the fixed
+hash-authorized theme bridge. Result thumbnails, Workbench and document
+popouts retain these restrictions. Script-powered HTML interaction is limited
+until an enforceable network boundary is available; layout, native form
+controls and local media remain. Explicitly started live dev servers are a
+separate capability. The [security acceptance](../audits/security-hardening-2026-10-20.md)
+records the probe and regression.

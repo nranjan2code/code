@@ -108,16 +108,24 @@ async fn concurrent_executions_keep_event_identity_separate() {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::test]
-async fn control_files_are_denied_before_spawn() {
+async fn control_files_are_denied_by_native_sandbox() {
     let workspace = tempfile::tempdir().unwrap();
     std::fs::write(workspace.path().join(".env"), "SECRET=must-not-leak").unwrap();
     let (sink, _events) = SandboxEventSink::new_with_id("stress-control".into());
-    let ctx = ToolContext::new(workspace.path().to_path_buf())
+    let mut ctx = ToolContext::new(workspace.path().to_path_buf())
         .with_sandbox_sink(sink.with_owner_session("sandbox-stress"));
+    ctx.sandbox = Some(Arc::new(vak_tools::sandbox::Seatbelt::new(
+        vak_tools::sandbox::SandboxMode::WorkspaceWrite,
+        workspace.path(),
+    )));
     let output = BashTool
-        .execute(&serde_json::json!({"command": "cat .env"}), &ctx)
+        .execute(
+            &serde_json::json!({"command": "name=.en; cat \"$name\"v"}),
+            &ctx,
+        )
         .await;
     assert!(output.is_error());
-    assert!(output.content.contains("control files"));
+    assert!(!output.content.contains("must-not-leak"));
 }

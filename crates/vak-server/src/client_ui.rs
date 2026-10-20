@@ -42,11 +42,23 @@ mod tests {
     #[test]
     fn the_app_page_confines_frames_to_the_app_and_loopback() {
         let response = serve_file(&CLIENT_UI, "index.html");
+        assert_eq!(response.headers()["x-dns-prefetch-control"], "off");
+        assert!(
+            CLIENT_UI
+                .get_file("index.html")
+                .unwrap()
+                .contents_utf8()
+                .unwrap()
+                .contains("http-equiv=\"x-dns-prefetch-control\" content=\"off\"")
+        );
         let policy = response.headers()["content-security-policy"]
             .to_str()
             .unwrap();
         assert!(policy.starts_with("frame-src 'self'"), "{policy}");
-        for allowed in policy.split_whitespace().skip(1) {
+        assert!(policy.contains("img-src 'self' data: blob:"));
+        assert!(policy.contains("media-src 'self' data: blob:"));
+        assert!(policy.contains("object-src 'none'"));
+        for allowed in policy.split(';').next().unwrap().split_whitespace().skip(1) {
             assert!(
                 matches!(
                     allowed,

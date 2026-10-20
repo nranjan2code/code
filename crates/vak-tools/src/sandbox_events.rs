@@ -83,6 +83,7 @@ pub struct SandboxEventSink {
     tx: mpsc::UnboundedSender<SandboxEvent>,
     execution_id: String,
     owner_session_id: Option<String>,
+    admitted: bool,
     trace: Option<vak_session::trace::TraceKey>,
 }
 
@@ -98,6 +99,7 @@ impl SandboxEventSink {
                 tx,
                 execution_id,
                 owner_session_id: None,
+                admitted: false,
                 trace: None,
             },
             rx,
@@ -106,6 +108,12 @@ impl SandboxEventSink {
 
     pub fn with_owner_session(mut self, session_id: impl Into<String>) -> Self {
         self.owner_session_id = Some(session_id.into());
+        self.admitted = true;
+        self
+    }
+
+    pub(crate) fn admitted(mut self) -> Self {
+        self.admitted = true;
         self
     }
 
@@ -149,7 +157,7 @@ impl SandboxEventSink {
     /// Whether this tool call was admitted by the runtime and should receive
     /// the workspace control-file restrictions that model fixtures omit.
     pub fn is_runtime_call(&self) -> bool {
-        self.owner_session_id.is_some()
+        self.admitted
     }
 
     pub fn emit_execution_started(

@@ -1,5 +1,12 @@
 # Decisions
 
+- 2026-10-20: The maintainer requested fixes for the integrity and hostile-prompt
+  audit, safe external media, and functioning external hyperlinks on desktop
+  and web. Restricted mutation/egress approval and mandatory backend control
+  protection take priority over automatic rendering or unqualified execution.
+  Full Access remains explicitly trusted. See the
+  [follow-through](audits/security-hardening-2026-10-20.md).
+
 - 2026-10-20: Library entries should show readable content rather than raw
   markup, account for their different content types, and retain their actions,
   flows and interactive controls. See [Library](design/82-library.md#5-the-artifact-page).

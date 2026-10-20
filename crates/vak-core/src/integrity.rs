@@ -29,6 +29,10 @@ pub struct Integrity {
     /// leaves one, and the next writer trims it. Not damage.
     pub torn_tails: u64,
     pub broken: Vec<Broken>,
+    /// Coverage failures prevent a healthy verdict; paths contain only state ids.
+    pub unreadable: Vec<String>,
+    /// Payload classes outside this keyless record/receipt check.
+    pub unchecked_classes: Vec<&'static str>,
     pub keys: u64,
     pub keys_destroyed: u64,
     pub keys_held: u64,
@@ -43,35 +47,63 @@ pub struct Integrity {
 }
 
 impl Integrity {
-    /// Nothing is damaged. Search being behind is not damage.
+    /// The covered records and receipts passed, with no inventory/read failure.
+    /// `unchecked_classes` remain outside this verdict; stale search is not damage.
     pub fn sound(&self) -> bool {
-        self.broken.is_empty() && self.receipts_unverified == 0
+        self.broken.is_empty()
+            && self.receipts_unverified == 0
+            && self.unreadable.is_empty()
+            && self.search != "unreadable"
     }
 }
 
 /// Every directory of record segments under `root`, not looking inside
-/// one, the object store or anything deeper than a ledger lies.
-fn segment_dirs(root: &Path) -> Vec<PathBuf> {
+/// one or state classes that the registry excludes from record verification.
+fn segment_dirs(root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut found = Vec::new();
-    let mut stack = vec![(root.to_path_buf(), 0u8)];
-    while let Some((dir, depth)) = stack.pop() {
-        if vak_session::verify::is_segment_dir(&dir) {
-            found.push(dir);
+    let mut unreadable = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let relative = dir.strip_prefix(root).unwrap_or(&dir);
+        // Only authoritative record trees belong in this inventory. In
+        // particular, never walk an Agent's editable workspace or a cache.
+        if crate::state::entries_for(crate::state::Root::Data)
+            .any(|entry| entry.class != crate::state::Class::Record && entry.matches(relative))
+        {
             continue;
         }
-        if depth >= 8 {
-            continue;
-        }
-        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            let plain_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
-            if plain_dir && entry.file_name() != "store" {
-                stack.push((path, depth + 1));
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => {
+                unreadable.push(dir);
+                continue;
             }
+        };
+        let mut children = Vec::new();
+        let mut chain = false;
+        for entry in entries {
+            let Ok(entry) = entry else {
+                unreadable.push(dir.clone());
+                continue;
+            };
+            let name = entry.file_name();
+            chain |=
+                name == "seals.log" || name.to_str().is_some_and(|name| name.starts_with("seg-"));
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() && name != "store" => children.push(entry.path()),
+                Ok(kind) if kind.is_symlink() => unreadable.push(entry.path()),
+                Ok(_) => {}
+                Err(_) => unreadable.push(entry.path()),
+            }
+        }
+        if chain {
+            found.push(dir);
+        } else {
+            stack.extend(children);
         }
     }
     found.sort();
-    found
+    (found, unreadable)
 }
 
 impl Core {
@@ -86,6 +118,12 @@ impl Core {
             records: 0,
             torn_tails: 0,
             broken: Vec::new(),
+            unreadable: Vec::new(),
+            unchecked_classes: vec![
+                "tenant_object_payloads",
+                "scope_key_payloads",
+                "derived_index_payloads",
+            ],
             keys: 0,
             keys_destroyed: 0,
             keys_held: 0,
@@ -94,7 +132,17 @@ impl Core {
             search: "unreadable",
             fenced: vak_session::fence::is_fenced(),
         };
-        for dir in segment_dirs(&home) {
+        let (directories, unreadable) = segment_dirs(&home);
+        report.unreadable = unreadable
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&home)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        for dir in directories {
             let relative = dir.strip_prefix(&home).unwrap_or(&dir);
             if relative
                 .components()
@@ -120,8 +168,16 @@ impl Core {
             report.keys = keys as u64;
             report.keys_destroyed = destroyed as u64;
             report.keys_held = tenant.held_count() as u64;
+        } else {
+            report.unreadable.push("tenant_keys".into());
         }
-        let receipts = self.erasure_receipts();
+        let receipts = match self.try_erasure_receipts() {
+            Ok(receipts) => receipts,
+            Err(_) => {
+                report.unreadable.push("erasure_receipts".into());
+                Vec::new()
+            }
+        };
         report.receipts = receipts.len() as u64;
         report.receipts_unverified = receipts
             .iter()

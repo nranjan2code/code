@@ -37,7 +37,7 @@ fn seatbelt_read_only_profile_denies_all_writes() {
     assert!(p.contains("(allow file-read* (subpath"));
     assert!(!p.contains("(allow file-read*)\n"));
     assert!(
-        !p.contains("file-write*"),
+        !p.contains("(allow file-write*"),
         "read-only must grant no write paths"
     );
 }
@@ -290,7 +290,7 @@ fn read_only_variant_strips_all_write_entitlements() {
         .expect("command follows profile");
     let profile = &wrapped[profile_start..profile_end];
     assert!(
-        !profile.contains("file-write*"),
+        !profile.contains("(allow file-write*"),
         "read-only variant must not grant writes: {profile}"
     );
 }

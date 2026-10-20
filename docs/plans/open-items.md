@@ -1,3 +1,41 @@
+## Data integrity and hostile prompts (2026-10-20)
+
+The [initial audit](../audits/security-integrity-2026-10-20.md) preserves the
+vulnerable baseline. The [follow-through](../audits/security-hardening-2026-10-20.md)
+records implementation, acceptance and remaining assurance limits.
+
+- [x] SI-01: remote answer media and thumbnails stay inert across Markdown and
+  presentation/card renderers; CSP denies remote media, and map tiles require
+  consent. Local/authenticated and supported self-contained media remain.
+- [x] Additional preview egress: block arbitrary document scripts after a real
+  Chrome probe bypassed fetch CSP using loopback WebRTC/STUN. Static and origin
+  policy reruns show zero packets. Origin documents retain the fixed theme
+  bridge; interactive page scripts are restricted pending proper confinement.
+- [x] SI-02: admitted workers protect secret/control files without owner
+  telemetry, including grep and computed shell paths. Seatbelt enforces the
+  exclusions; unqualified backends refuse restricted execution.
+- [x] SI-03: unknown stored/file/command authorship is both private and
+  untrusted, editable admission context is conservative, and mixed-context
+  mutation and outbound calls cannot use preapproval to bypass the ask.
+- [x] SI-04: owner requests carry private provenance through the live loop,
+  ledger-derived turns and later recalled context.
+- [x] SI-05: strict inventory, first-segment seals and complete manifest checks;
+  read/receipt failures prevent a healthy report, observation does not repair,
+  and Admin/CLI state the unchecked payload coverage.
+- [x] External hyperlinks use trusted clicks, system-browser opening on Tauri,
+  separate tabs on web, scheme validation and no referrer.
+- [ ] Restore rendered-browser compatibility under the screened proxy and native
+  confinement. The public-page Chrome smoke currently fails before DOM output
+  on this Mac; the tool returns an error and ordinary fetch remains available.
+  Do not remove confinement to make the smoke pass. DNS/SOCKS rejection and
+  private IPC confinement have passing regression tests.
+- [ ] Qualify Linux Landlock and Docker for mandatory control-file exclusions.
+  Restricted worker/parser/MCP paths currently refuse these backends safely.
+- [ ] Independent reference readers and multi-process storage interleavings,
+  complete rollback/deletion detection, and descriptor-relative filesystem
+  operations remain broader assurance work. Full Access is still explicitly
+  trusted and unsandboxed; prompts cannot select it automatically.
+
 ## Voice setup and current providers (2026-10-20)
 
 - [x] Study current provider documentation and connected-account catalogues,

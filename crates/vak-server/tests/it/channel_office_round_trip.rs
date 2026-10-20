@@ -83,6 +83,26 @@ fn inbox_path(name: &str, bytes: &[u8]) -> (String, String) {
     (format!("inbox/{}-{name}", &hex[..12]), hex)
 }
 
+/// A synthetic human on the existing approver surface answers one real gate.
+async fn approve_edit(base: &str) {
+    let client = reqwest::Client::new();
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let status: serde_json::Value = client.get(format!("{base}/gateway/status"))
+                .send().await.unwrap().json().await.unwrap();
+            if status["approvals"]["pending"].as_u64().unwrap_or(0) > 0 { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        let response = client.post(format!("{base}/gateway/inbound"))
+            .json(&serde_json::json!({"surface":"log","chat":"ops","sender":"owner","text":"yes","wait":false}))
+            .send().await.unwrap();
+        assert_eq!(response.status(), 200);
+        let answer: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(answer["state"], "approval_resolved");
+        assert_eq!(answer["approved"], true);
+    }).await.expect("forwarded attachment edit requires human approval");
+}
+
 /// Sends `bytes` as `name` on a channel whose model edits it with `ops`,
 /// and returns the waiting reply.
 async fn round_trip(
@@ -112,7 +132,7 @@ async fn round_trip(
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[gateway]\nchat_allowlist_open = true\n",
+        "[gateway]\nchat_allowlist_open = true\napprovals = \"forward\"\napprover = \"log:ops\"\n",
     )
     .unwrap();
     vak_config::paths::isolate_home_for_tests();
@@ -148,12 +168,13 @@ async fn round_trip(
     if accepts_files {
         request["capabilities"] = serde_json::json!({"accepts_files": true});
     }
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::new();
+    let pending = client
         .post(format!("http://{addr}/gateway/inbound"))
-        .json(&request)
-        .send()
-        .await
-        .unwrap();
+        .json(&request);
+    let base = format!("http://{addr}");
+    let (response, ()) = tokio::join!(pending.send(), approve_edit(&base));
+    let response = response.unwrap();
     assert_eq!(response.status(), 200);
     response.json().await.unwrap()
 }
@@ -325,7 +346,7 @@ async fn the_telegram_bridge_sends_the_edited_workbook_back() {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/config.toml"),
-        "[gateway]\nchat_allowlist = [\"telegram:4242\"]\n",
+        "[gateway]\nchat_allowlist = [\"telegram:4242\", \"log:ops\"]\napprovals = \"forward\"\napprover = \"log:ops\"\n",
     )
     .unwrap();
     vak_config::paths::isolate_home_for_tests();
@@ -363,7 +384,9 @@ async fn the_telegram_bridge_sends_the_edited_workbook_back() {
         gateway_token: "vk_test".into(),
         bot_id: None,
     };
-    assert_eq!(bridge.tick().await.unwrap(), 901);
+    let base = format!("http://{gateway_addr}");
+    let (tick, ()) = tokio::join!(bridge.tick(), approve_edit(&base));
+    assert_eq!(tick.unwrap(), 901);
 
     let sent = sent.lock().unwrap();
     assert_eq!(sent.len(), 2, "{sent:?}");

@@ -222,7 +222,7 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
             );
           }
           case "image":
-            return node.safe && uiPreferences.externalMedia && safeUrl(node.url, true) ? <img class="semantic-image" src={node.url} alt={node.alt} title={node.title ?? undefined} loading="lazy" /> : <span>{node.alt || "Image unavailable"}</span>;
+            return node.safe && uiPreferences.externalMedia && safeUrl(node.url, true) ? <img class="semantic-image" src={node.url} alt={node.alt} title={node.title ?? undefined} loading="lazy" /> : safeUrl(node.url) ? <a class="semantic-link" href={node.url} target="_blank" rel="noreferrer noopener">{node.alt || "Open external image"}</a> : <span>{node.alt || "Image unavailable"}</span>;
           case "soft_break":
             return " ";
           case "hard_break":
@@ -536,7 +536,7 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string } & Presenta
           case "citations":
             return <ol class="semantic-citations"><For each={block.items}>{(citation) => <li><Show when={safeUrl(citation.url)} fallback={<span>{citation.label}</span>}><a href={citation.url} target="_blank" rel="noreferrer noopener">{citation.label}</a></Show></li>}</For></ol>;
           case "media":
-            return safeUrl(block.source, true) ? (block.media_type?.startsWith("image/") && uiPreferences.externalMedia ? <img class="semantic-media" src={block.source} alt={block.alt} loading="lazy" /> : <a class="semantic-media-link" href={block.source} target="_blank" rel="noreferrer noopener">{block.alt || "Open media"}</a>) : <span class="semantic-unsafe-link">{block.alt || "Unsafe media omitted"}</span>;
+            return (safeUrl(block.source) || safeUrl(block.source, true)) ? (block.media_type?.startsWith("image/") && uiPreferences.externalMedia && safeUrl(block.source, true) ? <img class="semantic-media" src={block.source} alt={block.alt} loading="lazy" /> : <a class="semantic-media-link" href={block.source} target="_blank" rel="noreferrer noopener">{block.alt || "Open media"}</a>) : <span class="semantic-unsafe-link">{block.alt || "Unsafe media omitted"}</span>;
           case "artifact_ref":
             return <Artifact item={{ id: block.id, turn_id: "", timestamp: "", role: "assistant", kind: "artifact", status: "succeeded", content: { type: "artifact", artifact: block.artifact }, actions: [], fallback_text: block.artifact.path ?? block.artifact.name }} />;
           case "rule":
@@ -821,7 +821,7 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
   const pending = () => !failed() && !page() && !image() && (source()?.kind === "Web page" || source()?.kind === "Image");
   return (
     <div class="result-card-preview" aria-hidden="true">
-      <Show when={page()}>{(html) => <div class="result-card-page"><iframe title="" tabIndex={-1} sandbox="allow-scripts" srcdoc={themedPreview(html())} /></div>}</Show>
+      <Show when={page()}>{(html) => <div class="result-card-page"><iframe title="" tabIndex={-1} sandbox="" srcdoc={themedPreview(html())} /></div>}</Show>
       <Show when={image()}>{(url) => <img class="result-card-image" src={url()} alt="" />}</Show>
       <Show when={pending()}><Skeleton label="Loading preview" shapes={["block"]} class="result-card-skeleton" /></Show>
       <Show when={!page() && !image() && !pending()}>

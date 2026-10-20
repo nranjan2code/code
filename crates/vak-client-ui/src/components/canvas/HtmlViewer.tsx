@@ -1,7 +1,7 @@
 import { withPreviewLibraries } from "../../previewLibraries";
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import * as api from "../../api";
-import { previewSandbox, previewWindowDocument, sandboxedSrcdoc } from "../../safeUrl";
+import { previewSandbox, previewWindowDocument, previewOriginWindowDocument, sandboxedSrcdoc } from "../../safeUrl";
 import { artifactPreviewHtml, subjectReader } from "../../artifactPreview";
 import { previewSource, subjectKey, subjectPath } from "../../canvasSubject";
 import { createLoader, readText } from "./createLoader";
@@ -19,8 +19,8 @@ type Shown =
 
 /**
  * A page. One with files behind it is served from a preview origin, so its
- * own stylesheets, scripts, modules, images and links load as they do on any
- * web server; markup from the conversation, and a page the server cannot
+ * own stylesheets and images load. Only the fixed theme bridge may run;
+ * document scripts and event handlers are blocked. markup from the conversation, and a page the server cannot
  * serve from an origin of its own, is shown as one document.
  *
  * The page is read once for what it is (`subjectKey`) and again only when the
@@ -35,7 +35,7 @@ export default function HtmlViewer(props: ViewerProps) {
       const reader = subjectReader(subject);
       const file = subjectPath(subject);
       const raw = subject.kind === "inline" ? subject.html : await readText(reader, file);
-      let warning: string | null = null;
+      let warning: string | null = "Scripts are blocked in this preview. Inputs and layout remain available; export the file to run its code outside Vakyartha.";
       const parsed = new DOMParser().parseFromString(raw, "text/html");
       if (!parsed.body?.textContent?.trim() && !parsed.body?.children.length && !parsed.querySelector("script")) {
         warning = "This page has nothing visible to show. Open Code to see what it contains.";
@@ -67,11 +67,10 @@ export default function HtmlViewer(props: ViewerProps) {
     const shown = loader.data()?.shown;
     props.register(shown ? {
       popout: () => {
-        if (shown.mode === "origin") {
-          window.open(shown.url, "_blank", "noopener,noreferrer");
-          return;
-        }
-        const url = URL.createObjectURL(new Blob([previewWindowDocument(shown.page)], { type: "text/html" }));
+        const document = shown.mode === "origin"
+          ? previewOriginWindowDocument(shown.url)
+          : previewWindowDocument(shown.page);
+        const url = URL.createObjectURL(new Blob([document], { type: "text/html" }));
         window.open(url, "_blank", "noopener,noreferrer");
         setTimeout(() => URL.revokeObjectURL(url), 60000);
       },

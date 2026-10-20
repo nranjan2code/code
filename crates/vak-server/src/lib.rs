@@ -14853,7 +14853,7 @@ async fn dispatch_candidate_revision(
                     candidate: saved.candidate.candidate_id.clone(),
                 },
             ))
-            .with_approver_answerable(false)
+            .with_approver_answerable(true)
             .with_task_copy_boundary()
             .with_new_documents(new_documents),
         Err(error) => {
@@ -14960,6 +14960,15 @@ async fn dispatch_candidate_revision(
             .collect::<Vec<_>>()
             .join(", ")
     );
+    let revision_approver: Arc<dyn Approver> = Arc::new(HttpApprover {
+        events_tx: parent.events_tx.clone(),
+        pending: parent.pending.clone(),
+        session_id: parent.id.clone(),
+        activity_buffer: parent.activity_buffer.clone(),
+        answerable: true,
+        shows_questions: false,
+        wait: Duration::from_secs(parent.core.control_limits().approval_secs),
+    });
     let reply_id = revision_id.clone();
     tokio::spawn(async move {
         let taken = child
@@ -14977,7 +14986,7 @@ async fn dispatch_candidate_revision(
                         .lock()
                         .map(|cancel| cancel.clone())
                         .unwrap_or_else(|_| CancellationToken::new()),
-                    Some(Arc::new(vak_agent::AutoDeny)),
+                    Some(revision_approver),
                     None,
                     None,
                     mpsc_to_broadcast(child.events_tx.clone()),
@@ -26006,6 +26015,40 @@ mod sandbox_promotion_tests {
         );
     }
 
+    async fn approve_revision_edit(state: &AppState, session: &str, tool: &str) -> usize {
+        let handle = state.get(session).unwrap();
+        let requests = handle
+            .pending
+            .lock()
+            .unwrap()
+            .values()
+            .map(|request| {
+                (
+                    request.id.clone(),
+                    request.tool.clone(),
+                    request.reason.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let count = requests.len();
+        for (id, requested_tool, reason) in requests {
+            assert_eq!(requested_tool, tool);
+            assert!(reason.contains("private data"), "{reason}");
+            assert!(reason.contains("inherited run context"), "{reason}");
+            let response = answer_approval(
+                State(state.clone()),
+                Path((session.into(), id)),
+                Json(ApprovalBody {
+                    approve: true,
+                    remember: false,
+                }),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        count
+    }
+
     #[tokio::test]
     async fn saved_human_comment_revision_fails_before_run_without_provider() {
         vak_config::paths::isolate_home_for_tests();
@@ -26164,8 +26207,10 @@ mod sandbox_promotion_tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let mut approvals = 0;
         let newer = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
+                approvals += approve_revision_edit(&state, "session-1", "write").await;
                 let records =
                     crate::sandbox_records::load(&sandbox_records_path(&state, "session-1"))
                         .unwrap();
@@ -26196,6 +26241,10 @@ mod sandbox_promotion_tests {
         })
         .await
         .unwrap();
+        assert_eq!(
+            approvals, 1,
+            "revision must ask the parent conversation before editing"
+        );
         assert_eq!(
             tokio::fs::read_to_string(newer.candidate.source_root.join("result.txt"))
                 .await
@@ -26316,8 +26365,10 @@ mod sandbox_promotion_tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let mut approvals = 0;
         let newer = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
+                approvals += approve_revision_edit(&state, "session-1", "office_apply").await;
                 let records =
                     crate::sandbox_records::load(&sandbox_records_path(&state, "session-1"))
                         .unwrap();
@@ -26347,6 +26398,10 @@ mod sandbox_promotion_tests {
         })
         .await
         .unwrap();
+        assert_eq!(
+            approvals, 1,
+            "revision must ask the parent conversation before editing"
+        );
 
         let files: Vec<&str> = newer
             .candidate

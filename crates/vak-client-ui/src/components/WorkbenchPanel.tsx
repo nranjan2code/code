@@ -863,7 +863,7 @@ export default function WorkbenchPanel() {
                 </div>
                 <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
                 <Show when={draftPage() && !reviewFileError()}>
-                  <iframe class="candidate-review-page" title={`Preview of ${reviewedPath()?.split("/").pop() ?? "the draft"}`} sandbox="allow-scripts" srcdoc={themedPreview(draftPage() ?? "")} />
+                  <iframe class="candidate-review-page" title={`Preview of ${reviewedPath()?.split("/").pop() ?? "the draft"}`} sandbox="" srcdoc={themedPreview(draftPage() ?? "")} />
                 </Show>
                 <Show when={!draftPage() && reviewedPath() && !reviewFileError() && !isDocumentPath(reviewedPath() ?? "")}>
                   <pre class="candidate-review-draft">{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre>
@@ -1447,7 +1447,7 @@ export default function WorkbenchPanel() {
                     <div style={{ width: "100%", height: "100%", "min-height": "400px" }}>
                       <iframe
                         srcdoc={themedPreview(artifactPreview())}
-                        sandbox="allow-scripts"
+                        sandbox=""
                         style={{
                           width: "100%",
                           height: "100%",

@@ -9,7 +9,7 @@
 # When a change makes a finding wrong, fixes it, or adds one, edit it here and
 # set `prose_reviewed` to the version and date, in the same commit.
 
-prose_reviewed = "8.9.0 · 2026-10-19"
+prose_reviewed = "8.16.0 · 2026-10-20"
 
 summary = """
 Vakyartha (`vak`) is a local-first agent harness for one owner: agents that \
@@ -77,7 +77,7 @@ because its revocation sat in an unreadable segment (A01), and a writer \
 paused between the epoch check and the ref update (A02). A review's probes \
 found them, not the suite. Repeated takeover tests now expose and cover \
 import invalidation of encrypted projections: a standby catalog cannot \
-outlive the imported keys. The broader interleaving gap remains.
+outlive the imported keys. The seal-manifest verifier blind spot found on 2026-10-20 is fixed; broader interleaving and independent-reader gaps remain.
 """
 matters = """
 These are the guarantees authorization, erasure and sync rest on. A bug here \
@@ -86,6 +86,18 @@ or a write that should have been fenced.
 """
 fix = "A model-based test of each chain's reader against a reference, and multi-process interleavings of every fenced write path."
 sources = "[docs/audits/architecture-and-presentation-review-2026-10-18.md](../docs/audits/architecture-and-presentation-review-2026-10-18.md) (A01, A02); [conversation/evidence and import checks](../docs/audits/conversation-evidence-contract-2026-10-19.md); `crates/vak-storage`, `crates/vak-session`."
+
+[[finding]]
+id = "F5"
+tag = "Compatibility"
+verdict = "Live smoke fails closed"
+title = "The securely confined rendered browser does not launch local Chrome"
+evidence = """
+The public example.com smoke on 2026-10-20 exits without a DOM under the new screened-proxy and native filesystem policy. Private-profile Unix IPC and private-destination rejection tests pass, but neither establishes working page rendering. The tool returns a typed error and recommends ordinary fetch; it never retries unconfined. Restricted Landlock and Docker workers also refuse until their backends enforce control-file exclusions.
+"""
+matters = "Script-built pages currently lose rendered browsing on the measured Mac, and unqualified restricted backends lose worker/parser/MCP availability. Safe refusal closes the unsafe execution path but does not establish feature parity."
+fix = "Qualify browser launch and backend control-file enforcement with real process tests, preserving proxy-only TCP, private profile state and mandatory secret/control exclusions."
+sources = "[Security hardening acceptance](../docs/audits/security-hardening-2026-10-20.md); the ignored public-page browser smoke and native IPC tests."
 
 [[keep]]
 name = "vak-permission"
@@ -113,7 +125,7 @@ text = "At-most-once outbound actions and unknown outcomes that are never re-sen
 
 [[keep]]
 name = "The provenance gate"
-text = "Private data plus someone else's words means a human approves anything that leaves the machine."
+text = "Owner input and unknown editable context carry conservative provenance; private plus untrusted content requires unpreauthorizable approval for mutations and outbound tool calls in restricted modes. Remote answer media stay inert until a person follows a link."
 
 [[keep]]
 name = "The completion judges"

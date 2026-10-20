@@ -187,9 +187,9 @@ Closing the last tab slides the Canvas away (`canvasSlideOut`, `EXIT_MS = 220` i
 
 A preview runs someone else's markup, so its isolation is decided by the client and never by the data that describes the preview.
 
-- **Sandbox.** `previewSandbox()` (`safeUrl.ts`) is the only source of an `iframe` `sandbox` value: `static` (`allow-scripts allow-forms`, opaque origin) for markup from the conversation and for a page shown as one document, `origin` for a page served from an origin of its own (§3.2), which is not the app's origin and so may keep its own storage and open windows. `allow-same-origin` on a `srcdoc` frame would give the previewed script the app's origin and its authenticated API, so it is never reachable from a card.
+- **Sandbox.** `previewSandbox()` (`safeUrl.ts`) is the only source of an `iframe` `sandbox` value: `static` (`allow-forms`, opaque origin; scripts blocked) for markup from the conversation and for a page shown as one document, `origin` for a page served from an origin of its own (§3.2), which is not the app's origin and so may keep its own storage and open windows. `allow-same-origin` on a `srcdoc` frame would give the previewed script the app's origin and its authenticated API, so it is never reachable from a card.
 - **Navigation.** A frame's own policy cannot stop it navigating itself away (a script, a link or a refresh), so the page that frames it does: the web app answers with `frame-src 'self' blob: data: http://127.0.0.1:* http://localhost:*` (`embedded_ui.rs`, `the_app_page_confines_frames_to_the_app_and_loopback`) and the desktop shell sets the same in `tauri.conf.json`. A preview cannot be sent to an internet address, whatever it runs. A preview on an origin of its own is still allowed to open a window (`allow-popups`).
-- **Network.** `sandboxedSrcdoc()` always writes `connect-src 'none'`. There is no card field, prop or argument that widens it, so the chrome's "Safe preview, offline" is what the frame enforces. A preview that needs network access is a separate, user-granted setting, not built.
+- **Network.** `sandboxedSrcdoc()` always writes `connect-src 'none'` and `script-src 'none'`. CSP fetch directives do not block WebRTC, so document scripts cannot run. There is no card field, prop or argument that widens it, so the chrome's "Safe preview, offline" is what the frame enforces. A preview that needs network access is a separate, user-granted setting, not built.
 - **Theme.** After the policy and before the markup, `sandboxedSrcdoc()` writes one `<style data-vak-theme>` block and nothing else: the active theme's tokens as CSS variables on `:root` (`--vak-bg`, `--vak-fg`, `--vak-muted`, `--vak-accent`, `--vak-rule`, `--vak-font`, `--vak-font-mono`, `--vak-radius`), read from the app's computed root style when the document is built, with `color-scheme` and `body { font-family: var(--vak-font) }`. A value cannot close the block. A theme switch rewrites that leading block in the open preview's document (`withCurrentTheme`, `previewTheme.ts`) and reads no file again; the sandbox value and the policy do not change. `emit_markup_preview_card`'s description names the variables (docs/design/96-answer-projection-gaps.md, Q1).
 - **CSP placement.** The policy is the first markup after the document's doctype, so no script (before `<head>`, or in a string or comment that mentions `<head>`) runs ahead of it.
 - **Server side.** `emit_file_preview_card` (a file, `ui.preview`, `artifact_path` required) and `emit_markup_preview_card` (inline markup, `ui.markup`, `html` required) have closed schemas, and `normalize_payload` drops `sandbox` and `connect_src` if a model sends them anyway. The client ignores them regardless, because the fence path does not go through the tool.
@@ -202,7 +202,7 @@ A page with files behind it (a saved draft's site, a run's output, a page in the
 
 - **An origin of its own.** Each preview listens on a fresh loopback port, so it is a browser origin of its own, and it is framed under the *other* loopback name than the one the app is reached by (`127.0.0.1` and `localhost` are two sites). It shares no cookie, storage or `document.parent` access with the app, and the app's routes, credentials and cookies never reach it.
 - **Scope.** The listener reads only through the same functions that serve the file to the owner: a saved version's manifest files (hash-checked), a run's scratch directory, or the conversation's own workspace (its Agent's folder) below the opened page's directory, exactly, with dotfiles refused and nothing looked for elsewhere. `..`, backslashes and NUL are refused before any read. The path starts with an unguessable token; a wrong or missing one is a plain 404.
-- **Policy.** The page may load its own files and run its own script and may reach no other origin (`connect-src 'self'`, no external images, fonts or frames); only the app's loopback origins and the desktop shell may embed it. `GET` and `HEAD` only, and a request whose `Host` is not a loopback name is refused (DNS rebinding).
+- **Policy.** The page may load its own files but runs only the fixed, hash-authorized theme bridge; document scripts and event handlers are blocked. It may reach no other origin (`connect-src 'self'`, no external images, fonts or frames); only the app's loopback origins and the desktop shell may embed it. `GET` and `HEAD` only, and a request whose `Host` is not a loopback name is refused (DNS rebinding).
 - **Lifetime.** The viewer closes the preview (`DELETE /previews/{id}`) when it lets go; at most 16 are open and the oldest goes first; none outlives twelve hours.
 - **Loopback only.** A loopback port cannot be reached from a browser on another machine. A request that did not arrive by a loopback name is answered `409 not_local`, and the page is shown as one document as before; a dev server reports that a live preview needs the app on this computer. Serving previews to a remote browser needs a distinct preview host name and a fixed port range; it is not built.
 - **Limits.** Links written as absolute paths (`/style.css`) resolve against the preview origin's root, not the page's directory, and are not found; relative links work. A dev server is framed directly on its own port; it is not proxied, so its hot-reload socket works as it does in a browser tab.
@@ -221,3 +221,17 @@ The Live preview list in the dock (`LivePreviewPanel.tsx`) is the one place dev 
   - `375px` (Mobile, with mobile device frame styling)
 - **Theme Awareness**: the canvas follows the client's themes (`theme.ts`: match system, light, dark, high contrast, frosted light, frosted dark; docs/design/75-visual-refresh.md).
 - **Keyboard Navigation**: Pressing `Escape` closes the canvas.
+
+## Preview script restriction — 2026-10-20
+
+A real Chrome probe sent five loopback STUN packets from an opaque-origin
+`srcdoc` carrying `connect-src 'none'`. Automatic document previews therefore
+block arbitrary scripts: static CSP uses `script-src 'none'`, and the isolated
+preview server permits only the exact SHA-256 of its fixed theme bridge.
+Origin previews retain relative styles/images and native form controls, but
+script-powered controls, modules and document fetch do not run. Result cards
+and Workbench frames also omit `allow-scripts`. Popouts retain a sandboxed
+wrapper rather than opening origin documents directly. Configured live dev
+servers remain a separate explicitly started capability; they are not described
+as offline document previews. See the
+[acceptance record](../audits/security-hardening-2026-10-20.md).

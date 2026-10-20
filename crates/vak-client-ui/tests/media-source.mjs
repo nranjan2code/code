@@ -16,3 +16,12 @@ for (const address of ["javascript:alert(1)", "file:///etc/passwd", "//host/a.pn
   assert.deepEqual(mediaSource(address), { kind: "refused" }, address);
 }
 console.log("media-source: ok");
+
+// Recognizing a web source never authorizes activating it in the renderer.
+const { safeUrl } = await import("../src/safeUrl.ts");
+for (const address of ["https://example.com/private?data=secret", "http://127.0.0.1/private", "https://example.com/a.mp3", "https://example.com/a.mp4"]) {
+  assert.equal(safeUrl(address, true), false, address);
+  assert.equal(safeUrl(address), true, "human-activated links remain available");
+}
+assert.equal(safeUrl("data:image/png;base64,AAAA", true), true);
+assert.equal(safeUrl("data:image/svg+xml,<svg/>", true), false);

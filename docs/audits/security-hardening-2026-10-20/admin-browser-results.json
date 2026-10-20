@@ -1,0 +1,53 @@
+{
+  "results": [
+    {
+      "checked": true,
+      "width": 1440,
+      "theme": "light",
+      "state": "complete"
+    },
+    {
+      "checked": true,
+      "width": 1440,
+      "theme": "light",
+      "state": "incomplete"
+    },
+    {
+      "checked": true,
+      "width": 1440,
+      "theme": "dark",
+      "state": "complete"
+    },
+    {
+      "checked": true,
+      "width": 1440,
+      "theme": "dark",
+      "state": "incomplete"
+    },
+    {
+      "checked": true,
+      "width": 390,
+      "theme": "light",
+      "state": "complete"
+    },
+    {
+      "checked": true,
+      "width": 390,
+      "theme": "light",
+      "state": "incomplete"
+    },
+    {
+      "checked": true,
+      "width": 390,
+      "theme": "dark",
+      "state": "complete"
+    },
+    {
+      "checked": true,
+      "width": 390,
+      "theme": "dark",
+      "state": "incomplete"
+    }
+  ],
+  "leaks": []
+}

@@ -1,0 +1,77 @@
+{
+  "results": [
+    {
+      "checked": true,
+      "externalLinks": 8,
+      "width": 1440,
+      "theme": "light",
+      "media": "on"
+    },
+    {
+      "checked": true,
+      "externalLinks": 8,
+      "width": 1440,
+      "theme": "light",
+      "media": "off"
+    },
+    {
+      "checked": true,
+      "externalLinks": 8,
+      "width": 1440,
+      "theme": "dark",
+      "media": "on"
+    },
+    {
+      "checked": true,
+      "externalLinks": 8,
+      "width": 1440,
+      "theme": "dark",
+      "media": "off"
+    },
+    {
+      "checked": true,
+      "externalLinks": 8,
+      "width": 390,
+      "theme": "light",
+      "media": "on"
+    },
+    {
+      "checked": true,
+      "externalLinks": 8,
+      "width": 390,
+      "theme": "light",
+      "media": "off"
+    },
+    {
+      "checked": true,
+      "externalLinks": 8,
+      "width": 390,
+      "theme": "dark",
+      "media": "on"
+    },
+    {
+      "checked": true,
+      "externalLinks": 8,
+      "width": 390,
+      "theme": "dark",
+      "media": "off"
+    },
+    {
+      "nativeTrustedClick": true,
+      "syntheticClickRefused": true
+    },
+    {
+      "rejectedUrlsInert": true
+    },
+    {
+      "webTrustedClick": true,
+      "separateTab": true,
+      "noReferrer": true
+    }
+  ],
+  "automaticRequests": 0,
+  "deliberateRequests": 1,
+  "referrers": [
+    null
+  ]
+}

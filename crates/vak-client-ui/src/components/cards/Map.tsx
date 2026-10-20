@@ -140,8 +140,9 @@ export default function MapCard(props: { payload: Payload }) {
     + (connect() === "area" ? " Z" : "");
 
   // Street tiles, only while the owner allows them.
+  const [loadedPlaces, setLoadedPlaces] = createSignal<Place[]>();
   const tiles = createMemo(() => {
-    if (!mapSettings()?.tiles) return [];
+    if (!mapSettings()?.tiles || loadedPlaces() !== places()) return [];
     const zoom = Math.max(0, Math.floor(Math.log2(view().scale / TILE)));
     const count = 2 ** zoom;
     const side = view().scale / count;
@@ -179,6 +180,9 @@ export default function MapCard(props: { payload: Payload }) {
 
   return (
     <Card form="map" label={p().label} title={p().title}>
+      <Show when={mapSettings()?.tiles && loadedPlaces() !== places()}>
+        <button type="button" class="btn" onClick={() => setLoadedPlaces(places())}>Load street map from OpenStreetMap</button>
+      </Show>
       <div class="map-frame" ref={host}>
         <svg width={width()} height={height()} role="img" aria-label={description()}>
           <rect class="map-ground" x="0" y="0" width={width()} height={height()} />

@@ -71,7 +71,9 @@ function inline(s: string): string {
   // `url` here is already HTML-escaped (entities), which is valid and safe
   // inside a src/href attribute — do not escape it again.
   out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt: string, url: string) => {
-    if (!safeUrl(url, true)) return m;
+    if (!safeUrl(url, true)) return safeUrl(url)
+      ? `<a class="lnk" href="${url}" target="_blank" rel="noreferrer noopener">${alt || "Open external image"}</a>`
+      : m;
     return `<img class="md-img" src="${url}" alt="${alt}" loading="lazy" />`;
   });
   // links → real anchors, gated by the same scheme allow-list as the settled

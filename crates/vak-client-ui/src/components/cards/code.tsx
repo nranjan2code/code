@@ -497,14 +497,9 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
  * `media` primitive, covering the former inline `link.preview` / `media.image`
  * / `media.video` / `media.audio` registry cases. `kind` selects the element.
  *
- * The privacy/security gating is deliberately evaluated HERE rather than in the
- * adapter, and is byte-for-byte the same predicate the inline cases used:
- * `uiPreferences.externalMedia` must be on AND the URL must pass
- * `safeUrl(url, true)` (media mode, which additionally allows `data:image/`)
- * before any `src` is emitted; `link.preview`'s href passes through
- * `safeUrl(url)` in non-media mode and is left undefined when it fails, while
- * its thumbnail is gated exactly like an image. Keeping it in the renderer also
- * preserves reactivity to the preference being toggled at runtime.
+ * Workspace bytes are loaded through the authenticated reader and held as
+ * object URLs. Self-contained supported media can render directly; remote
+ * sources stay explicit links. Link thumbnails use the same media allowlist.
  */
 function renderMedia(node: AdaptiveRenderNode, _surface: RenderSurface) {
   const kind = (str(node.props, "kind") ?? "link").toLowerCase();
@@ -547,13 +542,17 @@ function renderMedia(node: AdaptiveRenderNode, _surface: RenderSurface) {
     });
     const src = () => {
       const from = origin();
-      if (from.kind === "web") return uiPreferences.externalMedia ? from.url : undefined;
+      if (from.kind === "web") return safeUrl(from.url, true) ? from.url : undefined;
       return from.kind === "workspace" ? fileUrl() : undefined;
+    };
+    const remoteLink = () => {
+      const from = origin();
+      return from.kind === "web" && safeUrl(from.url) ? from.url : undefined;
     };
     const unavailable = () =>
       fileError() ?? (origin().kind === "web" && !uiPreferences.externalMedia ? "Images from the web are off in Settings." : undefined);
     return (
-      <Show when={src()} fallback={<Show when={unavailable()}>{(why) => <figure class="rich-media"><figcaption>{alt() || "Media"}: {why()}</figcaption></figure>}</Show>}>
+      <Show when={src()} fallback={<Show when={remoteLink()} fallback={<Show when={unavailable()}>{(why) => <figure class="rich-media"><figcaption>{alt() || "Media"}: {why()}</figcaption></figure>}</Show>}>{(url) => <a class="rich-link-card" href={url()} target="_blank" rel="noreferrer noopener">{alt() || "Open external media"}</a>}</Show>}>
         {(url) =>
           kind === "image" ? (
             <figure class="rich-media">

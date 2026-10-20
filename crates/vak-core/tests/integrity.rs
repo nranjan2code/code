@@ -56,4 +56,20 @@ async fn a_changed_byte_is_found_and_an_erased_conversation_still_verifies() {
     assert_eq!(damaged.broken.len(), 1, "{damaged:?}");
     assert!(damaged.broken[0].at.ends_with(&ids[2]), "{damaged:?}");
     assert_eq!(damaged.broken[0].segment, 1);
+    let kept = core.shared_scope().install_receipts();
+    std::fs::create_dir_all(&kept).unwrap();
+    std::fs::write(kept.join("synthetic-invalid.json"), b"{broken").unwrap();
+    let report = core.data_integrity();
+    assert!(!report.sound(), "{report:?}");
+    assert!(
+        report
+            .unreadable
+            .iter()
+            .any(|class| class == "erasure_receipts")
+    );
+    assert!(report.unchecked_classes.contains(&"tenant_object_payloads"));
+    assert_eq!(
+        std::fs::read(kept.join("synthetic-invalid.json")).unwrap(),
+        b"{broken"
+    );
 }

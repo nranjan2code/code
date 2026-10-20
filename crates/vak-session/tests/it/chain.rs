@@ -164,3 +164,68 @@ fn a_released_writer_lets_another_holder_write_and_is_taken_back() {
         .collect();
     assert_eq!(labels, ["a", "b", "c"]);
 }
+
+#[test]
+fn verification_rejects_corrupt_seal_manifest_and_never_repairs_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let set = vak_storage::segments::SegmentSet::open(dir.path()).unwrap();
+    let lock = set.lock().unwrap();
+    let mut writer = set.writer(1, &lock).unwrap();
+    writer.append(b"one", None).unwrap();
+    drop(writer);
+    set.seal(1, &lock).unwrap();
+    drop(lock);
+    let manifest = dir.path().join("seals.log");
+    let original = std::fs::read(&manifest).unwrap();
+    for damage in [original[..original.len() - 1].to_vec(), {
+        let mut bad = original.clone();
+        bad[8] ^= 1;
+        bad
+    }] {
+        std::fs::write(&manifest, &damage).unwrap();
+        assert!(
+            vak_session::verify::verify(dir.path())
+                .broken_segment
+                .is_some()
+        );
+        assert_eq!(
+            std::fs::read(&manifest).unwrap(),
+            damage,
+            "observation must not repair"
+        );
+    }
+}
+
+#[test]
+fn verification_of_a_missing_chain_does_not_create_it_or_report_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("absent");
+    assert!(
+        vak_session::verify::verify(&missing)
+            .broken_segment
+            .is_some()
+    );
+    assert!(!missing.exists());
+}
+
+#[test]
+fn a_valid_prefix_is_not_a_complete_sealed_segment() {
+    let dir = tempfile::tempdir().unwrap();
+    let set = vak_storage::segments::SegmentSet::open(dir.path()).unwrap();
+    let lock = set.lock().unwrap();
+    let mut writer = set.writer(1, &lock).unwrap();
+    writer.append(b"one", None).unwrap();
+    let prefix = std::fs::read(set.log_path(1)).unwrap();
+    writer.append(b"two", None).unwrap();
+    drop(writer);
+    set.seal(1, &lock).unwrap();
+    drop(lock);
+    let mut shortened = b"VAKSEG01".to_vec();
+    shortened.push(0);
+    shortened.extend(prefix);
+    std::fs::write(set.sealed_path(1), shortened).unwrap();
+    assert_eq!(
+        vak_session::verify::verify(dir.path()).broken_segment,
+        Some(1)
+    );
+}
