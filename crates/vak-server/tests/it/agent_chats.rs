@@ -1003,3 +1003,89 @@ async fn time_limits_round_trip_and_apply_live() {
     assert_eq!(limits.command_secs, 45);
     assert_eq!(limits.approval_secs, 60);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn voice_setup_and_auditions_stay_with_the_selected_agent() {
+    let (app, core, _temp) = two_agent_app().await;
+    let (status, _) = call(
+        &app,
+        "PATCH",
+        "/config",
+        json!({
+            "agent": "newsy", "voice_enabled": true, "voice_provider": "openai",
+            "voice_transcription_model": "account-stt", "voice_synthesis_model": "account-tts",
+            "voice_name": "account-voice", "voice_persona": "Calm"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, config) = call(&app, "GET", "/config?agent=newsy", json!({})).await;
+    assert_eq!(config["voice"]["voice_name"], "account-voice");
+    assert_eq!(config["voice"]["persona"], "Calm");
+    assert!(!core.effective_voice().enabled);
+    // Change only the service: old model and voice ids cannot cross accounts.
+    assert_eq!(
+        call(
+            &app,
+            "PATCH",
+            "/config",
+            json!({"agent":"newsy", "voice_provider":"gemini"})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (_, config) = call(&app, "GET", "/config?agent=newsy", json!({})).await;
+    assert!(config["voice"]["transcription_model"].is_null());
+    assert!(config["voice"]["synthesis_model"].is_null());
+    assert!(config["voice"]["voice_name"].is_null());
+    // Missing selected-Agent pin is reported before any paid dispatch. Reading
+    // the default Core instead would report its disabled switch (409).
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/voice/speak",
+            json!({"text":"Hello", "agent":"newsy"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/voice/speak",
+            json!({"text":"Hello", "agent":"other"})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/voice/speak",
+            json!({"text":"Hello", "session_id":"missing", "agent":"newsy"})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    // An explicit audition can check configuration while conversations stay off.
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/voice/speak",
+            json!({"text":"Hello", "agent":"other", "voice_override":{"provider":"openai"}})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (_, config) = call(&app, "GET", "/config?agent=other", json!({})).await;
+    assert_eq!(config["voice"]["enabled"], false);
+}

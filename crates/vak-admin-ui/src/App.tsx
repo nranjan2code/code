@@ -3338,6 +3338,7 @@ function ChannelPermissionPicker(props: {
 /// signals and folds them into its own single Save call, exactly like
 /// `pinRoute`/`pinPerm` do today.
 function VoiceConfigEditor(props: {
+  agent?: string;
   pinned: boolean;
   setPinned: (v: boolean) => void;
   voiceName: string;
@@ -3354,29 +3355,41 @@ function VoiceConfigEditor(props: {
   subject: "bot" | "chat";
 }) {
   const [previewing, setPreviewing] = createSignal(false);
-  const [voiceProviders] = createResource(selectedAgentId, () => api.voiceProviders(selectedAgentIdOrUndefined()));
-  const modelProvider = () => props.provider === "gemini" ? "google" : props.provider === "openai" ? "openai" : "";
+  const voiceAgent = () => props.agent || "vak";
+  const [voiceProviders] = createResource(voiceAgent, (agent) => api.voiceProviders(agent));
+  const voiceServices = () => voiceProviders.error ? undefined : voiceProviders();
+  const [voiceDefaults] = createResource(voiceAgent, (agent) => api.config(agent));
+  const effectiveProvider = () => props.provider || (voiceDefaults.error ? undefined : voiceDefaults()?.voice?.provider) || "";
+  const modelProvider = () => effectiveProvider() === "gemini" ? "google" : effectiveProvider() === "local" ? "" : effectiveProvider();
   const [voiceModels, { refetch: refreshVoiceModels }] = createResource(
-    () => [modelProvider(), selectedAgentIdOrUndefined() ?? ""] as const,
-    ([provider, agent]) => provider ? api.models(provider, agent || undefined) : Promise.resolve({ provider: "", models: [], capabilities: {} }),
+    () => [modelProvider(), voiceAgent()] as const,
+    ([provider, agent]) => provider ? api.voiceModels(effectiveProvider(), agent || undefined) : Promise.resolve({ provider: "", models: [], capabilities: {} }),
   );
+  const voiceCatalogue = () => voiceModels.error ? undefined : voiceModels();
   const modelChoices = (operation: "transcription" | "synthesis") => {
-    const models = voiceModels()?.models ?? [];
-    const advertised = voiceModels()?.capabilities?.[operation];
-    if (props.provider === "openai") {
-      return models.filter((model) => advertised ? advertised.includes(model) : operation === "synthesis" ? /tts/i.test(model) : /transcri|whisper/i.test(model));
-    }
-    return models.filter((model) => advertised ? advertised.includes(model) : operation === "synthesis"
-      ? /tts/i.test(model)
-      : !/tts|image|embed|embedding/i.test(model));
+    return voiceModels.loading ? [] : voiceCatalogue()?.capabilities?.[operation] ?? [];
   };
+  const [packIndex, setPackIndex] = createSignal(0);
+  const pickedPack = () => voiceModels.loading ? undefined : voiceCatalogue()?.voice_packs?.[packIndex()] ?? voiceCatalogue()?.voice_pack;
+  function useConversationPack() {
+    const pack = pickedPack();
+    if (!pack) return;
+    props.setProvider?.(pack.provider);
+    props.setTranscriptionModel(pack.transcription_model);
+    props.setSynthesisModel(pack.synthesis_model);
+    props.setVoiceName(pack.voice_name ?? "");
+  }
+
   let audioEl: HTMLAudioElement | undefined;
+  let audioUrl: string | undefined;
+  onCleanup(() => { audioEl?.pause(); if (audioUrl) URL.revokeObjectURL(audioUrl); });
 
   const preview = async () => {
     setPreviewing(true);
     try {
       const blob = await api.speak({
         text: "Hi, this is a preview of my voice.",
+        agent: voiceAgent(),
         voice_override: {
           provider: props.provider || null,
           voice_name: props.voiceName || null,
@@ -3386,7 +3399,10 @@ function VoiceConfigEditor(props: {
         },
       });
       if (!audioEl) audioEl = new Audio();
-      audioEl.src = URL.createObjectURL(blob);
+      audioEl.pause();
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      audioUrl = URL.createObjectURL(blob);
+      audioEl.src = audioUrl;
       await audioEl.play();
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -3419,11 +3435,12 @@ function VoiceConfigEditor(props: {
             </div>
           </Show>
           <Show when={props.setProvider}>
-            <select value={props.provider ?? ""} onChange={(e) => props.setProvider?.(e.currentTarget.value)} aria-label="Voice provider">
+            <select value={props.provider ?? ""} onChange={(e) => { props.setProvider?.(e.currentTarget.value); props.setTranscriptionModel(""); props.setSynthesisModel(""); props.setVoiceName(""); }} aria-label="Voice provider">
               <option value="">Inherit voice provider</option>
-              <For each={voiceProviders()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}</option>}</For>
+              <For each={voiceServices()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}</option>}</For>
             </select>
           </Show>
+          <Show when={pickedPack()}><Show when={voiceCatalogue()?.voice_packs?.length}><select aria-label="Voice setup provider" value={packIndex()} onChange={e => setPackIndex(Number(e.currentTarget.value))}><For each={voiceCatalogue()?.voice_packs}>{(pack,index) => <option value={index()}>{pack.label}</option>}</For></select></Show><button type="button" onClick={useConversationPack}>Use everyday setup</button><p class="dim">Uses a listening and speaking pair from this account. Preview before saving.</p></Show>
           <input
             value={props.voiceName}
             onInput={(e) => props.setVoiceName(e.currentTarget.value)}
@@ -3437,8 +3454,8 @@ function VoiceConfigEditor(props: {
               <For each={modelChoices("transcription")}>{(model) => <option value={model}>{model}</option>}</For>
             </select>
           </Show>
-          <Show when={modelChoices("synthesis").length > 0} fallback={<input value={props.synthesisModel} onInput={(e) => props.setSynthesisModel(e.currentTarget.value)} placeholder="Synthesis model (inherit if empty)" aria-label="Synthesis model" />}>
-            <select value={props.synthesisModel} onChange={(e) => props.setSynthesisModel(e.currentTarget.value)} aria-label="Synthesis model">
+          <Show when={modelChoices("synthesis").length > 0} fallback={<input value={props.synthesisModel} onInput={(e) => { props.setSynthesisModel(e.currentTarget.value); props.setVoiceName(""); }} placeholder="Synthesis model (inherit if empty)" aria-label="Synthesis model" />}>
+            <select value={props.synthesisModel} onChange={(e) => { props.setSynthesisModel(e.currentTarget.value); props.setVoiceName(""); }} aria-label="Synthesis model">
               <option value="">Inherit speaking model</option>
               <Show when={props.synthesisModel && !modelChoices("synthesis").includes(props.synthesisModel)}><option value={props.synthesisModel}>{props.synthesisModel} (saved; unavailable)</option></Show>
               <For each={modelChoices("synthesis")}>{(model) => <option value={model}>{model}</option>}</For>
@@ -3753,6 +3770,7 @@ function ChannelAccessEditor(props: {
         </Show>
       </Show>
       <VoiceConfigEditor
+        agent={agentId() || botDefaultAgent()}
         pinned={pinVoice()}
         setPinned={setPinVoice}
         provider={voiceProvider()}
@@ -4079,6 +4097,7 @@ function BotAccessEditor(props: {
       </Show>
       <ChannelPermissionPicker pinned={pinPerm()} setPinned={setPinPerm} mode={perm()} setMode={setPerm} subject="bot" />
       <VoiceConfigEditor
+        agent={agentId()}
         pinned={pinVoice()}
         setPinned={setPinVoice}
         voiceName={voiceName()}
@@ -5973,23 +5992,42 @@ export function Settings() {
   const [config, { refetch: refetchConfig }] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
   const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [providersData, { refetch: refetchProviders }] = createResource(selectedAgentId, () => api.providers(selectedAgentIdOrUndefined()));
-  const [voiceProviders] = createResource(selectedAgentId, () => api.voiceProviders(selectedAgentIdOrUndefined()));
+  const configuredVoice = () => configScope() === "user" ? layer()?.voice ?? config()?.voice : config()?.voice;
+  const [voiceProviders, { refetch: refreshVoiceProviders }] = createResource(selectedAgentId, () => api.voiceProviders(selectedAgentIdOrUndefined()));
+  const voiceServices = () => voiceProviders.error ? undefined : voiceProviders();
   const [voiceModels, { refetch: refreshVoiceModels }] = createResource(
-    () => [voiceProviders()?.providers.find((item) => item.name === config()?.voice?.provider)?.name ?? "", selectedAgentIdOrUndefined() ?? ""] as const,
-    ([voiceProvider, agent]) => voiceProvider === "gemini" || voiceProvider === "openai"
-      ? api.models(voiceProvider === "gemini" ? "google" : "openai", agent || undefined)
+    () => [voiceServices()?.providers.find((item) => item.name === configuredVoice()?.provider)?.name ?? "", selectedAgentIdOrUndefined() ?? ""] as const,
+    ([voiceProvider, agent]) => voiceProvider && voiceProvider !== "local"
+      ? api.voiceModels(voiceProvider, agent || undefined)
       : Promise.resolve({ provider: "", models: [], capabilities: {} }),
   );
+  const voiceCatalogue = () => voiceModels.error ? undefined : voiceModels();
   const voiceModelChoices = (operation: "transcription" | "synthesis") => {
-    const models = voiceModels()?.models ?? [];
-    const advertised = voiceModels()?.capabilities?.[operation];
-    if (config()?.voice?.provider === "openai") {
-      return models.filter((model) => advertised ? advertised.includes(model) : operation === "synthesis" ? /tts/i.test(model) : /transcri|whisper/i.test(model));
-    }
-    return models.filter((model) => advertised ? advertised.includes(model) : operation === "synthesis"
-      ? /tts/i.test(model)
-      : !/tts|image|embed|embedding/i.test(model));
+    return voiceModels.loading ? [] : voiceCatalogue()?.capabilities?.[operation] ?? [];
   };
+  const [voicePackIndex, setVoicePackIndex] = createSignal(0);
+  const chosenVoicePack = () => voiceModels.loading ? undefined : voiceCatalogue()?.voice_packs?.[voicePackIndex()] ?? voiceCatalogue()?.voice_pack;
+  const [voicePreviewBusy, setVoicePreviewBusy] = createSignal(false);
+  let settingsVoiceAudio: HTMLAudioElement | undefined;
+  let settingsVoiceUrl: string | undefined;
+  onCleanup(() => { settingsVoiceAudio?.pause(); if (settingsVoiceUrl) URL.revokeObjectURL(settingsVoiceUrl); });
+  const previewSettingsVoice = async () => {
+    setVoicePreviewBusy(true);
+    try {
+      const voice = configuredVoice();
+      const blob = await api.speak({ text: "This is a voice test.", agent: selectedAgentIdOrUndefined(), voice_override: {
+        provider: voice?.provider, transcription_model: voice?.transcription_model,
+        synthesis_model: voice?.synthesis_model, voice_name: voice?.voice_name, persona: voice?.persona,
+      } });
+      settingsVoiceAudio?.pause();
+      if (settingsVoiceUrl) URL.revokeObjectURL(settingsVoiceUrl);
+      settingsVoiceUrl = URL.createObjectURL(blob);
+      settingsVoiceAudio = new Audio(settingsVoiceUrl);
+      await settingsVoiceAudio.play();
+    } catch (error) { pushToast("alert", `Voice test failed: ${error}`); }
+    finally { setVoicePreviewBusy(false); }
+  };
+
   const [rebuilding, setRebuilding] = createSignal(false);
   const [catalogStatus, { refetch: refetchCatalogStatus }] = createResource(() => api.catalogStatus());
   const [doctorReport, setDoctorReport] = createSignal<string | null>(null);
@@ -6170,7 +6208,7 @@ export function Settings() {
   const guard = async (work: () => Promise<void>, ok: string) => {
     try {
       await work();
-      await Promise.all([refetchConfig(), refetchLayer()]);
+      await Promise.all([refetchConfig(), refetchLayer(), refreshVoiceProviders()]);
       pushToast("info", ok);
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
@@ -6633,12 +6671,12 @@ export function Settings() {
             <section class="panel" data-testid="voice-settings">
               <div class="panel-title-row">
                 <div>
-                  <h2>Voice & Speech Engine</h2>
+                  <h2>Voice and speech</h2>
                   <p class="dim">Voice route for this Agent. Connected channels can choose a narrower provider and model pair.</p>
                 </div>
                 <span class="chip">{config()?.voice?.source ?? (configScope() === "user" ? "Global" : "Workspace")}</span>
               </div>
-              <Show when={config()?.voice} fallback={<div class="dim">Voice configuration unavailable.</div>}>
+              <Show when={configuredVoice()} fallback={<div class="dim">Voice configuration unavailable.</div>}>
                 {(voice) => <>
                   <label class="inherit-toggle">
                     <input
@@ -6649,12 +6687,11 @@ export function Settings() {
                   </label>
                 <Show when={voice().provider && voice().provider !== "local"}>
                     {(() => {
-                      const provider = voice().provider === "gemini" ? "google" : "openai";
-                      const status = voiceProviders()?.providers.find((item) => item.name === voice().provider);
+                      const provider = voice().provider === "gemini" ? "google" : voice().provider ?? "";
+                      const status = voiceServices()?.providers.find((item) => item.name === voice().provider);
                       return <div class="row-gap">
                         <span class={`chip chip-tone-${status?.configured ? "success" : "warning"}`}>{status?.configured ? "Voice key available" : "Voice key needed"}</span>
                         <button type="button" class="ghost small" onClick={() => {
-                          setConfigScope("project");
                           setSelectedProvider(provider);
                           document.getElementById("provider-credentials")?.scrollIntoView({ behavior: "smooth", block: "center" });
                           window.setTimeout(() => document.getElementById("provider-key-entry")?.focus(), 100);
@@ -6667,26 +6704,35 @@ export function Settings() {
                       Model discovery unavailable: {String(voiceModels.error)}. Enter an exact model id or <button type="button" class="ghost small" onClick={() => void refreshVoiceModels()}>retry</button> after adding a key.
                     </div>
                   </Show>
+                  <Show when={chosenVoicePack()}>{(pack) => <div class="voice-setup"><Show when={voiceCatalogue()?.voice_packs?.length}><select aria-label="Voice setup provider" value={voicePackIndex()} onChange={e => setVoicePackIndex(Number(e.currentTarget.value))}><For each={voiceCatalogue()?.voice_packs}>{(item,index) => <option value={index()}>{item.label}</option>}</For></select></Show><button type="button" onClick={() => void guard(() => api.patchConfigScope(configScope(), {
+                    voice_provider: pack().provider, voice_transcription_model: pack().transcription_model,
+                    voice_synthesis_model: pack().synthesis_model, voice_name: pack().voice_name ?? null,
+                  }, selectedAgentIdOrUndefined()), "Everyday voice setup saved")}>Use everyday setup</button><span class="dim">Listening and speaking models from this account, saved together. Test before enabling conversations.</span></div>}</Show>
+                  <div class="row-gap"><span class="dim">{voiceServices()?.providers.find((item) => item.name === voice().provider)?.readiness?.detail}</span><button type="button" disabled={voicePreviewBusy() || !voice().provider} onClick={() => void previewSettingsVoice()}>{voicePreviewBusy() ? "Testing…" : "Test voice"}</button></div>
+                  <Show when={voice().provider === "openrouter" && voice().synthesis_model}><p class="dim"><a href={`https://openrouter.ai/${voice().synthesis_model?.split('/').map(encodeURIComponent).join('/')}`} target="_blank" rel="noreferrer">Current speaking model prices, languages and voices</a></p></Show>
                   <div class="voice-grid-2x2">
                     <div class="form-row">
                       <label for="voice-provider">Provider</label>
-                      <select id="voice-provider" value={voice().provider ?? ""} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value || null }, selectedAgentIdOrUndefined()), "Voice provider saved")}>
+                      <select id="voice-provider" ref={el => syncSelect(el, () => voice().provider ?? "", voiceServices)} value={voice().provider ?? ""} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value || null }, selectedAgentIdOrUndefined()), "Voice provider saved")}>
                         <option value="">Inherit provider</option>
-                        <For each={voiceProviders()?.providers ?? []}>{(provider) => <option value={provider.name}>{provider.name}</option>}</For>
+                        <For each={voiceServices()?.providers ?? []}>{(provider) => <option value={provider.name}>{provider.name}</option>}</For>
                       </select>
                     </div>
                     <div class="form-row">
                       <label for="voice-transcription-model">Transcription model</label>
                       <Show when={voiceModelChoices("transcription").length > 0} fallback={<input id="voice-transcription-model" value={voice().transcription_model ?? ""} placeholder="Model ID from provider account" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Transcription model saved")} />}>
-                        <select id="voice-transcription-model" value={voice().transcription_model ?? ""} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value || null }, selectedAgentIdOrUndefined()), "Transcription model saved")}><option value="">Choose discovered model</option><Show when={voice().transcription_model && !voiceModelChoices("transcription").includes(voice().transcription_model!)}><option value={voice().transcription_model!}>{voice().transcription_model} (saved; unavailable)</option></Show><For each={voiceModelChoices("transcription")}>{(model) => <option value={model}>{model}</option>}</For></select>
+                        <select id="voice-transcription-model" ref={el => syncSelect(el, () => voice().transcription_model ?? "", voiceCatalogue)} value={voice().transcription_model ?? ""} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value || null }, selectedAgentIdOrUndefined()), "Transcription model saved")}><option value="">Choose discovered model</option><Show when={voice().transcription_model && !voiceModelChoices("transcription").includes(voice().transcription_model!)}><option value={voice().transcription_model!}>{voice().transcription_model} (saved; unavailable)</option></Show><For each={voiceModelChoices("transcription")}>{(model) => <option value={model}>{model}</option>}</For></select>
                       </Show>
                     </div>
                     <div class="form-row">
                       <label for="voice-synthesis-model">Synthesis model</label>
                       <Show when={voiceModelChoices("synthesis").length > 0} fallback={<input id="voice-synthesis-model" value={voice().synthesis_model ?? ""} placeholder="Model ID from provider account" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Synthesis model saved")} />}>
-                        <select id="voice-synthesis-model" value={voice().synthesis_model ?? ""} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value || null }, selectedAgentIdOrUndefined()), "Synthesis model saved")}><option value="">Choose discovered model</option><Show when={voice().synthesis_model && !voiceModelChoices("synthesis").includes(voice().synthesis_model!)}><option value={voice().synthesis_model!}>{voice().synthesis_model} (saved; unavailable)</option></Show><For each={voiceModelChoices("synthesis")}>{(model) => <option value={model}>{model}</option>}</For></select>
+                        <select id="voice-synthesis-model" ref={el => syncSelect(el, () => voice().synthesis_model ?? "", voiceCatalogue)} value={voice().synthesis_model ?? ""} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value || null }, selectedAgentIdOrUndefined()), "Synthesis model saved")}><option value="">Choose discovered model</option><Show when={voice().synthesis_model && !voiceModelChoices("synthesis").includes(voice().synthesis_model!)}><option value={voice().synthesis_model!}>{voice().synthesis_model} (saved; unavailable)</option></Show><For each={voiceModelChoices("synthesis")}>{(model) => <option value={model}>{model}</option>}</For></select>
                       </Show>
                     </div>
+                    <div class="form-row"><label for="voice-name">Voice</label><input id="voice-name" list="admin-discovered-voices" value={voice().voice_name ?? ""} placeholder="Service default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_name: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Voice saved")} /></div>
+                    <datalist id="admin-discovered-voices"><For each={voiceCatalogue()?.speech_models?.find(model => model.id === voice().synthesis_model)?.voices ?? []}>{voice => <option value={voice} />}</For></datalist>
+                    <div class="form-row"><label for="voice-style">Speaking style</label><input id="voice-style" value={voice().persona ?? ""} placeholder="Calm and concise" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_persona: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Speaking style saved")} /></div>
                   </div>
                 </>}
               </Show>

@@ -459,7 +459,7 @@ export interface DirListing {
 }
 
 export interface ConfigSnapshot {
-  voice?: { enabled: boolean; provider?: string | null; transcription_model?: string | null; synthesis_model?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string };
+  voice?: { enabled: boolean; provider?: string | null; transcription_model?: string | null; synthesis_model?: string | null; voice_name?: string | null; persona?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string };
   provider: string;
   model: string;
   provider_source?: string;
@@ -734,7 +734,7 @@ export interface OnboardingState {
 }
 
 export interface VoiceProviderDescriptor {
-  name: "gemini" | "openai" | "local";
+  name: "gemini" | "openai" | "openrouter" | "local";
   formats: Array<"pcm16" | "ogg_opus" | "mp3" | "wav">;
   credential_vars: string[];
   configured: boolean;

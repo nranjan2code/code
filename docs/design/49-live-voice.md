@@ -20,13 +20,58 @@ never built or has been removed.
 
 **One provider vocabulary.** `vak_voice::VoiceProvider`
 (`crates/vak-voice/src/provider.rs`) is the closed set `gemini`, `openai`,
-`local`, parsed in exactly one place. Every route resolves through it, so the
+`openrouter`, `local`, parsed in exactly one place. Every route resolves through it, so the
 socket, channel voice notes, `/voice/speak`, `/voice/providers`, `/config`
 and doctor cannot disagree about names. An unset provider is a configuration
 gap reported as such, never an implicit vendor. Hosted routes require explicit
 `transcription_model` / `synthesis_model` pins from the operator's discovered
 catalogue (invariant 9); there is no shared `model` fallback and no realtime
 model, because no realtime adapter exists.
+
+**Everyday setup (2026-10-20).** Settings and Admin offer a suggested
+listening/speaking pair from the connected account's catalogue, saving both
+pins with the provider in one configuration write. `VoiceProvider::model_choices`
+classifies the batch adapters' model families; it does not ship model ids.
+Suggestions prefer stable aliases, dedicated transcription and compact speech
+families. Naming conventions are selection hints, not proof of account access
+or comparative latency; exact-id configuration remains available. No suggestion
+is applied without the person's action. Streaming-only and diarization routes
+are excluded from this batch picker. Provider changes clear foreign model and
+voice pins, including bot-to-chat overlays.
+
+The Agent's `[voice] voice_name` and `persona` are saved with its route and
+used for narration and conversation replies. `persona` here is a speaking-style
+direction, not the conversational identity prompt. Request/channel overrides
+remain narrower. OpenAI GPT speech receives style through `instructions`;
+legacy TTS engines do not support that control. Settings and Admin audition the
+selected Agent even before enabling microphone conversations; that preview does
+not persist an enabled switch. A missing live conversation is refused rather
+than speaking through another Agent. Readiness distinguishes a connected key
+from a complete setup and asks for speaking/microphone verification.
+
+Dedicated Gemini transcription uses the Interactions API with inline bounded
+audio and verbatim mode. General multimodal transcription keeps generateContent.
+Gemini speech and dedicated transcription set `store: false`; no provider-side
+interaction history is requested. This is not a claim about every provider's
+processing or retention terms. Current documentation, live-account evidence and
+acceptance limits are in [the voice review](../audits/voice-experience-2026-10-20.md).
+
+`GET /voice/models` resolves the selected Agent and supplies operation-specific
+choices. OpenRouter uses its published `output_modalities=speech|transcription`
+catalogues separately from text discovery, retaining creation time, pricing and
+model-specific voices. Each speech vendor with published voices gets a preset;
+its newest compact peer is paired with its own transcription route where
+available, otherwise the newest discovered recognizer. Reference-only models
+remain individually selectable and receive no invented voice. Prices use
+incompatible units across models, so suggestions do not claim to be cheapest.
+The selected model links to its current prices and languages.
+
+OpenRouter reuses the VAK-owned compatible HTTP audio adapter and shared account
+credentials. Most routed speakers return MP3; routed Gemini and HeyGen speech require
+24 kHz and 44.1 kHz mono PCM16 respectively, wrapped as WAV for browser playback. Explicit incompatible
+formats are refused. Channel bridges accept the returned WAV/MP3 type;
+Telegram's ffmpeg conversion detects input before producing Ogg/Opus. No
+provider SDK or second Agent conversation loop is introduced.
 
 **One server surface.** `crates/vak-server/src/voice.rs` holds every voice
 route. Transcription has a single implementation used by the socket and by
@@ -50,8 +95,8 @@ discovered transcription and synthesis models.
 
 Voice provider keys are shared account credentials stored through the normal
 provider credential flow in the OS secret service or encrypted fallback. The
-Voice settings page can add, replace and remove the Google Gemini or OpenAI
-key; a key is never returned to the client. Agents may use the shared
+Voice settings page can add, replace and remove the Google Gemini, OpenAI or
+OpenRouter key; a key is never returned to the client. Agents may use the shared
 credential without copying it into Agent data. The provider must still be
 selected for the Agent, and its account-discovered transcription and synthesis
 models must be pinned. Settings and Admin populate those choices from the

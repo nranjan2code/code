@@ -416,6 +416,7 @@ export default function Settings() {
     activeAgentId,
     (agent) => api.listVoiceProviders(agent || undefined),
   );
+  const voiceServices = () => voiceProviders.error ? undefined : voiceProviders();
   const [voiceKeyDraft, setVoiceKeyDraft] = createSignal("");
   const [voiceKeyBusy, setVoiceKeyBusy] = createSignal(false);
   const [voiceTestBusy, setVoiceTestBusy] = createSignal(false);
@@ -609,28 +610,28 @@ export default function Settings() {
     }
   }
   async function updateVoice(patch: Record<string, unknown>) {
-    try { await api.patchConfig(patch, activeAgentId()); await Promise.all([load(), loadHealth()]); setNotice({ kind: "info", text: "Voice settings saved" }); } catch (e) { setNotice({ kind: "error", text: `Could not save voice settings: ${(e as Error).message}` }); }
+    try { await api.patchConfig(patch, activeAgentId()); await Promise.all([load(), loadHealth(), refreshVoiceProviders()]); setNotice({ kind: "info", text: "Voice settings saved" }); } catch (e) { setNotice({ kind: "error", text: `Could not save voice settings: ${(e as Error).message}` }); }
   }
 
   const voiceProviderName = () => config()?.voice?.provider || "";
-  const voiceCredentialProvider = () => voiceProviderName() === "gemini" ? "google" : voiceProviderName() === "openai" ? "openai" : "";
-  const voiceModelProvider = () => voiceProviderName() === "gemini" ? "google" : voiceProviderName() === "openai" ? "openai" : "";
+  const voiceCredentialProvider = () => voiceProviderName() === "gemini" ? "google" : voiceProviderName() === "local" ? "" : voiceProviderName();
+  const voiceModelProvider = () => voiceProviderName() === "gemini" ? "google" : voiceProviderName() === "local" ? "" : voiceProviderName();
   const [voiceModels, { refetch: refreshVoiceModels }] = createResource(
     () => [voiceModelProvider(), activeAgentId()] as const,
-    ([provider, agent]) => provider ? api.discoverModels(provider, agent || undefined) : Promise.resolve({ provider: "", models: [] }),
+    ([provider, agent]) => provider ? api.discoverVoiceModels(voiceProviderName(), agent || undefined) : Promise.resolve({ provider: "", models: [] }),
   );
+  const voiceCatalogue = () => voiceModels.error ? undefined : voiceModels();
   const voiceModelChoices = (operation: "transcription" | "synthesis") => {
-    const models = voiceModels()?.models ?? [];
-    const capabilities = voiceModels()?.capabilities;
-    const advertised = capabilities?.[operation];
-    if (voiceProviderName() === "local") return [];
-    if (voiceProviderName() === "openai") {
-      return models.filter((model) => advertised ? advertised.includes(model) : operation === "synthesis" ? /tts/i.test(model) : /transcri|whisper/i.test(model));
-    }
-    return models.filter((model) => advertised ? advertised.includes(model) : operation === "synthesis"
-      ? /tts/i.test(model)
-      : !/tts|image|embed|embedding/i.test(model));
+    return voiceModels.loading ? [] : voiceCatalogue()?.capabilities?.[operation] ?? [];
   };
+  const [voicePackChoice, setVoicePackChoice] = createSignal(0);
+  const selectedVoicePack = () => voiceModels.loading ? undefined : voiceCatalogue()?.voice_packs?.[voicePackChoice()] ?? voiceCatalogue()?.voice_pack;
+  async function useConversationPack() {
+    const pack = selectedVoicePack();
+    if (!pack) return;
+    await updateVoice({ voice_provider: pack.provider, voice_transcription_model: pack.transcription_model, voice_synthesis_model: pack.synthesis_model, voice_name: pack.voice_name ?? null });
+  }
+
   async function saveVoiceKey() {
     const key = voiceKeyDraft().trim();
     if (!key || voiceKeyBusy()) return;
@@ -664,21 +665,32 @@ export default function Settings() {
       setVoiceKeyBusy(false);
     }
   }
+  let voiceTestAudio: HTMLAudioElement | undefined;
+  let voiceTestUrl: string | undefined;
+  const stopVoiceTest = () => {
+    voiceTestAudio?.pause();
+    voiceTestAudio = undefined;
+    if (voiceTestUrl) URL.revokeObjectURL(voiceTestUrl);
+    voiceTestUrl = undefined;
+  };
+  onCleanup(stopVoiceTest);
   async function testVoice() {
     if (voiceTestBusy()) return;
     setVoiceTestBusy(true);
     try {
       const blob = await api.speak("This is a voice test.", {
         provider: voiceProviderName(),
+        agent: activeAgentId(),
         transcriptionModel: config()?.voice?.transcription_model ?? undefined,
         synthesisModel: config()?.voice?.synthesis_model ?? undefined,
-        voiceName: uiPreferences.voiceName || undefined,
-        persona: uiPreferences.voicePersona || undefined,
+        voiceName: config()?.voice?.voice_name ?? undefined,
+        persona: config()?.voice?.persona ?? undefined,
       });
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.addEventListener("ended", () => URL.revokeObjectURL(url), { once: true });
-      await audio.play();
+      stopVoiceTest();
+      voiceTestUrl = URL.createObjectURL(blob);
+      voiceTestAudio = new Audio(voiceTestUrl);
+      voiceTestAudio.addEventListener("ended", stopVoiceTest, { once: true });
+      await voiceTestAudio.play();
       setNotice({ kind: "info", text: "Voice test is playing." });
     } catch (error) {
       setNotice({ kind: "error", text: `Voice test failed: ${error instanceof Error ? error.message : String(error)}` });
@@ -2120,17 +2132,18 @@ export default function Settings() {
               <Group title="Voice">
                 <Row title="Enable voice conversations" description="Talk with Vakyartha using your microphone."><Switch label="Enable voice conversations" checked={config()?.voice?.enabled ?? false} onChange={(value) => void updateVoice({ voice_enabled: value })} /></Row>
                 <Row title="Speak updates aloud" description="Read updates and approval requests aloud."><Switch label="Speak updates aloud" checked={uiPreferences.voiceEnabled} onChange={(value) => updateUiPreference("voiceEnabled", value)} /></Row>
-                <Row title="Available voice services" description="Shows which services are ready to use."><span class="settings-value">{voiceProviders.loading ? "Checking…" : (voiceProviders()?.providers.map((provider) => `${provider.name} · ${provider.readiness ? (provider.readiness.ready ? "ready" : provider.readiness.detail) : provider.configured ? "ready" : "setup needed"}`).join(", ") || "None available")}</span></Row>
-                <Row title="Voice service" description="Used for listening and speaking."><select value={config()?.voice?.provider ?? ""} onChange={(e) => void updateVoice({ voice_provider: e.currentTarget.value || null })}><option value="">Inherit configured provider</option><For each={voiceProviders()?.providers ?? []}>{(provider) => <option value={provider.name}>{provider.name}</option>}</For></select></Row>
+                <Row title="Available voice services" description="Shows which services are ready to use."><span class="settings-value">{voiceProviders.error ? `Could not check services: ${String(voiceProviders.error)}` : voiceProviders.loading ? "Checking…" : (voiceServices()?.providers.map((provider) => `${provider.name} · ${provider.readiness ? (provider.readiness.detail) : provider.configured ? "ready" : "setup needed"}`).join(", ") || "None available")}</span></Row>
+                <Row title="Voice service" description="Used for listening and speaking."><select value={config()?.voice?.provider ?? ""} onChange={(e) => void updateVoice({ voice_provider: e.currentTarget.value || null, voice_transcription_model: null, voice_synthesis_model: null, voice_name: null })}><option value="">Inherit configured provider</option><For each={voiceServices()?.providers ?? []}>{(provider) => <option value={provider.name}>{provider.name}</option>}</For></select></Row>
+                <Show when={selectedVoicePack()}>{(pack) => <Row className="voice-setup-row" title="Everyday conversation" description="A suggested listening and speaking pair from your connected account. Apply together, then test before turning on the microphone."><Show when={voiceCatalogue()?.voice_packs?.length}><select aria-label="Voice setup provider" value={voicePackChoice()} onChange={e => setVoicePackChoice(Number(e.currentTarget.value))}><For each={voiceCatalogue()?.voice_packs}>{(item, index) => <option value={index()}>{item.label}</option>}</For></select></Show><button class="settings-button" onClick={() => void useConversationPack()}>Use everyday setup</button><span class="settings-value">{pack().transcription_model} · {pack().synthesis_model}</span></Row>}</Show>
                 <Show when={!voiceProviderName()}><Row title="Voice setup" description="Choose a provider to configure its key and discovered listening and speaking models."><span class="settings-value">No voice provider is selected for this Agent.</span></Row></Show>
                 <Show when={voiceProviderName() && voiceProviderName() !== "local"}><Row title="Test speaking" description="Make one short request with this Agent's selected provider and speaking model."><button class="settings-button" disabled={voiceTestBusy()} onClick={() => void testVoice()}>{voiceTestBusy() ? "Testing…" : "Test voice"}</button></Row></Show>
                 <Show when={voiceProviderName() && voiceProviderName() !== "local"}>
                   <Row title="Service key" description="Saved in shared credentials and available to your Agents. The key is never shown again.">
                     <span class="key-edit">
-                      <input type="password" value={voiceKeyDraft()} autocomplete="new-password" placeholder={`Enter ${voiceProviderName() === "gemini" ? "Google Gemini" : "OpenAI"} key`} onInput={(event) => setVoiceKeyDraft(event.currentTarget.value)} />
+                      <input type="password" value={voiceKeyDraft()} autocomplete="new-password" placeholder={`Enter ${voiceProviderName() === "gemini" ? "Google Gemini" : voiceProviderName() === "openrouter" ? "OpenRouter" : "OpenAI"} key`} onInput={(event) => setVoiceKeyDraft(event.currentTarget.value)} />
                       <button class="settings-button" disabled={!voiceKeyDraft().trim() || voiceKeyBusy()} onClick={() => void saveVoiceKey()}>{voiceKeyBusy() ? "Saving…" : "Save key"}</button>
-                      <Show when={voiceProviders()?.providers.find((provider) => provider.name === voiceProviderName())?.configured}>
-                        <button class="settings-button danger" disabled={voiceKeyBusy()} onClick={() => setConfirmConfig({ title: `Remove the shared ${voiceProviderName() === "gemini" ? "Google Gemini" : "OpenAI"} key?`, description: "Voice for every Agent using this shared key will stop working unless another credential is available.", confirmLabel: "Remove key", isDanger: true, onConfirm: removeVoiceKey })}>Remove key</button>
+                      <Show when={voiceServices()?.providers.find((provider) => provider.name === voiceProviderName())?.configured}>
+                        <button class="settings-button danger" disabled={voiceKeyBusy()} onClick={() => setConfirmConfig({ title: `Remove the shared ${voiceProviderName() === "gemini" ? "Google Gemini" : voiceProviderName() === "openrouter" ? "OpenRouter" : "OpenAI"} key?`, description: "Voice for every Agent using this shared key will stop working unless another credential is available.", confirmLabel: "Remove key", isDanger: true, onConfirm: removeVoiceKey })}>Remove key</button>
                       </Show>
                     </span>
                   </Row>
@@ -2141,9 +2154,9 @@ export default function Settings() {
                     <button class="settings-button" onClick={() => void refreshVoiceModels()}>Retry discovery</button>
                   </Row>
                 </Show>
-                <Show when={uiPreferences.voiceEnabled}>
-                  <Row title="Voice" description="The voice's name from your voice service; leave blank for its default."><input value={uiPreferences.voiceName} placeholder="Service default" onChange={(event) => updateUiPreference("voiceName", event.currentTarget.value.trim())} /></Row>
-                  <Row title="Speaking style" description="Describe how Vakyartha should sound."><input value={uiPreferences.voicePersona} placeholder="e.g. calm and concise" onInput={(event) => updateUiPreference("voicePersona", event.currentTarget.value)} /></Row>
+                <Show when={voiceProviderName()}>
+                  <Row title="Voice" description="The voice's name from your voice service; leave blank for its default."><input list="discovered-voice-names" value={config()?.voice?.voice_name ?? ""} placeholder="Service default" onChange={(event) => void updateVoice({ voice_name: event.currentTarget.value.trim() || null })} /></Row>
+                  <Row title="Speaking style" description="Tone and pacing, when supported by the speaking model."><input value={config()?.voice?.persona ?? ""} placeholder="e.g. calm and concise" onChange={(event) => void updateVoice({ voice_persona: event.currentTarget.value.trim() || null })} /></Row>
                 </Show>
                 <Show when={voiceProviderName() && voiceProviderName() !== "local"}>
                   <Row title="Listening model" description="Choose from models returned by this account. Access depends on the provider key.">
@@ -2157,13 +2170,15 @@ export default function Settings() {
                     </Show>
                   </Row>
                 </Show>
-                <Show when={voiceProviderName() === "local"}><Row title="Local voice engines" description="Listening and speaking use the local engines shown in Available voice services."><span class="settings-value">{voiceProviders()?.providers.find((provider) => provider.name === "local")?.readiness?.detail ?? "Checking local engines…"}</span></Row></Show>
+                <Show when={voiceProviderName() === "openrouter" && config()?.voice?.synthesis_model}><Row title="Prices and languages" description="Check the selected model's current price, languages and voices before using it."><a href={`https://openrouter.ai/${config()?.voice?.synthesis_model?.split('/').map(encodeURIComponent).join('/')}`} target="_blank" rel="noreferrer">Speaking model details</a></Row></Show>
+                <Show when={voiceProviderName() === "local"}><Row title="Local voice engines" description="Listening and speaking use the local engines shown in Available voice services."><span class="settings-value">{voiceServices()?.providers.find((provider) => provider.name === "local")?.readiness?.detail ?? "Checking local engines…"}</span></Row></Show>
                 <TechnicalRow>
                   <Row title="Session limit" description="Longest voice conversation, in seconds."><input type="number" min="1" max="86400" value={config()?.voice?.max_session_secs ?? 900} onChange={(e) => void updateVoice({ voice_max_session_secs: Number(e.currentTarget.value) })} /></Row>
                   <Row title="Simultaneous conversations" description="How many voice conversations can run at once."><input type="number" min="1" max="64" value={config()?.voice?.max_concurrent ?? 2} onChange={(e) => void updateVoice({ voice_max_concurrent: Number(e.currentTarget.value) })} /></Row>
                   <Row title="Audio size limit" description="Largest recording accepted in one conversation, in bytes."><input type="number" min="1" max={256 * 1024 * 1024} value={config()?.voice?.max_audio_bytes ?? 16 * 1024 * 1024} onChange={(e) => void updateVoice({ voice_max_audio_bytes: Number(e.currentTarget.value) })} /></Row>
                 </TechnicalRow>
               </Group>
+              <datalist id="discovered-voice-names"><For each={voiceCatalogue()?.speech_models?.find(model => model.id === config()?.voice?.synthesis_model)?.voices ?? []}>{voice => <option value={voice} />}</For></datalist>
               <Group title="Sound">
                 <Row title="Sound cues" description="A short sound when work starts, finishes or fails, when something needs your OK, and for a notification."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
                 <Show when={uiPreferences.soundCues}>

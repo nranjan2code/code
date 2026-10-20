@@ -1,3 +1,24 @@
+## Voice setup and current providers (2026-10-20)
+
+- [x] Study current provider documentation and connected-account catalogues,
+  add account-derived everyday setup in Settings/Admin, save Agent voice/style,
+  fix preview scope and cross-provider inheritance, and support dedicated
+  Gemini transcription. OpenRouter adds its separate audio catalogues, vendor
+  presets, discovered voices and browser-compatible playback. See [the review](../audits/voice-experience-2026-10-20.md)
+  for measured live results and exact acceptance limits.
+- [ ] Native-speaker acceptance across the requested Indian languages, including
+  the Kannada Flash-Lite error and natural code-switching; coverage tables and
+  synthetic samples do not establish quality.
+- [ ] Quiet-room physical-microphone acceptance and a real channel voice note;
+  synthetic recordings do not close these checks.
+- [ ] Streaming transcription/synthesis adapters remain doc 49's open work.
+  The shipped cascade waits for an utterance, the governed turn and synthesis.
+- [ ] Provider/model metadata does not establish every speech capability or
+  latency: naming-derived suggestions require a test. Unknown exact ids remain
+  configurable; provider-reported speech billing remains unknown.
+- [ ] Persist/session-account previews in shared voice accounting: sessionless
+  auditions still return a receipt header rather than a session receipt.
+
 ## Library previews and controls (2026-10-20)
 
 - [x] Replace raw markup with appropriate saved-version previews and separate

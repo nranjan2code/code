@@ -205,7 +205,7 @@ pub struct FileConfig {
 #[serde(default)]
 pub struct VoiceSettings {
     pub enabled: bool,
-    /// `gemini`, `openai` or `local` (`vak_voice::VoiceProvider`). Unset
+    /// `gemini`, `openai`, `openrouter` or `local` (`vak_voice::VoiceProvider`). Unset
     /// inherits from a wider layer; unset everywhere is a configuration gap
     /// the voice routes report, never an implicit vendor.
     pub provider: Option<String>,
@@ -213,6 +213,8 @@ pub struct VoiceSettings {
     pub transcription_model: Option<String>,
     /// Hosted text-to-speech model, from the operator's discovered catalogue.
     pub synthesis_model: Option<String>,
+    pub voice_name: Option<String>,
+    pub persona: Option<String>,
     pub max_session_secs: u64,
     pub max_concurrent: usize,
     pub max_audio_bytes: u64,
@@ -230,6 +232,8 @@ impl Default for VoiceSettings {
             provider: None,
             transcription_model: None,
             synthesis_model: None,
+            voice_name: None,
+            persona: None,
             max_session_secs: 900,
             max_concurrent: 2,
             max_audio_bytes: 16 * 1024 * 1024,
@@ -248,6 +252,8 @@ impl VoiceSettings {
                 self.transcription_model.as_deref(),
             ),
             ("voice.synthesis_model", self.synthesis_model.as_deref()),
+            ("voice.voice_name", self.voice_name.as_deref()),
+            ("voice.persona", self.persona.as_deref()),
         ] {
             if let Some(value) = value
                 && (value.trim().is_empty() || value.chars().count() > 256)
@@ -1328,6 +1334,9 @@ pub struct VoiceConfig {
 impl VoiceConfig {
     /// Overlay a narrower scope onto its parent. Missing fields inherit.
     pub fn overlay(parent: Option<&Self>, child: &Self) -> Self {
+        let same_provider = child.provider.is_none()
+            || child.provider.as_ref() == parent.and_then(|v| v.provider.as_ref());
+        let route_parent = parent.filter(|_| same_provider);
         Self {
             provider: child
                 .provider
@@ -1336,15 +1345,15 @@ impl VoiceConfig {
             voice_name: child
                 .voice_name
                 .clone()
-                .or_else(|| parent.and_then(|v| v.voice_name.clone())),
+                .or_else(|| route_parent.and_then(|v| v.voice_name.clone())),
             transcription_model: child
                 .transcription_model
                 .clone()
-                .or_else(|| parent.and_then(|v| v.transcription_model.clone())),
+                .or_else(|| route_parent.and_then(|v| v.transcription_model.clone())),
             synthesis_model: child
                 .synthesis_model
                 .clone()
-                .or_else(|| parent.and_then(|v| v.synthesis_model.clone())),
+                .or_else(|| route_parent.and_then(|v| v.synthesis_model.clone())),
             persona: child
                 .persona
                 .clone()
@@ -2896,6 +2905,8 @@ pub struct VoicePatch {
     pub provider: Option<Option<String>>,
     pub transcription_model: Option<Option<String>>,
     pub synthesis_model: Option<Option<String>>,
+    pub voice_name: Option<Option<String>>,
+    pub persona: Option<Option<String>>,
 }
 
 impl VoicePatch {
@@ -2907,6 +2918,8 @@ impl VoicePatch {
             && self.provider.is_none()
             && self.transcription_model.is_none()
             && self.synthesis_model.is_none()
+            && self.voice_name.is_none()
+            && self.persona.is_none()
     }
 }
 
@@ -2931,6 +2944,8 @@ pub fn persist_voice_settings_at(path: PathBuf, patch: &VoicePatch) -> Result<()
             ("provider", &patch.provider),
             ("transcription_model", &patch.transcription_model),
             ("synthesis_model", &patch.synthesis_model),
+            ("voice_name", &patch.voice_name),
+            ("persona", &patch.persona),
         ] {
             match value {
                 Some(Some(v)) => {
@@ -4814,6 +4829,30 @@ mod tests {
     }
 
     #[test]
+    fn channel_voice_provider_changes_drop_parent_model_and_voice_ids() {
+        let parent = VoiceConfig {
+            provider: Some("gemini".into()),
+            voice_name: Some("parent-voice".into()),
+            transcription_model: Some("parent-stt".into()),
+            synthesis_model: Some("parent-tts".into()),
+            ..Default::default()
+        };
+        let child = VoiceConfig {
+            provider: Some("openai".into()),
+            ..Default::default()
+        };
+        let effective = VoiceConfig::overlay(Some(&parent), &child);
+        assert_eq!(effective.provider, child.provider);
+        assert_eq!(effective.transcription_model, None);
+        assert_eq!(effective.synthesis_model, None);
+        assert_eq!(effective.voice_name, None);
+        assert_eq!(
+            VoiceConfig::overlay(Some(&parent), &VoiceConfig::default()),
+            parent
+        );
+    }
+
+    #[test]
     fn voice_patch_sets_clears_and_preserves_keys() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
@@ -4828,6 +4867,8 @@ mod tests {
                 enabled: Some(true),
                 transcription_model: Some(Some("stt-a".into())),
                 synthesis_model: Some(None),
+                voice_name: Some(Some("account-voice".into())),
+                persona: Some(Some("Calm and concise".into())),
                 ..VoicePatch::default()
             },
         )
@@ -4839,6 +4880,8 @@ mod tests {
         assert_eq!(voice["transcription_model"].as_str(), Some("stt-a"));
         assert!(!voice.contains_key("synthesis_model"));
         assert_eq!(voice["future_key"].as_integer(), Some(7));
+        assert_eq!(voice["voice_name"].as_str(), Some("account-voice"));
+        assert_eq!(voice["persona"].as_str(), Some("Calm and concise"));
         assert!(VoicePatch::default().is_empty());
     }
     use super::*;

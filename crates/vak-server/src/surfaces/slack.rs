@@ -401,21 +401,27 @@ impl SlackBridge {
         let response = http()
             .post(format!("{}/voice/speak", self.gateway_url))
             .bearer_auth(&self.gateway_token)
-            .json(&serde_json::json!({"text": text, "format": "wav", "session_id": session_id}))
+            .json(&serde_json::json!({"text": text, "session_id": session_id}))
             .send()
             .await
             .map_err(|e| e.to_string())?;
         if !response.status().is_success() {
             return Err(format!("voice speak returned {}", response.status()));
         }
+        let (filename, _mime) = match response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+        {
+            Some("audio/wav") => ("reply.wav", "audio/wav"),
+            Some("audio/mpeg") => ("reply.mp3", "audio/mpeg"),
+            _ => return Err("voice service returned an unsupported audio encoding".into()),
+        };
         let audio = response.bytes().await.map_err(|e| e.to_string())?;
         let upload = http()
             .get(format!("{}/files.getUploadURLExternal", self.api_base))
             .bearer_auth(&self.bot_token)
-            .query(&[
-                ("filename", "reply.wav"),
-                ("length", &audio.len().to_string()),
-            ])
+            .query(&[("filename", filename), ("length", &audio.len().to_string())])
             .send()
             .await
             .map_err(|e| e.to_string())?;

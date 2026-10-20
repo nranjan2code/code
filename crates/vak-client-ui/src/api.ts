@@ -1415,6 +1415,13 @@ export interface DiscoveredModels {
   provider: string;
   models: string[];
   capabilities?: Record<string, string[]>;
+  voice_pack?: { provider: string; transcription_model: string; synthesis_model: string; voice_name?: string | null } | null;
+  voice_packs?: Array<{ label: string; provider: string; transcription_model: string; synthesis_model: string; voice_name?: string | null }>;
+  speech_models?: Array<{ id: string; operation: string; created: number; pricing: Record<string, string>; voices: string[] }>;
+}
+
+export function discoverVoiceModels(provider: string, agent?: string): Promise<DiscoveredModels> {
+  return req(withAgent(`/voice/models?provider=${encodeURIComponent(provider)}`, agent));
 }
 
 export function discoverModels(provider: string, agent?: string): Promise<DiscoveredModels> {
@@ -2349,7 +2356,7 @@ export function mergePr(
  * path parses JSON, mirroring req()'s error-shape handling. */
 export async function speak(
   text: string,
-  opts?: { voiceName?: string; persona?: string; provider?: string; transcriptionModel?: string; synthesisModel?: string; sessionId?: string },
+  opts?: { voiceName?: string; persona?: string; provider?: string; transcriptionModel?: string; synthesisModel?: string; agent?: string; sessionId?: string },
 ): Promise<Blob> {
   const voice_override =
     opts?.voiceName || opts?.persona || opts?.provider || opts?.transcriptionModel || opts?.synthesisModel
@@ -2364,7 +2371,7 @@ export async function speak(
   const res = await authFetch("/voice/speak", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice_override, session_id: opts?.sessionId }),
+    body: JSON.stringify({ text, voice_override, session_id: opts?.sessionId, agent: opts?.agent }),
   });
   if (!res.ok) {
     const text = await res.text();

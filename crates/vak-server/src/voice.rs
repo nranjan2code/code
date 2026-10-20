@@ -196,6 +196,7 @@ fn credential(core: &vak_core::Core, provider: VoiceProvider) -> Result<String, 
     let provider_id = match provider {
         VoiceProvider::Gemini => "google",
         VoiceProvider::OpenAi => "openai",
+        VoiceProvider::OpenRouter => "openrouter",
         VoiceProvider::Local => return Err(RouteError::NoCredential(provider)),
     };
     core.provider_api_key(provider_id)
@@ -241,10 +242,15 @@ pub(crate) async fn transcribe(
                 .await
                 .map_err(RouteError::Local)
         }
-        VoiceProvider::OpenAi => {
+        provider @ (VoiceProvider::OpenAi | VoiceProvider::OpenRouter) => {
             let model = pinned_model(settings.transcription_model.as_ref(), "transcription")?;
-            let key = credential(core, VoiceProvider::OpenAi)?;
-            vak_llm::openai::transcribe(&openai_config(key), audio, mime, &model, cancel)
+            let key = credential(core, provider)?;
+            let mut config = openai_config(key);
+            if provider == VoiceProvider::OpenRouter {
+                config.base_url = "https://openrouter.ai/api/v1".into();
+                config.openrouter = true;
+            }
+            vak_llm::openai::transcribe(&config, audio, mime, &model, cancel)
                 .await
                 .map_err(RouteError::Provider)
         }
@@ -277,6 +283,8 @@ pub(crate) struct SpeakBody {
     /// Agent's voice style and personality.
     #[serde(default)]
     session_id: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// `POST /voice/speak`: synthesize `text` through the effective voice route
@@ -307,7 +315,19 @@ pub(crate) async fn voice_speak(
             ),
         );
     }
-    let requested = body.format.as_deref().unwrap_or("wav");
+    let routed_pcm = provider == VoiceProvider::OpenRouter
+        && settings
+            .synthesis_model
+            .as_deref()
+            .is_some_and(|model| routed_pcm_rate(model).is_some());
+    let requested =
+        body.format
+            .as_deref()
+            .unwrap_or(if provider == VoiceProvider::OpenRouter && !routed_pcm {
+                "mp3"
+            } else {
+                "wav"
+            });
     let Some(format) =
         SpeakFormat::parse(requested).filter(|format| provider.speak_formats().contains(format))
     else {
@@ -316,6 +336,15 @@ pub(crate) async fn voice_speak(
             format!("the {provider} voice provider cannot produce '{requested}' audio"),
         );
     };
+    if provider == VoiceProvider::OpenRouter
+        && ((routed_pcm && format != SpeakFormat::Wav)
+            || (!routed_pcm && format != SpeakFormat::Mp3))
+    {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "this routed speaking model requires its default audio format",
+        );
+    }
     if !state.voice_requests.admit(settings.max_requests_per_minute) {
         return error_response(
             StatusCode::TOO_MANY_REQUESTS,
@@ -385,6 +414,16 @@ pub(crate) async fn voice_speak(
     response
 }
 
+fn routed_pcm_rate(model: &str) -> Option<u32> {
+    if model.starts_with("google/gemini-") && model.contains("-tts") {
+        Some(24_000)
+    } else if model.starts_with("heygen/heygen-voice-") {
+        Some(44_100)
+    } else {
+        None
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn synthesize(
     core: &vak_core::Core,
@@ -401,24 +440,51 @@ async fn synthesize(
             .speak(text, format, cancel)
             .await
             .map_err(RouteError::Local),
-        VoiceProvider::OpenAi => {
+        provider @ (VoiceProvider::OpenAi | VoiceProvider::OpenRouter) => {
             let key = credential(core, provider)?;
+            let mut config = openai_config(key);
+            if provider == VoiceProvider::OpenRouter {
+                config.base_url = "https://openrouter.ai/api/v1".into();
+                config.openrouter = true;
+            }
+            let pcm_rate = (provider == VoiceProvider::OpenRouter)
+                .then(|| model.and_then(routed_pcm_rate))
+                .flatten();
             let response_format = match format {
+                SpeakFormat::Wav if pcm_rate.is_some() => "pcm",
                 SpeakFormat::Wav => "wav",
                 SpeakFormat::Pcm16 => "pcm",
                 SpeakFormat::OggOpus => "opus",
                 SpeakFormat::Mp3 => "mp3",
             };
-            vak_llm::openai::speak(
-                &openai_config(key),
+            let bytes = vak_llm::openai::speak(
+                &config,
                 text,
                 model.unwrap_or_default(),
-                voice_name.or(Some("alloy")),
+                if provider == VoiceProvider::OpenRouter {
+                    voice_name
+                } else {
+                    voice_name.or(Some("alloy"))
+                },
+                persona,
                 response_format,
                 cancel,
             )
             .await
-            .map_err(RouteError::Provider)
+            .map_err(RouteError::Provider)?;
+            if let Some(sample_rate_hz) = pcm_rate {
+                // These routed speech adapters publish mono PCM16 output rates.
+                audio::wrap_wav(
+                    &bytes,
+                    audio::PcmSpec {
+                        sample_rate_hz,
+                        channels: 1,
+                    },
+                )
+                .map_err(RouteError::Local)
+            } else {
+                Ok(bytes)
+            }
         }
         VoiceProvider::Gemini => {
             let key = credential(core, provider)?;
@@ -449,6 +515,7 @@ pub(crate) fn narrowed(
             // accidentally inheriting ids from the Agent's provider.
             settings.transcription_model = None;
             settings.synthesis_model = None;
+            settings.voice_name = None;
         }
         settings.provider = Some(provider);
     }
@@ -457,6 +524,12 @@ pub(crate) fn narrowed(
     }
     if let Some(model) = pin(&tier.synthesis_model) {
         settings.synthesis_model = Some(model);
+    }
+    if let Some(voice) = pin(&tier.voice_name) {
+        settings.voice_name = Some(voice);
+    }
+    if let Some(persona) = pin(&tier.persona) {
+        settings.persona = Some(persona);
     }
     settings
 }
@@ -508,22 +581,34 @@ fn resolve_speaker(state: &AppState, body: &SpeakBody) -> Result<Speaker, Respon
         .as_deref()
         .and_then(|id| chat_for_session(state, id));
     let core = if let Some(session_id) = body.session_id.as_deref() {
-        crate::resolve_scoped_core(state, Some(session_id), None)?
+        state
+            .get(session_id)
+            .map(|handle| handle.core.clone())
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::NOT_FOUND,
+                    "Open the conversation before playing its voice",
+                )
+            })?
     } else if let Some(key) = chat.as_deref() {
         state
             .gateway
             .core_for_entry(&state.core, key)
             .unwrap_or_else(|_| state.core.clone())
     } else {
-        state.core.clone()
+        crate::resolve_scoped_core(state, None, body.agent.as_deref())?
     };
     let chat_voice = chat
         .as_deref()
         .and_then(|key| state.gateway.resolve_voice(key));
-    let settings = narrowed(
+    let mut settings = narrowed(
         narrowed(core.effective_voice(), chat_voice.as_ref()),
         body.voice_override.as_ref(),
     );
+    // An explicit audition does not turn on microphone conversations.
+    if body.session_id.is_none() && body.voice_override.is_some() {
+        settings.enabled = true;
+    }
     let non_empty = |value: Option<String>| value.filter(|v| !v.trim().is_empty());
     let voice_name = non_empty(
         body.voice_override
@@ -536,7 +621,8 @@ fn resolve_speaker(state: &AppState, body: &SpeakBody) -> Result<Speaker, Respon
                 .as_ref()
                 .and_then(|voice| voice.voice_name.clone()),
         )
-    });
+    })
+    .or_else(|| settings.voice_name.clone());
     // The persona comes from the bot/chat `identity` prompt block
     // (docs/design/45-prompt-layers.md); an explicit override still wins.
     let persona = non_empty(
@@ -548,6 +634,7 @@ fn resolve_speaker(state: &AppState, body: &SpeakBody) -> Result<Speaker, Respon
         chat.as_deref()
             .and_then(|key| state.gateway.resolve_persona(key))
     })
+    .or_else(|| settings.persona.clone())
     .or_else(|| {
         let header = crate::read_historical_header(state, body.session_id.as_deref()?)?;
         let agent = header.agent?;
@@ -717,10 +804,35 @@ pub(crate) async fn voice_providers(
                 let provider_id = match provider {
                     VoiceProvider::Gemini => "google",
                     VoiceProvider::OpenAi => "openai",
+                    VoiceProvider::OpenRouter => "openrouter",
                     VoiceProvider::Local => "",
                 };
                 let configured = core.provider_configured(provider_id);
-                (configured, None)
+                let settings = core.effective_voice();
+                let selected = settings.provider.as_deref() == Some(provider.as_str());
+                let ready = configured
+                    && selected
+                    && settings
+                        .transcription_model
+                        .as_ref()
+                        .is_some_and(|v| !v.trim().is_empty())
+                    && settings
+                        .synthesis_model
+                        .as_ref()
+                        .is_some_and(|v| !v.trim().is_empty());
+                let detail = if !configured {
+                    "Add a service key"
+                } else if !selected {
+                    "Key connected; choose this service and its models"
+                } else if !ready {
+                    "Choose listening and speaking models"
+                } else {
+                    "Setup complete; test speaking and your microphone"
+                };
+                (
+                    configured,
+                    Some(serde_json::json!({"ready": ready, "detail": detail})),
+                )
             };
             serde_json::json!({
                 "name": descriptor.name,
@@ -738,26 +850,99 @@ pub(crate) async fn voice_providers(
 /// remain account-discovered; this only classifies the provider's declared
 /// naming conventions for the two voice operations.
 pub(crate) fn voice_model_capabilities(provider: &str, models: &[String]) -> serde_json::Value {
-    let transcription: Vec<_> = models
+    let choices = match provider {
+        "google" => VoiceProvider::Gemini.model_choices(models),
+        "openai" | "openai-responses" => VoiceProvider::OpenAi.model_choices(models),
+        _ => Default::default(),
+    };
+    serde_json::to_value(choices).unwrap_or_default()
+}
+
+fn routed_voice_packs(models: &[vak_llm::models::SpeechModel]) -> Vec<serde_json::Value> {
+    let origins: std::collections::BTreeSet<_> = models
         .iter()
-        .filter(|model| {
-            if provider == "openai" {
-                let id = model.to_ascii_lowercase();
-                id.contains("transcri") || id.contains("whisper")
-            } else {
-                !model.to_ascii_lowercase().contains("tts")
-                    && !model.to_ascii_lowercase().contains("image")
-                    && !model.to_ascii_lowercase().contains("embed")
+        .filter_map(|m| m.id.split_once('/').map(|(origin, _)| origin))
+        .collect();
+    let newest = |model: &&vak_llm::models::SpeechModel| {
+        (
+            model.created / 86_400,
+            model
+                .id
+                .split(['-', '/'])
+                .any(|part| matches!(part, "mini" | "lite" | "turbo" | "flash")),
+            model.created,
+        )
+    };
+    origins.into_iter().filter_map(|origin| {
+        let belongs = |model: &&vak_llm::models::SpeechModel| model.id.split_once('/').is_some_and(|(name, _)| name == origin);
+        let listen = models.iter().filter(belongs).filter(|m| m.operation == "transcription").max_by_key(newest)
+            .or_else(|| models.iter().filter(|m| m.operation == "transcription").max_by_key(newest))?;
+        let speak = models.iter().filter(belongs).filter(|m| m.operation == "speech" && !m.voices.is_empty()).max_by_key(newest)?;
+        Some(serde_json::json!({"label":origin,"provider":"openrouter", "transcription_model":listen.id,
+            "synthesis_model":speak.id, "voice_name":speak.voices.iter().find(|voice| voice.starts_with("en-")).or_else(|| speak.voices.first())}))
+    }).collect()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ModelsQuery {
+    provider: String,
+    agent: Option<String>,
+}
+
+/// The implemented voice endpoints' catalogue, separate from text discovery.
+pub(crate) async fn voice_models(
+    State(state): State<AppState>,
+    Query(query): Query<ModelsQuery>,
+) -> Response {
+    let core = match crate::resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
+    let provider = match VoiceProvider::resolve(Some(&query.provider)) {
+        Ok(provider) => provider,
+        Err(error) => return error_response(StatusCode::BAD_REQUEST, error),
+    };
+    if provider == VoiceProvider::OpenRouter {
+        return match core.discover_speech_models("openrouter").await {
+            Ok(mut metadata) => {
+                metadata.sort_by_key(|model| std::cmp::Reverse(model.created));
+                let models: Vec<_> = metadata.iter().map(|m| m.id.clone()).collect();
+                let transcription: Vec<_> = metadata
+                    .iter()
+                    .filter(|m| m.operation == "transcription")
+                    .map(|m| m.id.clone())
+                    .collect();
+                let synthesis: Vec<_> = metadata
+                    .iter()
+                    .filter(|m| m.operation == "speech")
+                    .map(|m| m.id.clone())
+                    .collect();
+                let packs = routed_voice_packs(&metadata);
+                Json(serde_json::json!({"provider":"openrouter", "models":models,
+                    "capabilities":{"transcription":transcription,"synthesis":synthesis}, "voice_packs":packs, "speech_models":metadata})).into_response()
             }
-        })
-        .cloned()
-        .collect();
-    let synthesis: Vec<_> = models
-        .iter()
-        .filter(|model| model.to_ascii_lowercase().contains("tts"))
-        .cloned()
-        .collect();
-    serde_json::json!({ "transcription": transcription, "synthesis": synthesis })
+            Err(error) => error_response(StatusCode::BAD_GATEWAY, error.to_string()),
+        };
+    }
+    let name = match provider {
+        VoiceProvider::Gemini => "google",
+        VoiceProvider::OpenAi => "openai",
+        _ => "",
+    };
+    if name.is_empty() {
+        return Json(serde_json::json!({"provider":query.provider,"models":[],"capabilities":{}}))
+            .into_response();
+    }
+    match core.discover_models(name).await {
+        Ok(models) => {
+            let mut capabilities = voice_model_capabilities(name, &models);
+            let pack = capabilities
+                .as_object_mut()
+                .and_then(|v| v.remove("conversation_pack"));
+            Json(serde_json::json!({"provider":query.provider,"models":models,"capabilities":capabilities,"voice_pack":pack})).into_response()
+        }
+        Err(error) => error_response(StatusCode::BAD_GATEWAY, error.to_string()),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1137,6 +1322,32 @@ async fn drive(mut socket: WebSocket, state: AppState, session_id: String) {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn routed_voice_packs_require_published_voices_and_prefer_compact_peers() {
+        let model =
+            |id: &str, operation: &str, created, voices: &[&str]| vak_llm::models::SpeechModel {
+                id: id.into(),
+                operation: operation.into(),
+                created,
+                pricing: serde_json::Value::Null,
+                voices: voices.iter().map(|voice| (*voice).into()).collect(),
+            };
+        let models = vec![
+            model("asr/new", "transcription", 100, &[]),
+            model("vendor/full", "speech", 200, &["full"]),
+            model("vendor/flash", "speech", 199, &["cs-CZ-one", "en-US-two"]),
+            model("cloning/reference-only", "speech", 300, &[]),
+        ];
+        let packs = routed_voice_packs(&models);
+        assert_eq!(packs.len(), 1);
+        assert_eq!(packs[0]["synthesis_model"], "vendor/flash");
+        assert_eq!(packs[0]["transcription_model"], "asr/new");
+        assert_eq!(packs[0]["voice_name"], "en-US-two");
+        assert_eq!(routed_pcm_rate("google/gemini-next-tts"), Some(24_000));
+        assert_eq!(routed_pcm_rate("heygen/heygen-voice-next"), Some(44_100));
+        assert_eq!(routed_pcm_rate("google/gemini-next-transcribe"), None);
+    }
 
     #[test]
     fn request_window_enforces_its_limit_and_rolls_over() {

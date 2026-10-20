@@ -197,7 +197,7 @@ export interface VoiceConfig {
 }
 
 export interface VoiceProviderSummary {
-  name: "gemini" | "openai" | "local";
+  name: "gemini" | "openai" | "openrouter" | "local";
   formats: string[];
   credential_vars: string[];
   configured: boolean;
@@ -209,7 +209,7 @@ export interface VoiceProviderListResponse {
 }
 
 export interface ConfigInfo {
-  voice?: { enabled: boolean; provider?: string | null; transcription_model?: string | null; synthesis_model?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string; quota?: { session_seconds: number; concurrent_sessions: number; inbound_audio_bytes: number; scope: string; source?: string } };
+  voice?: { enabled: boolean; provider?: string | null; transcription_model?: string | null; synthesis_model?: string | null; voice_name?: string | null; persona?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string; quota?: { session_seconds: number; concurrent_sessions: number; inbound_audio_bytes: number; scope: string; source?: string } };
   provider: string;
   model: string;
   bedrock_region?: string;
@@ -543,6 +543,9 @@ export interface DiscoveredModelsResponse {
   provider: string;
   models: string[];
   capabilities?: Record<string, string[]>;
+  voice_pack?: { provider: string; transcription_model: string; synthesis_model: string; voice_name?: string | null } | null;
+  voice_packs?: Array<{ label: string; provider: string; transcription_model: string; synthesis_model: string; voice_name?: string | null }>;
+  speech_models?: Array<{ id: string; operation: string; created: number; pricing: Record<string, string>; voices: string[] }>;
   error?: string;
 }
 
@@ -861,6 +864,7 @@ export interface PromptEffective {
 }
 
 export interface ConfigLayer {
+  voice?: ConfigInfo["voice"];
   scope: ConfigScope;
   path: string;
   provider?: string | null;

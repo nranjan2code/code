@@ -12,19 +12,17 @@ use serde_json::Value;
 
 use crate::gateway::{InboundChannel, InboundRequest};
 
-/// Convert the server's canonical WAV synthesis artifact to Telegram's
+/// Convert the server's encoded synthesis audio to Telegram's
 /// `sendVoice` contract (Ogg/Opus). ffmpeg is an optional host capability;
 /// when absent the caller can retain the text response and report the
 /// actionable error instead of sending malformed media.
-async fn wav_to_telegram_opus(wav: Vec<u8>) -> Result<Vec<u8>, String> {
+async fn audio_to_telegram_opus(audio: Vec<u8>) -> Result<Vec<u8>, String> {
     use tokio::io::AsyncWriteExt;
     let mut child = tokio::process::Command::new("ffmpeg")
         .args([
             "-hide_banner",
             "-loglevel",
             "error",
-            "-f",
-            "wav",
             "-i",
             "pipe:0",
             "-c:a",
@@ -44,7 +42,7 @@ async fn wav_to_telegram_opus(wav: Vec<u8>) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Telegram voice requires ffmpeg for Ogg/Opus conversion: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin
-            .write_all(&wav)
+            .write_all(&audio)
             .await
             .map_err(|e| format!("write ffmpeg input: {e}"))?;
     }
@@ -792,7 +790,7 @@ impl TelegramBridge {
         let response = http()
             .post(format!("{}/voice/speak", self.gateway_url))
             .bearer_auth(&self.gateway_token)
-            .json(&serde_json::json!({"text": text, "format": "wav", "session_id": session_id}))
+            .json(&serde_json::json!({"text": text, "session_id": session_id}))
             .send()
             .await
             .map_err(|e| format!("voice speak request: {e}"))?;
@@ -807,10 +805,9 @@ impl TelegramBridge {
             return Err("voice speak returned empty audio".into());
         }
         // Telegram's native voice method only accepts an OGG container with
-        // Opus audio.  The provider-neutral synthesis endpoint deliberately
-        // returns WAV, so negotiate the transport codec here instead of
-        // silently uploading an invalid WAV as `sendVoice`.
-        let audio = wav_to_telegram_opus(audio.to_vec()).await?;
+        // Opus audio; synthesis can return WAV or MP3. Negotiate the channel
+        // codec in this process instead of mislabelling provider bytes.
+        let audio = audio_to_telegram_opus(audio.to_vec()).await?;
         let part = reqwest::multipart::Part::bytes(audio)
             .file_name("reply.ogg")
             .mime_str("audio/ogg")
@@ -1113,7 +1110,7 @@ mod tests {
 
     #[tokio::test]
     async fn opus_conversion_rejects_invalid_wav_without_claiming_delivery() {
-        let result = wav_to_telegram_opus(b"not-a-wav".to_vec()).await;
+        let result = audio_to_telegram_opus(b"not-a-wav".to_vec()).await;
         assert!(result.is_err());
         let error = result.unwrap_err();
         assert!(error.contains("ffmpeg") || error.contains("conversion"));

@@ -128,6 +128,81 @@ async fn read_json(res: reqwest::Response) -> Result<serde_json::Value, LlmError
     serde_json::from_str(&body).map_err(|e| LlmError::Parse(e.to_string()))
 }
 
+/// Speech metadata published by a routing service's modality catalogues.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SpeechModel {
+    pub id: String,
+    pub operation: String,
+    pub created: u64,
+    pub pricing: serde_json::Value,
+    pub voices: Vec<String>,
+}
+
+fn collect_speech_metadata(json: &serde_json::Value, operation: &str) -> Vec<SpeechModel> {
+    json.get("data")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|model| {
+            model
+                .pointer("/architecture/output_modalities")
+                .and_then(|v| v.as_array())
+                .is_some_and(|modalities| modalities.iter().any(|v| v.as_str() == Some(operation)))
+        })
+        .filter_map(|model| {
+            Some(SpeechModel {
+                id: model.get("id")?.as_str()?.to_string(),
+                operation: operation.to_string(),
+                created: model
+                    .get("created")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_default(),
+                pricing: model
+                    .get("pricing")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                voices: model
+                    .get("supported_voices")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|voice| voice.as_str().map(str::to_string))
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+/// Dedicated speech discovery is separate from the text catalogue: a speech
+/// service failure must not take a working text route out of discovery.
+pub async fn list_speech_models(
+    provider: &str,
+    auth: &ProviderAuth,
+) -> Result<Vec<SpeechModel>, LlmError> {
+    let base = auth
+        .base_url
+        .as_deref()
+        .or_else(|| default_base_url(provider))
+        .ok_or_else(|| LlmError::InvalidRequest("speech service has no endpoint".into()))?;
+    let client = http()?;
+    let adapter = crate::registry::default_registry().get(provider, auth)?;
+    let mut out = Vec::new();
+    for modality in ["speech", "transcription"] {
+        let request = client
+            .get(format!("{}/models", base.trim_end_matches('/')))
+            .bearer_auth(&auth.api_key)
+            .query(&[("output_modalities", modality)]);
+        let json = read_json(send_admitted(adapter.as_ref(), provider, request).await?).await?;
+        out.extend(collect_speech_metadata(&json, modality));
+    }
+    if out.is_empty() {
+        return Err(LlmError::Parse(
+            "provider returned no dedicated speech models".into(),
+        ));
+    }
+    Ok(out)
+}
+
 /// Ask `provider` which models `auth` unlocks. Returns ids sorted and
 /// de-duplicated; never falls back to a baked-in list.
 pub async fn list_models(provider: &str, auth: &ProviderAuth) -> Result<Vec<String>, LlmError> {
@@ -883,6 +958,21 @@ fn collect_data_ids(json: serde_json::Value) -> Vec<String> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speech_metadata_requires_the_published_modality_and_keeps_voices_and_rates() {
+        let json = serde_json::json!({"data":[
+            {"id":"vendor/new-speech", "created":123, "architecture":{"output_modalities":["speech"]}, "pricing":{"prompt":"0.000001"}, "supported_voices":["account-voice"]},
+            {"id":"vendor/chat", "architecture":{"output_modalities":["text"]}},
+            {"id":"vendor/unknown"}
+        ]});
+        let models = collect_speech_metadata(&json, "speech");
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "vendor/new-speech");
+        assert_eq!(models[0].voices, ["account-voice"]);
+        assert_eq!(models[0].pricing["prompt"], "0.000001");
+        assert!(collect_speech_metadata(&json, "transcription").is_empty());
+    }
 
     #[test]
     fn openai_shape_yields_ids() {

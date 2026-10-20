@@ -826,8 +826,6 @@ export async function speak(text: string): Promise<void> {
   if (!uiPreferences.voiceEnabled || !text.trim() || !api.isBackendReady()) return;
   try {
     const blob = await api.speak(text, {
-      voiceName: uiPreferences.voiceName,
-      persona: uiPreferences.voicePersona,
       sessionId: activeId() ?? undefined,
     });
     const url = URL.createObjectURL(blob);

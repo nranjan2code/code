@@ -1478,6 +1478,7 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/voice/speak", post(voice::voice_speak))
         .route("/voice/providers", get(voice::voice_providers))
+        .route("/voice/models", get(voice::voice_models))
         .route("/memory", get(list_memory).post(append_memory))
         .route(
             "/memory/{note_id}",
@@ -16578,8 +16579,11 @@ async fn discover_models(
     };
     match listed {
         Ok(models) => {
-            let capabilities = voice::voice_model_capabilities(&name, &models);
-            Json(serde_json::json!({ "provider": name, "models": models, "capabilities": capabilities })).into_response()
+            let mut capabilities = voice::voice_model_capabilities(&name, &models);
+            let voice_pack = capabilities
+                .as_object_mut()
+                .and_then(|object| object.remove("conversation_pack"));
+            Json(serde_json::json!({ "provider": name, "models": models, "capabilities": capabilities, "voice_pack": voice_pack })).into_response()
         }
         Err(e) => {
             let mut body = provider_error_body(&e);
@@ -17475,6 +17479,7 @@ fn config_layer_response(
         "profile": layer.profile,
         "workers": layer.workers,
         "theme": layer.ui.theme,
+        "voice": layer.voice.unwrap_or_default(),
         "permissions": {
             "allow": layer.allow,
             "ask": layer.ask,
@@ -17717,6 +17722,10 @@ struct ConfigPatch {
     voice_transcription_model: Option<Option<String>>,
     #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
     voice_synthesis_model: Option<Option<String>>,
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    voice_name: Option<Option<String>>,
+    #[serde(default, deserialize_with = "crate::gateway::deserialize_present")]
+    voice_persona: Option<Option<String>>,
     /// Whether worker delegation (the `task` tool) is available. Absent
     /// means "leave alone", same convention every field here uses. The
     /// `subagents` alias keeps a client sending the pre-rename field name
@@ -18080,14 +18089,33 @@ async fn patch_config_scope(
     };
     let permission_mode = body.permission_mode.as_deref().and_then(parse_mode);
     let approval_mode = body.approval_mode.as_deref().and_then(parse_approval_mode);
+    let changed_voice_provider = body
+        .voice_provider
+        .as_ref()
+        .is_some_and(|provider| provider.as_ref() != core.effective_voice().provider.as_ref());
+    let changed_speaking_model = body
+        .voice_synthesis_model
+        .as_ref()
+        .is_some_and(|model| model.as_ref() != core.effective_voice().synthesis_model.as_ref());
     let voice_patch = vak_config::VoicePatch {
         enabled: body.voice_enabled,
         max_session_secs: body.voice_max_session_secs,
         max_concurrent: body.voice_max_concurrent,
         max_audio_bytes: body.voice_max_audio_bytes,
         provider: body.voice_provider.clone(),
-        transcription_model: body.voice_transcription_model.clone(),
-        synthesis_model: body.voice_synthesis_model.clone(),
+        transcription_model: body
+            .voice_transcription_model
+            .clone()
+            .or_else(|| changed_voice_provider.then_some(None)),
+        synthesis_model: body
+            .voice_synthesis_model
+            .clone()
+            .or_else(|| changed_voice_provider.then_some(None)),
+        voice_name: body
+            .voice_name
+            .clone()
+            .or_else(|| (changed_voice_provider || changed_speaking_model).then_some(None)),
+        persona: body.voice_persona.clone(),
     };
     let invalid_name = |value: &String| value.trim().is_empty() || value.chars().count() > 256;
     if voice_patch
@@ -18107,6 +18135,8 @@ async fn patch_config_scope(
         || [
             voice_patch.transcription_model.as_ref(),
             voice_patch.synthesis_model.as_ref(),
+            voice_patch.voice_name.as_ref(),
+            voice_patch.persona.as_ref(),
         ]
         .into_iter()
         .flatten()

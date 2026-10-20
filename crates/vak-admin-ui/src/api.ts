@@ -820,6 +820,8 @@ export const api = {
   sameModelSuggestions: (model: string, agent?: string): Promise<SameModelSuggestions> =>
     fetch(withAgent(`/config/route/suggestions?model=${encodeURIComponent(model)}`, agent)).then((r) => handle(r)),
 
+  voiceModels: (provider: string, agent?: string): Promise<DiscoveredModelsResponse> =>
+    fetch(withAgent(`/voice/models?provider=${encodeURIComponent(provider)}`, agent)).then((r) => handle(r)),
   voiceProviders: (agent?: string): Promise<VoiceProviderListResponse> =>
     fetch(withAgent("/voice/providers", agent)).then((r) => handle(r)),
 
@@ -1258,8 +1260,8 @@ export const api = {
   /// `voice_override` so it hears the in-progress, unsaved config.
   speak: (body: {
     text: string;
-    bot_id?: string;
-    chat_key?: string;
+    agent?: string;
+    session_id?: string;
     voice_override?: VoiceConfig;
   }): Promise<Blob> =>
     fetch("/voice/speak", {

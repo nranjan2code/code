@@ -273,3 +273,8 @@ listed here unless the maintainer reopens it.
 - Mail and calendar against the storage of the time, on a feature branch
   since merged (`docs/design/80-mail-and-calendar.md`).
 - Main only: no pull requests, side branches or leftover worktrees.
+
+- 2026-10-20: Prioritize fast everyday voice conversation and study current,
+  affordable models across reachable providers, with multilingual coverage
+  including Indian languages, using account discovery rather
+  than a static model list. Evidence and limits: [voice experience review](audits/voice-experience-2026-10-20.md).

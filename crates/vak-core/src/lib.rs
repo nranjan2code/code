@@ -5103,6 +5103,16 @@ impl Core {
         Ok(all)
     }
 
+    /// Discover a connected routing service's dedicated speech models without
+    /// changing its text catalogue or exposing account credentials.
+    pub async fn discover_speech_models(
+        &self,
+        provider: &str,
+    ) -> Result<Vec<vak_llm::models::SpeechModel>, CoreError> {
+        let auth = self.provider_auth_for(provider)?;
+        Ok(vak_llm::models::list_speech_models(provider, &auth).await?)
+    }
+
     /// Read provider-published account metadata without exposing credentials.
     pub async fn provider_status(
         &self,

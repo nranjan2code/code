@@ -130,6 +130,7 @@ pub async fn speak(
     text: &str,
     model: &str,
     voice: Option<&str>,
+    instructions: Option<&str>,
     format: &str,
     cancel: &CancellationToken,
 ) -> Result<Vec<u8>, LlmError> {
@@ -161,6 +162,11 @@ pub async fn speak(
     });
     if let Some(voice) = voice.filter(|v| !v.trim().is_empty()) {
         body["voice"] = Value::String(voice.to_string());
+    }
+    if let Some(instructions) = instructions.filter(|v| !v.trim().is_empty())
+        && (config.openrouter || model.starts_with("gpt-"))
+    {
+        body["instructions"] = Value::String(instructions.to_string());
     }
     let url = format!("{}/audio/speech", config.base_url.trim_end_matches('/'));
     let response = tokio::select! {

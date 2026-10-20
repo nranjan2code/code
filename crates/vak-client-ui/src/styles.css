@@ -2255,6 +2255,9 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
   .setting-control > .key-edit input { flex: 1 1 190px; width: auto; }
 }
 .settings-button { min-height: 31px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-soft); background: var(--surface); font-size: var(--fs-meta); }
+.voice-setup-row .setting-control { flex-wrap: wrap; }
+.voice-setup-row .settings-button { flex: none; white-space: nowrap; }
+.voice-setup-row .settings-value { flex-basis: 100%; }
 .settings-button:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface-hover); }
 
 .archived-list { overflow: hidden; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-raised); }

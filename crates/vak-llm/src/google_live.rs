@@ -84,11 +84,21 @@ pub async fn transcribe(
             return Err(error);
         }
     };
-    let body = build_transcribe_request(audio, mime);
-    let url = format!(
-        "https://{LIVE_WS_HOST}/v1beta/models/{}:generateContent",
-        config.model
-    );
+    let dedicated = config.model.split('-').any(|part| part == "transcribe");
+    let (url, body) = if dedicated {
+        (
+            format!("https://{LIVE_WS_HOST}/v1beta/interactions"),
+            build_transcription_interaction_request(&config.model, audio, mime),
+        )
+    } else {
+        (
+            format!(
+                "https://{LIVE_WS_HOST}/v1beta/models/{}:generateContent",
+                config.model
+            ),
+            build_transcribe_request(audio, mime),
+        )
+    };
     let capacity_ticket =
         crate::RateLimitGate::capacity_observation_ticket(account.clone(), &config.model);
     let response = tokio::select! {
@@ -115,12 +125,16 @@ pub async fn transcribe(
             crate::openai::retry_after_from_headers(&headers),
         ));
     }
-    let text = value
-        .pointer("/candidates/0/content/parts/0/text")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let text = if dedicated {
+        interaction_text(&value)
+    } else {
+        value
+            .pointer("/candidates/0/content/parts/0/text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let text = text.trim().to_string();
     if text.is_empty() {
         return Err(LlmError::InvalidRequest(
             "provider returned an empty transcript".into(),
@@ -128,6 +142,35 @@ pub async fn transcribe(
     }
     quota.settle_estimate();
     Ok(text)
+}
+
+fn build_transcription_interaction_request(model: &str, audio: &[u8], mime: &str) -> Value {
+    use base64::Engine as _;
+    json!({
+        "model": model,
+        "store": false,
+        "input": [{"type": "audio", "mime_type": mime,
+            "data": base64::engine::general_purpose::STANDARD.encode(audio)}],
+        "generation_config": {"transcription_config": {"mode": {"type": "verbatim"}}},
+    })
+}
+
+fn interaction_text(value: &Value) -> String {
+    if let Some(text) = value.get("output_text").and_then(Value::as_str) {
+        return text.to_string();
+    }
+    value
+        .get("steps")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|step| step.get("type").and_then(Value::as_str) == Some("model_output"))
+        .filter_map(|step| step.get("content").and_then(Value::as_array))
+        .flatten()
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn build_transcribe_request(audio: &[u8], mime: &str) -> Value {
@@ -414,6 +457,7 @@ fn build_tts_interaction_request(
     }
     json!({
         "model": model,
+        "store": false,
         "input": [{"type": "user_input", "content": [content]}],
         "response_format": {"type": "audio"},
         "generation_config": {"speech_config": [{"voice": voice}]},
@@ -715,6 +759,27 @@ mod tests {
     }
 
     #[test]
+    fn dedicated_transcription_uses_verbatim_audio_and_reads_only_model_text() {
+        let body = build_transcription_interaction_request(
+            "discovered-transcribe",
+            &[0, 1, 2],
+            "audio/wav",
+        );
+        assert_eq!(body["input"][0]["data"], "AAEC");
+        assert_eq!(body["store"], false);
+        assert_eq!(
+            body["generation_config"]["transcription_config"]["mode"]["type"],
+            "verbatim"
+        );
+        let response = json!({"steps": [
+            {"type":"user_input", "content":[{"type":"text", "text":"not the transcript"}]},
+            {"type":"model_output", "content":[{"type":"text", "text":"one "}, {"type":"text", "text":"two"}]}
+        ]});
+        assert_eq!(interaction_text(&response), "one two");
+        assert_eq!(interaction_text(&json!({})), "");
+    }
+
+    #[test]
     fn interactions_tts_request_keeps_transcript_verbatim_and_uses_style_metadata() {
         let body = build_tts_interaction_request(
             "models/gemini-account-tts-model",
@@ -723,6 +788,7 @@ mod tests {
             "Kore",
         );
         assert_eq!(body["model"], "models/gemini-account-tts-model");
+        assert_eq!(body["store"], false);
         assert_eq!(body["input"][0]["content"][0]["text"], "Hello there.");
         assert_eq!(
             body["input"][0]["content"][0]["annotations"][0]["style"],

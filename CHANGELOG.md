@@ -1,5 +1,18 @@
 ## Unreleased
 
+- Voice settings and Admin offer an everyday listening/speaking setup from
+  your connected account, save voice and speaking style with the Agent, and
+  preview before enabling microphone conversations. Provider switches clear
+  incompatible model and voice choices; readiness distinguishes keys from setup.
+- Gemini's dedicated transcription models use their current speech endpoint
+  in verbatim mode. Gemini speech calls request no stored interaction history;
+  OpenAI GPT speech receives the selected speaking style.
+
+- OpenRouter voice support discovers its separate speech/transcription
+  catalogues, offers vendor presets and model-specific voices, and links current
+  prices and languages. Playback and channel bridges handle routed MP3 and
+  Gemini/HeyGen PCM wrapped as WAV. Discovery failures retain retry and exact-ID setup.
+
 ## 8.16.0 — 2026-10-20
 - Library files open as readable, interactive previews: HTML pages, formatted
   Markdown, CSV/TSV tables, images, audio and video, alongside the existing
