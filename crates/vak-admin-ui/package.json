@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --port 1421 --strictPort",
     "check": "tsc --noEmit",
+    "test": "node --test tests/*.mjs",
     "build": "tsc && vite build && node scripts/stamp.mjs",
     "preview": "vite preview"
   },

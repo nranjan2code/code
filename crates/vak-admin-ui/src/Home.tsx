@@ -1408,7 +1408,7 @@ export function Home() {
           <div class="home-deck-tags">
             <div class="deck-tag">
               <span class="deck-tag-k">Agents in view</span>
-              <span class="font-semibold">{selectedAgentId() === "all" ? `All ${adminAgents().length} agents` : selectedAgentId() === "global" ? "Shared defaults" : adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}</span>
+              <span class="semibold">{selectedAgentId() === "all" ? `All ${adminAgents().length} agents` : selectedAgentId() === "global" ? "Shared defaults" : adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}</span>
             </div>
             <div class="deck-tag">
               <span class="deck-tag-k">Workspace</span>

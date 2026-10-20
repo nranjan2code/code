@@ -647,7 +647,7 @@ export function buildWorkflowGraph(
 
   // 2.5: Security & Sandbox Jail (docs/design/24 & 25)
   const permMode = contract?.permission_mode || "WorkspaceWrite";
-  const isFullAccess = permMode === "FullAccess";
+  const isFullAccess = permMode.toLowerCase() === "fullaccess";
   const sandboxNode: WorkflowNode = {
     id: "sandbox",
     stage_key: "sandbox",
@@ -1203,7 +1203,7 @@ export function SessionsList() {
 
       {/* Best-of-N Candidate Management Deck */}
       <Show when={(bestofn()?.runs?.length ?? 0) > 0}>
-        <section class="panel candidates-panel">
+        <section class="panel">
           <div class="candidates-header">
             <div>
               <h3>Active Best-of-N Candidate Runs</h3>
@@ -1218,7 +1218,7 @@ export function SessionsList() {
                     <span class="chip mono">Candidate #{run.branch_index != null ? run.branch_index + 1 : 1}</span>
                     <span class="mono dim">{shortId(run.session_id)}</span>
                   </div>
-                  <div class="candidate-prompt font-semibold">{run.prompt}</div>
+                  <div class="candidate-prompt semibold">{run.prompt}</div>
                   <div class="candidate-actions">
                     <button
                       type="button"
@@ -1246,25 +1246,25 @@ export function SessionsList() {
 
       {/* Sessions Posture Deck */}
       <div class="sessions-posture-deck">
-        <div class="sessions-kpi-card">
-          <span class="kpi-label">Total conversations</span>
-          <span class="kpi-value font-mono">{totalCount()}</span>
-          <span class="kpi-sub dim">Every conversation, kept in full</span>
+        <div class="session-kpi-card">
+          <span class="session-kpi-label">Total conversations</span>
+          <span class="session-kpi-val mono">{totalCount()}</span>
+          <span class="session-kpi-sub dim">Every conversation, kept in full</span>
         </div>
-        <div class="sessions-kpi-card">
-          <span class="kpi-label">This project</span>
-          <span class="kpi-value font-mono">{(sessions()?.sessions ?? []).filter(isLocal).length}</span>
-          <span class="kpi-sub dim">{localSpace() ? projectName(localSpace()) : "All projects"}</span>
+        <div class="session-kpi-card">
+          <span class="session-kpi-label">This project</span>
+          <span class="session-kpi-val mono">{(sessions()?.sessions ?? []).filter(isLocal).length}</span>
+          <span class="session-kpi-sub dim">{localSpace() ? projectName(localSpace()) : "All projects"}</span>
         </div>
-        <div class="sessions-kpi-card">
-          <span class="kpi-label">Archived</span>
-          <span class="kpi-value font-mono">{archivedCount()}</span>
-          <span class="kpi-sub dim">Hidden from primary queue</span>
+        <div class="session-kpi-card">
+          <span class="session-kpi-label">Archived</span>
+          <span class="session-kpi-val mono">{archivedCount()}</span>
+          <span class="session-kpi-sub dim">Hidden from primary queue</span>
         </div>
-        <div class="sessions-kpi-card">
-          <span class="kpi-label">Execution Mode</span>
-          <span class="kpi-value">Immutable</span>
-          <span class="kpi-sub dim">Invariant 1 & 2 verified</span>
+        <div class="session-kpi-card">
+          <span class="session-kpi-label">Execution Mode</span>
+          <span class="session-kpi-val">Immutable</span>
+          <span class="session-kpi-sub dim">Invariant 1 & 2 verified</span>
         </div>
       </div>
 
@@ -1336,7 +1336,7 @@ export function SessionsList() {
       </div>
 
       {/* Sessions Table */}
-      <div class="sessions-table-panel">
+      <div class="sessions-table-wrapper">
         <Show when={!sessions.loading} fallback={<div class="empty">Loading session index…</div>}>
           <Show
             when={filtered().length > 0}
@@ -1362,9 +1362,9 @@ export function SessionsList() {
                       classList={{ "archived-row": s.archived }}
                       onClick={() => navigate(`#/sessions/${s.session_id}`)}
                     >
-                      <td class="mono font-semibold">
+                      <td class="mono semibold">
                         <div class="session-id-cell">
-                          <span class="cdot cdot-ok" />
+                          <span class="cdot cdot-done" />
                           <span>{s.session_id}</span>
                         </div>
                       </td>
@@ -1687,16 +1687,16 @@ export function SessionForensics(props: { sessionId: string }) {
   return (
     <div class="view session-forensics-view">
       {/* Executive Forensics Masthead */}
-      <div class="forensics-masthead">
-        <div class="masthead-nav-bar">
+      <div class="session-masthead">
+        <div class="session-masthead-top">
           <button type="button" class="button small ghost" onClick={() => navigate("#/sessions")}>
             ‹ Conversations
           </button>
-          <div class="masthead-id-pill">
-            <span class="cdot cdot-ok" />
-            <span class="mono font-bold">{shortId(props.sessionId, 12)}</span>
+          <div class="session-id-pill">
+            <span class="cdot cdot-done" />
+            <span class="mono semibold">{shortId(props.sessionId, 12)}</span>
           </div>
-          <div class="masthead-right-actions">
+          <div class="session-masthead-actions">
             <a
               class="button small ghost"
               href={`/admin/api/sessions/${encodeURIComponent(props.sessionId)}/export`}
@@ -1715,7 +1715,7 @@ export function SessionForensics(props: { sessionId: string }) {
         <div class="session-metrics-deck">
           <div class="session-metric-tile">
             <span class="metric-label">DISPATCH ROUTE</span>
-            <div class="metric-value font-semibold mono">
+            <div class="metric-value semibold mono">
               {contract()?.provider ?? "openai-completions"} · {contract()?.model ?? "default"}
             </div>
             <span class="metric-sub mono dim">
@@ -1726,18 +1726,18 @@ export function SessionForensics(props: { sessionId: string }) {
           <div class="session-metric-tile">
             <span class="metric-label">AUTHORITY & SANDBOX</span>
             <div class="metric-value">
-              <span class={`chip ${contract()?.permission_mode === "FullAccess" ? "chip-tone-alert" : "chip-tone-success"}`}>
+              <span class={`chip ${contract()?.permission_mode?.toLowerCase() === "fullaccess" ? "chip-tone-alert" : "chip-tone-success"}`}>
                 {contract()?.permission_mode ?? "WorkspaceWrite"}
               </span>
             </div>
             <span class="metric-sub dim">
-              {contract()?.permission_mode === "FullAccess" ? "Unsandboxed (Host trust confirmed)" : "OS Process Jail Sandbox"}
+              {contract()?.permission_mode?.toLowerCase() === "fullaccess" ? "Unsandboxed (Host trust confirmed)" : "OS Process Jail Sandbox"}
             </span>
           </div>
 
           <div class="session-metric-tile">
             <span class="metric-label">TOTAL TURNS</span>
-            <div class="metric-value font-bold mono">
+            <div class="metric-value semibold mono">
               {turns().length} turns
             </div>
             <span class="metric-sub dim">
@@ -1747,7 +1747,7 @@ export function SessionForensics(props: { sessionId: string }) {
 
           <div class="session-metric-tile">
             <span class="metric-label">TOKEN VOLUME</span>
-            <div class="metric-value font-bold mono">
+            <div class="metric-value semibold mono">
               {totalTokens() > 1000 ? `${(totalTokens() / 1000).toFixed(1)}k` : totalTokens()} tokens
             </div>
             <span class="metric-sub dim">
@@ -1757,7 +1757,7 @@ export function SessionForensics(props: { sessionId: string }) {
 
           <div class="session-metric-tile">
             <span class="metric-label">FINOPS COST</span>
-            <div class="metric-value font-bold mono">
+            <div class="metric-value semibold mono">
               ${totalCost().toFixed(4)}
             </div>
             <span class="metric-sub dim">
@@ -1793,7 +1793,7 @@ export function SessionForensics(props: { sessionId: string }) {
                   setSelectedTurnIndex(val);
                 }
               }}
-              class="turn-number-input mono font-bold"
+              class="turn-number-input mono semibold"
             />
             <span class="dim">of {turns().length}</span>
           </div>
@@ -1911,7 +1911,7 @@ export function SessionForensics(props: { sessionId: string }) {
                 </div>
                 <div class="turn-summary-right">
                   <span class="dim mono">{timeAgo(currentTurn()!.started_at)}</span>
-                  <span class="mono font-semibold">
+                  <span class="mono semibold">
                     {currentTurn()!.tool_calls.length} tool{currentTurn()!.tool_calls.length === 1 ? "" : "s"}
                   </span>
                   <span class="mono">
@@ -2066,7 +2066,7 @@ export function SessionForensics(props: { sessionId: string }) {
                             </div>
                           </div>
                           <div class="node-body">
-                            <div class="node-title font-semibold" title={node.title}>{node.title}</div>
+                            <div class="node-title semibold" title={node.title}>{node.title}</div>
                             <div class="node-subtitle mono" title={node.subtitle}>{node.subtitle}</div>
                           </div>
                           <div class="node-footer">
@@ -2183,7 +2183,7 @@ export function SessionForensics(props: { sessionId: string }) {
                         <div class="inspector-kv-grid">
                           <div class="kv-item">
                             <span class="kv-label">Stage Latency:</span>
-                            <span class="mono font-semibold">{activeNode()!.duration_ms != null ? `${activeNode()!.duration_ms} ms` : "0 ms"}</span>
+                            <span class="mono semibold">{activeNode()!.duration_ms != null ? `${activeNode()!.duration_ms} ms` : "0 ms"}</span>
                           </div>
                           <div class="kv-item">
                             <span class="kv-label">Input Tokens:</span>
@@ -2195,7 +2195,7 @@ export function SessionForensics(props: { sessionId: string }) {
                           </div>
                           <div class="kv-item">
                             <span class="kv-label">Cost (USD):</span>
-                            <span class="mono font-bold">${(activeNode()!.cost ?? 0).toFixed(5)}</span>
+                            <span class="mono semibold">${(activeNode()!.cost ?? 0).toFixed(5)}</span>
                           </div>
                         </div>
                       </Match>
@@ -2216,7 +2216,7 @@ export function SessionForensics(props: { sessionId: string }) {
                           <div class="security-card">
                             <span class="security-card-title">OS Sandbox Backend</span>
                             <span class="security-card-status">
-                              {contract()?.permission_mode === "FullAccess"
+                              {contract()?.permission_mode?.toLowerCase() === "fullaccess"
                                 ? "Unsandboxed (FullAccess)"
                                 : "Seatbelt / OS Process Jail"}
                             </span>
@@ -2301,7 +2301,7 @@ export function SessionForensics(props: { sessionId: string }) {
                       <Show when={e.is_error}>
                         <span class="chip chip-error">error</span>
                       </Show>
-                      <span class="entry-ts font-mono" title={e.ts}>{clock(e.ts)} ({timeAgo(e.ts)})</span>
+                      <span class="entry-ts mono" title={e.ts}>{clock(e.ts)} ({timeAgo(e.ts)})</span>
                     </header>
                     <pre class="entry-content mono">{e.content}</pre>
                   </article>

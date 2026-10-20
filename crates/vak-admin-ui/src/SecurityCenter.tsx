@@ -1029,7 +1029,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
       />
 
       <Show when={account()}>
-        {(owner) => <section class="card">
+        {(owner) => <section class="panel">
           <h2>Owner sign-in</h2>
           <p>{owner().passkeys} passkey{owner().passkeys === 1 ? "" : "s"} · {owner().recovery_codes_remaining} recovery codes left</p>
           <p>Passkeys sign you in to this server. Save recovery codes outside Vakyartha.</p>
@@ -1043,7 +1043,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
       {/* Executive Posture Deck */}
       <div class="security-posture-deck">
         <div class="stat-card">
-          <span class="stat-card-label">Authority Mode</span>
+          <span class="stat-label">Authority Mode</span>
           <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
             <span class={`chip chip-tone-${selectedPermissionMode() === "FullAccess" ? "danger" : selectedPermissionMode() === "ReadOnly" ? "info" : "success"}`}>
               {selectedPermissionMode()}
@@ -1052,42 +1052,42 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
               <span class="dim" style={{ "font-size": "12px" }}>inherited</span>
             </Show>
           </div>
-          <span class="stat-card-hint">
+          <span class="stat-sub">
             {props.scope() === "user" ? "Global Scope" : "Workspace Rooted"}
           </span>
         </div>
 
         <div class="stat-card">
-          <span class="stat-card-label">Approval Strategy</span>
+          <span class="stat-label">Approval Strategy</span>
           <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
             <span class="chip chip-tone-info">
               {selectedApprovalMode() === "ask" ? "Ask" : selectedApprovalMode() === "approve-safe" ? "Approve Safe" : "Auto-Approve"}
             </span>
           </div>
-          <span class="stat-card-hint">Escalation Policy</span>
+          <span class="stat-sub">Escalation Policy</span>
         </div>
 
         <div class="stat-card">
-          <span class="stat-card-label">OS Sandbox Engine</span>
+          <span class="stat-label">OS Sandbox Engine</span>
           <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
             <span class={`chip chip-tone-${selectedPermissionMode() === "FullAccess" ? "danger" : "success"}`}>
               {selectedPermissionMode() === "FullAccess" ? "Bypassed (Unsandboxed)" : (config()?.sandbox ?? "Seatbelt")}
             </span>
           </div>
-          <span class="stat-card-hint">
+          <span class="stat-sub">
             {selectedPermissionMode() === "FullAccess" ? "Full Host Execution" : "Process Group Isolation"}
           </span>
         </div>
 
         <div class="stat-card">
-          <span class="stat-card-label">Forensic Audit Log</span>
+          <span class="stat-label">Forensic Audit Log</span>
           <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
             <strong style={{ "font-size": "18px", "font-weight": "700" }}>
               {events()?.events.length ?? 0}
             </strong>
             <span class="dim" style={{ "font-size": "12px" }}>recorded events</span>
           </div>
-          <span class="stat-card-hint">Append-only JSONL</span>
+          <span class="stat-sub">Append-only JSONL</span>
         </div>
       </div>
 

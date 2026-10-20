@@ -579,8 +579,7 @@ export function Inbox() {
                             <div class="inbox-gate-actions">
                               <button
                                 type="button"
-                                class="button small"
-                                style="background: var(--ok); color: var(--on-accent); border: none;"
+                                class="button small approve"
                                 onClick={() =>
                                   void handleResolveApproval(
                                     approval().session_id,

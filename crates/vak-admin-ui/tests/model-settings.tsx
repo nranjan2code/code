@@ -3,16 +3,21 @@ import { Settings } from '../src/App';
 import '../src/styles.css';
 let release: (() => void) | undefined;
 let delayAlpha = false;
+const requests: URL[] = [];
 const patches: { path: string; body: any }[] = [];
 let sharedRoute: { same_model: string[][]; fallback_models: string[] } = { same_model: [['alpha/one', 'beta/one-copy']], fallback_models: ['shared-b'] };
 window.fetch = async (input, init) => {
-  const path = new URL(String(input), location.origin).pathname;
+  const url = new URL(String(input), location.origin);
+  requests.push(url);
+  const path = url.pathname;
   let body: unknown = {};
   if (init?.method === 'PATCH') {
     const sent = JSON.parse(String(init.body));
     patches.push({ path, body: sent });
     if (path === '/config/global') sharedRoute = { same_model: sent.route_same_model ?? sharedRoute.same_model, fallback_models: sent.route_fallback_models ?? sharedRoute.fallback_models };
   }
+  else if (path === '/voice/providers') body = { providers: [] };
+  else if (path === '/config/control') body = { control: {}, route: 'alpha/custom-saved', effective: {}, limits: {}, shipped_limits: {} };
   else if (path === '/providers') body = { providers: ['alpha', 'beta', 'bedrock'].map((name) => ({ name, configured: true, requires_key: true })), current: 'alpha', current_model: 'custom-saved' };
   else if (path === '/config/global') body = { provider: 'alpha', model: 'custom-saved', max_turns: 40, permissions: {}, route: sharedRoute };
   else if (['/config', '/config/project'].includes(path)) body = { provider: 'alpha', model: 'custom-saved', max_turns: 40, permissions: {}, route: { same_model: [], fallback_models: [] } };
@@ -36,6 +41,7 @@ const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement
     ['alpha', 'beta', 'bedrock'].every((name) => [...document.querySelector<HTMLSelectElement>('select[aria-label="Provider"]')!.options].some((option) => option.value === name)),
     'global settings loads the provider catalogue',
   );
+  check(requests.some((url) => url.pathname === '/voice/providers') && !requests.some((url) => url.searchParams.get('agent') === 'global' || url.searchParams.get('agent') === 'all'), 'aggregate scope never becomes a synthetic Agent id on voice requests');
   const panel = () => document.querySelector<HTMLElement>('[data-testid="backup-models"]')!;
   const boxes = () => [...panel().querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
   check(panel()?.textContent?.includes('one-copy') && panel().textContent?.includes('shared-b'), 'backup panel shows confirmed groups and allowed backups');
@@ -66,3 +72,14 @@ const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement
   select('Model', 'bedrock-one'); await tick(); check(!save().disabled, 'a discovered Bedrock model can save without vendor-specific preflight');
   return { passed: passed.length, checks: passed };
 };
+
+const runner = document.createElement("button");
+runner.textContent = "Run regression checks";
+runner.addEventListener("click", async () => {
+  const result = document.getElementById("check-result")!;
+  try { result.textContent = JSON.stringify(await (window as any).runChecks(), null, 2); }
+  catch (error) { result.textContent = `FAILED: ${error}`; }
+});
+document.body.prepend(runner);
+const result = document.createElement("pre"); result.id = "check-result";
+runner.after(result);

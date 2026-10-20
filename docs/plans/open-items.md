@@ -1,3 +1,14 @@
+## Admin theme and style review (2026-10-20)
+
+- [x] Consolidate undefined tokens and mismatched component classes throughout
+  the admin UI; correct light/dark artwork, status contrast, chart typography,
+  nested form layout, focus bindings and narrow-screen overflow. Coverage and
+  the distinction between live data and synthetic states are recorded in
+  [the acceptance review](../audits/admin-style-review-2026-10-20.md).
+- [ ] Install the rebuilt server bundle in a subsequent release. The reviewed
+  checkout runs against the installed service from `~/vak-home` through the
+  local admin preview; the installed binary has not been replaced by this review.
+
 - [x] Live, dev route (2026-10-15): "Pause my morning line." was
   answered "The morning line is paused" with no call. Cause: the set of
   tools a session has loaded ("stays loaded for the session", doc 88

@@ -2,7 +2,7 @@ import { For, Show, createMemo, createResource, createSignal, onCleanup } from "
 import { api } from "./api";
 import { conn, navigate, pushToast, route, selectedAgentId, setSelectedAgentId } from "./store";
 import type { OperationsSnapshot, SandboxRecord } from "./types";
-import "./focusTrap";
+import { trapFocus } from "./focusTrap";
 import { cadence as automationCadence } from "./Automations";
 import { EffectList } from "./Effects";
 
@@ -585,6 +585,6 @@ export function OperationsCenter(props: { section?: Section }) {
         </>}</Show>
       </Show>
     </Show>
-    <Show when={doctorOpen()}><div class="ops-dialog-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDoctorOpen(false); }}><section class="ops-dialog" role="dialog" aria-modal="true" aria-labelledby="doctor-title" use:trapFocus><div class="panel-title-row"><div><span class="eyebrow">Contextual diagnosis</span><h2 id="doctor-title">Ask doctor</h2><p class="dim">Scope: {workspace() === "all" ? "all workspaces" : workspace()} · {timeWindowLabels[timeWindow()]} · {operationPath()}</p></div><button type="button" class="ghost small" onClick={() => setDoctorOpen(false)} aria-label="Close doctor">Close</button></div><Show when={!doctorLoading()} fallback={<div class="empty">Collecting health checks and ledger evidence…</div>}><Show when={doctorResult()}>{(result) => <><Show when={result().failures != null}><Metric label="Failed checks" value={result().failures!} tone={result().failures ? "bad" : "good"} /></Show><Show when={result().checks?.length}><div class="ops-check-list"><For each={result().checks}>{(check) => <div class="ops-check-row"><StatusMark value={check.ok ? "pass" : "fail"} /><strong>{check.label}</strong><span>{check.detail}</span></div>}</For></div></Show><pre class="mono report-pre">{result().report}</pre></>}</Show></Show></section></div></Show>
+    <Show when={doctorOpen()}><div class="ops-dialog-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDoctorOpen(false); }}><section class="ops-dialog" role="dialog" aria-modal="true" aria-labelledby="doctor-title" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setDoctorOpen(false); }}><div class="panel-title-row"><div><span class="eyebrow">Contextual diagnosis</span><h2 id="doctor-title">Ask doctor</h2><p class="dim">Scope: {workspace() === "all" ? "all workspaces" : workspace()} · {timeWindowLabels[timeWindow()]} · {operationPath()}</p></div><button type="button" class="ghost small" onClick={() => setDoctorOpen(false)} aria-label="Close doctor">Close</button></div><Show when={!doctorLoading()} fallback={<div class="empty">Collecting health checks and ledger evidence…</div>}><Show when={doctorResult()}>{(result) => <><Show when={result().failures != null}><Metric label="Failed checks" value={result().failures!} tone={result().failures ? "bad" : "good"} /></Show><Show when={result().checks?.length}><div class="ops-check-list"><For each={result().checks}>{(check) => <div class="ops-check-row"><StatusMark value={check.ok ? "pass" : "fail"} /><strong>{check.label}</strong><span>{check.detail}</span></div>}</For></div></Show><pre class="mono report-pre">{result().report}</pre></>}</Show></Show></section></div></Show>
   </div>;
 }

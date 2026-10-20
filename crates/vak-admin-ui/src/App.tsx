@@ -25,7 +25,7 @@ import { SecurityCenter } from "./SecurityCenter";
 import { Inbox } from "./Inbox";
 import { BackupModels } from "./BackupModels";
 import { SessionsList, SessionForensics } from "./SessionForensics";
-import "./focusTrap";
+import { trapFocus } from "./focusTrap";
 import { clock, shortId, timeAgo } from "./time";
 import {
   AccessPicker, BUILTIN_TOOLS, MATCHER_TOOLS, MatcherBuilder, ScheduleBuilder,
@@ -66,6 +66,13 @@ createEffect(() => {
   const resolved = t === "system" ? (systemDark() ? "dark" : "light") : t;
   document.documentElement.dataset.theme = resolved;
 });
+
+// Use the approved light/dark exports for the actual resolved theme, including sign-in.
+const brandSymbol = () => {
+  const choice = theme();
+  const dark = choice === "system" ? systemDark() : ["dark", "contrast", "frosted-dark"].includes(choice);
+  return `/admin/assets/brand/songbird-${dark ? "reverse" : "colour"}.svg`;
+};
 
 // Unread inbox badge: polled lightly while signed in.
 const [unread, setUnread] = createSignal(0);
@@ -425,7 +432,7 @@ function Login() {
   return (
     <div class="login-wrap">
       <form class="login-card" onSubmit={submit}>
-        <div class="login-logo"><img src="/admin/assets/brand/songbird-reverse.svg" alt="" /></div>
+        <div class="login-logo"><img src={brandSymbol()} alt="" /></div>
         <h1>Vakyartha admin</h1>
         <Show when={recovered()}>
           <p class="hint">The recovery code has been used. Add a new passkey now.</p>
@@ -1085,15 +1092,15 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
   const [catalogQuery, setCatalogQuery] = createSignal("");
   const pluginScope = () => props.ctx.scope() === "user" ? "user" as const : "workspace" as const;
   const [sources, { refetch: refetchSources }] = createResource(
-    () => [pluginScope(), selectedAgentId()] as const,
+    () => [pluginScope(), selectedAgentIdOrUndefined() ?? ""] as const,
     ([scope]) => api.pluginSources(scope, selectedAgentIdOrUndefined()),
   );
   const [sharedPlugins] = createResource(
-    () => [pluginScope(), selectedAgentId()] as const,
+    () => [pluginScope(), selectedAgentIdOrUndefined() ?? ""] as const,
     ([scope, agent]) => scope === "workspace" && agent !== "all" && agent !== "global" ? api.plugins("user", agent) : Promise.resolve({ plugins: [] }),
   );
   const [catalog, { refetch: refetchCatalog }] = createResource(
-    () => [catalogQuery(), pluginScope(), selectedAgentId()] as const,
+    () => [catalogQuery(), pluginScope(), selectedAgentIdOrUndefined() ?? ""] as const,
     ([query, scope]) => api.pluginCatalog(query, scope === "user" ? "user" : undefined, selectedAgentIdOrUndefined()),
   );
   const refresh = props.ctx.refetchPlugins;
@@ -1659,10 +1666,10 @@ Nothing runs alongside your turns. Add one to keep a record of what Vakyartha do
 
 function ExtensionsSection() {
   const [config, configActions] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
-  const [mcp, mcpActions] = createResource(() => [configScope(), selectedAgentId()] as const, ([scope]) => api.mcpServers(scope, selectedAgentIdOrUndefined()));
-  const [hooks, hooksActions] = createResource(() => [configScope(), selectedAgentId()] as const, ([scope]) => api.hooks(scope, selectedAgentIdOrUndefined()));
+  const [mcp, mcpActions] = createResource(() => [configScope(), selectedAgentIdOrUndefined() ?? ""] as const, ([scope]) => api.mcpServers(scope, selectedAgentIdOrUndefined()));
+  const [hooks, hooksActions] = createResource(() => [configScope(), selectedAgentIdOrUndefined() ?? ""] as const, ([scope]) => api.hooks(scope, selectedAgentIdOrUndefined()));
   const [skills, skillsActions] = createResource(selectedAgentId, () => api.skills(selectedAgentIdOrUndefined()));
-  const [plugins, pluginsActions] = createResource(() => [configScope(), selectedAgentId()] as const, ([scope]) => api.plugins(scope === "user" ? "user" : "workspace", selectedAgentIdOrUndefined()));
+  const [plugins, pluginsActions] = createResource(() => [configScope(), selectedAgentIdOrUndefined() ?? ""] as const, ([scope]) => api.plugins(scope === "user" ? "user" : "workspace", selectedAgentIdOrUndefined()));
   const [proposals, proposalsActions] = createResource(selectedAgentId, () => api.skillProposals(selectedAgentIdOrUndefined()));
   const [sharedMcp] = createResource(selectedAgentId, (agent) => agent !== "all" && agent !== "global" ? api.mcpServers("user", agent) : Promise.resolve({ servers: {} }));
   const [sharedHooks] = createResource(selectedAgentId, (agent) => agent !== "all" && agent !== "global" ? api.hooks("user", agent) : Promise.resolve({ hooks: [] }));
@@ -2026,10 +2033,10 @@ function MemoryView() {
                 <div class="toggle-card-body">
                   <strong>{f.title}</strong>
                   <span>{f.desc}</span>
-                  <Show when={() => f.setHere()}>
+                  <Show when={f.setHere()}>
                     <span class="chip chip-tone-success" style="margin-top:4px">set here</span>
                   </Show>
-                  <Show when={() => !f.setHere()}>
+                  <Show when={!f.setHere()}>
                     <span class="chip chip-tone-warning" style="margin-top:4px">inherited</span>
                   </Show>
                 </div>
@@ -2280,7 +2287,7 @@ function SpendTrendChart(props: { points: FinOpsDailyPoint[]; capUsd: number | n
             x={padding.left + 4}
             y={avgY()! - 3}
             fill="var(--faint)"
-            font-size="9"
+            font-size="12"
             opacity="0.8"
           >
             avg
@@ -2304,7 +2311,7 @@ function SpendTrendChart(props: { points: FinOpsDailyPoint[]; capUsd: number | n
             y={capY()! - 4}
             text-anchor="end"
             fill="var(--accent)"
-            font-size="10"
+            font-size="12"
             font-weight="500"
           >
             cap ${props.capUsd!.toFixed(2)}
@@ -2343,7 +2350,7 @@ function SpendTrendChart(props: { points: FinOpsDailyPoint[]; capUsd: number | n
                     y={height - 6}
                     text-anchor="middle"
                     fill={isHovered() ? "var(--text)" : "var(--faint)"}
-                    font-size="9.5"
+                    font-size="12"
                     font-weight={isHovered() ? "600" : "normal"}
                   >
                     {label}
@@ -3347,10 +3354,10 @@ function VoiceConfigEditor(props: {
   subject: "bot" | "chat";
 }) {
   const [previewing, setPreviewing] = createSignal(false);
-  const [voiceProviders] = createResource(selectedAgentId, (agent) => api.voiceProviders(agent || undefined));
+  const [voiceProviders] = createResource(selectedAgentId, () => api.voiceProviders(selectedAgentIdOrUndefined()));
   const modelProvider = () => props.provider === "gemini" ? "google" : props.provider === "openai" ? "openai" : "";
   const [voiceModels, { refetch: refreshVoiceModels }] = createResource(
-    () => [modelProvider(), selectedAgentId()] as const,
+    () => [modelProvider(), selectedAgentIdOrUndefined() ?? ""] as const,
     ([provider, agent]) => provider ? api.models(provider, agent || undefined) : Promise.resolve({ provider: "", models: [], capabilities: {} }),
   );
   const modelChoices = (operation: "transcription" | "synthesis") => {
@@ -5966,9 +5973,9 @@ export function Settings() {
   const [config, { refetch: refetchConfig }] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
   const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [providersData, { refetch: refetchProviders }] = createResource(selectedAgentId, () => api.providers(selectedAgentIdOrUndefined()));
-  const [voiceProviders] = createResource(selectedAgentId, (agent) => api.voiceProviders(agent || undefined));
+  const [voiceProviders] = createResource(selectedAgentId, () => api.voiceProviders(selectedAgentIdOrUndefined()));
   const [voiceModels, { refetch: refreshVoiceModels }] = createResource(
-    () => [voiceProviders()?.providers.find((item) => item.name === config()?.voice?.provider)?.name ?? "", selectedAgentId()] as const,
+    () => [voiceProviders()?.providers.find((item) => item.name === config()?.voice?.provider)?.name ?? "", selectedAgentIdOrUndefined() ?? ""] as const,
     ([voiceProvider, agent]) => voiceProvider === "gemini" || voiceProvider === "openai"
       ? api.models(voiceProvider === "gemini" ? "google" : "openai", agent || undefined)
       : Promise.resolve({ provider: "", models: [], capabilities: {} }),
@@ -6509,7 +6516,7 @@ export function Settings() {
                 <div class="route-probe-panel">
                   <div class="route-probe-header">
                     <div>
-                      <strong style={{ "font-size": "var(--fs-meta, 13px)" }}>Live Connection Probe</strong>
+                      <strong style={{ "font-size": "13px" }}>Live Connection Probe</strong>
                       <span class="dim" style={{ "font-size": "12px", "display": "block" }}>
                         Checks the model catalogue; does not send a test prompt.
                       </span>
@@ -7848,7 +7855,7 @@ export default function App() {
       <Match when={authed() === true}>
         <div class="shell">
           <aside class="sidebar" classList={{ "mobile-expanded": mobileNavOpen() }}>
-            <div class="brand" aria-label="Vakyartha"><span class="brand-mark"><img src="/admin/assets/brand/songbird-reverse.svg" alt="" /></span><span class="brand-wordmark" aria-hidden="true" /><button class="mobile-nav-toggle" type="button" aria-expanded={mobileNavOpen()} aria-controls="admin-primary-nav" onClick={() => setMobileNavOpen((open) => !open)}>{mobileNavOpen() ? "Close menu" : "Menu"}</button></div>
+            <div class="brand" aria-label="Vakyartha"><span class="brand-mark"><img src={brandSymbol()} alt="" /></span><span class="brand-wordmark" aria-hidden="true" /><button class="mobile-nav-toggle" type="button" aria-expanded={mobileNavOpen()} aria-controls="admin-primary-nav" onClick={() => setMobileNavOpen((open) => !open)}>{mobileNavOpen() ? "Close menu" : "Menu"}</button></div>
             <div class="sidebar-scope">
               <ScopeControl />
             </div>

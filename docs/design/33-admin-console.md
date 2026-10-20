@@ -30,6 +30,21 @@ bookmarkable, evidence-first control plane over the server, CorePool, gateway,
 channels, work, delivery, automations, providers, incidents, and Doctor
 checks; it is not a second source of operational truth.
 
+## Visual contract
+
+The admin console is the compact operator surface of `DESIGN.md`. Its theme
+blocks own color, type and shape tokens; feature sections use those names rather
+than introducing aliases or fixed dark fills. Nested pages, conditional cards,
+links, dialogs and shared pickers follow the same contract. Approved Songbird
+exports follow the resolved theme, including sign-in.
+
+`npm --prefix crates/vak-admin-ui test` checks token references, component class
+coverage, the 12px typography floor (including SVG labels), dialog directive
+bindings and conditional badges. The isolated browser fixtures under
+`crates/vak-admin-ui/tests/` cover populated inbox and picker states without
+writing to the installed home. The dated coverage record is
+[the admin style review](../audits/admin-style-review-2026-10-20.md).
+
 ## Architecture
 
 ```

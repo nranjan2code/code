@@ -647,7 +647,7 @@ function IntentSimulator() {
         {/* Custom Input & Surface Bar */}
         <div class="intent-input-section" style={{ "margin-top": "16px" }}>
           <div class="intent-input-header">
-            <label class="font-semibold" style={{ "font-size": "13px" }}>Test Work Instruction Prompt</label>
+            <label class="semibold" style={{ "font-size": "13px" }}>Test Work Instruction Prompt</label>
             <div class="intent-surface-picker">
               <span class="dim" style={{ "font-size": "12px" }}>Delivery Surface:</span>
               <select
@@ -1236,7 +1236,7 @@ export function Commitments() {
       {/* Posture Masthead */}
       <div class="commitments-posture-deck">
         <div class="stat-card">
-          <span class="stat-card-label">Active Obligations</span>
+          <span class="stat-label">Active Obligations</span>
           <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
             <strong style={{ "font-size": "18px", "font-weight": "700" }}>
               {metrics().active}
@@ -1248,13 +1248,13 @@ export function Commitments() {
               <span class="chip chip-tone-warning">{metrics().suspended} waiting</span>
             </Show>
           </div>
-          <span class="stat-card-hint">
+          <span class="stat-sub">
             {metrics().closed} closed / historical
           </span>
         </div>
 
         <div class="stat-card">
-          <span class="stat-card-label">Evidence Satisfaction</span>
+          <span class="stat-label">Evidence Satisfaction</span>
           <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
             <strong style={{ "font-size": "18px", "font-weight": "700" }}>
               {(data()?.commitments.length ?? 0) > 0 ? `${metrics().metRatio}%` : "—"}
@@ -1269,27 +1269,27 @@ export function Commitments() {
               {(data()?.commitments.length ?? 0) > 0 ? "standards met" : "idle (0 tracked)"}
             </span>
           </div>
-          <span class="stat-card-hint">
+          <span class="stat-sub">
             {(data()?.commitments.length ?? 0) > 0 ? "Lattice verified" : "Lattice active on durable work"}
           </span>
         </div>
 
         <div class="stat-card">
-          <span class="stat-card-label">Incurred Portfolio Spend</span>
+          <span class="stat-label">Incurred Portfolio Spend</span>
           <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
             <strong style={{ "font-size": "18px", "font-weight": "700" }}>
               ${metrics().totalSpend.toFixed(3)}
             </strong>
           </div>
-          <span class="stat-card-hint">Total episodes spend</span>
+          <span class="stat-sub">Total episodes spend</span>
         </div>
 
         <div class="stat-card">
-          <span class="stat-card-label">Intent Classification</span>
+          <span class="stat-label">Intent Classification</span>
           <div style={{ "display": "flex", "align-items": "center", "gap": "6px", "margin": "4px 0" }}>
             <span class="chip chip-tone-info">7-Axis Kernel Active</span>
           </div>
-          <span class="stat-card-hint">Progressive capability slicing</span>
+          <span class="stat-sub">Progressive capability slicing</span>
         </div>
       </div>
 
