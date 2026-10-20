@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.16.0",
-  "revision": "c4013b521",
+  "revision": "64ecdcfe1",
   "first_date": "2026-08-21",
   "last_date": "2026-10-20",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2422,
+   "total_commits": 2423,
    "days": 61,
    "peak_day": 174,
    "design_docs": 96,
@@ -119,20 +119,6 @@
    "documents": 48
   },
   "open_items": [
-   {
-    "section": "Library previews and controls (2026-10-20)",
-    "open": 1,
-    "items": [
-     "Release/install the rebuilt client bundles;"
-    ]
-   },
-   {
-    "section": "Admin theme and style review (2026-10-20)",
-    "open": 1,
-    "items": [
-     "Install the rebuilt server bundle in a subsequent release."
-    ]
-   },
    {
     "section": "The product from the model's side (review, 2026-10-19)",
     "open": 4,
@@ -300,21 +286,21 @@
     ]
    }
   ],
-  "open_total": 78,
+  "open_total": 76,
   "measures_revision": "6fa02ac29"
  },
  "activity": {
   "since": "2026-10-06",
   "until": "2026-10-20",
-  "commits": 538,
+  "commits": 539,
   "areas": [
    [
     "docs",
-    450
+    451
    ],
    [
     "(root)",
-    293
+    294
    ],
    [
     "vak-core",
@@ -676,6 +662,15 @@
   ],
   "recent": [
    {
+    "hash": "64ecdcfe1",
+    "date": "2026-10-20",
+    "subject": "Record 8.16.0 release and local install",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "c4013b521",
     "date": "2026-10-20",
     "subject": "Prepare 8.16.0 release notes",
@@ -799,16 +794,6 @@
      "(root)",
      "docs",
      "vak-catalog"
-    ]
-   },
-   {
-    "hash": "c25ebdbaa",
-    "date": "2026-10-19",
-    "subject": "Keep tool caches out of the workspace; name what is installed",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-tools"
     ]
    }
   ],
@@ -30034,6 +30019,12 @@
  ],
  "replay": [
   {
+   "hash": "64ecdcfe1",
+   "date": "2026-10-20",
+   "subject": "Record 8.16.0 release and local install",
+   "subsystems": []
+  },
+  {
    "hash": "c4013b521",
    "date": "2026-10-20",
    "subject": "Prepare 8.16.0 release notes",
@@ -37120,7 +37111,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1383,
+  "docs_commits": 1384,
   "hot": 645
  },
  "findings": [
