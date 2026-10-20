@@ -1,5 +1,9 @@
 # Decisions
 
+- 2026-10-20: Library entries should show readable content rather than raw
+  markup, account for their different content types, and retain their actions,
+  flows and interactive controls. See [Library](design/82-library.md#5-the-artifact-page).
+
 - 2026-10-19: Keep conversation previews compact: a single file card where
   possible, otherwise a collapsed preview, with short primary labels and
   icons for secondary actions. See [composed answers](design/87-composed-answers.md).

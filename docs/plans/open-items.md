@@ -1,3 +1,14 @@
+## Library previews and controls (2026-10-20)
+
+- [x] Replace raw markup with appropriate saved-version previews and separate
+  content, history and comments. Preserve interactive controls and the existing
+  sharing, comparison and comment flows. Browser acceptance covers desktop and
+  phone in light/dark; see [the review](../audits/library-preview-review-2026-10-20.md).
+- [ ] Release/install the rebuilt client bundles; checkout acceptance does not
+  certify the installed desktop app. Multi-file HTML dependency packaging is
+  outside this preview change; linked resources may be unavailable and are
+  identified in the preview.
+
 ## Admin theme and style review (2026-10-20)
 
 - [x] Consolidate undefined tokens and mismatched component classes throughout

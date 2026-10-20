@@ -144,3 +144,20 @@ node tests/model-choices.mjs
 
 The admin race and provider-neutral model discovery fixture is
 `crates/vak-admin-ui/tests/model-settings.html`.
+
+# Library previews and workflows
+
+Open `/app/tests/library-preview.html` in the Vite web dev server and run
+`window.runChecks()`. Add `?theme=dark` for dark mode. The fixture mounts the
+real Library over synthetic artifact/version routes: HTML, Markdown, CSV,
+images, audio/video controls, code, saved pages with linked controls,
+Office/PDF viewers, malformed tables and refused reads. It exercises version
+selection, comparison, comments and sharing, and checks that no preview reads
+a mutable workspace file. `window.openLibraryFixture(id)` opens one example.
+Typecheck with `tsc --noEmit -p tsconfig.library-fixture.json`.
+
+The 2026-10-20 browser review also verifies HTML interaction state across
+Source and History, and overflow at desktop/phone sizes in light/dark. Audio
+and video fixtures certify controls only; Office fixtures certify integration
+with the existing renderer, not parsing or full document fidelity. No provider
+calls, installed binary changes, or live sharing effects are involved.

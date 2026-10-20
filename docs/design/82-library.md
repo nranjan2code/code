@@ -351,12 +351,20 @@ Volume control is the design. The rules:
 
 Opening an entry shows, in this order:
 
-1. **The artifact**, drawn by the existing Canvas viewers (HTML, Office,
-   PDF, tables, media, source, routines) and opened by identity
-   (`canvasSubject.ts`): a version that is a frozen candidate opens as a
-   `draft_file`, a draft still in scratch as an `execution_artifact`, and
-   the file in the folder as a `file`, so the page never shows a different
-   file than the one it names.
+1. **The artifact**, read by artifact id and immutable version through the
+   authenticated Library routes. Content has the full reading area; History
+   and Comments are separate views beside a version picker. `LibraryPreview`
+   draws HTML in the existing opaque-origin sandbox with the no-network CSP,
+   Markdown with the existing safe text renderer, CSV/TSV with the bounded
+   table parser, images as images, and audio/video with browser playback
+   controls. Code stays source; unsupported formats offer download. Office
+   and PDF reuse `OfficeView`, and saved pages reuse `PageView`, including
+   their controls and linked values. Switching to history or comments keeps
+   the content mounted; HTML source keeps its preview alive too. A different
+   version gets its own viewer. No preview substitutes the live workspace
+   file. Linked files not embedded in HTML may be unavailable; a preview
+   with linked image/script/stylesheet references says so. Browser codec
+   support determines which audio/video files can play.
 2. **Actions**: Continue working · Make another · Edit · Download · Put
    back · Share · Keep live · Rename · Move · Star · Archive. L1 has Open
    conversation (the conversation that made the current version, at its
@@ -364,7 +372,7 @@ Opening an entry shows, in this order:
    the rest with M8. **Download** serves the bytes through the existing
    authenticated, hash-checked routes and always as an attachment
    (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`).
-   An HTML artifact is viewed only in the Canvas's sandboxed preview
+   An HTML artifact is viewed only in a sandboxed preview
    (invariant 35), never rendered on the app's own origin.
 3. **Versions**: the timeline (§2), with who made each one and the existing
    diffs: Office redlines, PDF and semantic diffs, file diffs. Who made a

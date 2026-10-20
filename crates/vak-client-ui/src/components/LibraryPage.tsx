@@ -8,7 +8,7 @@ import { activate, openAgentChat } from "../App";
 import { attachArtifact } from "../attachFiles";
 import { compareTexts, type Run } from "../wordDiff";
 import Icon, { type IconName } from "./Icon";
-import OfficeView from "./OfficeView";
+import LibraryPreview from "./LibraryPreview";
 import OfficeChangeList from "./OfficeChangeList";
 import PageView, { readPage } from "./PageView";
 import PageKeeper from "./PageKeeper";
@@ -23,6 +23,21 @@ const KIND: Record<ArtifactSummary["kind"], string> = {
   page: "Page",
   skill: "Ability",
 };
+
+/** A display hint, never a replacement for the artifact's declared kind. */
+function kindName(artifact: ArtifactSummary): string {
+  if (artifact.kind !== "file" && artifact.kind !== "document") return KIND[artifact.kind];
+  const ext = artifact.path.split(".").pop()?.toLowerCase() ?? "";
+  if (/^(html?|xhtml)$/.test(ext)) return "Web page";
+  if (/^(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/.test(ext)) return "Image";
+  if (/^(mp3|wav|ogg|m4a|aac|flac)$/.test(ext)) return "Audio";
+  if (/^(mp4|webm|mov|m4v)$/.test(ext)) return "Video";
+  if (/^(xlsx|xlsm|xltx)$/.test(ext)) return "Spreadsheet";
+  if (/^(pptx|pptm|potx)$/.test(ext)) return "Slides";
+  if (/^(csv|tsv)$/.test(ext)) return "Data table";
+  if (/^(docx|docm|dotx|md|markdown|pdf)$/.test(ext)) return "Document";
+  return KIND[artifact.kind];
+}
 
 const CHANGED: { value: string; label: string; days: number }[] = [
   { value: "any", label: "Any time", days: Infinity },
@@ -144,11 +159,6 @@ function isText(artifact: ArtifactSummary): boolean {
     && /\.(md|txt|csv|tsv|json|ya?ml|toml|html?|css|js|ts|tsx|py|rs|go|sh|sql|xml|ini)$/i.test(artifact.path);
 }
 
-/** An Office file or PDF, which the Library previews as a document. */
-function isDocument(artifact: ArtifactSummary): boolean {
-  return /\.(docx|docm|dotx|xlsx|xlsm|xltx|pptx|pptm|potx|vsdx|pdf)$/i.test(artifact.path);
-}
-
 /** The icon for a file, by its kind. */
 function kindIcon(path: string): IconName {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -157,7 +167,10 @@ function kindIcon(path: string): IconName {
   if (["pptx", "pptm", "potx"].includes(ext)) return "slides";
   if (ext === "vsdx") return "diagram";
   if (ext === "pdf") return "pdf";
-  if (["html", "htm", "css", "js", "ts", "tsx", "py", "rs", "go", "sh", "json", "sql"].includes(ext)) return "code";
+  if (/^(mp3|wav|ogg|m4a|aac|flac)$/.test(ext)) return "mic";
+  if (/^(mp4|webm|mov|m4v)$/.test(ext)) return "monitor";
+  if (["html", "htm", "xhtml"].includes(ext)) return "preview";
+  if (["css", "js", "ts", "tsx", "py", "rs", "go", "sh", "json", "sql"].includes(ext)) return "code";
   return "file";
 }
 
@@ -387,6 +400,7 @@ function History(props: {
 function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => void }) {
   const [detail, { refetch }] = createResource(() => props.id, (id) => api.libraryArtifact(id));
   const [chosen, setChosen] = createSignal<string | null>(null);
+  const [section, setSection] = createSignal<"preview" | "history" | "comments">("preview");
   const [renaming, setRenaming] = createSignal(false);
   const [sharing, setSharing] = createSignal(false);
   const [editing, setEditing] = createSignal<string | null>(null);
@@ -395,14 +409,6 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
   const [note, setNote] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
   const version = () => chosen() ?? detail()?.head ?? null;
-  const [text] = createResource(
-    () => {
-      const found = detail();
-      const at = version();
-      return found && at && isText(found) ? [found.id, at] as const : null;
-    },
-    async ([id, at]) => new TextDecoder().decode(await api.libraryVersionBytes(id, at)),
-  );
   const [page] = createResource(
     () => {
       const found = detail();
@@ -497,7 +503,7 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
                   </form>
                 </Show>
                 <p class="library-meta">
-                  {KIND[found().kind]} · {found().agent === "vak" ? "Vakyartha" : found().agent} · changed {relAgo(found().updated_at)}
+                  {kindName(found())} · {found().agent === "vak" ? "Vakyartha" : found().agent} · changed {relAgo(found().updated_at)}
                   <Show when={found().starred}> · Starred</Show>
                   <Show when={found().held}> · On hold</Show>
                   <Show when={found().archived}> · Archived</Show>
@@ -506,7 +512,7 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
               </div>
             </div>
             <FileStates needs={found().needs} />
-            <div class="artifact-toolbar" role="toolbar" aria-label="Actions">
+            <div class="artifact-toolbar" role="toolbar" aria-label="Artifact actions">
               <button class="btn primary" onClick={() => void workOn(found(), "continue")}>Continue working</button>
               <Show when={version()}>{(at) => <button class="btn" onClick={() => void download(found(), at())}><Icon name="download" size={14} />Download</button>}</Show>
               <button class="btn" onClick={() => setSharing(true)}><Icon name="link" size={14} />Share</button>
@@ -515,7 +521,7 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
                 <PageKeeper
                   artifactId={found().id}
                   title={found().name}
-                  request={page()?.page.items.find((item) => item.role === "user")?.fallback_text.trim() || null}
+                  request={(!page.error && page()?.page.items.find((item) => item.role === "user")?.fallback_text.trim()) || null}
                 />
               </Show>
               <details class="workspace-more" data-menu>
@@ -525,8 +531,8 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
                   <Show when={found().history.some((v) => v.session)}>
                     <button type="button" role="menuitem" onClick={(e) => { closeMenu(e); openConversation(found()); }}><Icon name="chat" />Open conversation</button>
                   </Show>
-                  <Show when={isText(found()) && text() !== undefined}>
-                    <button type="button" role="menuitem" onClick={(e) => { closeMenu(e); setEditing(text() ?? ""); }}><Icon name="pencil" />Edit</button>
+                  <Show when={isText(found()) && version()}>
+                    <button type="button" role="menuitem" onClick={(e) => { closeMenu(e); const at = version(); if (at) void act(async () => { const bytes = await api.libraryVersionBytes(found().id, at); setChosen(at); setEditing(new TextDecoder().decode(bytes)); setSection("preview"); }); }}><Icon name="pencil" />Edit</button>
                   </Show>
                   <button type="button" role="menuitem" onClick={(e) => { closeMenu(e); putBackInput.click(); }}><Icon name="restore" />Put back a copy</button>
                   <button type="button" role="menuitem" onClick={(e) => { closeMenu(e); setRenaming(true); }}><Icon name="tag" />Rename</button>
@@ -577,6 +583,21 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
           </Show>
 
           <Show when={notice()}><p class="library-note" role="status">{notice()}</p></Show>
+          <div class="library-content-bar">
+            <div class="library-content-tabs" role="group" aria-label="Artifact view">
+              <button class="btn sm" aria-pressed={section() === "preview"} onClick={() => setSection("preview")}>Content</button>
+              <button class="btn sm" aria-pressed={section() === "history"} onClick={() => setSection("history")}>History <span>{found().history.length}</span></button>
+              <button class="btn sm" aria-pressed={section() === "comments"} onClick={() => setSection("comments")}>Comments <span>{found().comments?.length ?? 0}</span></button>
+            </div>
+            <Show when={version()}>
+              <label class="library-version-picker">Viewing
+                <select aria-label="Version to view" value={version() ?? ""} onChange={e => { setChosen(e.currentTarget.value); setEditing(null); }}>
+                  <For each={[...found().history].reverse()}>{v => <option value={v.id}>Version {found().history.findIndex(item => item.id === v.id) + 1}{v.id === found().head ? " · Latest" : ""}{v.erased ? " · Deleted" : v.trashed_at ? " · In trash" : ""}</option>}</For>
+                </select>
+              </label>
+            </Show>
+          </div>
+          <div class="library-content-section" hidden={section() !== "preview"}>
           <Show when={editing() !== null}>
             <form
               class="library-edit"
@@ -602,40 +623,30 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
             </form>
           </Show>
           <Show when={editing() === null}>
-          <Show
-            when={found().kind === "page"}
-            fallback={
-              <Show
-                when={isText(found())}
-                fallback={
-                  <Show
-                    when={isDocument(found()) && version()}
-                    fallback={<div class="library-preview dock-empty">Download to open this {KIND[found().kind].toLowerCase()}.</div>}
-                  >
-                    {(at) => (
-                      <div class="library-preview library-document">
-                        <OfficeView source={{ path: found().path, version: { artifact: found().id, version: at() } }} fileName={found().path.split("/").pop() ?? found().path} />
-                      </div>
-                    )}
+            <Show when={found().kind === "page"} fallback={
+              <Show when={version()} fallback={<p class="library-note">No saved version to show yet.</p>}>
+                {at => <Show keyed when={`${found().id}:${at()}`}>
+                  <LibraryPreview artifact={found()} version={at()} />
+                </Show>}
+              </Show>
+            }>
+              <div class="library-preview library-page-view">
+                <Show when={!page.error} fallback={<p role="alert">This page could not be opened. Try reopening it or download this version.</p>}>
+                  <Show when={page()} fallback={<p class="library-note">{page.loading ? "Opening page…" : "No page to show in this version."}</p>}>
+                    {shown => <PageView page={shown().page} versionId={shown().version} />}
                   </Show>
-                }
-              >
-                <pre class="library-preview">{text() ?? "Loading…"}</pre>
-              </Show>
-            }
-          >
-            <div class="library-preview library-page-view">
-              <Show when={page()} fallback={<p class="library-note">{version() ? "Loading…" : "No version yet: the first comes from its automation's first run."}</p>}>
-                {(shown) => <PageView page={shown().page} versionId={shown().version} />}
-              </Show>
-            </div>
+                </Show>
+              </div>
+            </Show>
           </Show>
-          </Show>
+          </div>
+
+          <Show when={section() === "history"}>
 
           <History
             found={found()}
             chosen={version()}
-            onChoose={setChosen}
+            onChoose={id => { setChosen(id); setEditing(null); setSection("preview"); }}
             act={act}
             onOpenConversation={(session) => { setLibraryOpen(false); void activate(session); }}
           />
@@ -643,6 +654,9 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
             <p class="library-note">Edits were made from the same version at once; each is kept until you choose.</p>
           </Show>
 
+          </Show>
+
+          <Show when={section() === "comments"}>
           <div class="library-comments-block">
           <h3>Comments</h3>
           <Show when={(found().comments ?? []).length > 0} fallback={<p class="library-note">No comments yet.</p>}>
@@ -679,6 +693,7 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
             )}
           </Show>
           </div>
+          </Show>
         </div>
       )}
     </Show>
@@ -856,7 +871,7 @@ export default function LibraryPage() {
                       <button type="button" class="library-card" onClick={() => setOpen(artifact.id)}>
                         <span class="library-card-top">
                           <span class="artifact-kind sm" aria-hidden="true"><Icon name={kindIcon(artifact.path)} size={16} /></span>
-                          <span class="library-card-kind">{KIND[artifact.kind]}</span>
+                          <span class="library-card-kind">{kindName(artifact)}</span>
                           <Show when={artifact.starred}><span class="library-card-star" aria-label="Starred">★</span></Show>
                         </span>
                         <strong>{artifact.name}</strong>
