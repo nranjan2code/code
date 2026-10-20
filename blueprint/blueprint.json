@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.16.1",
-  "revision": "b8a967534",
+  "revision": "66d3a278f",
   "first_date": "2026-08-21",
   "last_date": "2026-10-20",
   "prose_reviewed": "8.16.0 · 2026-10-20"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2425,
+   "total_commits": 2426,
    "days": 61,
    "peak_day": 174,
    "design_docs": 96,
@@ -317,7 +317,7 @@
  "activity": {
   "since": "2026-10-06",
   "until": "2026-10-20",
-  "commits": 541,
+  "commits": 542,
   "areas": [
    [
     "docs",
@@ -325,7 +325,7 @@
    ],
    [
     "(root)",
-    296
+    297
    ],
    [
     "vak-core",
@@ -430,13 +430,13 @@
     44
    ],
    [
-    "cli",
-    "Command line",
-    38
-   ],
-   [
     "engineering",
     "Build, gate and release",
+    39
+   ],
+   [
+    "cli",
+    "Command line",
     38
    ],
    [
@@ -687,6 +687,14 @@
   ],
   "recent": [
    {
+    "hash": "66d3a278f",
+    "date": "2026-10-20",
+    "subject": "Release 8.16.1",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "b8a967534",
     "date": "2026-10-20",
     "subject": "Harden data integrity and hostile prompt boundaries",
@@ -824,16 +832,6 @@
     "date": "2026-10-19",
     "subject": "Record the model-side review and what it leaves open",
     "areas": [
-     "docs"
-    ]
-   },
-   {
-    "hash": "13e5e1324",
-    "date": "2026-10-19",
-    "subject": "Add a Storage tab to the blueprint",
-    "areas": [
-     "(root)",
-     "blueprint",
      "docs"
     ]
    }
@@ -21395,9 +21393,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 124,
+   "commits": 125,
    "fixes": 21,
-   "recent": 38,
+   "recent": 39,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -30061,6 +30059,14 @@
   }
  ],
  "replay": [
+  {
+   "hash": "66d3a278f",
+   "date": "2026-10-20",
+   "subject": "Release 8.16.1",
+   "subsystems": [
+    "engineering"
+   ]
+  },
   {
    "hash": "b8a967534",
    "date": "2026-10-20",
