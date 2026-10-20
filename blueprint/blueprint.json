@@ -1,9 +1,9 @@
 {
  "meta": {
   "version": "8.14.0",
-  "revision": "a045409c2",
+  "revision": "27e0ce987",
   "first_date": "2026-08-21",
-  "last_date": "2026-10-19",
+  "last_date": "2026-10-20",
   "prose_reviewed": "8.9.0 · 2026-10-19"
  },
  "summary": {
@@ -11,16 +11,16 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 338293,
+   "rust_src": 338319,
    "rust_tests": 86647,
-   "ts_src": 62551,
+   "ts_src": 62557,
    "routes": 397,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2414,
-   "days": 60,
+   "total_commits": 2417,
+   "days": 61,
    "peak_day": 174,
    "design_docs": 96,
    "agents_words": 20243,
@@ -119,6 +119,13 @@
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "Admin theme and style review (2026-10-20)",
+    "open": 1,
+    "items": [
+     "Install the rebuilt server bundle in a subsequent release."
+    ]
+   },
    {
     "section": "The product from the model's side (review, 2026-10-19)",
     "open": 4,
@@ -286,57 +293,57 @@
     ]
    }
   ],
-  "open_total": 76,
+  "open_total": 77,
   "measures_revision": "6fa02ac29"
  },
  "activity": {
-  "since": "2026-10-05",
-  "until": "2026-10-19",
-  "commits": 549,
+  "since": "2026-10-06",
+  "until": "2026-10-20",
+  "commits": 533,
   "areas": [
    [
     "docs",
-    467
+    449
    ],
    [
     "(root)",
-    300
+    289
    ],
    [
     "vak-core",
-    239
+    230
    ],
    [
     "vak-server",
-    186
+    175
    ],
    [
     "vak-client-ui",
-    122
+    119
    ],
    [
     "vak-agent",
-    113
-   ],
-   [
-    "vak-session",
-    95
+    112
    ],
    [
     "vak-tools",
     91
    ],
    [
-    "vak",
-    74
+    "vak-session",
+    85
    ],
    [
-    "vak-admin-ui",
+    "vak",
     67
    ],
    [
+    "vak-admin-ui",
+    58
+   ],
+   [
     "vak-config",
-    59
+    51
    ],
    [
     "vak-control",
@@ -347,32 +354,32 @@
    [
     "server",
     "HTTP service",
-    122
+    112
    ],
    [
     "turn",
     "Turn admission",
-    113
+    106
    ],
    [
     "client",
     "Workspace client",
-    103
+    100
    ],
    [
     "loop",
     "Agent loop",
-    101
+    100
    ],
    [
     "cards",
     "Cards and presentation",
-    101
+    100
    ],
    [
     "ledger",
     "Ledgers and records",
-    81
+    74
    ],
    [
     "tools",
@@ -382,12 +389,7 @@
    [
     "admin",
     "Admin console",
-    66
-   ],
-   [
-    "config",
-    "Configuration and secrets",
-    59
+    56
    ],
    [
     "control",
@@ -395,9 +397,9 @@
     51
    ],
    [
-    "state",
-    "State registry and baseline",
-    48
+    "config",
+    "Configuration and secrets",
+    51
    ],
    [
     "library",
@@ -405,14 +407,19 @@
     44
    ],
    [
+    "state",
+    "State registry and baseline",
+    43
+   ],
+   [
     "cli",
     "Command line",
-    43
+    38
    ],
    [
     "engineering",
     "Build, gate and release",
-    37
+    36
    ],
    [
     "catalog",
@@ -425,19 +432,14 @@
     34
    ],
    [
-    "automations",
-    "Automations and triggers",
-    34
-   ],
-   [
     "workers",
     "Workers and delegation",
-    32
+    31
    ],
    [
-    "delivery",
-    "Delivery",
-    28
+    "automations",
+    "Automations and triggers",
+    31
    ],
    [
     "intent",
@@ -445,9 +447,14 @@
     27
    ],
    [
-    "runs",
-    "Runs, effects and cursors",
-    27
+    "llm",
+    "Model providers and routing",
+    25
+   ],
+   [
+    "delivery",
+    "Delivery",
+    25
    ],
    [
     "capabilities",
@@ -455,54 +462,54 @@
     24
    ],
    [
-    "llm",
-    "Model providers and routing",
-    23
-   ],
-   [
-    "mail",
-    "Mail and calendar",
-    22
-   ],
-   [
-    "gateway",
-    "Gateway and channels",
-    22
-   ],
-   [
-    "canvas",
-    "Canvas and previews",
-    21
-   ],
-   [
-    "office",
-    "Office and PDF documents",
-    21
-   ],
-   [
     "abilities",
     "Self-evolving abilities",
     20
    ],
    [
+    "office",
+    "Office and PDF documents",
+    20
+   ],
+   [
     "sandbox",
     "Sandbox and execution",
-    20
+    19
    ],
    [
     "storage",
     "Storage substrate",
-    20
+    19
    ],
    [
-    "context",
-    "Context engine",
+    "runs",
+    "Runs, effects and cursors",
     19
+   ],
+   [
+    "canvas",
+    "Canvas and previews",
+    19
+   ],
+   [
+    "mail",
+    "Mail and calendar",
+    18
    ],
    [
     "memory",
     "Memory and learning",
-    19
+    18
+   ],
+   [
+    "context",
+    "Context engine",
+    17
+   ],
+   [
+    "gateway",
+    "Gateway and channels",
+    17
    ],
    [
     "eval",
@@ -512,11 +519,6 @@
    [
     "flows",
     "Flows and planner",
-    15
-   ],
-   [
-    "inbox",
-    "Inbox and digest",
     14
    ],
    [
@@ -525,19 +527,14 @@
     13
    ],
    [
+    "inbox",
+    "Inbox and digest",
+    13
+   ],
+   [
     "agents",
     "Agents",
     12
-   ],
-   [
-    "operations",
-    "Operations",
-    11
-   ],
-   [
-    "plugins",
-    "Plugins and packages",
-    10
    ],
    [
     "finops",
@@ -550,13 +547,13 @@
     9
    ],
    [
-    "permission",
-    "Permissions and provenance",
+    "plugins",
+    "Plugins and packages",
     9
    ],
    [
-    "backup",
-    "Backup and restore",
+    "permission",
+    "Permissions and provenance",
     9
    ],
    [
@@ -575,9 +572,9 @@
     8
    ],
    [
-    "checkpoints",
-    "Checkpoints and worktrees",
-    6
+    "backup",
+    "Backup and restore",
+    7
    ],
    [
     "voice",
@@ -585,8 +582,8 @@
     6
    ],
    [
-    "coworking",
-    "Shared conversations",
+    "operations",
+    "Operations",
     6
    ],
    [
@@ -600,6 +597,16 @@
     5
    ],
    [
+    "checkpoints",
+    "Checkpoints and worktrees",
+    5
+   ],
+   [
+    "coworking",
+    "Shared conversations",
+    5
+   ],
+   [
     "onboarding",
     "Setup and onboarding",
     5
@@ -608,11 +615,6 @@
     "install",
     "Install and update",
     5
-   ],
-   [
-    "terminal",
-    "Rich terminal",
-    4
    ],
    [
     "goal",
@@ -630,6 +632,11 @@
     3
    ],
    [
+    "terminal",
+    "Rich terminal",
+    3
+   ],
+   [
     "telemetry",
     "Telemetry and logs",
     3
@@ -637,6 +644,11 @@
    [
     "hooks",
     "Hooks",
+    2
+   ],
+   [
+    "security",
+    "Security events",
     2
    ],
    [
@@ -653,14 +665,36 @@
     "site",
     "Public site and brand",
     1
-   ],
-   [
-    "security",
-    "Security events",
-    1
    ]
   ],
   "recent": [
+   {
+    "hash": "27e0ce987",
+    "date": "2026-10-20",
+    "subject": "Polish admin console themes and states",
+    "areas": [
+     "docs",
+     "vak-admin-ui"
+    ]
+   },
+   {
+    "hash": "3f95ed3a4",
+    "date": "2026-10-20",
+    "subject": "Retry a rate limit whatever its message says",
+    "areas": [
+     "(root)",
+     "vak-llm"
+    ]
+   },
+   {
+    "hash": "f62850d03",
+    "date": "2026-10-20",
+    "subject": "Keep OpenRouter turns from cancelling themselves",
+    "areas": [
+     "(root)",
+     "vak-llm"
+    ]
+   },
    {
     "hash": "a045409c2",
     "date": "2026-10-19",
@@ -782,39 +816,15 @@
      "vak-core",
      "vak-judge"
     ]
-   },
-   {
-    "hash": "04e902065",
-    "date": "2026-10-19",
-    "subject": "Show cards for any plan entry; take the diff card from the files",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-control",
-     "vak-core",
-     "vak-judge",
-     "vak-tools"
-    ]
-   },
-   {
-    "hash": "745f0e691",
-    "date": "2026-10-19",
-    "subject": "Clarify desktop single-instance activation after install",
-    "areas": [
-     "docs"
-    ]
-   },
-   {
-    "hash": "784ef5a07",
-    "date": "2026-10-19",
-    "subject": "Open unreleased changes after 8.13.1",
-    "areas": [
-     "(root)"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "A Gemini free-tier turn that reaches the per-minute request limit now waits as long as Google says and carries on, instead of failing:",
+   "Admin pages and nested tabs consistently use the shared theme colors, fonts, cards, controls and status styling.",
+   "Admin diagnostics and memory confirmation dialogs open correctly and retain keyboard focus.",
+   "OpenRouter turns no longer stop the moment they start:",
+   "The OpenRouter Responses route no longer fails with \"store:"
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1269,7 +1279,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 83795,
+   "lines": 83801,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1301,7 +1311,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 55379,
+   "lines": 55405,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -1464,7 +1474,7 @@
    ],
    "commits": 506,
    "fixes": 74,
-   "recent": 103,
+   "recent": 100,
    "fix_density": 4.1,
    "out": [
     {
@@ -2646,7 +2656,7 @@
    ],
    "commits": 11,
    "fixes": 2,
-   "recent": 4,
+   "recent": 3,
    "fix_density": 0.4,
    "out": [
     {
@@ -2839,9 +2849,9 @@
    ],
    "modules": 21,
    "parts": [],
-   "lines": 23098,
+   "lines": 23105,
    "largest": [
-    7947,
+    7954,
     "crates/vak-admin-ui/src/App.tsx"
    ],
    "routes": [
@@ -2878,9 +2888,9 @@
     "crates/vak-server/src/client_ui.rs",
     "crates/vak-server/src/embedded_ui.rs"
    ],
-   "commits": 277,
+   "commits": 278,
    "fixes": 48,
-   "recent": 66,
+   "recent": 56,
    "fix_density": 2.1,
    "out": [
     {
@@ -3832,7 +3842,7 @@
    ],
    "commits": 133,
    "fixes": 10,
-   "recent": 43,
+   "recent": 38,
    "fix_density": 2.0,
    "out": [
     {
@@ -4308,7 +4318,7 @@
    ],
    "commits": 383,
    "fixes": 59,
-   "recent": 113,
+   "recent": 106,
    "fix_density": 4.1,
    "out": [
     {
@@ -5119,7 +5129,7 @@
    ],
    "commits": 299,
    "fixes": 56,
-   "recent": 101,
+   "recent": 100,
    "fix_density": 4.4,
    "out": [
     {
@@ -5492,7 +5502,7 @@
    ],
    "commits": 87,
    "fixes": 9,
-   "recent": 32,
+   "recent": 31,
    "fix_density": 2.6,
    "out": [
     {
@@ -5906,7 +5916,7 @@
    ],
    "commits": 41,
    "fixes": 3,
-   "recent": 19,
+   "recent": 17,
    "fix_density": 0.7,
    "out": [
     {
@@ -7059,9 +7069,9 @@
    ],
    "modules": 23,
    "parts": [],
-   "lines": 15227,
+   "lines": 15253,
    "largest": [
-    1818,
+    1846,
     "crates/vak-llm/src/rate_limit.rs"
    ],
    "routes": [
@@ -7103,9 +7113,9 @@
     "crates/vak-llm/src/types.rs",
     "crates/vak-llm/src/work.rs"
    ],
-   "commits": 99,
+   "commits": 101,
    "fixes": 12,
-   "recent": 23,
+   "recent": 25,
    "fix_density": 0.8,
    "out": [
     {
@@ -8982,7 +8992,7 @@
    ],
    "commits": 38,
    "fixes": 4,
-   "recent": 10,
+   "recent": 9,
    "fix_density": 1.1,
    "out": [
     {
@@ -9258,7 +9268,7 @@
    ],
    "commits": 60,
    "fixes": 0,
-   "recent": 15,
+   "recent": 14,
    "fix_density": 0.0,
    "out": [
     {
@@ -9847,7 +9857,7 @@
    ],
    "commits": 130,
    "fixes": 19,
-   "recent": 20,
+   "recent": 19,
    "fix_density": 2.8,
    "out": [
     {
@@ -10164,9 +10174,9 @@
     "crates/vak-admin-ui/src/SecurityCenter.tsx",
     "crates/vak-core/src/security_events.rs"
    ],
-   "commits": 20,
+   "commits": 21,
    "fixes": 4,
-   "recent": 1,
+   "recent": 2,
    "fix_density": 2.5,
    "out": [
     {
@@ -10667,7 +10677,7 @@
    ],
    "commits": 194,
    "fixes": 18,
-   "recent": 81,
+   "recent": 74,
    "fix_density": 1.5,
    "out": [
     {
@@ -11358,7 +11368,7 @@
    ],
    "commits": 28,
    "fixes": 0,
-   "recent": 20,
+   "recent": 19,
    "fix_density": 0.0,
    "out": [
     {
@@ -11535,7 +11545,7 @@
    ],
    "commits": 27,
    "fixes": 1,
-   "recent": 27,
+   "recent": 19,
    "fix_density": 0.2,
    "out": [
     {
@@ -12218,7 +12228,7 @@
    ],
    "commits": 77,
    "fixes": 6,
-   "recent": 48,
+   "recent": 43,
    "fix_density": 1.6,
    "out": [
     {
@@ -12934,7 +12944,7 @@
    ],
    "commits": 21,
    "fixes": 2,
-   "recent": 9,
+   "recent": 7,
    "fix_density": 1.7,
    "out": [
     {
@@ -13292,7 +13302,7 @@
    ],
    "commits": 24,
    "fixes": 3,
-   "recent": 6,
+   "recent": 5,
    "fix_density": 1.6,
    "out": [
     {
@@ -13456,7 +13466,7 @@
    ],
    "commits": 206,
    "fixes": 31,
-   "recent": 59,
+   "recent": 51,
    "fix_density": 3.2,
    "out": [
     {
@@ -14518,7 +14528,7 @@
    ],
    "commits": 302,
    "fixes": 53,
-   "recent": 101,
+   "recent": 100,
    "fix_density": 2.8,
    "out": [
     {
@@ -14949,7 +14959,7 @@
    ],
    "commits": 131,
    "fixes": 25,
-   "recent": 28,
+   "recent": 25,
    "fix_density": 2.4,
    "out": [
     {
@@ -15213,7 +15223,7 @@
    ],
    "commits": 67,
    "fixes": 5,
-   "recent": 21,
+   "recent": 19,
    "fix_density": 1.0,
    "out": [
     {
@@ -15899,7 +15909,7 @@
    ],
    "commits": 85,
    "fixes": 9,
-   "recent": 21,
+   "recent": 20,
    "fix_density": 0.3,
    "out": [
     {
@@ -16214,7 +16224,7 @@
    ],
    "commits": 164,
    "fixes": 13,
-   "recent": 22,
+   "recent": 18,
    "fix_density": 0.5,
    "out": [
     {
@@ -17154,7 +17164,7 @@
    ],
    "commits": 41,
    "fixes": 1,
-   "recent": 19,
+   "recent": 18,
    "fix_density": 0.7,
    "out": [
     {
@@ -17382,7 +17392,7 @@
    ],
    "commits": 34,
    "fixes": 1,
-   "recent": 34,
+   "recent": 31,
    "fix_density": 0.2,
    "out": [
     {
@@ -17799,7 +17809,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 3215,
+   "lines": 3214,
    "largest": [
     782,
     "crates/vak-core/src/inbox.rs"
@@ -17828,9 +17838,9 @@
     "crates/vak/src/digest.rs",
     "crates/vak/src/inbox.rs"
    ],
-   "commits": 46,
+   "commits": 47,
    "fixes": 4,
-   "recent": 14,
+   "recent": 13,
    "fix_density": 1.2,
    "out": [
     {
@@ -18438,7 +18448,7 @@
    ],
    "commits": 37,
    "fixes": 2,
-   "recent": 6,
+   "recent": 5,
    "fix_density": 2.5,
    "out": [
     {
@@ -18625,7 +18635,7 @@
    ],
    "commits": 549,
    "fixes": 85,
-   "recent": 122,
+   "recent": 112,
    "fix_density": 2.6,
    "out": [
     {
@@ -19458,7 +19468,7 @@
    ],
    "commits": 138,
    "fixes": 21,
-   "recent": 22,
+   "recent": 17,
    "fix_density": 2.3,
    "out": [
     {
@@ -19934,9 +19944,9 @@
     "crates/vak-server/src/operations.rs",
     "crates/vak-server/src/service_control.rs"
    ],
-   "commits": 75,
+   "commits": 76,
    "fixes": 18,
-   "recent": 11,
+   "recent": 6,
    "fix_density": 4.5,
    "out": [
     {
@@ -21350,7 +21360,7 @@
    ],
    "commits": 122,
    "fixes": 21,
-   "recent": 37,
+   "recent": 36,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -30005,6 +30015,33 @@
  ],
  "replay": [
   {
+   "hash": "27e0ce987",
+   "date": "2026-10-20",
+   "subject": "Polish admin console themes and states",
+   "subsystems": [
+    "admin",
+    "inbox",
+    "operations",
+    "security"
+   ]
+  },
+  {
+   "hash": "3f95ed3a4",
+   "date": "2026-10-20",
+   "subject": "Retry a rate limit whatever its message says",
+   "subsystems": [
+    "llm"
+   ]
+  },
+  {
+   "hash": "f62850d03",
+   "date": "2026-10-20",
+   "subject": "Keep OpenRouter turns from cancelling themselves",
+   "subsystems": [
+    "llm"
+   ]
+  },
+  {
    "hash": "a045409c2",
    "date": "2026-10-19",
    "subject": "Run the coding-turn outcome test with the real worker",
@@ -35142,239 +35179,6 @@
     "sandbox",
     "server"
    ]
-  },
-  {
-   "hash": "934575965",
-   "date": "2026-10-05",
-   "subject": "Tracker: M4.7b commit",
-   "subsystems": []
-  },
-  {
-   "hash": "4263f9af3",
-   "date": "2026-10-05",
-   "subject": "M4.7b: the mail vault's routine cursors are a cursor ref",
-   "subsystems": [
-    "mail",
-    "runs",
-    "storage"
-   ]
-  },
-  {
-   "hash": "e682cb559",
-   "date": "2026-10-05",
-   "subject": "Tracker: M4.7a commit",
-   "subsystems": []
-  },
-  {
-   "hash": "6a03aab5f",
-   "date": "2026-10-05",
-   "subject": "M4.7a: channel pollers hold cursors; resyncs are recorded gaps",
-   "subsystems": [
-    "admin",
-    "cli",
-    "config",
-    "gateway",
-    "ledger",
-    "operations",
-    "runs",
-    "server",
-    "state"
-   ]
-  },
-  {
-   "hash": "8f268edc3",
-   "date": "2026-10-05",
-   "subject": "Tracker: M4.6 commit",
-   "subsystems": []
-  },
-  {
-   "hash": "9eb561d78",
-   "date": "2026-10-05",
-   "subject": "M4.6: mail and calendar changes are effects; their single-use claims go",
-   "subsystems": [
-    "admin",
-    "delivery",
-    "mail",
-    "runs"
-   ]
-  },
-  {
-   "hash": "5a6120ed2",
-   "date": "2026-10-05",
-   "subject": "Tracker: M4.5 commit",
-   "subsystems": []
-  },
-  {
-   "hash": "94b826ed6",
-   "date": "2026-10-05",
-   "subject": "M4.5: every action outside Vak is an effect; the outbox goes",
-   "subsystems": [
-    "admin",
-    "automations",
-    "canvas",
-    "cli",
-    "client",
-    "config",
-    "delivery",
-    "gateway",
-    "ledger",
-    "operations",
-    "runs",
-    "server",
-    "state",
-    "terminal",
-    "turn"
-   ]
-  },
-  {
-   "hash": "e1728e749",
-   "date": "2026-10-05",
-   "subject": "Tracker: M4.4 commit",
-   "subsystems": []
-  },
-  {
-   "hash": "7b3a0ceaf",
-   "date": "2026-10-05",
-   "subject": "M4.4: a slot starts only through its trigger's claim",
-   "subsystems": [
-    "admin",
-    "automations",
-    "client",
-    "ledger",
-    "mail",
-    "runs",
-    "server",
-    "turn"
-   ]
-  },
-  {
-   "hash": "430ef4e38",
-   "date": "2026-10-05",
-   "subject": "M4.3: one trigger model; a trigger's last run is a query over its runs",
-   "subsystems": [
-    "admin",
-    "automations",
-    "backup",
-    "canvas",
-    "checkpoints",
-    "cli",
-    "client",
-    "config",
-    "gateway",
-    "inbox",
-    "ledger",
-    "mail",
-    "operations",
-    "runs",
-    "server",
-    "state",
-    "turn"
-   ]
-  },
-  {
-   "hash": "9fc4e5b5c",
-   "date": "2026-10-05",
-   "subject": "M4.2 done: flows are runs, keyed by run id",
-   "subsystems": [
-    "admin",
-    "cli",
-    "config",
-    "flows",
-    "runs",
-    "server",
-    "turn"
-   ]
-  },
-  {
-   "hash": "63bc1a40c",
-   "date": "2026-10-05",
-   "subject": "M4.2 parts 1-2: a run record for every cause; /runs, vak runs, Runs screen",
-   "subsystems": [
-    "admin",
-    "cli",
-    "config",
-    "gateway",
-    "inbox",
-    "ledger",
-    "loop",
-    "operations",
-    "runs",
-    "server",
-    "state",
-    "turn",
-    "workers"
-   ]
-  },
-  {
-   "hash": "5ba742a6b",
-   "date": "2026-10-05",
-   "subject": "M4.1: fencing groundwork — a restored store fences the process that held it",
-   "subsystems": [
-    "admin",
-    "context",
-    "delivery",
-    "ledger",
-    "operations",
-    "server",
-    "turn"
-   ]
-  },
-  {
-   "hash": "f7507c7af",
-   "date": "2026-10-05",
-   "subject": "M4 design pass: runs, triggers, effects, cursors and fencing agreed",
-   "subsystems": []
-  },
-  {
-   "hash": "bd326e08e",
-   "date": "2026-10-05",
-   "subject": "M3b done: the live dev run passes; the search index rebuilds across schema changes",
-   "subsystems": [
-    "admin",
-    "server"
-   ]
-  },
-  {
-   "hash": "c37e42874",
-   "date": "2026-10-05",
-   "subject": "Credential scopes are named by explicit owner, never guessed as a project",
-   "subsystems": [
-    "config"
-   ]
-  },
-  {
-   "hash": "4d365e5f6",
-   "date": "2026-10-05",
-   "subject": "M3b slice 6, part 1: Projects screen, backups that cover the data home, scripts and docs",
-   "subsystems": [
-    "admin",
-    "backup",
-    "config",
-    "engineering",
-    "operations",
-    "server",
-    "state"
-   ]
-  },
-  {
-   "hash": "78a2641e4",
-   "date": "2026-10-05",
-   "subject": "M3b slice 5 done: the gateway and workspace lists key by space; audit closes bridges",
-   "subsystems": [
-    "admin",
-    "cards",
-    "config",
-    "context",
-    "coworking",
-    "gateway",
-    "ledger",
-    "memory",
-    "office",
-    "plugins",
-    "sandbox",
-    "server",
-    "turn"
-   ]
   }
  ],
  "groups": [
@@ -35473,10 +35277,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS admin console at /admin",
-   "src": 24812,
+   "src": 24818,
    "tests": 0,
    "files": 31,
-   "commits": 260,
+   "commits": 261,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35486,7 +35290,7 @@
     "solid-js"
    ],
    "largest": [
-    7947,
+    7954,
     "crates/vak-admin-ui/src/App.tsx"
    ],
    "subsystems": [
@@ -36304,10 +36108,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Provider wires, SSE, model discovery, route ladder, receipts",
-   "src": 14083,
+   "src": 14109,
    "tests": 1886,
    "files": 22,
-   "commits": 98,
+   "commits": 100,
    "deps": [
     "vak-control"
    ],
@@ -36345,7 +36149,7 @@
     "tracing"
    ],
    "largest": [
-    1818,
+    1846,
     "crates/vak-llm/src/rate_limit.rs"
    ],
    "subsystems": [
@@ -37262,7 +37066,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1381,
+  "docs_commits": 1382,
   "hot": 644
  },
  "findings": [
@@ -37419,7 +37223,7 @@
    },
    "rate_gate": {
     "file": "crates/vak-llm/src/rate_limit.rs",
-    "line": 728,
+    "line": 730,
     "what": "Requests wait on the provider's allowance and honour Retry-After (invariant 7)",
     "value": null
    },
