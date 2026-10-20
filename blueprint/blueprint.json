@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.14.0",
-  "revision": "27e0ce987",
+  "version": "8.15.0",
+  "revision": "c9f680e33",
   "first_date": "2026-08-21",
   "last_date": "2026-10-20",
   "prose_reviewed": "8.9.0 · 2026-10-19"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2417,
+   "total_commits": 2418,
    "days": 61,
    "peak_day": 174,
    "design_docs": 96,
@@ -299,7 +299,7 @@
  "activity": {
   "since": "2026-10-06",
   "until": "2026-10-20",
-  "commits": 533,
+  "commits": 534,
   "areas": [
    [
     "docs",
@@ -307,7 +307,7 @@
    ],
    [
     "(root)",
-    289
+    290
    ],
    [
     "vak-core",
@@ -669,6 +669,14 @@
   ],
   "recent": [
    {
+    "hash": "c9f680e33",
+    "date": "2026-10-20",
+    "subject": "Bump version to 8.15.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "27e0ce987",
     "date": "2026-10-20",
     "subject": "Polish admin console themes and states",
@@ -805,26 +813,9 @@
      "vak-catalog",
      "vak-core"
     ]
-   },
-   {
-    "hash": "a9c0ad125",
-    "date": "2026-10-19",
-    "subject": "Infer source support only when the planned answer makes claims",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-core",
-     "vak-judge"
-    ]
    }
   ],
-  "unreleased": [
-   "A Gemini free-tier turn that reaches the per-minute request limit now waits as long as Google says and carries on, instead of failing:",
-   "Admin pages and nested tabs consistently use the shared theme colors, fonts, cards, controls and status styling.",
-   "Admin diagnostics and memory confirmation dialogs open correctly and retain keyboard focus.",
-   "OpenRouter turns no longer stop the moment they start:",
-   "The OpenRouter Responses route no longer fails with \"store:"
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30014,6 +30005,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "c9f680e33",
+   "date": "2026-10-20",
+   "subject": "Bump version to 8.15.0",
+   "subsystems": []
+  },
   {
    "hash": "27e0ce987",
    "date": "2026-10-20",
