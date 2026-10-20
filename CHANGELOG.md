@@ -1,12 +1,10 @@
-## Unreleased
-
+## 8.16.0 — 2026-10-20
 - Library files open as readable, interactive previews: HTML pages, formatted
   Markdown, CSV/TSV tables, images, audio and video, alongside the existing
   Office, PDF and saved-page viewers. Source stays available on request.
 - Library content now has its own reading area, separate History and Comments
   views, a version picker, clearer file types and grouped actions. Interactive
   page inputs survive visiting history, comments or HTML source.
-
 ## 8.15.0 — 2026-10-20
 - A Gemini free-tier turn that reaches the per-minute request limit now
   waits as long as Google says and carries on, instead of failing: a rate
