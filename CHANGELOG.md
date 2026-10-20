@@ -1,4 +1,4 @@
-## Unreleased
+## 8.15.0 — 2026-10-20
 - A Gemini free-tier turn that reaches the per-minute request limit now
   waits as long as Google says and carries on, instead of failing: a rate
   limit is retried whatever its message says, and only a quota the provider
