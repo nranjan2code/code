@@ -1,5 +1,3 @@
-## Unreleased
-
 ## 8.20.0 — 2026-10-22
 
 - The turn navigator rolls with the mouse wheel, trackpad, drag and keyboard;
@@ -24,6 +22,8 @@
 - File details read current Library state, evidence distinguishes links from
   verification, and unavailable checks are shown as unavailable. Followed
   sources, workspace promises and conversation workers state their scope.
+
+## Unreleased
 
 ## 8.19.0 — 2026-10-21
 
