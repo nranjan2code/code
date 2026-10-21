@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.17.2",
-  "revision": "850900957",
+  "revision": "64fd4a411",
   "first_date": "2026-08-21",
   "last_date": "2026-10-21",
   "prose_reviewed": "8.16.0 · 2026-10-20"
@@ -11,21 +11,21 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 341421,
-   "rust_tests": 87210,
-   "ts_src": 63139,
-   "routes": 398,
+   "rust_src": 345760,
+   "rust_tests": 87486,
+   "ts_src": 63615,
+   "routes": 401,
    "forms": 20,
    "worker_tasks": 14,
-   "state_paths": 79,
+   "state_paths": 80,
    "lock_crates": 764,
-   "total_commits": 2434,
+   "total_commits": 2435,
    "days": 62,
    "peak_day": 174,
-   "design_docs": 96,
-   "agents_words": 20491,
+   "design_docs": 97,
+   "agents_words": 20522,
    "subsystems": 64,
-   "connections": 821,
+   "connections": 828,
    "flows": 11
   },
   "tools": [
@@ -50,6 +50,7 @@
    "remember",
    "skill",
    "task",
+   "topics",
    "webfetch",
    "workers",
    "write"
@@ -124,6 +125,16 @@
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "Topics (2026-10-21)",
+    "open": 4,
+    "items": [
+     "Cross-conversation Topic identities, incremental lifetime-scale organisation, semantic summaries and related-work enrichment remain outside the initial conversation-scoped views.",
+     "Support explicit Topic focus on managed/automatic/goal admission without losing the execution contract;",
+     "Preserve destination metadata in independent queued requests before allowing focused Topic sends while another run is active.",
+     "Natural-language archive/reopen with an explicit human lifecycle approval;"
+    ]
+   },
    {
     "section": "Turn relations, context and answer sizing (2026-10-21)",
     "open": 2,
@@ -334,57 +345,57 @@
     ]
    }
   ],
-  "open_total": 89,
+  "open_total": 93,
   "measures_revision": "850900957"
  },
  "activity": {
   "since": "2026-10-07",
   "until": "2026-10-21",
-  "commits": 516,
+  "commits": 517,
   "areas": [
    [
     "docs",
-    424
+    425
    ],
    [
     "(root)",
-    288
+    289
    ],
    [
     "vak-core",
-    224
+    225
    ],
    [
     "vak-server",
-    166
+    167
    ],
    [
     "vak-client-ui",
-    120
+    121
    ],
    [
     "vak-agent",
-    111
+    112
    ],
    [
     "vak-tools",
-    88
+    89
    ],
    [
     "vak-session",
-    80
+    81
    ],
    [
     "vak",
-    63
+    64
    ],
    [
     "vak-admin-ui",
-    54
+    55
    ],
    [
     "vak-config",
-    47
+    48
    ],
    [
     "vak-control",
@@ -395,7 +406,17 @@
    [
     "server",
     "HTTP service",
-    105
+    106
+   ],
+   [
+    "client",
+    "Workspace client",
+    102
+   ],
+   [
+    "turn",
+    "Turn admission",
+    102
    ],
    [
     "cards",
@@ -403,34 +424,24 @@
     102
    ],
    [
-    "client",
-    "Workspace client",
-    101
-   ],
-   [
-    "turn",
-    "Turn admission",
-    101
-   ],
-   [
     "loop",
     "Agent loop",
-    99
+    100
    ],
    [
     "ledger",
     "Ledgers and records",
-    71
+    72
    ],
    [
     "tools",
     "Built-in tools and the worker",
-    67
+    68
    ],
    [
     "admin",
     "Admin console",
-    52
+    53
    ],
    [
     "control",
@@ -440,7 +451,7 @@
    [
     "config",
     "Configuration and secrets",
-    47
+    48
    ],
    [
     "library",
@@ -450,22 +461,27 @@
    [
     "state",
     "State registry and baseline",
-    39
+    40
    ],
    [
     "engineering",
     "Build, gate and release",
-    39
+    40
    ],
    [
     "cli",
     "Command line",
-    36
+    37
    ],
    [
     "lifecycle",
     "Lifecycle and erasure",
     35
+   ],
+   [
+    "catalog",
+    "Catalog and search",
+    30
    ],
    [
     "workers",
@@ -475,11 +491,6 @@
    [
     "intent",
     "Intent kernel",
-    29
-   ],
-   [
-    "catalog",
-    "Catalog and search",
     29
    ],
    [
@@ -575,7 +586,7 @@
    [
     "agents",
     "Agents",
-    11
+    12
    ],
    [
     "plugins",
@@ -623,6 +634,11 @@
     6
    ],
    [
+    "doctor",
+    "Doctor and health",
+    6
+   ],
+   [
     "sync",
     "Sync",
     5
@@ -635,11 +651,6 @@
    [
     "operations",
     "Operations",
-    5
-   ],
-   [
-    "doctor",
-    "Doctor and health",
     5
    ],
    [
@@ -704,6 +715,26 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "64fd4a411",
+    "date": "2026-10-21",
+    "subject": "Add Agent-owned Topics across runtime, clients, CLI and Doctor",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs",
+     "vak",
+     "vak-admin-ui",
+     "vak-agent",
+     "vak-catalog",
+     "vak-client-ui",
+     "vak-config",
+     "vak-core",
+     "vak-server",
+     "vak-session",
+     "vak-tools"
+    ]
+   },
    {
     "hash": "850900957",
     "date": "2026-10-21",
@@ -866,17 +897,12 @@
     "areas": [
      "(root)"
     ]
-   },
-   {
-    "hash": "02a8b7b93",
-    "date": "2026-10-20",
-    "subject": "Refresh blueprint for Library previews",
-    "areas": [
-     "blueprint"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "Topics organise ongoing work under each Agent, with model-selected placement, human corrections, direct navigation, pinning and explicit archive/reopen.",
+   "Doctor reports Topic record integrity, missing turn references and catalog indexing status through the shared CLI, terminal, web and Admin health report."
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1126,7 +1152,7 @@
  "specs": {
   "counts": {
    "historical": 10,
-   "implemented": 59,
+   "implemented": 60,
    "proposal": 6,
    "superseded": 9,
    "in progress": 26,
@@ -1331,7 +1357,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 84443,
+   "lines": 85548,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1343,7 +1369,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 80301,
+   "lines": 81052,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1353,7 +1379,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 66292,
+   "lines": 66890,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1363,7 +1389,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 55540,
+   "lines": 56324,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -1404,7 +1430,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 37383,
+   "lines": 38960,
    "crates": [
     "vak-session",
     "vak-config",
@@ -1427,11 +1453,11 @@
    "layers": [
     "L7"
    ],
-   "modules": 65,
+   "modules": 66,
    "parts": [],
-   "lines": 18469,
+   "lines": 18740,
    "largest": [
-    3182,
+    3210,
     "crates/vak-client-ui/src/api.ts"
    ],
    "routes": [
@@ -1491,6 +1517,7 @@
     "crates/vak-client-ui/src/components/Skeleton.tsx",
     "crates/vak-client-ui/src/components/StatusBar.tsx",
     "crates/vak-client-ui/src/components/Toast.tsx",
+    "crates/vak-client-ui/src/components/TopicTurnControl.tsx",
     "crates/vak-client-ui/src/components/TranscriptModal.tsx",
     "crates/vak-client-ui/src/components/WorkspaceHeader.tsx",
     "crates/vak-client-ui/src/controlsExpression.ts",
@@ -1526,10 +1553,10 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 512,
+   "commits": 513,
    "fixes": 74,
-   "recent": 101,
-   "fix_density": 4.0,
+   "recent": 102,
+   "fix_density": 3.9,
    "out": [
     {
      "from": "client",
@@ -1545,7 +1572,7 @@
      "from": "client",
      "to": "agents",
      "kind": "code",
-     "weight": 9,
+     "weight": 10,
      "example": [
       "crates/vak-client-ui/src/App.tsx",
       "crates/vak-client-ui/src/agentRecents.ts"
@@ -2247,7 +2274,7 @@
      "from": "agents",
      "to": "client",
      "kind": "code",
-     "weight": 17,
+     "weight": 20,
      "example": [
       "crates/vak-client-ui/src/components/AgentCreateWizard.tsx",
       "crates/vak-client-ui/src/App.tsx"
@@ -2903,7 +2930,7 @@
    ],
    "modules": 21,
    "parts": [],
-   "lines": 23177,
+   "lines": 23266,
    "largest": [
     8000,
     "crates/vak-admin-ui/src/App.tsx"
@@ -2942,9 +2969,9 @@
     "crates/vak-server/src/client_ui.rs",
     "crates/vak-server/src/embedded_ui.rs"
    ],
-   "commits": 280,
+   "commits": 281,
    "fixes": 48,
-   "recent": 52,
+   "recent": 53,
    "fix_density": 2.1,
    "out": [
     {
@@ -3878,9 +3905,9 @@
    ],
    "modules": 4,
    "parts": [],
-   "lines": 5077,
+   "lines": 5241,
    "largest": [
-    2804,
+    2811,
     "crates/vak/src/main.rs"
    ],
    "routes": [],
@@ -3894,10 +3921,10 @@
     "crates/vak/src/main.rs",
     "crates/vak/src/question_prompt.rs"
    ],
-   "commits": 133,
+   "commits": 134,
    "fixes": 10,
-   "recent": 36,
-   "fix_density": 2.0,
+   "recent": 37,
+   "fix_density": 1.9,
    "out": [
     {
      "from": "cli",
@@ -4192,22 +4219,22 @@
    ],
    "in": [
     {
+     "from": "agents",
+     "to": "cli",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak/src/agents_cli.rs",
+      "crates/vak/src/cli.rs"
+     ]
+    },
+    {
      "from": "runs",
      "to": "cli",
      "kind": "code",
      "weight": 2,
      "example": [
       "crates/vak/src/effects.rs",
-      "crates/vak/src/cli.rs"
-     ]
-    },
-    {
-     "from": "agents",
-     "to": "cli",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak/src/agents_cli.rs",
       "crates/vak/src/cli.rs"
      ]
     },
@@ -4337,9 +4364,9 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 14325,
+   "lines": 14398,
    "largest": [
-    12476,
+    12549,
     "crates/vak-core/src/lib.rs"
    ],
    "routes": [
@@ -4370,9 +4397,9 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 386,
+   "commits": 387,
    "fixes": 59,
-   "recent": 101,
+   "recent": 102,
    "fix_density": 4.1,
    "out": [
     {
@@ -4473,6 +4500,16 @@
      "example": [
       "crates/vak-core/src/lib.rs",
       "crates/vak-core/src/capability/provider.rs"
+     ]
+    },
+    {
+     "from": "turn",
+     "to": "agents",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-core/src/lib.rs",
+      "crates/vak-core/src/agent_definitions.rs"
      ]
     },
     {
@@ -4627,16 +4664,6 @@
     },
     {
      "from": "turn",
-     "to": "agents",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-core/src/lib.rs",
-      "crates/vak-core/src/agent_definitions.rs"
-     ]
-    },
-    {
-     "from": "turn",
      "to": "automations",
      "kind": "code",
      "weight": 1,
@@ -4738,6 +4765,16 @@
      ]
     },
     {
+     "from": "agents",
+     "to": "turn",
+     "kind": "code",
+     "weight": 7,
+     "example": [
+      "crates/vak-core/src/agent_definitions.rs",
+      "crates/vak-core/src/lib.rs"
+     ]
+    },
+    {
      "from": "server",
      "to": "turn",
      "kind": "code",
@@ -4785,16 +4822,6 @@
      "example": [
       "crates/vak-server/src/gateway.rs",
       "crates/vak-core/src/admission.rs"
-     ]
-    },
-    {
-     "from": "agents",
-     "to": "turn",
-     "kind": "code",
-     "weight": 3,
-     "example": [
-      "crates/vak-core/src/agent_definitions.rs",
-      "crates/vak-core/src/lib.rs"
      ]
     },
     {
@@ -5173,9 +5200,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 12764,
+   "lines": 13228,
    "largest": [
-    11753,
+    12217,
     "crates/vak-agent/src/lib.rs"
    ],
    "routes": [],
@@ -5191,10 +5218,10 @@
     "crates/vak-agent/src/stop_policy.rs",
     "crates/vak-agent/src/workspace.rs"
    ],
-   "commits": 301,
+   "commits": 302,
    "fixes": 56,
-   "recent": 99,
-   "fix_density": 4.4,
+   "recent": 100,
+   "fix_density": 4.2,
    "out": [
     {
      "from": "loop",
@@ -5274,6 +5301,16 @@
      "example": [
       "crates/vak-agent/src/lib.rs",
       "crates/vak-tools/src/drafts.rs"
+     ]
+    },
+    {
+     "from": "loop",
+     "to": "agents",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-agent/src/lib.rs",
+      "crates/vak-session/src/work_threads.rs"
      ]
     },
     {
@@ -7524,7 +7561,7 @@
    ],
    "modules": 19,
    "parts": [],
-   "lines": 9128,
+   "lines": 9130,
    "largest": [
     2228,
     "crates/vak-tools/src/broker.rs"
@@ -7557,9 +7594,9 @@
     "crates/vak-tools/src/window.rs",
     "crates/vak-tools/src/write.rs"
    ],
-   "commits": 175,
+   "commits": 176,
    "fixes": 23,
-   "recent": 67,
+   "recent": 68,
    "fix_density": 2.5,
    "out": [
     {
@@ -7805,6 +7842,16 @@
      ]
     },
     {
+     "from": "agents",
+     "to": "tools",
+     "kind": "code",
+     "weight": 4,
+     "example": [
+      "crates/vak-core/src/agent_network.rs",
+      "crates/vak-tools/src/context.rs"
+     ]
+    },
+    {
      "from": "cards",
      "to": "tools",
      "kind": "code",
@@ -7872,16 +7919,6 @@
      "example": [
       "crates/vak-core/src/learning.rs",
       "crates/vak-core/src/reach.rs"
-     ]
-    },
-    {
-     "from": "agents",
-     "to": "tools",
-     "kind": "code",
-     "weight": 2,
-     "example": [
-      "crates/vak-core/src/agent_network.rs",
-      "crates/vak-tools/src/context.rs"
      ]
     },
     {
@@ -9599,6 +9636,16 @@
      ]
     },
     {
+     "from": "agents",
+     "to": "permission",
+     "kind": "code",
+     "weight": 6,
+     "example": [
+      "crates/vak-core/src/agent_definitions.rs",
+      "crates/vak-core/src/trust.rs"
+     ]
+    },
+    {
      "from": "turn",
      "to": "permission",
      "kind": "code",
@@ -9606,16 +9653,6 @@
      "example": [
       "crates/vak-core/src/lib.rs",
       "crates/vak-control/src/provenance.rs"
-     ]
-    },
-    {
-     "from": "agents",
-     "to": "permission",
-     "kind": "code",
-     "weight": 5,
-     "example": [
-      "crates/vak-core/src/agent_definitions.rs",
-      "crates/vak-core/src/trust.rs"
      ]
     },
     {
@@ -10714,7 +10751,7 @@
    ],
    "modules": 18,
    "parts": [],
-   "lines": 13132,
+   "lines": 13149,
    "largest": [
     3857,
     "crates/vak-session/src/log.rs"
@@ -10752,9 +10789,9 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 197,
+   "commits": 198,
    "fixes": 18,
-   "recent": 71,
+   "recent": 72,
    "fix_density": 1.4,
    "out": [
     {
@@ -10910,6 +10947,16 @@
    ],
    "in": [
     {
+     "from": "catalog",
+     "to": "ledger",
+     "kind": "code",
+     "weight": 29,
+     "example": [
+      "crates/vak-catalog/src/history.rs",
+      "crates/vak-session/src/chain.rs"
+     ]
+    },
+    {
      "from": "runs",
      "to": "ledger",
      "kind": "code",
@@ -10917,16 +10964,6 @@
      "example": [
       "crates/vak-server/src/effects.rs",
       "crates/vak-session/src/fence.rs"
-     ]
-    },
-    {
-     "from": "catalog",
-     "to": "ledger",
-     "kind": "code",
-     "weight": 28,
-     "example": [
-      "crates/vak-catalog/src/history.rs",
-      "crates/vak-session/src/chain.rs"
      ]
     },
     {
@@ -10967,6 +11004,16 @@
      "example": [
       "crates/vak-core/src/scheduled.rs",
       "crates/vak-session/src/log.rs"
+     ]
+    },
+    {
+     "from": "agents",
+     "to": "ledger",
+     "kind": "code",
+     "weight": 14,
+     "example": [
+      "crates/vak-core/src/agent_definitions.rs",
+      "crates/vak-session/src/types.rs"
      ]
     },
     {
@@ -11160,16 +11207,6 @@
      ]
     },
     {
-     "from": "agents",
-     "to": "ledger",
-     "kind": "code",
-     "weight": 4,
-     "example": [
-      "crates/vak-core/src/agent_definitions.rs",
-      "crates/vak-session/src/types.rs"
-     ]
-    },
-    {
      "from": "config",
      "to": "ledger",
      "kind": "code",
@@ -11177,6 +11214,16 @@
      "example": [
       "crates/vak-config/src/paths.rs",
       "crates/vak-session/src/objects.rs"
+     ]
+    },
+    {
+     "from": "doctor",
+     "to": "ledger",
+     "kind": "code",
+     "weight": 4,
+     "example": [
+      "crates/vak-core/src/health.rs",
+      "crates/vak-session/src/documents.rs"
      ]
     },
     {
@@ -11336,16 +11383,6 @@
      "weight": 1,
      "example": [
       "crates/vak/src/main.rs",
-      "crates/vak-session/src/log.rs"
-     ]
-    },
-    {
-     "from": "doctor",
-     "to": "ledger",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-core/src/health.rs",
       "crates/vak-session/src/log.rs"
      ]
     },
@@ -11848,6 +11885,16 @@
      ]
     },
     {
+     "from": "agents",
+     "to": "runs",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-server/src/topics.rs",
+      "crates/vak-session/src/runs.rs"
+     ]
+    },
+    {
      "from": "cli",
      "to": "runs",
      "kind": "code",
@@ -12010,9 +12057,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 5207,
+   "lines": 5577,
    "largest": [
-    1402,
+    1520,
     "crates/vak-catalog/src/ingest.rs"
    ],
    "routes": [
@@ -12036,16 +12083,16 @@
     "crates/vak-core/src/catalog.rs",
     "crates/vak-server/src/catalog_api.rs"
    ],
-   "commits": 41,
+   "commits": 42,
    "fixes": 2,
-   "recent": 29,
+   "recent": 30,
    "fix_density": 0.4,
    "out": [
     {
      "from": "catalog",
      "to": "ledger",
      "kind": "code",
-     "weight": 28,
+     "weight": 29,
      "example": [
       "crates/vak-catalog/src/history.rs",
       "crates/vak-session/src/chain.rs"
@@ -12073,6 +12120,16 @@
     },
     {
      "from": "catalog",
+     "to": "lifecycle",
+     "kind": "code",
+     "weight": 5,
+     "example": [
+      "crates/vak-catalog/src/ingest.rs",
+      "crates/vak-session/src/conversation_state.rs"
+     ]
+    },
+    {
+     "from": "catalog",
      "to": "admin",
      "kind": "code",
      "weight": 4,
@@ -12093,12 +12150,12 @@
     },
     {
      "from": "catalog",
-     "to": "lifecycle",
+     "to": "agents",
      "kind": "code",
      "weight": 2,
      "example": [
-      "crates/vak-core/src/catalog.rs",
-      "crates/vak-core/src/trash.rs"
+      "crates/vak-catalog/src/ingest.rs",
+      "crates/vak-session/src/work_threads.rs"
      ]
     },
     {
@@ -12174,6 +12231,16 @@
    ],
    "in": [
     {
+     "from": "agents",
+     "to": "catalog",
+     "kind": "code",
+     "weight": 5,
+     "example": [
+      "crates/vak-server/src/topics.rs",
+      "crates/vak-catalog/src/history.rs"
+     ]
+    },
+    {
      "from": "abilities",
      "to": "catalog",
      "kind": "code",
@@ -12191,6 +12258,16 @@
      "example": [
       "crates/vak-admin-ui/src/api.ts",
       "/catalog"
+     ]
+    },
+    {
+     "from": "doctor",
+     "to": "catalog",
+     "kind": "code",
+     "weight": 4,
+     "example": [
+      "crates/vak-core/src/health.rs",
+      "crates/vak-catalog/src/history.rs"
      ]
     },
     {
@@ -12352,9 +12429,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 3720,
+   "lines": 3727,
    "largest": [
-    1835,
+    1842,
     "crates/vak-core/src/state.rs"
    ],
    "routes": [
@@ -12373,9 +12450,9 @@
     "crates/vak-core/src/state.rs",
     "crates/vak/src/data.rs"
    ],
-   "commits": 78,
+   "commits": 79,
    "fixes": 6,
-   "recent": 39,
+   "recent": 40,
    "fix_density": 1.6,
    "out": [
     {
@@ -12882,6 +12959,16 @@
      ]
     },
     {
+     "from": "catalog",
+     "to": "lifecycle",
+     "kind": "code",
+     "weight": 5,
+     "example": [
+      "crates/vak-catalog/src/ingest.rs",
+      "crates/vak-session/src/conversation_state.rs"
+     ]
+    },
+    {
      "from": "state",
      "to": "lifecycle",
      "kind": "code",
@@ -12889,6 +12976,16 @@
      "example": [
       "crates/vak-core/src/integrity.rs",
       "crates/vak-core/src/erasure.rs"
+     ]
+    },
+    {
+     "from": "agents",
+     "to": "lifecycle",
+     "kind": "code",
+     "weight": 4,
+     "example": [
+      "crates/vak-client-ui/src/components/AgentPickerModal.tsx",
+      "crates/vak-client-ui/src/components/EraseAgentSheet.tsx"
      ]
     },
     {
@@ -12932,16 +13029,6 @@
      ]
     },
     {
-     "from": "agents",
-     "to": "lifecycle",
-     "kind": "code",
-     "weight": 2,
-     "example": [
-      "crates/vak-client-ui/src/components/AgentPickerModal.tsx",
-      "crates/vak-client-ui/src/components/EraseAgentSheet.tsx"
-     ]
-    },
-    {
      "from": "backup",
      "to": "lifecycle",
      "kind": "code",
@@ -12952,16 +13039,6 @@
      ]
     },
     {
-     "from": "catalog",
-     "to": "lifecycle",
-     "kind": "code",
-     "weight": 2,
-     "example": [
-      "crates/vak-core/src/catalog.rs",
-      "crates/vak-core/src/trash.rs"
-     ]
-    },
-    {
      "from": "client",
      "to": "lifecycle",
      "kind": "code",
@@ -12969,6 +13046,16 @@
      "example": [
       "crates/vak-client-ui/src/components/Settings.tsx",
       "crates/vak-client-ui/src/components/EraseConversationSheet.tsx"
+     ]
+    },
+    {
+     "from": "doctor",
+     "to": "lifecycle",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-core/src/health.rs",
+      "crates/vak-core/src/trash.rs"
      ]
     },
     {
@@ -13592,7 +13679,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 9888,
+   "lines": 9896,
    "largest": [
     6437,
     "crates/vak-config/src/lib.rs"
@@ -13621,9 +13708,9 @@
     "crates/vak-config/src/test_scope.rs",
     "crates/vak-server/src/restart.rs"
    ],
-   "commits": 208,
+   "commits": 209,
    "fixes": 31,
-   "recent": 47,
+   "recent": 48,
    "fix_density": 3.1,
    "out": [
     {
@@ -13749,6 +13836,16 @@
      ]
     },
     {
+     "from": "agents",
+     "to": "config",
+     "kind": "code",
+     "weight": 9,
+     "example": [
+      "crates/vak-core/src/agent_definitions.rs",
+      "crates/vak-config/src/paths.rs"
+     ]
+    },
+    {
      "from": "automations",
      "to": "config",
      "kind": "code",
@@ -13776,16 +13873,6 @@
      "example": [
       "crates/vak-server/src/core_pool.rs",
       "crates/vak-config/src/lib.rs"
-     ]
-    },
-    {
-     "from": "agents",
-     "to": "config",
-     "kind": "code",
-     "weight": 8,
-     "example": [
-      "crates/vak-core/src/agent_definitions.rs",
-      "crates/vak-config/src/paths.rs"
      ]
     },
     {
@@ -18273,22 +18360,26 @@
    "group": "Apps",
    "role": "Agent definitions, lifecycle, the Agent network, per-Agent chats",
    "homes": [
-    "vak-client-ui",
     "vak-server",
+    "vak-client-ui",
+    "vak-session",
     "vak-core",
-    "vak"
+    "vak",
+    "vak-tools"
    ],
    "layers": [
+    "L1",
+    "L4",
     "L5",
     "L6",
     "L7"
    ],
-   "modules": 13,
+   "modules": 18,
    "parts": [],
-   "lines": 3034,
+   "lines": 5830,
    "largest": [
-    710,
-    "crates/vak-core/src/agent_network.rs"
+    1182,
+    "crates/vak-session/src/work_threads.rs"
    ],
    "routes": [
     "/agent-network/capabilities",
@@ -18302,13 +18393,18 @@
     "/agents/{agent}/pause",
     "/agents/{agent}/resume",
     "/agents/{agent}/revoke",
-    "/config/agents"
+    "/agents/{agent}/topics",
+    "/config/agents",
+    "/sessions/{id}/topics",
+    "/sessions/{id}/topics/{topic}"
    ],
    "cli": [
-    "agents"
+    "agents",
+    "topics"
    ],
    "docs": [
-    "64-agent-owned-platform.md"
+    "64-agent-owned-platform.md",
+    "101-topics.md"
    ],
    "units": [
     "crates/vak-client-ui/src/agentGlyph.ts",
@@ -18319,22 +18415,27 @@
     "crates/vak-client-ui/src/components/AgentPickerModal.tsx",
     "crates/vak-client-ui/src/components/AgentPresence.tsx",
     "crates/vak-client-ui/src/components/RevokeAgentSheet.tsx",
+    "crates/vak-client-ui/src/components/TopicsPanel.tsx",
     "crates/vak-core/src/agent_definitions.rs",
     "crates/vak-core/src/agent_network.rs",
     "crates/vak-server/src/agent_chats.rs",
     "crates/vak-server/src/agents.rs",
-    "crates/vak/src/agents_cli.rs"
+    "crates/vak-server/src/topics.rs",
+    "crates/vak-session/src/work_threads.rs",
+    "crates/vak-tools/src/topics.rs",
+    "crates/vak/src/agents_cli.rs",
+    "crates/vak/src/topics.rs"
    ],
-   "commits": 79,
+   "commits": 80,
    "fixes": 16,
-   "recent": 11,
-   "fix_density": 5.3,
+   "recent": 12,
+   "fix_density": 2.7,
    "out": [
     {
      "from": "agents",
      "to": "client",
      "kind": "code",
-     "weight": 17,
+     "weight": 20,
      "example": [
       "crates/vak-client-ui/src/components/AgentCreateWizard.tsx",
       "crates/vak-client-ui/src/App.tsx"
@@ -18342,29 +18443,9 @@
     },
     {
      "from": "agents",
-     "to": "config",
-     "kind": "code",
-     "weight": 8,
-     "example": [
-      "crates/vak-core/src/agent_definitions.rs",
-      "crates/vak-config/src/paths.rs"
-     ]
-    },
-    {
-     "from": "agents",
-     "to": "permission",
-     "kind": "code",
-     "weight": 5,
-     "example": [
-      "crates/vak-core/src/agent_definitions.rs",
-      "crates/vak-core/src/trust.rs"
-     ]
-    },
-    {
-     "from": "agents",
      "to": "ledger",
      "kind": "code",
-     "weight": 4,
+     "weight": 14,
      "example": [
       "crates/vak-core/src/agent_definitions.rs",
       "crates/vak-session/src/types.rs"
@@ -18372,9 +18453,19 @@
     },
     {
      "from": "agents",
+     "to": "config",
+     "kind": "code",
+     "weight": 9,
+     "example": [
+      "crates/vak-core/src/agent_definitions.rs",
+      "crates/vak-config/src/paths.rs"
+     ]
+    },
+    {
+     "from": "agents",
      "to": "turn",
      "kind": "code",
-     "weight": 3,
+     "weight": 7,
      "example": [
       "crates/vak-core/src/agent_definitions.rs",
       "crates/vak-core/src/lib.rs"
@@ -18382,9 +18473,29 @@
     },
     {
      "from": "agents",
+     "to": "permission",
+     "kind": "code",
+     "weight": 6,
+     "example": [
+      "crates/vak-core/src/agent_definitions.rs",
+      "crates/vak-core/src/trust.rs"
+     ]
+    },
+    {
+     "from": "agents",
+     "to": "catalog",
+     "kind": "code",
+     "weight": 5,
+     "example": [
+      "crates/vak-server/src/topics.rs",
+      "crates/vak-catalog/src/history.rs"
+     ]
+    },
+    {
+     "from": "agents",
      "to": "lifecycle",
      "kind": "code",
-     "weight": 2,
+     "weight": 4,
      "example": [
       "crates/vak-client-ui/src/components/AgentPickerModal.tsx",
       "crates/vak-client-ui/src/components/EraseAgentSheet.tsx"
@@ -18392,9 +18503,19 @@
     },
     {
      "from": "agents",
+     "to": "tools",
+     "kind": "code",
+     "weight": 4,
+     "example": [
+      "crates/vak-core/src/agent_network.rs",
+      "crates/vak-tools/src/context.rs"
+     ]
+    },
+    {
+     "from": "agents",
      "to": "server",
      "kind": "code",
-     "weight": 2,
+     "weight": 3,
      "example": [
       "crates/vak-server/src/agent_chats.rs",
       "crates/vak-server/src/core_pool.rs"
@@ -18402,12 +18523,22 @@
     },
     {
      "from": "agents",
-     "to": "tools",
+     "to": "cli",
      "kind": "code",
      "weight": 2,
      "example": [
-      "crates/vak-core/src/agent_network.rs",
-      "crates/vak-tools/src/context.rs"
+      "crates/vak/src/agents_cli.rs",
+      "crates/vak/src/cli.rs"
+     ]
+    },
+    {
+     "from": "agents",
+     "to": "runs",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-server/src/topics.rs",
+      "crates/vak-session/src/runs.rs"
      ]
     },
     {
@@ -18418,16 +18549,6 @@
      "example": [
       "crates/vak-client-ui/src/components/AgentCreateWizard.tsx",
       "crates/vak-client-ui/src/soundCues.ts"
-     ]
-    },
-    {
-     "from": "agents",
-     "to": "cli",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak/src/agents_cli.rs",
-      "crates/vak/src/cli.rs"
      ]
     },
     {
@@ -18446,7 +18567,7 @@
      "from": "client",
      "to": "agents",
      "kind": "code",
-     "weight": 9,
+     "weight": 10,
      "example": [
       "crates/vak-client-ui/src/App.tsx",
       "crates/vak-client-ui/src/agentRecents.ts"
@@ -18493,6 +18614,16 @@
      ]
     },
     {
+     "from": "turn",
+     "to": "agents",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-core/src/lib.rs",
+      "crates/vak-core/src/agent_definitions.rs"
+     ]
+    },
+    {
      "from": "admin",
      "to": "agents",
      "kind": "code",
@@ -18500,6 +18631,16 @@
      "example": [
       "crates/vak-server/src/admin.rs",
       "crates/vak-core/src/agent_definitions.rs"
+     ]
+    },
+    {
+     "from": "catalog",
+     "to": "agents",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-catalog/src/ingest.rs",
+      "crates/vak-session/src/work_threads.rs"
      ]
     },
     {
@@ -18520,6 +18661,16 @@
      "example": [
       "crates/vak-server/src/gateway.rs",
       "crates/vak-core/src/agent_definitions.rs"
+     ]
+    },
+    {
+     "from": "loop",
+     "to": "agents",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-agent/src/lib.rs",
+      "crates/vak-session/src/work_threads.rs"
      ]
     },
     {
@@ -18553,6 +18704,16 @@
      ]
     },
     {
+     "from": "doctor",
+     "to": "agents",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-core/src/health.rs",
+      "crates/vak-session/src/work_threads.rs"
+     ]
+    },
+    {
      "from": "eval",
      "to": "agents",
      "kind": "code",
@@ -18569,16 +18730,6 @@
      "weight": 1,
      "example": [
       "crates/vak-core/src/erasure.rs",
-      "crates/vak-core/src/agent_definitions.rs"
-     ]
-    },
-    {
-     "from": "turn",
-     "to": "agents",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-core/src/lib.rs",
       "crates/vak-core/src/agent_definitions.rs"
      ]
     },
@@ -18603,7 +18754,7 @@
      ]
     }
    ],
-   "layer": "L7"
+   "layer": "L6"
   },
   {
    "id": "coworking",
@@ -18792,9 +18943,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 32445,
+   "lines": 32481,
    "largest": [
-    28611,
+    28647,
     "crates/vak-server/src/lib.rs"
    ],
    "routes": [
@@ -18832,9 +18983,9 @@
     "crates/vak-server/src/web.rs",
     "crates/vak-session/src/turn_marks.rs"
    ],
-   "commits": 553,
+   "commits": 554,
    "fixes": 85,
-   "recent": 105,
+   "recent": 106,
    "fix_density": 2.6,
    "out": [
     {
@@ -19370,6 +19521,16 @@
      ]
     },
     {
+     "from": "agents",
+     "to": "server",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-server/src/agent_chats.rs",
+      "crates/vak-server/src/core_pool.rs"
+     ]
+    },
+    {
      "from": "identity",
      "to": "server",
      "kind": "code",
@@ -19397,16 +19558,6 @@
      "example": [
       "crates/vak-server/src/social/linkedin.rs",
       "crates/vak-server/src/lib.rs"
-     ]
-    },
-    {
-     "from": "agents",
-     "to": "server",
-     "kind": "code",
-     "weight": 2,
-     "example": [
-      "crates/vak-server/src/agent_chats.rs",
-      "crates/vak-server/src/core_pool.rs"
      ]
     },
     {
@@ -20369,9 +20520,9 @@
    ],
    "modules": 3,
    "parts": [],
-   "lines": 1699,
+   "lines": 2217,
    "largest": [
-    1239,
+    1757,
     "crates/vak-core/src/health.rs"
    ],
    "routes": [
@@ -20387,10 +20538,10 @@
     "crates/vak-core/src/health.rs",
     "crates/vak/src/doctor.rs"
    ],
-   "commits": 46,
+   "commits": 47,
    "fixes": 8,
-   "recent": 5,
-   "fix_density": 4.7,
+   "recent": 6,
+   "fix_density": 3.6,
    "out": [
     {
      "from": "doctor",
@@ -20400,6 +20551,26 @@
      "example": [
       "crates/vak-core/src/health.rs",
       "crates/vak-config/src/lib.rs"
+     ]
+    },
+    {
+     "from": "doctor",
+     "to": "catalog",
+     "kind": "code",
+     "weight": 4,
+     "example": [
+      "crates/vak-core/src/health.rs",
+      "crates/vak-catalog/src/history.rs"
+     ]
+    },
+    {
+     "from": "doctor",
+     "to": "ledger",
+     "kind": "code",
+     "weight": 4,
+     "example": [
+      "crates/vak-core/src/health.rs",
+      "crates/vak-session/src/documents.rs"
      ]
     },
     {
@@ -20424,6 +20595,16 @@
     },
     {
      "from": "doctor",
+     "to": "lifecycle",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-core/src/health.rs",
+      "crates/vak-core/src/trash.rs"
+     ]
+    },
+    {
+     "from": "doctor",
      "to": "turn",
      "kind": "code",
      "weight": 2,
@@ -20444,6 +20625,16 @@
     },
     {
      "from": "doctor",
+     "to": "agents",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-core/src/health.rs",
+      "crates/vak-session/src/work_threads.rs"
+     ]
+    },
+    {
+     "from": "doctor",
      "to": "cli",
      "kind": "code",
      "weight": 1,
@@ -20460,16 +20651,6 @@
      "example": [
       "crates/vak-core/src/health.rs",
       "crates/vak-control/src/lib.rs"
-     ]
-    },
-    {
-     "from": "doctor",
-     "to": "ledger",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-core/src/health.rs",
-      "crates/vak-session/src/log.rs"
      ]
     },
     {
@@ -21557,9 +21738,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 126,
+   "commits": 127,
    "fixes": 21,
-   "recent": 39,
+   "recent": 40,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -21567,12 +21748,12 @@
   }
  ],
  "coverage": {
-  "units": 709,
-  "claimed": 709,
-  "routes": 398,
-  "routes_claimed": 398,
-  "verbs": 35,
-  "verbs_claimed": 35,
+  "units": 715,
+  "claimed": 715,
+  "routes": 401,
+  "routes_claimed": 401,
+  "verbs": 36,
+  "verbs_claimed": 36,
   "docs_uncited": [
    "00-roadmap.md",
    "100-workers.md",
@@ -21609,6 +21790,16 @@
    ]
   },
   {
+   "from": "catalog",
+   "to": "ledger",
+   "kind": "code",
+   "weight": 29,
+   "example": [
+    "crates/vak-catalog/src/history.rs",
+    "crates/vak-session/src/chain.rs"
+   ]
+  },
+  {
    "from": "runs",
    "to": "ledger",
    "kind": "code",
@@ -21616,16 +21807,6 @@
    "example": [
     "crates/vak-server/src/effects.rs",
     "crates/vak-session/src/fence.rs"
-   ]
-  },
-  {
-   "from": "catalog",
-   "to": "ledger",
-   "kind": "code",
-   "weight": 28,
-   "example": [
-    "crates/vak-catalog/src/history.rs",
-    "crates/vak-session/src/chain.rs"
    ]
   },
   {
@@ -21646,6 +21827,16 @@
    "example": [
     "crates/vak-client-ui/src/candidateVersions.ts",
     "crates/vak-client-ui/src/api.ts"
+   ]
+  },
+  {
+   "from": "agents",
+   "to": "client",
+   "kind": "code",
+   "weight": 20,
+   "example": [
+    "crates/vak-client-ui/src/components/AgentCreateWizard.tsx",
+    "crates/vak-client-ui/src/App.tsx"
    ]
   },
   {
@@ -21676,16 +21867,6 @@
    "example": [
     "crates/vak-server/src/events.rs",
     "crates/vak-session/src/trace.rs"
-   ]
-  },
-  {
-   "from": "agents",
-   "to": "client",
-   "kind": "code",
-   "weight": 17,
-   "example": [
-    "crates/vak-client-ui/src/components/AgentCreateWizard.tsx",
-    "crates/vak-client-ui/src/App.tsx"
    ]
   },
   {
@@ -21746,6 +21927,16 @@
    "example": [
     "crates/vak-tools/src/broker.rs",
     "crates/vak-ooxml/src/blank.rs"
+   ]
+  },
+  {
+   "from": "agents",
+   "to": "ledger",
+   "kind": "code",
+   "weight": 14,
+   "example": [
+    "crates/vak-core/src/agent_definitions.rs",
+    "crates/vak-session/src/types.rs"
    ]
   },
   {
@@ -21909,6 +22100,16 @@
    ]
   },
   {
+   "from": "client",
+   "to": "agents",
+   "kind": "code",
+   "weight": 10,
+   "example": [
+    "crates/vak-client-ui/src/App.tsx",
+    "crates/vak-client-ui/src/agentRecents.ts"
+   ]
+  },
+  {
    "from": "context",
    "to": "ledger",
    "kind": "code",
@@ -21939,6 +22140,16 @@
    ]
   },
   {
+   "from": "agents",
+   "to": "config",
+   "kind": "code",
+   "weight": 9,
+   "example": [
+    "crates/vak-core/src/agent_definitions.rs",
+    "crates/vak-config/src/paths.rs"
+   ]
+  },
+  {
    "from": "automations",
    "to": "config",
    "kind": "code",
@@ -21956,16 +22167,6 @@
    "example": [
     "crates/vak-agent/src/cards.rs",
     "crates/vak-delivery/src/skills.rs"
-   ]
-  },
-  {
-   "from": "client",
-   "to": "agents",
-   "kind": "code",
-   "weight": 9,
-   "example": [
-    "crates/vak-client-ui/src/App.tsx",
-    "crates/vak-client-ui/src/agentRecents.ts"
    ]
   },
   {
@@ -22076,16 +22277,6 @@
    "example": [
     "crates/vak-admin-ui/src/api.ts",
     "/admin/api/bestofn"
-   ]
-  },
-  {
-   "from": "agents",
-   "to": "config",
-   "kind": "code",
-   "weight": 8,
-   "example": [
-    "crates/vak-core/src/agent_definitions.rs",
-    "crates/vak-config/src/paths.rs"
    ]
   },
   {
@@ -22236,6 +22427,16 @@
    "example": [
     "crates/vak-admin-ui/src/Home.tsx",
     "/ops/center"
+   ]
+  },
+  {
+   "from": "agents",
+   "to": "turn",
+   "kind": "code",
+   "weight": 7,
+   "example": [
+    "crates/vak-core/src/agent_definitions.rs",
+    "crates/vak-core/src/lib.rs"
    ]
   },
   {
@@ -22446,6 +22647,16 @@
    "example": [
     "crates/vak-admin-ui/src/Home.tsx",
     "/data/status"
+   ]
+  },
+  {
+   "from": "agents",
+   "to": "permission",
+   "kind": "code",
+   "weight": 6,
+   "example": [
+    "crates/vak-core/src/agent_definitions.rs",
+    "crates/vak-core/src/trust.rs"
    ]
   },
   {
@@ -22700,12 +22911,12 @@
   },
   {
    "from": "agents",
-   "to": "permission",
+   "to": "catalog",
    "kind": "code",
    "weight": 5,
    "example": [
-    "crates/vak-core/src/agent_definitions.rs",
-    "crates/vak-core/src/trust.rs"
+    "crates/vak-server/src/topics.rs",
+    "crates/vak-catalog/src/history.rs"
    ]
   },
   {
@@ -22726,6 +22937,16 @@
    "example": [
     "crates/vak-client-ui/src/components/SearchModal.tsx",
     "crates/vak-client-ui/src/App.tsx"
+   ]
+  },
+  {
+   "from": "catalog",
+   "to": "lifecycle",
+   "kind": "code",
+   "weight": 5,
+   "example": [
+    "crates/vak-catalog/src/ingest.rs",
+    "crates/vak-session/src/conversation_state.rs"
    ]
   },
   {
@@ -23080,12 +23301,22 @@
   },
   {
    "from": "agents",
-   "to": "ledger",
+   "to": "lifecycle",
    "kind": "code",
    "weight": 4,
    "example": [
-    "crates/vak-core/src/agent_definitions.rs",
-    "crates/vak-session/src/types.rs"
+    "crates/vak-client-ui/src/components/AgentPickerModal.tsx",
+    "crates/vak-client-ui/src/components/EraseAgentSheet.tsx"
+   ]
+  },
+  {
+   "from": "agents",
+   "to": "tools",
+   "kind": "code",
+   "weight": 4,
+   "example": [
+    "crates/vak-core/src/agent_network.rs",
+    "crates/vak-tools/src/context.rs"
    ]
   },
   {
@@ -23286,6 +23517,26 @@
    "example": [
     "crates/vak-delivery/src/adaptive.rs",
     "crates/vak-presentation/src/lib.rs"
+   ]
+  },
+  {
+   "from": "doctor",
+   "to": "catalog",
+   "kind": "code",
+   "weight": 4,
+   "example": [
+    "crates/vak-core/src/health.rs",
+    "crates/vak-catalog/src/history.rs"
+   ]
+  },
+  {
+   "from": "doctor",
+   "to": "ledger",
+   "kind": "code",
+   "weight": 4,
+   "example": [
+    "crates/vak-core/src/health.rs",
+    "crates/vak-session/src/documents.rs"
    ]
   },
   {
@@ -23650,12 +23901,12 @@
   },
   {
    "from": "agents",
-   "to": "turn",
+   "to": "server",
    "kind": "code",
    "weight": 3,
    "example": [
-    "crates/vak-core/src/agent_definitions.rs",
-    "crates/vak-core/src/lib.rs"
+    "crates/vak-server/src/agent_chats.rs",
+    "crates/vak-server/src/core_pool.rs"
    ]
   },
   {
@@ -24470,6 +24721,16 @@
   },
   {
    "from": "turn",
+   "to": "agents",
+   "kind": "code",
+   "weight": 3,
+   "example": [
+    "crates/vak-core/src/lib.rs",
+    "crates/vak-core/src/agent_definitions.rs"
+   ]
+  },
+  {
+   "from": "turn",
    "to": "cards",
    "kind": "code",
    "weight": 3,
@@ -24790,32 +25051,22 @@
   },
   {
    "from": "agents",
-   "to": "lifecycle",
+   "to": "cli",
    "kind": "code",
    "weight": 2,
    "example": [
-    "crates/vak-client-ui/src/components/AgentPickerModal.tsx",
-    "crates/vak-client-ui/src/components/EraseAgentSheet.tsx"
+    "crates/vak/src/agents_cli.rs",
+    "crates/vak/src/cli.rs"
    ]
   },
   {
    "from": "agents",
-   "to": "server",
+   "to": "runs",
    "kind": "code",
    "weight": 2,
    "example": [
-    "crates/vak-server/src/agent_chats.rs",
-    "crates/vak-server/src/core_pool.rs"
-   ]
-  },
-  {
-   "from": "agents",
-   "to": "tools",
-   "kind": "code",
-   "weight": 2,
-   "example": [
-    "crates/vak-core/src/agent_network.rs",
-    "crates/vak-tools/src/context.rs"
+    "crates/vak-server/src/topics.rs",
+    "crates/vak-session/src/runs.rs"
    ]
   },
   {
@@ -24960,12 +25211,12 @@
   },
   {
    "from": "catalog",
-   "to": "lifecycle",
+   "to": "agents",
    "kind": "code",
    "weight": 2,
    "example": [
-    "crates/vak-core/src/catalog.rs",
-    "crates/vak-core/src/trash.rs"
+    "crates/vak-catalog/src/ingest.rs",
+    "crates/vak-session/src/work_threads.rs"
    ]
   },
   {
@@ -25370,6 +25621,16 @@
   },
   {
    "from": "doctor",
+   "to": "lifecycle",
+   "kind": "code",
+   "weight": 2,
+   "example": [
+    "crates/vak-core/src/health.rs",
+    "crates/vak-core/src/trash.rs"
+   ]
+  },
+  {
+   "from": "doctor",
    "to": "turn",
    "kind": "code",
    "weight": 2,
@@ -25726,6 +25987,16 @@
    "example": [
     "crates/vak-core/src/erasure.rs",
     "crates/vak-core/src/lib.rs"
+   ]
+  },
+  {
+   "from": "loop",
+   "to": "agents",
+   "kind": "code",
+   "weight": 2,
+   "example": [
+    "crates/vak-agent/src/lib.rs",
+    "crates/vak-session/src/work_threads.rs"
    ]
   },
   {
@@ -26626,16 +26897,6 @@
    "example": [
     "crates/vak-admin-ui/src/api.ts",
     "/admin/api/questions"
-   ]
-  },
-  {
-   "from": "agents",
-   "to": "cli",
-   "kind": "code",
-   "weight": 1,
-   "example": [
-    "crates/vak/src/agents_cli.rs",
-    "crates/vak/src/cli.rs"
    ]
   },
   {
@@ -27820,6 +28081,16 @@
   },
   {
    "from": "doctor",
+   "to": "agents",
+   "kind": "code",
+   "weight": 1,
+   "example": [
+    "crates/vak-core/src/health.rs",
+    "crates/vak-session/src/work_threads.rs"
+   ]
+  },
+  {
+   "from": "doctor",
    "to": "cli",
    "kind": "code",
    "weight": 1,
@@ -27836,16 +28107,6 @@
    "example": [
     "crates/vak-core/src/health.rs",
     "crates/vak-control/src/lib.rs"
-   ]
-  },
-  {
-   "from": "doctor",
-   "to": "ledger",
-   "kind": "code",
-   "weight": 1,
-   "example": [
-    "crates/vak-core/src/health.rs",
-    "crates/vak-session/src/log.rs"
    ]
   },
   {
@@ -29570,16 +29831,6 @@
   },
   {
    "from": "turn",
-   "to": "agents",
-   "kind": "code",
-   "weight": 1,
-   "example": [
-    "crates/vak-core/src/lib.rs",
-    "crates/vak-core/src/agent_definitions.rs"
-   ]
-  },
-  {
-   "from": "turn",
    "to": "automations",
    "kind": "code",
    "weight": 1,
@@ -30283,6 +30534,27 @@
   }
  ],
  "replay": [
+  {
+   "hash": "64fd4a411",
+   "date": "2026-10-21",
+   "subject": "Add Agent-owned Topics across runtime, clients, CLI and Doctor",
+   "subsystems": [
+    "admin",
+    "agents",
+    "catalog",
+    "cli",
+    "client",
+    "config",
+    "doctor",
+    "engineering",
+    "ledger",
+    "loop",
+    "server",
+    "state",
+    "tools",
+    "turn"
+   ]
+  },
   {
    "hash": "850900957",
    "date": "2026-10-21",
@@ -35294,10 +35566,10 @@
    "layer": "L7",
    "kind": "rust",
    "role": "The CLI binary and every subcommand",
-   "src": 14401,
+   "src": 15030,
    "tests": 1528,
-   "files": 31,
-   "commits": 214,
+   "files": 32,
+   "commits": 215,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35346,7 +35618,7 @@
     "uuid"
    ],
    "largest": [
-    2804,
+    2811,
     "crates/vak/src/main.rs"
    ],
    "subsystems": [
@@ -35374,10 +35646,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS admin console at /admin",
-   "src": 24874,
+   "src": 24963,
    "tests": 0,
    "files": 31,
-   "commits": 263,
+   "commits": 264,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35411,10 +35683,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 16748,
+   "src": 17212,
    "tests": 19973,
    "files": 13,
-   "commits": 355,
+   "commits": 356,
    "deps": [
     "vak-config",
     "vak-context",
@@ -35452,7 +35724,7 @@
     "uuid"
    ],
    "largest": [
-    11753,
+    12217,
     "crates/vak-agent/src/lib.rs"
    ],
    "subsystems": [
@@ -35506,10 +35778,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "SQLite catalog: nodes, lineage, FTS5",
-   "src": 4682,
+   "src": 5052,
    "tests": 0,
    "files": 5,
-   "commits": 36,
+   "commits": 37,
    "deps": [
     "vak-config",
     "vak-llm",
@@ -35533,7 +35805,7 @@
     "tracing"
    ],
    "largest": [
-    1402,
+    1520,
     "crates/vak-catalog/src/ingest.rs"
    ],
    "subsystems": [
@@ -35545,10 +35817,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 38265,
+   "src": 38652,
    "tests": 324,
-   "files": 190,
-   "commits": 650,
+   "files": 192,
+   "commits": 651,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35564,7 +35836,7 @@
     "solid-js"
    ],
    "largest": [
-    3182,
+    3210,
     "crates/vak-client-ui/src/api.ts"
    ],
    "subsystems": [
@@ -35636,10 +35908,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Layered TOML, credentials, paths, scopes",
-   "src": 9826,
+   "src": 9834,
    "tests": 867,
    "files": 8,
-   "commits": 216,
+   "commits": 217,
    "deps": [
     "vak-control",
     "vak-llm"
@@ -35756,10 +36028,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 61738,
-   "tests": 10209,
+   "src": 62336,
+   "tests": 10484,
    "files": 74,
-   "commits": 658,
+   "commits": 659,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35819,7 +36091,7 @@
     "walkdir"
    ],
    "largest": [
-    12476,
+    12549,
     "crates/vak-core/src/lib.rs"
    ],
    "subsystems": [
@@ -36593,10 +36865,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 76132,
-   "tests": 24371,
-   "files": 53,
-   "commits": 846,
+   "src": 76883,
+   "tests": 24372,
+   "files": 54,
+   "commits": 847,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -36659,7 +36931,7 @@
     "zeroize"
    ],
    "largest": [
-    28611,
+    28647,
     "crates/vak-server/src/lib.rs"
    ],
    "subsystems": [
@@ -36698,10 +36970,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 16382,
+   "src": 17581,
    "tests": 4918,
-   "files": 25,
-   "commits": 214,
+   "files": 26,
+   "commits": 215,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36751,6 +37023,7 @@
     "runs",
     "lifecycle",
     "cards",
+    "agents",
     "server"
    ]
   },
@@ -36862,10 +37135,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Built-in tools, argument reader, broker worker protocol, egress proxy",
-   "src": 16537,
+   "src": 16857,
    "tests": 1217,
-   "files": 29,
-   "commits": 212,
+   "files": 30,
+   "commits": 213,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36928,7 +37201,8 @@
     "sandbox",
     "library",
     "office",
-    "mail"
+    "mail",
+    "agents"
    ]
   },
   {
@@ -36967,15 +37241,15 @@
   "files": [
    {
     "file": "crates/vak-server/src/lib.rs",
-    "lines": 28611
+    "lines": 28647
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12476
+    "lines": 12549
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
-    "lines": 11753
+    "lines": 12217
    },
    {
     "file": "crates/vak-mail-calendar/src/provider.rs",
@@ -37018,14 +37292,14 @@
    {
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 1881,
+    "line": 1885,
     "lines": 1875
    },
    {
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6662,
-    "lines": 1649
+    "line": 6663,
+    "lines": 1721
    },
    {
     "name": "snapshot_inner",
@@ -37048,8 +37322,8 @@
    {
     "name": "router_with_state",
     "file": "crates/vak-server/src/lib.rs",
-    "line": 904,
-    "lines": 720
+    "line": 905,
+    "lines": 726
    },
    {
     "name": "execute",
@@ -37066,7 +37340,7 @@
    {
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5676,
+    "line": 5680,
     "lines": 564
    },
    {
@@ -37084,7 +37358,7 @@
    {
     "name": "patch_config_scope",
     "file": "crates/vak-server/src/lib.rs",
-    "line": 17886,
+    "line": 17922,
     "lines": 483
    }
   ],
@@ -37164,8 +37438,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1390,
-  "hot": 650
+  "docs_commits": 1391,
+  "hot": 651
  },
  "findings": [
   {
@@ -37173,7 +37447,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 192 (rank 1 of 4,473 library functions) and `Core::run_turn_recorded` at 106 (rank 3); the median is 3 and the 99th percentile 24. 155 commits changed the first (6% of all) and 214 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.5 per thousand lines, against a median of 4.4 over 404 files; file size alone does not predict the rate (ρ = -0.13).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 192 (rank 1 of 4,473 library functions) and `Core::run_turn_recorded` at 106 (rank 3); the median is 3 and the 99th percentile 24. 155 commits changed the first (6% of all) and 215 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.2 per thousand lines, against a median of 4.4 over 408 files; file size alone does not predict the rate (ρ = -0.14).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
