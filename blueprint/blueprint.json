@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.17.1",
-  "revision": "cba157ff1",
+  "version": "8.17.2",
+  "revision": "850900957",
   "first_date": "2026-08-21",
   "last_date": "2026-10-21",
   "prose_reviewed": "8.16.0 · 2026-10-20"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2432,
+   "total_commits": 2434,
    "days": 62,
    "peak_day": 174,
    "design_docs": 96,
@@ -340,7 +340,7 @@
  "activity": {
   "since": "2026-10-07",
   "until": "2026-10-21",
-  "commits": 514,
+  "commits": 516,
   "areas": [
    [
     "docs",
@@ -348,7 +348,7 @@
    ],
    [
     "(root)",
-    286
+    288
    ],
    [
     "vak-core",
@@ -705,6 +705,22 @@
   ],
   "recent": [
    {
+    "hash": "850900957",
+    "date": "2026-10-21",
+    "subject": "Record 8.17.2 release notes",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "12a81e972",
+    "date": "2026-10-21",
+    "subject": "Bump version to 8.17.2",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "cba157ff1",
     "date": "2026-10-21",
     "subject": "Resolve historical dependencies per outcome and stabilize answer composition",
@@ -858,32 +874,9 @@
     "areas": [
      "blueprint"
     ]
-   },
-   {
-    "hash": "16ff14fb9",
-    "date": "2026-10-20",
-    "subject": "Improve Library previews and controls",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-client-ui"
-    ]
-   },
-   {
-    "hash": "c9f680e33",
-    "date": "2026-10-20",
-    "subject": "Bump version to 8.15.0",
-    "areas": [
-     "(root)"
-    ]
    }
   ],
-  "unreleased": [
-   "Follow-ups use an explicitly labelled recent reference;",
-   "Context planning reads addressed closing records and the active turn, records replayable selections, and uses an explicit configurable resource envelope when a route's capacity is unknown.",
-   "Answers preserve source order and stable placement anchors while streaming, settled and in Canvas.",
-   "Channel replies carry their own settled outcome metadata, so concurrent presentation updates cannot change their notices."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30290,6 +30283,18 @@
   }
  ],
  "replay": [
+  {
+   "hash": "850900957",
+   "date": "2026-10-21",
+   "subject": "Record 8.17.2 release notes",
+   "subsystems": []
+  },
+  {
+   "hash": "12a81e972",
+   "date": "2026-10-21",
+   "subject": "Bump version to 8.17.2",
+   "subsystems": []
+  },
   {
    "hash": "cba157ff1",
    "date": "2026-10-21",
