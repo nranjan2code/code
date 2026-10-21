@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.20.0",
-  "revision": "a015c09f5",
+  "revision": "56e0bc59d",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.19.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 80,
    "lock_crates": 764,
-   "total_commits": 2443,
+   "total_commits": 2444,
    "days": 63,
    "peak_day": 174,
    "design_docs": 97,
@@ -396,11 +396,11 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 500,
+  "commits": 501,
   "areas": [
    [
     "docs",
-    410
+    411
    ],
    [
     "(root)",
@@ -499,13 +499,13 @@
     47
    ],
    [
-    "library",
-    "Library and file state",
-    42
-   ],
-   [
     "engineering",
     "Build, gate and release",
+    43
+   ],
+   [
+    "library",
+    "Library and file state",
     42
    ],
    [
@@ -761,6 +761,15 @@
   ],
   "recent": [
    {
+    "hash": "56e0bc59d",
+    "date": "2026-10-22",
+    "subject": "Refresh blueprint for 8.20.0 release",
+    "areas": [
+     "blueprint",
+     "docs"
+    ]
+   },
+   {
     "hash": "a015c09f5",
     "date": "2026-10-22",
     "subject": "Finalize 8.20.0 changelog",
@@ -912,14 +921,6 @@
      "(root)",
      "docs",
      "vak-client-ui"
-    ]
-   },
-   {
-    "hash": "66b44448c",
-    "date": "2026-10-21",
-    "subject": "Release 8.17.0",
-    "areas": [
-     "(root)"
     ]
    }
   ],
@@ -21762,9 +21763,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 129,
+   "commits": 130,
    "fixes": 21,
-   "recent": 42,
+   "recent": 43,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -30559,6 +30560,14 @@
  ],
  "replay": [
   {
+   "hash": "56e0bc59d",
+   "date": "2026-10-22",
+   "subject": "Refresh blueprint for 8.20.0 release",
+   "subsystems": [
+    "engineering"
+   ]
+  },
+  {
    "hash": "a015c09f5",
    "date": "2026-10-22",
    "subject": "Finalize 8.20.0 changelog",
@@ -37276,7 +37285,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1397,
+  "docs_commits": 1398,
   "hot": 654
  },
  "findings": [
