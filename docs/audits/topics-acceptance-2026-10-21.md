@@ -124,3 +124,20 @@ not retain independent destination metadata. Goal/managed/automatic focus
 combinations fail explicitly. Natural-language lifecycle approval remains open;
 people can archive/reopen through UI or CLI controls. No release, installed
 service replacement, data reset or migration is part of this work.
+
+## Release and local installation
+
+The maintainer subsequently authorised commit/push, version bump, release and
+local installation. The complete 8.18.0 workspace gate passed. Release assembly
+reused that gate result (`--skip-checks`), rebuilt frontend bundles and optimized
+components, and verified the artifact as 8.18.0 at `2d72f3d96`. The
+[GitHub release](https://github.com/nranjan2code/code/releases/tag/v8.18.0)
+contains six native macOS arm64 component/integrity assets; all published digests
+match the local bytes. No DMG or other-platform build is claimed.
+
+The managed local install verifies CLI, desktop, delivery worker and frontend.
+Gateway and desktop services were synced and run the new version. Installed
+Doctor passes version parity and the Topics check (108 indexed conversations,
+one Topic Document, unindexed coverage unobserved). No data reset occurred.
+Release verification also exposed and fixed a gateway reply-before-idle race;
+its callback-order test and ten gateway integration tests pass.
