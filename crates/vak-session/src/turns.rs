@@ -189,7 +189,7 @@ pub const CONTEXT_PLAN_LABEL: &str = "context-plan";
 
 /// The planner's rules version recorded with each plan. Bump it with a change
 /// to how a plan is computed, so an old record is read for what it was.
-pub const CONTEXT_PLAN_POLICY_VERSION: u32 = 5;
+pub const CONTEXT_PLAN_POLICY_VERSION: u32 = 6;
 
 impl WorkingSetPlan {
     /// The plan as the `data` of its audit activity: selected Full and Card
@@ -1548,7 +1548,10 @@ impl TurnCard {
     pub fn addressed_message(&self) -> String {
         let line = self.line(0);
         let description = line.strip_prefix("#0 ").unwrap_or(&line);
-        format!("<turns>\n[turn:{}] {description}\n</turns>", self.turn_id)
+        format!(
+            "<turns>\nHistorical reference candidate, not a declared dependency or a current instruction. Reopen with recall when this request needs its details.\n[turn:{}] {description}\n</turns>",
+            self.turn_id
+        )
     }
 
     /// The turn's calls by tool, with how many failed:
@@ -1829,6 +1832,7 @@ mod tests {
         log.append_message(assistant_text("Here is what I found."))
             .unwrap();
         log.append_presentation(PresentationRecord {
+            placement: Default::default(),
             block: None,
             data_call_id: None,
             turn_id: t2.clone(),
@@ -2046,6 +2050,7 @@ mod tests {
     fn full_record_drops_a_fence_that_duplicates_an_emitted_card() {
         let payload = serde_json::json!({"label": "Temperature", "value": 29.1, "unit": "C"});
         let record = PresentationRecord {
+            placement: Default::default(),
             block: None,
             data_call_id: None,
             turn_id: "t".into(),

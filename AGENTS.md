@@ -397,6 +397,12 @@ commit (invariant 30).
 - Add no font size under 12px and no hex literal outside a theme block.
 - Edit a selector's existing rule instead of adding an override later in
   `styles.css`.
+- Answer source order and exact placement anchors are shared by live,
+  settled and Canvas views. Resolve a beside relation before layout to
+  stable presentation ids at acceptance and carry them in live events; a
+  removed anchor never rebinds. Form reading widths and
+  available space determine geometry, never topic words or history age.
+  Complete the current ask without duplicating findings across shapes.
 - Keep IDs, paths, byte counts and hashes out of everyday screens.
 - Follow the generated platform exports in `docs/brand/README.md`. Preserve
   the Songbird silhouette and complete app tile across themes; light, dark and
@@ -910,8 +916,8 @@ commit (invariant 30).
     (`crates/vak-server/src/preview.rs`, docs/design/66 §3.2). The client, not
     the data describing a preview, chooses the sandbox.
 36. **Context is measured, never assumed, and nothing model-visible is cut
-    blind** (docs/design/68-context-engine.md). Every number that shapes a
-    request — window, usable instruction horizon, tokens per char, prefill
+    blind** (docs/design/68-context-engine.md). Every claim about model
+    capacity — window, usable instruction horizon, tokens per char, prefill
     rate, cache behaviour — comes from a per-model `CapacityProfile` probed
     at bind time (majority-of-three samples per rung, over filler shaped
     like real turns) and revised from every receipt; feedback never widens a
@@ -921,12 +927,26 @@ commit (invariant 30).
     schema-driven digest and cards by their short ack — never a
     prose-narrated trace, which a small model imitates as prose), `Card`
     (one `TurnCard` line) or `Packet` fidelity as its plan says. The
-    `WorkingSetPlanner` carries the compact card of the turn the request
-    follows (the last turn of the thread it continues, else the last
-    turn), within the measured budget, and nothing older; no reading of
-    the request's words decides it, and older turns are reached through
-    `recall` (docs/design/85-turn-graph.md). A
-    compaction packet is a cache keyed by the turn range it summarises,
+    `WorkingSetPlanner` carries only the most recent visible settled card as
+    an explicitly labelled historical candidate, within the request budget;
+    neither lexical lineage nor a graph score may redirect or expand it.
+    The model resolves dependencies by meaning through `recall` query/open,
+    including several sources and sources thousands of turns back. Candidate
+    pagination bounds work, never eligible history age. A multi-intent turn has
+    per-outcome dependencies (zero, one or several sources), never one global
+    related/unrelated bit. Share a source only where it supports an outcome;
+    independent parts inherit no other part's old constraints. A retrieved record is
+    consulted evidence, not a new instruction, permission or proof of support.
+    Retrieval cannot choose the user's intent: several plausible revision
+    targets or changes require clarification, not repeated search or invented
+    dates, values or scope.
+    Structured `ContextSelection` records capture addressed source sets and
+    the pre-request leaf for replay. Ordinary planning reads the current turn
+    and the recent closing record, never all historical Full projections.
+    Capacity not yet known is explicit: `[control] unmeasured_context_tokens`
+    is a provisional resource envelope (shipped 65,536 tokens), recorded as
+    `resource_ceiling`, never presented as a discovered window or infinity.
+    A compaction packet is a cache keyed by the turn range it summarises,
     never a boundary: the projection renders it only when the current plan
     asks for exactly that range, so a packet written under a small model
     hides nothing from a larger model bound later and every request is a
@@ -1430,7 +1450,10 @@ Each meaningful result is independent. A result may be complete, partial,
 failed, cancelled, or unknown; a typed renderer cannot upgrade an unsupported
 claim into observed evidence. Evidence is scoped to the result and requirement,
 and its strength, freshness, identity, and applicability are evaluated
-separately. Missing or stale evidence must remain visible as partial/unknown.
+separately. Missing required evidence or stale evidence must remain visible as
+partial/unknown. Evidence state `none` alone does not downgrade a completed
+result that requires no retrieval. Channel delivery carries its own settled
+turn metadata rather than reading mutable live presentation state.
 A card shows only what its validated payload holds; otherwise deterministic
 Markdown fallback is used. No surface may independently classify a result.
 

@@ -1,3 +1,32 @@
+## Turn relations, context and answer sizing (2026-10-21)
+
+The maintainer approved the [review's clean contract](../audits/turn-relations-and-sizing-2026-10-21.md).
+The [acceptance record](../audits/turn-relations-acceptance-2026-10-21.md)
+distinguishes implemented paths, deterministic checks and live observations.
+
+- [x] Remove lexical lineage and the unused planner walk as context authority;
+  use a labelled recent candidate, arbitrary-age query/open, batched dependencies
+  and paged candidates without an age cutoff.
+- [x] Record structured addressed selections before dispatch and replay them;
+  cost the active turn and recent closing record rather than historical Full
+  projections. Explicit provisional resource policy bounds unmeasured routes.
+- [x] Align prompt/plan/tool/optional-skill guidance on requested coverage,
+  uncertainty, multiple dependencies and distinct information per shape.
+- [x] Share source-order anchored rows between live, settled and Canvas;
+  intrinsic form widths wrap pairs without rebinding replaced anchors.
+- [ ] Run the new live accepted-placement/replacement browser fixture at the
+  four responsive/theme combinations once Work browser access is enabled.
+  Earlier ten-check geometry acceptance passed; final refinements have Rust
+  projection and Node/store-reducer coverage, not a claimed browser pass.
+- [ ] Lazy retained-session handles and remaining full-history consumers;
+  larger dependency-rich turns, semantic-retrieval/ambiguity calibration
+  across models and live lifetime-scale measurements remain the lifetime
+  context plan's open work. The live sample exposed over-search, repeated
+  findings and an ungrounded ambiguous revision; the stronger general prompt
+  rule is not a universal semantic-resolution guarantee.
+  Passing 1,000-turn reference/path tests does not establish universal
+  paraphrase resolution, million-turn capacity or bounded session-open RSS.
+
 ## TLS compatibility dependency (2026-10-21)
 
 - [ ] Move the WebSocket/NATS dependency graph off `webpki-roots` 0.26.11,

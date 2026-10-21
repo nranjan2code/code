@@ -71,6 +71,8 @@ pub struct OutputProvenance {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputItem {
+    #[serde(default)]
+    pub placement: vak_session::types::CardPlacement,
     pub id: String,
     pub timestamp: String,
     pub turn_id: String,
@@ -191,6 +193,9 @@ impl OutputContent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputTimeline {
+    /// Events already covered by an authoritative settlement snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub covered_sequence: Option<u64>,
     pub schema_version: u16,
     pub session_id: String,
     #[serde(default)]
@@ -213,11 +218,10 @@ pub struct OutputTimeline {
 pub struct AnswerOutline {
     pub turn_id: String,
     pub sections: Vec<AnswerSection>,
-    /// Items the model placed beside the item before them (a card's
-    /// `beside_previous`); a client lays them side by side where there is
-    /// room, and one under the other where there is not.
+    /// Addressed pairs, resolved in recorded answer order before any layout.
+    /// The first item is the anchor; the second was placed beside it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub beside: Vec<String>,
+    pub beside: Vec<[String; 2]>,
 }
 
 /// One section of an answer and the items that deliver it. An item is
@@ -235,6 +239,7 @@ pub struct AnswerSection {
 impl OutputTimeline {
     pub fn empty(session_id: impl Into<String>) -> Self {
         Self {
+            covered_sequence: None,
             schema_version: PRESENTATION_SCHEMA_VERSION,
             session_id: session_id.into(),
             cursor: None,

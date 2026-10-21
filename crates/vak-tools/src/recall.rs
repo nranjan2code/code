@@ -37,7 +37,11 @@ pub const MAX_LIMIT: usize = 20;
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecallRequest {
     /// `query`: search everything the runtime reaches.
-    Search { query: String, limit: usize },
+    Search {
+        query: String,
+        limit: usize,
+        offset: usize,
+    },
     /// `open: "#3"`: a turn of this conversation by its `<turns>` number.
     Turn(u64),
     /// `open: "turn:<turn_id>"`: a turn of this conversation by its stable id.
@@ -78,6 +82,24 @@ pub fn parse_recall_args(args: &Value) -> Result<Vec<RecallRequest>, String> {
     if let Some(open) = text_arg(args, "open") {
         requests.push(parse_open(open, args)?);
     }
+    if let Some(opens) = args.get("opens").filter(|value| !value.is_null()) {
+        let opens = opens
+            .as_array()
+            .ok_or("opens must be a list of exact references")?;
+        if opens.len() > MAX_LIMIT {
+            return Err("open at most 20 references per call".into());
+        }
+        for reference in opens {
+            let reference = reference
+                .as_str()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or("each opens entry must be a non-empty reference")?;
+            let request = parse_open(reference, args)?;
+            if !requests.contains(&request) {
+                requests.push(request);
+            }
+        }
+    }
     if let Some(query) = text_arg(args, "query") {
         if query.chars().count() > 2048 {
             return Err("query must be at most 2048 characters".into());
@@ -89,6 +111,11 @@ pub fn parse_recall_args(args: &Value) -> Result<Vec<RecallRequest>, String> {
         requests.push(RecallRequest::Search {
             query: query.into(),
             limit,
+            offset: args
+                .get("offset")
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(0),
         });
     }
     if requests.is_empty() {
@@ -262,7 +289,7 @@ impl Tool for RecallTool {
          profile, a source you follow or a file you made. Search with query, a specific \
          subject; each hit says where it is from, and gives the open value that reopens it. \
          Reopen with open: #3 (a turn), pres:<id> (a card), ev:<id> (a tool result), or a \
-         hit's turn:<id>. A request that does not refer back needs no recall. What a record \
+         hit's turn:<id>. Use opens to reopen several dependencies together. Follow a search's next page or refine the subject when needed; age never makes history ineligible. Retrieve missing facts or constraints that could change the answer, even without an explicit reference back. A self-contained request needs no recall. What a record \
          says was true then; current facts need fresh evidence."
     }
 
@@ -282,6 +309,8 @@ impl Tool for RecallTool {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "What to find, as a specific subject: a name, a thing, a file, what was said."},
+                "opens": {"type": "array", "items": {"type": "string"}, "description": "Exact references to reopen together when this request needs several earlier results; at most 20, with no history-age cutoff."},
+                "offset": {"type": "integer", "minimum": 0, "description": "Continue a search using its next.offset, with the same query and limit. Defaults to 0."},
                 "open": {"type": "string", "description": "One reference to reopen, as the context or a hit shows it: #3, pres:<id>, ev:<id>, turn:<id> or conversation:<id>/turn:<id>."},
                 "lines": range("Optional, with an ev: reference: the 1-based lines to return, inclusive."),
                 "chars": range("Optional, with an ev: reference: the 0-based characters [start, end) to return, for one very long line; at most 29000."),
@@ -320,6 +349,27 @@ mod tests {
 
     fn open(reference: &str) -> Result<RecallRequest, String> {
         one(json!({ "open": reference }))
+    }
+
+    #[test]
+    fn several_dependencies_and_candidate_pages_are_addressed() {
+        let requests =
+            parse_recall_args(&json!({"opens": ["turn:old-a", "turn:old-b", "turn:old-a"],
+            "query": "earlier constraints", "offset": 64, "limit": 4}))
+            .unwrap();
+        assert_eq!(
+            requests,
+            vec![
+                RecallRequest::TurnId("old-a".into()),
+                RecallRequest::TurnId("old-b".into()),
+                RecallRequest::Search {
+                    query: "earlier constraints".into(),
+                    offset: 64,
+                    limit: 4
+                }
+            ]
+        );
+        assert!(parse_recall_args(&json!({"opens": [null]})).is_err());
     }
 
     #[test]
@@ -371,7 +421,8 @@ mod tests {
                 RecallRequest::Turn(2),
                 RecallRequest::Search {
                     query: "the Lisbon notes".into(),
-                    limit: DEFAULT_LIMIT
+                    limit: DEFAULT_LIMIT,
+                    offset: 0,
                 }
             ]
         );
@@ -415,7 +466,8 @@ mod tests {
             one(json!({"query": " Noida forecast ", "limit": 1000})).unwrap(),
             RecallRequest::Search {
                 query: "Noida forecast".into(),
-                limit: MAX_LIMIT
+                limit: MAX_LIMIT,
+                offset: 0,
             }
         );
         assert!(parse_recall_args(&json!({"query": "x".repeat(2049)})).is_err());

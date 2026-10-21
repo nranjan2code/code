@@ -32,6 +32,9 @@ pub struct TurnSearchResult {
     pub matches: Vec<TurnSearchHit>,
     /// A bounded candidate pass is not an exhaustive absence proof.
     pub candidate_limit_reached: bool,
+    /// Cursor over ranked candidates, including excluded branches. Following
+    /// this cursor cannot loop forever on an ineligible first page.
+    pub next_offset: Option<usize>,
 }
 
 /// Where one entry is: its ledger and the position just before it.
@@ -642,6 +645,18 @@ impl Catalog {
         limit: usize,
         stop: &(dyn Fn() -> bool + Sync),
     ) -> Result<TurnSearchResult, CatalogError> {
+        self.search_turns_page(session, leaf, query, limit, 0, stop)
+    }
+
+    pub fn search_turns_page(
+        &self,
+        session: &str,
+        leaf: &str,
+        query: &str,
+        limit: usize,
+        offset: usize,
+        stop: &(dyn Fn() -> bool + Sync),
+    ) -> Result<TurnSearchResult, CatalogError> {
         let query_terms = vak_session::turns::history_query_terms(query);
         let terms: Vec<String> = query_terms
             .iter()
@@ -651,6 +666,7 @@ impl Catalog {
             return Ok(TurnSearchResult {
                 matches: vec![],
                 candidate_limit_reached: false,
+                next_offset: None,
             });
         }
         let session = ingest::session_node(session);
@@ -661,22 +677,32 @@ impl Catalog {
             "SELECT r.turn_id, r.entry_id, r.record, bm25(turn_records_fts), r.recorded_at
              FROM turn_records_fts JOIN turn_records r ON r.rowid = turn_records_fts.rowid
              WHERE turn_records_fts MATCH ?1 AND r.session = ?2
-             ORDER BY bm25(turn_records_fts), r.entry_id LIMIT 64",
+             ORDER BY bm25(turn_records_fts), r.entry_id LIMIT 64 OFFSET ?3",
         )?;
         let hits = statement
-            .query_map(params![terms.join(" OR "), session], |row| {
-                Ok(TurnSearchHit {
-                    turn_id: row.get(0)?,
-                    record_id: row.get(1)?,
-                    record: row.get(2)?,
-                    match_score: row.get(3)?,
-                    recorded_at: row.get(4)?,
-                })
-            })?
+            .query_map(
+                params![
+                    terms.join(" OR "),
+                    session,
+                    i64::try_from(offset).unwrap_or(i64::MAX)
+                ],
+                |row| {
+                    Ok(TurnSearchHit {
+                        turn_id: row.get(0)?,
+                        record_id: row.get(1)?,
+                        record: row.get(2)?,
+                        match_score: row.get(3)?,
+                        recorded_at: row.get(4)?,
+                    })
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         let candidate_limit_reached = hits.len() == 64;
+        let available = hits.len();
+        let mut scanned = 0usize;
         let mut selected = Vec::new();
         for hit in hits {
+            scanned += 1;
             if over() {
                 return Err(CatalogError::Interrupted);
             }
@@ -692,6 +718,8 @@ impl Catalog {
         Ok(TurnSearchResult {
             matches: selected,
             candidate_limit_reached,
+            next_offset: (scanned < available || candidate_limit_reached)
+                .then_some(offset.saturating_add(scanned)),
         })
     }
 }
@@ -700,6 +728,51 @@ impl Catalog {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paging_reaches_every_candidate_beyond_one_thousand_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = Catalog::open(&dir.path().join("catalog.db"), dir.path()).unwrap();
+        let mut parent = None;
+        let mut ids = Vec::new();
+        catalog.seed(|tx| {
+            for ordinal in 0..1005 {
+                let entry = Entry::new(parent.take(), EntryPayload::Message(vak_session::MessageRecord {
+                    message: vak_llm::Message::user_text("shared subject"), meta: None,
+                }));
+                index_entry(tx, "ses_paged", Position { segment: 1, frames: ordinal }, &entry)?;
+                tx.execute("INSERT INTO turn_records (session, entry_id, turn_id, record, recorded_at) VALUES (?1,?2,?3,?4,?5)",
+                    params!["ses_paged", entry.id, entry.id, "shared subject", "2026-10-21T00:00:00Z"])?;
+                parent = Some(entry.id.clone());
+                ids.push(entry.id);
+            }
+            Ok(())
+        }).unwrap();
+        let mut seen = std::collections::HashSet::new();
+        let mut offset = 0;
+        loop {
+            let page = catalog
+                .search_turns_page(
+                    "paged",
+                    parent.as_deref().unwrap(),
+                    "shared subject",
+                    8,
+                    offset,
+                    &|| false,
+                )
+                .unwrap();
+            for hit in page.matches {
+                assert!(seen.insert(hit.turn_id), "no repeated candidates");
+            }
+            let Some(next) = page.next_offset else {
+                break;
+            };
+            assert!(next > offset);
+            offset = next;
+        }
+        assert_eq!(seen.len(), ids.len());
+        assert!(seen.contains(&ids[0]) && seen.contains(ids.last().unwrap()));
+    }
 
     #[test]
     #[allow(clippy::disallowed_macros)] // Explicit test measurements, never runtime output.

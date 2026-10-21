@@ -618,6 +618,7 @@ impl DeliveryPacket {
             return;
         }
         let timeline = self.presentation.get_or_insert_with(|| OutputTimeline {
+            covered_sequence: None,
             schema_version: PRESENTATION_SCHEMA_VERSION,
             session_id: String::new(),
             cursor: None,
@@ -628,6 +629,7 @@ impl DeliveryPacket {
         });
         for (index, output) in cards.into_iter().enumerate() {
             timeline.items.push(OutputItem {
+                placement: Default::default(),
                 card_state: None,
                 id: format!("{}/card/{index}", self.job_id),
                 timestamp: String::new(),
@@ -780,32 +782,30 @@ pub fn render(job: &DeliveryJob) -> Result<DeliveryPacket, DeliveryError> {
     })
 }
 
+fn metadata_status(metadata: &BTreeMap<String, String>) -> OutputStatus {
+    let complete = matches!(
+        (
+            metadata.get("outcome_completion").map(String::as_str),
+            metadata.get("outcome_evidence_state").map(String::as_str)
+        ),
+        (Some("complete"), None | Some("fresh" | "none")) | (None, None)
+    );
+    if complete && !review_required(metadata.get("outcome_human_review").map(String::as_str)) {
+        OutputStatus::Succeeded
+    } else {
+        OutputStatus::Partial
+    }
+}
+
+fn review_required(review: Option<&str>) -> bool {
+    review.is_some_and(|value| !value.trim().is_empty() && value != "not_required")
+}
+
 fn presentation_for_job(job: &DeliveryJob) -> Option<OutputTimeline> {
     let DeliveryContent::Answer(answer) = &job.content else {
         return None;
     };
-    let default_status = match (
-        answer
-            .metadata
-            .get("outcome_completion")
-            .map(String::as_str),
-        answer
-            .metadata
-            .get("outcome_evidence_state")
-            .map(String::as_str),
-    ) {
-        (Some("complete"), None | Some("fresh")) | (None, None) => OutputStatus::Succeeded,
-        _ => OutputStatus::Partial,
-    };
-    let default_status = if answer
-        .metadata
-        .get("outcome_human_review")
-        .is_some_and(|value| !value.trim().is_empty() && value != "not_required")
-    {
-        OutputStatus::Partial
-    } else {
-        default_status
-    };
+    let default_status = metadata_status(&answer.metadata);
     let legacy_document = answer.document.clone();
     let has_typed_results = !answer.results.is_empty();
     let results = if answer.results.is_empty() {
@@ -829,7 +829,8 @@ fn presentation_for_job(job: &DeliveryJob) -> Option<OutputTimeline> {
                     result.id
                 ));
             }
-            OutputItem { card_state: None,
+            OutputItem {
+                placement: Default::default(), card_state: None,
                 id: format!("{}/{}", job.job_id, result.id),
                 timestamp: String::new(),
                 turn_id: job.job_id.clone(),
@@ -857,6 +858,7 @@ fn presentation_for_job(job: &DeliveryJob) -> Option<OutputTimeline> {
         })
         .collect();
     Some(OutputTimeline {
+        covered_sequence: None,
         schema_version: presentation::PRESENTATION_SCHEMA_VERSION,
         session_id: String::new(),
         cursor: None,
@@ -1014,27 +1016,14 @@ fn render_answer(
     project_structured: bool,
     skills: &SkillRegistry,
 ) -> String {
-    let metadata_notice = match (
-        answer
-            .metadata
-            .get("outcome_completion")
-            .map(String::as_str),
-        answer
-            .metadata
-            .get("outcome_evidence_state")
-            .map(String::as_str),
-    ) {
-        (Some("complete"), None | Some("fresh")) | (None, None) => None,
-        _ => Some(
-            "⚠️ Outcome incomplete or unverified — review the evidence before relying on this result.\n\n"
-                .into(),
-        ),
-    };
+    let metadata_notice = (metadata_status(&answer.metadata) != OutputStatus::Succeeded).then(||
+        "⚠️ Outcome incomplete or unverified — review the evidence before relying on this result.\n\n".into()
+    );
     let result_notice = answer.results.iter().find_map(|result| {
         let outcome = result.outcome.as_ref()?;
         (outcome.status != OutputStatus::Succeeded
-            || outcome.evidence_state.as_deref().is_some_and(|state| state != "fresh")
-            || outcome.human_review.is_some())
+            || outcome.evidence_state.as_deref().is_some_and(|state| !matches!(state, "fresh" | "none"))
+            || review_required(outcome.human_review.as_deref()))
         .then_some(format!(
             "⚠️ Result '{}' is incomplete, unverified, or requires review — inspect its evidence before relying on it.\n\n",
             result.id
@@ -1848,6 +1837,56 @@ mod tests {
             Some("required")
         );
         assert_eq!(timeline.diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn completed_answers_without_retrieval_do_not_get_unverified_notices() {
+        for markup in [
+            Markup::Plain,
+            Markup::Markdown,
+            Markup::TelegramHtml,
+            Markup::SlackMrkdwn,
+            Markup::DiscordMarkdown,
+        ] {
+            for (completion, evidence, warned) in [
+                ("complete", "none", false),
+                ("complete", "fresh", false),
+                ("complete", "stale", true),
+                ("complete", "unknown", true),
+                ("partial", "none", true),
+                ("unknown", "none", true),
+                ("failed", "none", true),
+            ] {
+                let mut input = job(markup, None);
+                let DeliveryContent::Answer(answer) = &mut input.content else {
+                    panic!("test job must contain an answer");
+                };
+                answer
+                    .metadata
+                    .insert("outcome_completion".into(), completion.into());
+                answer
+                    .metadata
+                    .insert("outcome_evidence_state".into(), evidence.into());
+                answer
+                    .metadata
+                    .insert("outcome_human_review".into(), "not_required".into());
+                let packet = render(&input).expect("valid delivery job");
+                assert_eq!(
+                    matches!(&packet.payload, DeliveryPayload::Text(text)
+                    if text.contains("Outcome incomplete or unverified")),
+                    warned,
+                    "{markup:?}: {completion}/{evidence}"
+                );
+                assert_eq!(
+                    packet.presentation.expect("presentation").items[0].status,
+                    if warned {
+                        OutputStatus::Partial
+                    } else {
+                        OutputStatus::Succeeded
+                    }
+                );
+            }
+        }
     }
 
     #[test]

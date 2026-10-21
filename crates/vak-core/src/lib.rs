@@ -386,6 +386,8 @@ pub enum CoreError {
     Catalog(#[from] vak_catalog::CatalogError),
     #[error("history is not indexed: {0}")]
     HistoryNotIndexed(String),
+    #[error("no eligible historical turn: {0}")]
+    HistoryNotFound(String),
     #[error("cancelled")]
     Cancelled,
     #[error("provider auth missing: set {env} for provider '{provider}'")]
@@ -5406,6 +5408,17 @@ impl Core {
                 now,
             ),
         };
+        profile.resource_ceiling = if profile.declared_window.is_none()
+            && profile.instruction_horizon.tokens == u64::MAX
+        {
+            Some(
+                Self::read_override(&self.inner.control_override)
+                    .unwrap_or_else(|| self.config().control.clone())
+                    .unmeasured_context_tokens(),
+            )
+        } else {
+            None
+        };
         profile.provenance.quantisation = key.quantisation.clone();
 
         if let Ok(mut cache) = self.inner.capacity_cache.lock() {
@@ -5414,7 +5427,10 @@ impl Core {
 
         let already_logged = session
             .latest_capacity_profile::<_, vak_context::capacity::CapacityProfile>(&key)
-            .is_some_and(|logged| logged.provenance.probed_at == profile.provenance.probed_at);
+            .is_some_and(|logged| {
+                logged.provenance.probed_at == profile.provenance.probed_at
+                    && logged.resource_ceiling == profile.resource_ceiling
+            });
         if !already_logged {
             let mut data = std::collections::BTreeMap::new();
             if let Ok(key_json) = serde_json::to_string(&key) {
@@ -6495,7 +6511,7 @@ impl Core {
             self.surface(),
             &attachments,
             intent::workspace_facts(&self.inner.cwd),
-            intent::history_facts(session),
+            intent::history_facts(session, &text),
             &vak_intent::Declared::default(),
             &self.turn_authority(),
             &intent::resolver_config(&self.inner.config),
@@ -9105,7 +9121,7 @@ mod channel_mcp_network_tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         let prompt = |surface: Surface| core.clone().with_surface(surface).system_prompt();
-        let cards = "with the card tool";
+        let cards = "Choose prose or card";
         let preview = "appear in the user's preview automatically";
 
         let desktop = prompt(Surface::Desktop);
@@ -12023,10 +12039,15 @@ mod capacity_probe_tests {
         // bind returns a metadata-only profile immediately.
         let bound = core.capacity_profile_for(&loopback_leg, &mut session).await;
         // The fake model publishes nothing: no window or output limit is
-        // invented for it: with no operator cap either, it has none.
+        // invented for it. The provisional operator resource envelope is
+        // separate from discovered/measured capacity.
         assert_eq!(bound.declared_window, None);
         assert_eq!(bound.output_reserve, 0);
-        assert!(!bound.is_bounded());
+        assert!(bound.is_bounded());
+        assert_eq!(
+            bound.resource_ceiling,
+            Some(core.inner.config.control.unmeasured_context_tokens())
+        );
         assert!(
             bound.provenance.rungs.is_empty(),
             "no ladder rung may run on the turn's own critical path"

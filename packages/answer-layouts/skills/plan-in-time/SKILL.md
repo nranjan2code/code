@@ -8,6 +8,10 @@ description: Lay out a plan that happens over time (a day, a trip, a routine, an
 Compose the answer in this order, each part its own card, each naming the
 plan deliverable it delivers:
 
+Use only the blocks needed for this request; a summary is optional. Each block
+must add information or interaction rather than repeat another. The following
+order is a composition guide, not a requirement to emit every listed card.
+
 1. `emit_summary_card`: the plan in one headline and one or two sentences,
    with up to five key points (start, end, the one thing not to miss).
 2. When the plan has figures worth seeing at a glance (total time, cost,

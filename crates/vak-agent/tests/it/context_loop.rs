@@ -280,12 +280,7 @@ async fn unrelated_history_does_not_trigger_compaction_just_to_fill_space() {
         .chain_to_root()
         .into_iter()
         .filter_map(|entry| match &entry.payload {
-            vak_session::EntryPayload::Activity(activity)
-                if activity.label == vak_session::CONTEXT_PLAN_LABEL =>
-            {
-                vak_session::WorkingSetPlan::from_activity_data(&activity.data)
-                    .map(|(plan, _)| plan)
-            }
+            vak_session::EntryPayload::ContextSelection(record) => Some(record.plan.clone()),
             _ => None,
         })
         .collect();
@@ -314,20 +309,19 @@ async fn the_plan_behind_a_request_is_recorded_and_replays_exactly() {
     .await;
     assert!(matches!(r.outcome, TurnOutcome::Completed { .. }));
     let log = SessionLog::open_read_only(r.path.clone()).unwrap();
-    let (entry_id, (plan, leaf)) = log
+    let entry_id = log
         .chain_to_root()
         .into_iter()
-        .find_map(|e| match &e.payload {
-            vak_session::EntryPayload::Activity(a) => {
-                vak_session::WorkingSetPlan::from_activity_data(&a.data).map(|p| (e.id.clone(), p))
-            }
-            _ => None,
+        .find_map(|entry| {
+            matches!(
+                entry.payload,
+                vak_session::EntryPayload::ContextSelection(_)
+            )
+            .then_some(entry.id.clone())
         })
-        .expect("a context-plan activity");
-    assert!(!entry_id.is_empty());
-    let mut replay = SessionLog::open_read_only(r.path).unwrap();
-    replay.branch_at(&leaf).unwrap();
-    let (messages, _) = replay.derive_with_plan_and_directive(&plan);
+        .expect("a structured context selection");
+    let messages = log.replay_context_selection(&entry_id).unwrap();
+
     assert_eq!(
         serde_json::to_value(&messages).unwrap(),
         serde_json::to_value(&r.requests[0].messages).unwrap(),

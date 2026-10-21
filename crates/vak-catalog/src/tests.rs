@@ -782,6 +782,7 @@ fn a_card_s_words_find_its_turn() {
     let payload =
         serde_json::json!({"headline": "Pick ZephyrDB", "points": ["Licence: Apache 2.0"]});
     log.append_presentation(vak_session::types::PresentationRecord {
+        placement: Default::default(),
         turn_id: turn.clone(),
         source: vak_session::types::PresentationSource::ToolCall {
             tool_use_id: "toolu_card".into(),

@@ -28,6 +28,10 @@ const FEEDBACK_EWMA_ALPHA: f64 = 0.3;
 /// cap or a long-lived default.
 const UNCALIBRATED_TOKENS_PER_CHAR: f64 = 0.25;
 
+/// Shipped resource policy only for routes with no established bound. Hosts
+/// may override it; it is never recorded as a discovered model window.
+pub use vak_control::DEFAULT_UNMEASURED_CONTEXT_TOKENS as DEFAULT_UNMEASURED_RESOURCE_CEILING;
+
 /// A request at or above this fraction of the current horizon that also
 /// failed an explicit instruction is treated as evidence the horizon is
 /// wrong rather than noise (§1 "Horizon tightening"). Below this fraction a
@@ -182,6 +186,10 @@ pub struct CapacityProfile {
     /// ceiling is then the instruction horizon alone, and no window is
     /// invented (docs/design/68-context-engine.md §1).
     pub declared_window: Option<u64>,
+    /// Operator resource policy for an unmeasured route, not model capacity.
+    /// None once discovery/probing establishes an actual ceiling.
+    #[serde(default)]
+    pub resource_ceiling: Option<u64>,
     /// The largest prompt the provider has actually accepted.
     pub verified_window: Option<u64>,
     /// The largest prompt at which the model still followed a tool
@@ -231,6 +239,9 @@ impl CapacityProfile {
     ) -> Self {
         CapacityProfile {
             declared_window,
+            resource_ceiling: declared_window
+                .is_none()
+                .then_some(DEFAULT_UNMEASURED_RESOURCE_CEILING),
             verified_window: None,
             // Unmeasured, the horizon is the top of its order: no bound
             // observed yet. Every observation only lowers it (`min`).
@@ -267,6 +278,7 @@ impl CapacityProfile {
     ) -> Self {
         CapacityProfile {
             declared_window,
+            resource_ceiling: None,
             verified_window,
             instruction_horizon: horizon,
             tokens_per_char: Ewma::new(FEEDBACK_EWMA_ALPHA),
@@ -316,7 +328,10 @@ impl CapacityProfile {
         let window = self.declared_window.map_or(u64::MAX, |window| {
             window.saturating_sub(self.output_reserve)
         });
-        self.instruction_horizon.tokens.min(window)
+        self.instruction_horizon.tokens.min(window).min(
+            self.resource_ceiling
+                .map_or(u64::MAX, |limit| limit.saturating_sub(self.output_reserve)),
+        )
     }
 
     /// Whether anything has bounded the prompt yet: a published or stated
@@ -1082,7 +1097,15 @@ mod tests {
     fn an_unknown_window_is_learned_from_the_limit_a_rejection_states() {
         let mut profile =
             CapacityProfile::from_metadata_only(None, 0, String::new(), SystemTime::now());
-        assert!(!profile.is_bounded());
+        assert!(
+            profile.is_bounded(),
+            "provisional resource policy still bounds a request"
+        );
+        assert_eq!(profile.declared_window, None);
+        assert_eq!(
+            profile.resource_ceiling,
+            Some(DEFAULT_UNMEASURED_RESOURCE_CEILING)
+        );
         profile.observe_over_length(140_000, Some(128_000));
         assert_eq!(profile.declared_window, Some(128_000));
         assert!(profile.is_bounded());

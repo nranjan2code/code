@@ -12,6 +12,54 @@ doc 30-render-architecture §30.1 (twelve `emit_*_card` tools over 109
 domain-labelled `semantic_type`s); the rendering contract of
 `vak-presentation` and doc 67 stays.
 
+## Accepted placement identity, 2026-10-21
+
+`PresentationRecord.placement` records the named part and exact beside/replaced
+Presentation entry ids when a card is accepted. Resolution uses the then-active
+sequence, respecting prose and part boundaries; it never chooses a new neighbour
+after replacement removes an endpoint. Both the settled OutputItem and
+CardRecorded live delta carry that accepted metadata. Their item identity is the
+same tool-call/structured-output identity. Live server and client stores remove
+only the addressed replaced presentation, and the shared row composer matches
+beside anchors by presentation identity before any outline arrives. Outlines
+project the same endpoints rather than infer them again from visible neighbours.
+
+HTTP, gateway and scheduled turns first drain the model-event forwarder, then
+publish the durable projection with a separate `covered_sequence`. The background projector and
+client discard events already covered by that snapshot. A delayed live card
+cannot overwrite a settled card or resurrect a replaced one; events from the
+next turn have later sequence numbers and remain admitted. The sequence is a
+stream authority boundary, not the ledger cursor or a second durable record.
+Reconnect and gap baselines preserve it; replaying RunFinished rebases from the
+canonical handle snapshot, and resync frames carry authoritative snapshot
+semantics rather than an additive live cursor.
+
+Channel replies carry metadata projected from their own settled turn alongside
+their text and cards. Delivery never reads a mutable live presentation to decide
+a reply's outcome: that view may still be streaming or already belong to the
+next turn. A completed outcome with evidence state `none` needs no retrieval;
+that state alone is not an unverified result. Stale or unknown evidence,
+incomplete outcomes and required human review still produce notices.
+
+## Shared order and geometry, 2026-10-21
+
+The ledger's answer order is semantic order: the client never lifts a summary
+or moves cards across another section or prose. The plan's sections attribute
+blocks; they do not authorize reordering. The host resolves `beside_previous`
+in original visible order to exact anchor/item ids in `AnswerOutline.beside`.
+Only adjacent cards of the same named part can pair. A removed or replaced
+anchor never silently binds another predecessor.
+
+LiveAnswer, settled composition and Canvas use the same row composer. Each
+form has a minimum reading width; grouped blocks share a wrapping flex row
+only when those widths fit, with unequal allocation where appropriate. Canvas
+adds available space through these same rules, without an independent CSS
+column flow. Prose, result ids and turn ids remain composition boundaries.
+
+Prompt and plan guidance request the smallest complete answer, with optional
+summary and no repetition of the same finding across forms. Tools and schemas
+remain available; there is no domain-specific layout recipe or card-count cap.
+
 ## Conversation state handoff (2026-10-19)
 
 The shared client hydrates from `/sessions/{id}/snapshot`: transcript
@@ -101,7 +149,7 @@ conversation:
 A turn's answer is composed by the runtime, not left to emit order:
 
 - **Outline.** The model's `plan` (doc 86) is the outline: its
-  deliverables, in order, are the answer's sections. A turn with no plan
+  deliverables name the answer's sections; source order remains authoritative. A turn with no plan
   is one section.
 - **Blocks.** The model shows each part of its answer that has a card
   shape by calling the card tool that owns its kind (`Tool::card_kinds`),
@@ -129,13 +177,9 @@ A turn's answer is composed by the runtime, not left to emit order:
   the client lays the answer out from it. Ledgers written while the answer
   was one nested call keep their `PresentationSource::Answer` records,
   which the projection still reads.
-- **Layout.** The client lays out the answer from the blocks' shapes,
-  deterministically: a summary block leads as the headline; a comparison
-  renders its options as columns; steps as a numbered flow; stats as one
-  row of figures; a callout as an accented note; small neighbouring blocks
-  (stats beside a callout) share a row on a wide screen and stack on a
-  narrow one. One type scale, one spacing rhythm, one entrance motion for
-  the whole answer, so it reads as one thing rather than a pile of boxes.
+- **Layout.** One shared source-order row composer draws the blocks on every
+  surface. Only exact addressed pairs share a row when their form reading
+  widths fit; otherwise they stack. The summary remains where it was emitted.
 
 ### 2a. Cards end the answer (2026-10-16)
 

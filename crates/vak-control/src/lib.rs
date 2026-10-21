@@ -12,6 +12,11 @@ pub mod provenance;
 
 pub use provenance::{Held, Provenance};
 
+/// Provisional request resource policy when no provider metadata or measured
+/// instruction horizon is available. Hosts expose it as configurable policy,
+/// never as an assertion about the model's window.
+pub const DEFAULT_UNMEASURED_CONTEXT_TOKENS: u64 = 65_536;
+
 pub use correct::{
     Finding, Ladder, RECOVERY_NOTE, ShownTool, card_ability_not_answered, card_command_not_run,
     card_data_not_found, card_file_missing, card_files_unchanged, card_kind_elsewhere,

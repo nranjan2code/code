@@ -2157,7 +2157,6 @@ impl Agent {
         // a genuinely new name is only ever appended at the end.
         let mut turn_plan: Option<vak_session::WorkingSetPlan> = None;
         let mut compaction_failed = false;
-        let mut logged_plan: Option<String> = None;
         let mut turn_tool_base: Option<Vec<vak_llm::ToolDefinition>> = None;
         let mut answered_by_cards: Option<AssistantMessage> = None;
         'turn: loop {
@@ -2504,27 +2503,17 @@ impl Agent {
                 ledger.receipt.prefix_digest =
                     assemble::prefix_digest(&self.config.system_prefix, &tool_defs);
                 // Model-visible selection must be reconstructable (invariant 1):
-                // the plan that shaped this request is recorded when it changes.
+                // exact source addresses and the pre-request leaf are recorded per step.
                 {
                     let mut session = self.session.lock().await;
-                    let data = plan.to_activity_data(session.tail_id().map(String::as_str));
-                    let fingerprint = format!("{data:?}");
-                    if logged_plan.as_deref() != Some(fingerprint.as_str()) {
-                        logged_plan = Some(fingerprint);
-                        if let Err(error) = session.append_activity(vak_session::ActivityRecord {
-                            activity_id: format!("context-plan-{}", uuid::Uuid::now_v7()),
-                            kind: vak_session::ActivityKind::Diagnostic,
-                            status: vak_session::ActivityStatus::Succeeded,
-                            label: vak_session::CONTEXT_PLAN_LABEL.into(),
-                            detail: None,
-                            data,
-                        }) {
-                            return TurnOutcome::Failed {
-                                error: LlmError::Network(format!(
-                                    "context plan write failed: {error}"
-                                )),
-                            };
-                        }
+                    if plan.selected_records.is_some()
+                        && let Err(error) = session.append_context_selection(plan.clone())
+                    {
+                        return TurnOutcome::Failed {
+                            error: LlmError::Network(format!(
+                                "context selection write failed: {error}"
+                            )),
+                        };
                     }
                 }
                 let must_call = self.must_call.take();
@@ -3924,6 +3913,7 @@ impl Agent {
                         continue;
                     }
                     let record = vak_session::types::PresentationRecord {
+                        placement: Default::default(),
                         turn_id: turn_id.clone(),
                         source: vak_session::types::PresentationSource::Delegated {
                             tool_use_id: id.clone(),
@@ -4038,6 +4028,7 @@ impl Agent {
             let derived_from =
                 session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
             let record = vak_session::types::PresentationRecord {
+                placement: Default::default(),
                 turn_id,
                 source: vak_session::types::PresentationSource::Fence {
                     message_entry_id: message_entry_id.to_string(),
@@ -6407,8 +6398,7 @@ impl Agent {
                         Fault::Target,
                         format!(
                             "{error}\n[optional-history]: nothing was found. Do not repeat this \
-                         lookup. Continue with the current request using available tools; if \
-                         the missing historical detail is essential, ask the user for it."
+                         exact open. Search with query or a different description, or read the next candidate page. If the target remains ambiguous and essential, ask the user; do not substitute a recent record."
                         ),
                     )
                 }
@@ -6459,6 +6449,7 @@ impl Agent {
         let mut parts = serde_json::Map::new();
         let mut held = vak_control::Provenance::NONE;
         let mut answered = false;
+        let mut opened = Vec::new();
         for request in requests {
             let key = if matches!(request, RecallRequest::Search { .. }) {
                 "found"
@@ -6475,7 +6466,14 @@ impl Agent {
                     serde_json::from_str(&error).unwrap_or(Value::String(error))
                 }
             };
-            parts.insert(key.into(), part);
+            if key == "opened" {
+                opened.push(part);
+            } else {
+                parts.insert(key.into(), part);
+            }
+        }
+        if !opened.is_empty() {
+            parts.insert("opened".into(), Value::Array(opened));
         }
         let content = Value::Object(parts).to_string();
         if answered {
@@ -6533,7 +6531,14 @@ impl Agent {
                 .to_string(),
             )
         };
-        {
+        let indexed = self.config.history_recall.is_some()
+            && matches!(
+                &request,
+                RecallRequest::Search { .. }
+                    | RecallRequest::TurnId(_)
+                    | RecallRequest::Elsewhere { .. }
+            );
+        if !indexed {
             let index = TurnIndex::from_log(&*self.session.lock().await);
             let aside = |turn: &vak_session::Turn| match &request {
                 RecallRequest::TurnId(id) => turn.id == *id,
@@ -6558,48 +6563,32 @@ impl Agent {
                 | RecallRequest::Elsewhere { .. }
         ) && let Some(recall) = &self.config.history_recall
         {
-            let (leaf, own) = {
-                let session = self.session.lock().await;
-                (
-                    session.tail_id().cloned().unwrap_or_default(),
-                    own_turns(&session),
-                )
-            };
-            // A turn id this conversation does not have is not found: the
-            // index behind it was never what was missing.
-            if let RecallRequest::TurnId(id) = &request
-                && TurnIndex::from_log(&*self.session.lock().await)
-                    .turn_by_id(id)
-                    .is_none()
-            {
-                return Err(RecallFailure::NotFound(
-                    serde_json::json!({"type": "not_found",
-                        "message": "no matching turn in this conversation"})
-                    .to_string(),
-                ));
-            }
-            let held = match &request {
-                RecallRequest::TurnId(id) => TurnIndex::from_log(&*self.session.lock().await)
-                    .turn_by_id(id)
-                    .map(|turn| turn.provenance),
-                RecallRequest::Search { .. } => Some(own),
-                _ => None,
-            };
+            // Core checks canonical membership, branch and turn marks. Do
+            // not reconstruct all historical payloads in the agent first.
+            let leaf = self
+                .session
+                .lock()
+                .await
+                .tail_id()
+                .cloned()
+                .unwrap_or_default();
             let recalled = tokio::select! {
                 result = recall(request, leaf, cancel.clone()) => result.map_err(RecallFailure::NotFound)?,
                 _ = cancel.cancelled() => return Err(RecallFailure::NotFound(serde_json::json!({"type":"cancelled",
                     "message":"history lookup cancelled"}).to_string())),
             };
-            let held = if recalled.reached_elsewhere {
-                Provenance::BOTH
-            } else {
-                held.unwrap_or(Provenance::UNTRUSTED)
-            };
-            return Ok((recalled.content, Provenance::PRIVATE.join(held)));
+            // A reopened historical result can contain outside contributions.
+            // Conservatively retain both labels rather than replay the entire
+            // conversation just to infer a narrower taint.
+            return Ok((recalled.content, Provenance::BOTH));
         }
         let session = self.session.lock().await;
         let (content, held) = match request {
-            RecallRequest::Search { query, limit } => {
+            RecallRequest::Search {
+                query,
+                limit,
+                offset,
+            } => {
                 let mut index = TurnIndex::from_log(&session);
                 index.ensure_cards(&|_| 0);
                 let matches: Vec<Value> = index
@@ -6618,6 +6607,7 @@ impl Agent {
                         Some(serde_json::json!({"open": format!("turn:{id}"),
                             "record": card.line(n + 1)}))
                     })
+                    .skip(offset)
                     .take(limit)
                     .collect();
                 (
@@ -7588,7 +7578,14 @@ impl Agent {
         }
         let derived_from =
             session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
+        let placement = session.card_placement(
+            &turn_id,
+            answers.clone(),
+            input.get("beside_previous") == Some(&Value::Bool(true)),
+            replaced.map(str::to_string),
+        );
         let record = vak_session::types::PresentationRecord {
+            placement,
             turn_id,
             source: vak_session::types::PresentationSource::ToolCall {
                 tool_use_id: call.id.clone(),

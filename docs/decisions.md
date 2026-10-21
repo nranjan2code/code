@@ -1,5 +1,13 @@
 # Decisions
 
+- 2026-10-21: The maintainer approved the clean turn-relations/context/answer-sizing
+  redesign, with no compatibility or migration requirement, arbitrary subjects
+  and references thousands of turns back. Existing query/open tools resolve
+  uncertainty; do not add domain branches or sample-specific fixes. See
+  [context](design/68-context-engine.md#current-request-contract-2026-10-21) and
+  [the review](audits/turn-relations-and-sizing-2026-10-21.md). The maintainer
+  requested documentation updates, then commit and push after verification.
+
 - 2026-10-20: The maintainer requested fixes for the integrity and hostile-prompt
   audit, safe external media, and functioning external hyperlinks on desktop
   and web. Restricted mutation/egress approval and mandatory backend control

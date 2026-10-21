@@ -359,7 +359,7 @@ async fn receipts_round_trip_through_disk() {
         vec![
             "header",
             "message",
-            "activity",
+            "context-selection",
             "receipt",
             "message",
             "turn-card"

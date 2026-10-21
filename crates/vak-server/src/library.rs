@@ -2938,6 +2938,7 @@ mod tests {
         let page = vak_delivery::page::Page::new(
             "Page".into(),
             vec![vak_delivery::OutputItem {
+                placement: Default::default(),
                 id: "item-1".into(),
                 timestamp: "now".into(),
                 turn_id: "turn".into(),

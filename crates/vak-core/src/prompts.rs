@@ -871,7 +871,7 @@ mod tests {
     #[test]
     fn the_seed_carries_no_card_payload_examples() {
         let seed = seed("test");
-        assert!(seed.presentation_contract.contains("with the card tool"));
+        assert!(seed.presentation_contract.contains("Choose prose or card"));
         assert!(
             seed.presentation_contract
                 .contains("cards are context, not new work")
@@ -929,7 +929,7 @@ mod tests {
         assert!(
             contract.contains("called\n  by its name") || contract.contains("called by its name")
         );
-        assert!(contract.contains("follow the newest message"));
+        assert!(contract.contains("its presence does not mean this request continues it"));
         assert!(
             sandbox.contains("sandbox"),
             "sandbox_contract block missing"
@@ -1125,13 +1125,15 @@ mod tests {
         );
         assert!(out.text.contains("Respond concisely."));
         for required in [
-            "`<turns>` shows the turn this request follows",
+            "`<turns>` holds a recent historical candidate",
             "`recall`",
-            "however long",
-            "candidates, not proof",
-            "a fresh request needs no recall",
+            "at any distance",
+            "Reopen an exact `open` reference to verify",
+            "A self-contained request needs no recall",
+            "Retrieval finds records; it cannot choose the user's intent.",
+            "For a multi-intent turn, resolve dependencies for each requested outcome.",
             "For a current fact with no known source URL",
-            "Unavailable history differs from",
+            "Unavailable, partial and empty history searches are different states.",
         ] {
             assert!(
                 out.text.contains(required),

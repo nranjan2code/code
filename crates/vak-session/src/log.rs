@@ -1058,9 +1058,8 @@ impl SessionLog {
     /// Thread IDs from the intent record written for the latest explicit
     /// objective (or correction). GoalUpdate and Intent entries share the
     /// admitted turn ID, so this remains reconstructable from the ledger.
-    fn explicit_goal_threads(&self) -> std::collections::BTreeSet<String> {
-        let chain = self.chain_to_root();
-        let anchor_turn = chain.iter().rev().find_map(|entry| {
+    pub fn explicit_goal_threads(&self) -> std::collections::BTreeSet<String> {
+        let anchor_turn = self.active_entries_rev().find_map(|entry| {
             let EntryPayload::GoalUpdate(update) = &entry.payload else {
                 return None;
             };
@@ -1077,8 +1076,7 @@ impl SessionLog {
         let Some(anchor_turn) = anchor_turn else {
             return Default::default();
         };
-        chain
-            .iter()
+        self.active_entries_rev()
             .find_map(|entry| {
                 if entry.at_turn.as_deref() != Some(anchor_turn.as_str()) {
                     return None;
@@ -1284,6 +1282,24 @@ impl SessionLog {
     /// every turn it holds at any fidelity, in its packet or as a retrieved
     /// turn held (docs/design/08-permissions.md "Provenance").
     pub fn carried_provenance(&self, plan: &WorkingSetPlan) -> vak_control::Provenance {
+        if let Some(selected) = &plan.selected_records {
+            return selected
+                .iter()
+                .fold(vak_control::Provenance::NONE, |held, (turn, closing)| {
+                    let provenance = self
+                        .by_id
+                        .get(closing)
+                        .and_then(|index| self.entries.get(*index))
+                        .and_then(|entry| match &entry.payload {
+                            EntryPayload::TurnCard(record) if record.turn_id == *turn => {
+                                Some(record.card.provenance)
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(vak_control::Provenance::BOTH);
+                    held.join(provenance)
+                });
+        }
         let cards = self.turn_cards();
         let mut carried = vak_control::Provenance::NONE;
         let mut in_packet = false;
@@ -1397,6 +1413,37 @@ impl SessionLog {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Resolve placement when accepting a card, from the active sequence before
+    /// a replacement changes visibility. Prose and named-part boundaries break it.
+    pub fn card_placement(
+        &self,
+        turn: &str,
+        part: Option<String>,
+        beside: bool,
+        replaces: Option<String>,
+    ) -> crate::types::CardPlacement {
+        let active: std::collections::HashSet<String> = self
+            .active_presentations()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let anchor = if beside {
+            self.active_entries_rev().find_map(|entry| match &entry.payload {
+                EntryPayload::Presentation(record) if record.turn_id == turn && active.contains(&entry.id) =>
+                    Some((record.placement.part == part && record.placement.beside.is_none()).then(|| entry.id.clone())),
+                EntryPayload::Message(message) if message.message.role == vak_llm::Role::Assistant && message.message.content.iter().any(|block| matches!(block, vak_llm::ContentBlock::Text { text } if !text.trim().is_empty())) => Some(None),
+                _ => None,
+            }).flatten()
+        } else {
+            None
+        };
+        crate::types::CardPlacement {
+            part,
+            beside: anchor,
+            replaces,
+        }
     }
 
     /// Presentations still shown after accepted card calls replace earlier
@@ -2558,6 +2605,32 @@ impl SessionLog {
         None
     }
 
+    /// The most recent visible settled reference. No topic/act inference and
+    /// no reconstruction of historical tool payloads. Marks are resolved newest
+    /// first on this branch; a handoff is a boundary, not another candidate.
+    pub fn recent_turn_card(&self) -> Option<(&str, &TurnCard)> {
+        let mut marks = HashMap::new();
+        for entry in self.active_entries_rev() {
+            match &entry.payload {
+                EntryPayload::TurnSetAside(mark) => {
+                    marks.entry(mark.turn.as_str()).or_insert(true);
+                }
+                EntryPayload::TurnRestored(mark) => {
+                    marks.entry(mark.turn.as_str()).or_insert(false);
+                }
+                EntryPayload::Compaction(record) if record.reset_all => return None,
+                EntryPayload::TurnCard(record)
+                    if !marks.get(record.turn_id.as_str()).copied().unwrap_or(false)
+                        && !record.card.stopped_empty() =>
+                {
+                    return Some((&entry.id, &record.card));
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// Reconstruct the active turn only. Work is proportional to this turn,
     /// not to unrelated settled history. Include admission metadata preceding
     /// its directive, stopping before the previous message.
@@ -3035,6 +3108,27 @@ impl SessionLog {
             else {
                 continue;
             };
+            // A compact reference reads its closing record only. Expanding
+            // historical exchanges here would turn one reference into O(payloads).
+            if *fidelity == Fidelity::Card {
+                if let Some(Entry {
+                    payload: EntryPayload::TurnCard(record),
+                    ..
+                }) = self
+                    .by_id
+                    .get(closing_id)
+                    .and_then(|index| self.entries.get(*index))
+                    && record.turn_id == *turn_id
+                {
+                    out.push((
+                        turn_id.clone(),
+                        Message::user_text(record.card.addressed_message()),
+                        true,
+                        false,
+                    ));
+                }
+                continue;
+            }
             let mut entries = Vec::new();
             let mut cursor = Some(closing_id.as_str());
             while let Some(id) = cursor {
@@ -3047,9 +3141,6 @@ impl SessionLog {
                 };
                 entries.push(entry);
                 if entry.id == *turn_id {
-                    break;
-                }
-                if entries.len() >= 512 {
                     break;
                 }
                 cursor = entry.parent_id.as_deref();
@@ -3082,6 +3173,32 @@ impl SessionLog {
             }
         }
         let current = self.current_turn_index_at(leaf);
+        if let Some(turn) = current.turns.last().filter(|turn| !turn.closed) {
+            let mut cursor = leaf;
+            while let Some(entry) = cursor
+                .and_then(|id| self.by_id.get(id))
+                .and_then(|i| self.entries.get(*i))
+            {
+                if entry.at_turn.as_deref() != Some(turn.id.as_str()) {
+                    break;
+                }
+                if let EntryPayload::Compaction(record) = &entry.payload
+                    && record.reset_all
+                {
+                    out.push((
+                        String::new(),
+                        Message::user_text(format!(
+                            "<context_summary>\n{}\n</context_summary>",
+                            record.summary
+                        )),
+                        true,
+                        false,
+                    ));
+                    break;
+                }
+                cursor = entry.parent_id.as_deref();
+            }
+        }
         if let Some(turn) = current
             .turns
             .last()
@@ -3138,21 +3255,25 @@ impl SessionLog {
             {
                 return Err(invalid());
             }
+            if self
+                .by_id
+                .get(turn_id)
+                .and_then(|index| self.entries.get(*index))
+                .is_none()
+            {
+                return Err(invalid());
+            }
             let mut cursor = Some(closing_id.as_str());
-            let mut count = 0;
-            let mut found = false;
-            while let Some(id) = cursor {
+            let mut found = matches!(fidelity, Fidelity::Card);
+
+            while let Some(id) = cursor.filter(|_| !found) {
                 let entry = self
                     .by_id
                     .get(id)
                     .and_then(|index| self.entries.get(*index))
                     .ok_or_else(invalid)?;
-                count += 1;
                 if entry.id == *turn_id {
                     found = true;
-                    break;
-                }
-                if count >= 512 {
                     break;
                 }
                 cursor = entry.parent_id.as_deref();
@@ -3177,7 +3298,7 @@ impl SessionLog {
         self.derive_selected_checked(&plan)?;
         let leaf_id = self.tail_id.clone().ok_or(SessionError::InvalidSelection)?;
         let record = crate::types::ContextSelectionRecord {
-            policy_version: 1,
+            policy_version: crate::turns::CONTEXT_PLAN_POLICY_VERSION,
             leaf_id,
             plan,
         };
@@ -3198,7 +3319,8 @@ impl SessionLog {
         let EntryPayload::ContextSelection(record) = &entry.payload else {
             return Err(SessionError::InvalidSelection);
         };
-        if record.policy_version != 1 || entry.parent_id.as_deref() != Some(record.leaf_id.as_str())
+        if record.policy_version != crate::turns::CONTEXT_PLAN_POLICY_VERSION
+            || entry.parent_id.as_deref() != Some(record.leaf_id.as_str())
         {
             return Err(SessionError::InvalidSelection);
         }

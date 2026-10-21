@@ -1,3 +1,4 @@
+import { answerRows, formReadingWidth } from "../answerComposition";
 import { validateAdaptiveTree } from "../adaptiveValidation";
 import AnswerValuesScope, { conversationValuesKey } from "./AnswerValuesScope";
 import { answerDocument, answerSegments, consolidateFilePreviews, groupAnswerEntries } from "../answerComposition";
@@ -1240,37 +1241,19 @@ function composeAnswer(
   entries: { item: OutputItem; node: JSX.Element }[],
   outline: import("../types").AnswerOutline | undefined,
 ): JSX.Element {
-  const paired = new Set<string>();
-  const block = (entry: { item: OutputItem; node: JSX.Element }) => (
-    <div class="answer-block" data-block={blockOf(entry.item) || undefined} data-paired={paired.has(entry.item.id) ? "" : undefined}>
-      {entry.node}
+  // The ledger's order is the reading order on every surface. Sections are
+  // attribution, not permission to move a block across another block or prose.
+  return <For each={answerRows(entries, outline?.beside)}>{(row) =>
+    <div class="answer-row">
+      <For each={row}>{(entry) =>
+        <div class="answer-block" data-block={blockOf(entry.item) || undefined}
+          style={{ "--answer-min-width": `${formReadingWidth(blockOf(entry.item))}rem` }}>
+          {entry.node}
+        </div>
+      }</For>
     </div>
-  );
-  // The first summary leads; a later one (a correction, a closing word)
-  // stays where the model put it.
-  const first = entries.find((entry) => blockOf(entry.item) === "summary");
-  const lead = first ? [first] : [];
-  const body = entries.filter((entry) => entry !== first);
-  const sections = (outline?.sections ?? [])
-    .map((section) => ({ name: section.name, entries: body.filter((entry) => section.items.includes(entry.item.id)) }))
-    .filter((section) => section.entries.length > 0);
-  const placed = new Set(sections.flatMap((section) => section.entries.map((entry) => entry.item.id)));
-  // A row holds two blocks: one placed beside a block already in a row
-  // takes the full width.
-  const shown = [...lead, ...sections.flatMap((section) => section.entries), ...body.filter((entry) => !placed.has(entry.item.id))];
-  const beside = new Set(outline?.beside ?? []);
-  shown.forEach((entry, index) => {
-    const previous = shown[index - 1];
-    if (previous && beside.has(entry.item.id) && !paired.has(previous.item.id)) {
-      paired.add(previous.item.id);
-      paired.add(entry.item.id);
-    }
-  });
-  return <>
-    {lead.map(block)}
-    {sections.map((section) => <section class="answer-section" aria-label={section.name}>{section.entries.map(block)}</section>)}
-    {body.filter((entry) => !placed.has(entry.item.id)).map(block)}
-  </>;
+  }</For>;
+
 }
 
 /** When cards mounted, so cards that land together come in one after
@@ -1305,13 +1288,14 @@ export function LiveAnswer(props: { sessionId: string }) {
       <div class="primary-result-material live-answer" aria-label="Answer so far">
         <For each={[...new Set(cards().map((item) => item.turn_id))]}>{(turn) =>
           <AnswerValuesScope scopeKey={conversationValuesKey(props.sessionId, turn)} items={cards().filter((item) => item.turn_id === turn)}>
-          <For each={cards().filter((item) => item.turn_id === turn)}>{(item) => (
-          <div class="answer-block card-arrive" style={{ "animation-delay": `${arrivalDelay()}ms` }} data-block={blockOf(item) || undefined}>
-            <Show when={item.content.type === "structured" && item.content.output}>{(output) =>
-              <StructuredView output={output()} fallback={item.fallback_text} sessionId={props.sessionId} presentationId={item.provenance?.presentation_id ?? undefined} />}
-            </Show>
-          </div>
-          )}</For>
+          {composeAnswer(cards().filter((item) => item.turn_id === turn).map((item) => ({
+            item,
+            node: <div class="card-arrive" style={{ "animation-delay": `${arrivalDelay()}ms` }}>
+              <Show when={item.content.type === "structured" && item.content.output}>{(output) =>
+                <StructuredView output={output()} fallback={item.fallback_text} sessionId={props.sessionId} presentationId={item.provenance?.presentation_id ?? undefined} />}
+              </Show>
+            </div>,
+          })), presentationOf(props.sessionId)?.answers?.find((outline) => outline.turn_id === turn))}
           </AnswerValuesScope>
         }</For>
       </div>

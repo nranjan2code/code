@@ -486,3 +486,13 @@ its recorded cap. Lowering below usage leaves an exhausted budget. Detached
 capacity probes and standalone session compaction are outside this request
 scope. Documents have no automatic expiry; lifecycle treatment remains open.
 This limit is separate from dollar admission and per-step retry limits.
+
+## Provisional context resource envelope
+
+`[control].unmeasured_context_tokens` is a positive request resource envelope
+used only while a route has neither a discovered window nor a measured horizon.
+Its shipped policy is 65,536 tokens, owned by vak-control; absent or zero uses
+that default. It is recorded separately as `CapacityProfile.resource_ceiling`,
+not represented as measured capacity. Model metadata and observations still
+own capacity claims; once a bound is known this provisional policy falls away.
+See doc 68's current request contract for prefix, active-turn and output costs.

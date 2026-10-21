@@ -166,6 +166,7 @@ fn build_closed_turn(log: &mut SessionLog, i: usize, kind: TurnKind) -> Result<S
             log.append_message(assistant_text(text.clone()))
                 .map_err(|e| e.to_string())?;
             log.append_presentation(PresentationRecord {
+                placement: Default::default(),
                 block: None,
                 data_call_id: None,
                 turn_id: turn_id.clone(),
@@ -512,7 +513,10 @@ fn packet_replay(dir: &Path) -> Result<ReplayVerdict, String> {
         return Err("the fixture must hold at least five closed turns with cards".into());
     };
     let base = plan_now(&log, &small);
+    // This fixture explicitly requests range/packet projection. Addressed
+    // source selection is a separate mode and never admits a stored packet.
     let with_range = |first: &str, last: &str| WorkingSetPlan {
+        selected_records: None,
         packet_range: Some((first.to_string(), last.to_string())),
         ..base.clone()
     };

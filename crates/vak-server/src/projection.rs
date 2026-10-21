@@ -347,7 +347,10 @@ pub(crate) fn answer_page(
 /// Keep the model's short narration separate from the structured cards.
 /// Channel bridges have native card projections; including these same cards
 /// in the narration made Discord/Slack show each result twice.
-pub(crate) fn channel_narration(session: &SessionLog, narration: String) -> String {
+pub(crate) fn channel_answer(
+    session: &SessionLog,
+    narration: String,
+) -> (String, Option<std::collections::BTreeMap<String, String>>) {
     let session_id = session
         .header()
         .map(|header| header.session_id.clone())
@@ -360,8 +363,19 @@ pub(crate) fn channel_narration(session: &SessionLog, narration: String) -> Stri
         .find(|item| item.role == OutputRole::User)
         .map(|item| item.turn_id.as_str())
     else {
-        return narration;
+        return (narration, None);
     };
+    // Metadata travels with this reply, never through a mutable live handle
+    // that may still be streaming or already belong to a continuation.
+    let metadata = timeline.items.iter().rev().find_map(|item| {
+        if item.turn_id != turn || item.role != OutputRole::Assistant {
+            return None;
+        }
+        match &item.content {
+            OutputContent::Document { document } => Some(document.metadata.clone()),
+            _ => None,
+        }
+    });
     let has_card = timeline.items.iter().any(|item| {
         item.turn_id == turn
             && item.kind == OutputKind::Card
@@ -371,9 +385,12 @@ pub(crate) fn channel_narration(session: &SessionLog, narration: String) -> Stri
             )
     });
     if !has_card {
-        return narration;
+        return (narration, metadata);
     }
-    vak_delivery::visible_card_followup(&narration).unwrap_or_default()
+    (
+        vak_delivery::visible_card_followup(&narration).unwrap_or_default(),
+        metadata,
+    )
 }
 
 /// Typed cards from the latest turn, retained separately for channel-native
@@ -669,6 +686,7 @@ fn append_sandbox_artifact_rows(
             continue;
         }
         timeline.items.push(OutputItem {
+            placement: Default::default(),
             card_state: None,
             id,
             timestamp,
@@ -1182,6 +1200,7 @@ fn snapshot_inner(
                             payload: card.payload.clone(),
                         };
                         timeline.items.push(OutputItem {
+                            placement: Default::default(),
                             card_state: None,
                             id: format!("{}-scheduled-{index}", entry.id),
                             timestamp: entry.ts.to_rfc3339(),
@@ -1260,6 +1279,7 @@ fn snapshot_inner(
                                     .and_then(|value| value.completion.as_deref()),
                             );
                             timeline.items.push(OutputItem {
+                                placement: Default::default(),
                                 card_state: None,
                                 id: format!("{}-text-{index}", entry.id),
                                 timestamp: entry.ts.to_rfc3339(),
@@ -1443,6 +1463,7 @@ fn snapshot_inner(
                                 )
                             {
                                 timeline.items.push(OutputItem {
+                                    placement: Default::default(),
                                     card_state: None,
                                     id: format!("{}-adaptive", entry.id),
                                     timestamp: entry.ts.to_rfc3339(),
@@ -1470,6 +1491,7 @@ fn snapshot_inner(
                             let recovered = failed && successful_runs.contains(&current_turn);
                             let detail = result.map(|(content, _)| content.clone());
                             timeline.items.push(OutputItem {
+                                placement: Default::default(),
                                 card_state: None,
                                 id: id.clone(),
                                 timestamp: entry.ts.to_rfc3339(),
@@ -1644,6 +1666,7 @@ fn snapshot_inner(
                                         )
                                     });
                                     timeline.items.push(OutputItem {
+                                        placement: Default::default(),
                                         card_state: None,
                                         id: item_id,
                                         timestamp: entry.ts.to_rfc3339(),
@@ -1679,6 +1702,7 @@ fn snapshot_inner(
                                     data.insert("path".into(), path.clone());
                                 }
                                 timeline.items.push(OutputItem {
+                                    placement: Default::default(),
                                     card_state: None,
                                     id: if n == 0 {
                                         format!("{id}-artifact")
@@ -1842,6 +1866,21 @@ fn snapshot_inner(
         &turn_evidence_state,
         &turn_human_review,
     );
+    let placements: HashMap<_, _> = session
+        .presentations()
+        .into_iter()
+        .map(|(id, record)| (id, record.placement.clone()))
+        .collect();
+    for item in &mut timeline.items {
+        if let Some(placement) = item
+            .provenance
+            .as_ref()
+            .and_then(|p| p.presentation_id.as_ref())
+            .and_then(|id| placements.get(id))
+        {
+            item.placement = placement.clone();
+        }
+    }
     timeline.answers = answer_outlines(session, &timeline.items);
     timeline.cursor = chain_cursor(session);
     log_turns_with_no_visible_answer(session_id, &timeline);
@@ -1860,7 +1899,6 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
     let mut plans: HashMap<String, Vec<vak_intent::Deliverable>> = HashMap::new();
     let mut proposed: HashMap<String, (String, Vec<vak_intent::Deliverable>)> = HashMap::new();
     let mut calls: HashMap<String, (String, Option<String>)> = HashMap::new();
-    let mut placed_beside: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut blocks_named: HashMap<(String, usize), Option<String>> = HashMap::new();
     let named = |input: &serde_json::Value| {
         input
@@ -1885,9 +1923,6 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
                         proposed.insert(id.clone(), (turn.clone(), plan));
                     }
                     calls.insert(id.clone(), (turn.clone(), named(input)));
-                    if input.get("beside_previous") == Some(&serde_json::Value::Bool(true)) {
-                        placed_beside.insert(id.clone());
-                    }
                     // An `answer` call's blocks each name their own.
                     if let Some(blocks) = input.get("blocks").and_then(serde_json::Value::as_array)
                     {
@@ -1909,7 +1944,7 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
             }
         }
     }
-    if plans.is_empty() && placed_beside.is_empty() {
+    if plans.is_empty() && !items.iter().any(|item| item.placement.beside.is_some()) {
         return Vec::new();
     }
     // A card an `answer` block showed: the block it came from, by the
@@ -1948,16 +1983,37 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
     let mut outlines = Vec::new();
     for turn_id in turns {
         let of_turn = || items.iter().filter(|item| item.turn_id == turn_id);
-        let beside: Vec<String> = of_turn()
-            .filter(|item| item.kind == OutputKind::Card)
-            .filter(|item| {
-                item.provenance
-                    .as_ref()
-                    .and_then(|provenance| provenance.tool_call_id.as_ref())
-                    .is_some_and(|call| placed_beside.contains(call))
-            })
-            .map(|item| item.id.clone())
-            .collect();
+        // Resolve adjacency in the canonical visible source order, never after
+        // summary/section reordering. Prose and result boundaries break pairs.
+        let mut beside: Vec<[String; 2]> = Vec::new();
+        let mut previous: Option<&OutputItem> = None;
+        let mut paired = std::collections::HashSet::new();
+        for item in of_turn() {
+            if item.kind != OutputKind::Card {
+                if item.role == OutputRole::Assistant
+                    && matches!(item.content, OutputContent::Document { .. })
+                {
+                    previous = None;
+                }
+                continue;
+            }
+            if let Some(anchor) = previous
+                && item.placement.beside.as_deref().is_some_and(|id| {
+                    anchor
+                        .provenance
+                        .as_ref()
+                        .and_then(|p| p.presentation_id.as_deref())
+                        == Some(id)
+                })
+                && !paired.contains(&anchor.id)
+                && named_of(anchor) == named_of(item)
+            {
+                beside.push([anchor.id.clone(), item.id.clone()]);
+                paired.insert(anchor.id.clone());
+                paired.insert(item.id.clone());
+            }
+            previous = Some(item);
+        }
         let plan = of_turn().find_map(|item| call_of(item).and_then(|(turn, _)| plans.get(turn)));
         if plan.is_none() && beside.is_empty() {
             continue;
@@ -2416,6 +2472,7 @@ fn activity_item(
         Vec::new()
     };
     OutputItem {
+        placement: Default::default(),
         card_state: None,
         id: activity.activity_id.clone(),
         timestamp: timestamp.into(),
@@ -2466,10 +2523,11 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
             };
             Some(OutputStreamEvent::ItemStarted {
                 item: OutputItem {
+                    placement: record.placement.clone(),
                     card_state: None,
-                    id: format!("live-card-{presentation_id}"),
+                    id: format!("{tool_use_id}-structured-0"),
                     timestamp: now,
-                    turn_id: "live".into(),
+                    turn_id: record.turn_id.clone(),
                     role: OutputRole::Tool,
                     kind: OutputKind::Card,
                     status: OutputStatus::Succeeded,
@@ -2489,6 +2547,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
         }
         AgentEvent::TurnStart { turn } => Some(OutputStreamEvent::ItemStarted {
             item: OutputItem {
+                placement: Default::default(),
                 card_state: None,
                 id: "live-assistant".into(),
                 timestamp: now,
@@ -2580,6 +2639,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
             size_bytes,
         }) => Some(OutputStreamEvent::ItemStarted {
             item: OutputItem {
+                placement: Default::default(),
                 card_state: None,
                 id: format!("artifact-{execution_id}-{path}"),
                 timestamp: now,
@@ -2718,6 +2778,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
             reason,
         } => Some(OutputStreamEvent::ItemStarted {
             item: OutputItem {
+                placement: Default::default(),
                 card_state: None,
                 id: id.clone(),
                 timestamp: now,
@@ -2781,6 +2842,12 @@ pub(crate) fn project_frame(
     framed: crate::events::SeqEvent,
 ) -> Option<vak_delivery::OutputStreamFrame> {
     let sequence = framed.seq;
+    if timeline
+        .covered_sequence
+        .is_some_and(|covered| sequence <= covered)
+    {
+        return None;
+    }
     let mut event = live_event(&timeline.session_id, framed.event)?;
     let active = timeline
         .items
@@ -2858,6 +2925,29 @@ pub(crate) fn apply_stream_event(timeline: &mut OutputTimeline, event: OutputStr
     match event {
         OutputStreamEvent::Snapshot { timeline: snapshot } => *timeline = snapshot,
         OutputStreamEvent::ItemStarted { item } | OutputStreamEvent::ItemReplaced { item } => {
+            // The background event consumer may trail the settlement snapshot.
+            // A late live card cannot overwrite its authoritative durable item.
+            if item.provenance.as_ref().and_then(|p| p.source.as_deref()) == Some("live_event")
+                && timeline.items.iter().any(|existing| {
+                    existing.id == item.id
+                        && existing
+                            .provenance
+                            .as_ref()
+                            .and_then(|p| p.source.as_deref())
+                            != Some("live_event")
+                })
+            {
+                return;
+            }
+            if let Some(replaced) = &item.placement.replaces {
+                timeline.items.retain(|candidate| {
+                    candidate
+                        .provenance
+                        .as_ref()
+                        .and_then(|p| p.presentation_id.as_ref())
+                        != Some(replaced)
+                });
+            }
             if let Some(existing) = timeline
                 .items
                 .iter_mut()
@@ -2924,6 +3014,7 @@ fn live_item(
     fallback_text: String,
 ) -> OutputItem {
     OutputItem {
+        placement: Default::default(),
         card_state: None,
         id,
         timestamp,
@@ -3120,6 +3211,7 @@ mod tests {
             "steps": [{"label": "Boil", "text": "Boil water"}],
         });
         let record = vak_session::types::PresentationRecord {
+            placement: Default::default(),
             turn_id: "directive-1".into(),
             source: vak_session::types::PresentationSource::ToolCall {
                 tool_use_id: "call-1".into(),
@@ -3150,10 +3242,10 @@ mod tests {
         let card = timeline
             .items
             .iter()
-            .find(|item| item.id == "live-card-pres-1")
+            .find(|item| item.id == "call-1-structured-0")
             .expect("the recorded card is in the live timeline");
         assert_eq!(card.kind, OutputKind::Card);
-        assert_eq!(card.turn_id, "live-turn-3");
+        assert_eq!(card.turn_id, "directive-1");
         let provenance = card.provenance.as_ref().expect("provenance");
         assert_eq!(provenance.source.as_deref(), Some("live_event"));
         assert_eq!(provenance.presentation_id.as_deref(), Some("pres-1"));
@@ -3190,7 +3282,18 @@ mod tests {
             .unwrap_or_else(|| panic!("fixture call must validate: {tool} {args:.600}"));
         let turn_id = log.latest_directive_entry_id().unwrap_or_default();
         let payload_digest = vak_session::types::payload_digest(&info.payload);
+        let placement = log.card_placement(
+            &turn_id,
+            args.get("deliverable")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            args.get("beside_previous") == Some(&serde_json::Value::Bool(true)),
+            args.get("replaces")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+        );
         log.append_presentation(vak_session::types::PresentationRecord {
+            placement,
             block: None,
             data_call_id: None,
             turn_id,
@@ -3363,6 +3466,7 @@ mod tests {
             .expect("fixture card validates");
             let entry = log
                 .append_presentation(vak_session::types::PresentationRecord {
+                    placement: Default::default(),
                     block: None,
                     data_call_id: None,
                     turn_id: turn_id.clone(),
@@ -3564,6 +3668,7 @@ mod tests {
 
         let mut timeline = OutputTimeline::empty("session-1");
         timeline.items.push(OutputItem {
+            placement: Default::default(),
             card_state: None,
             id: "tool-call-1".into(),
             timestamp: "2026-09-20T10:00:00+00:00".into(),
@@ -3588,6 +3693,7 @@ mod tests {
             fallback_text: String::new(),
         });
         timeline.items.push(OutputItem {
+            placement: Default::default(),
             card_state: None,
             id: "result-1".into(),
             timestamp: "2026-09-20T10:00:01+00:00".into(),
@@ -3684,6 +3790,7 @@ mod tests {
             .enumerate()
         {
             timeline.items.push(OutputItem {
+                placement: Default::default(),
                 card_state: None,
                 id: format!("call-1-artifact-{n}"),
                 timestamp: "2026-10-14T10:00:00+00:00".into(),
@@ -3877,6 +3984,7 @@ mod tests {
             .expect("event sidecar");
         let mut timeline = OutputTimeline::empty("session-1");
         timeline.items.push(OutputItem {
+            placement: Default::default(),
             card_state: None,
             id: "write-1-artifact".into(),
             timestamp: "2026-09-20T10:00:00+00:00".into(),
@@ -3962,6 +4070,7 @@ mod tests {
     #[test]
     fn repeated_writes_keep_one_latest_artifact_per_turn_and_path() {
         let artifact = |id: &str, turn: &str, path: &str| OutputItem {
+            placement: Default::default(),
             card_state: None,
             id: id.into(),
             timestamp: "2026-09-23T00:00:00Z".into(),
@@ -4003,6 +4112,7 @@ mod tests {
     #[test]
     fn scratch_artifacts_dedupe_by_relative_path_per_turn() {
         let artifact = |id: &str, path: &str, execution: &str| OutputItem {
+            placement: Default::default(),
             card_state: None,
             id: id.into(),
             timestamp: "2026-09-23T00:00:00Z".into(),
@@ -5456,6 +5566,12 @@ mod tests {
             append_presentation_for_call(log, name, id, &input);
             log.presentations().last().expect("recorded").0.clone()
         };
+        call(
+            &mut log,
+            "c0",
+            "emit_callout_card",
+            serde_json::json!({"tone":"note", "text":"Earlier independent block."}),
+        );
         let first = call(
             &mut log,
             "c1",
@@ -5468,11 +5584,95 @@ mod tests {
             "emit_callout_card",
             serde_json::json!({"tone": "tip", "text": "Rest between runs.", "beside_previous": true}),
         );
+        let paired_timeline = snapshot("replaces", &log);
+        let pairs = &paired_timeline.answers[0].beside;
+        assert_eq!(pairs.len(), 1);
+        assert!(pairs[0][0].starts_with("c1-") && pairs[0][1].starts_with("c2-"));
+        // Feed the actual accepted records through the live frame projector.
+        // Endpoint identities and placement must match the settled snapshot.
+        let mut live = OutputTimeline::empty("replaces");
+        for (sequence, (presentation_id, record)) in log.presentations().into_iter().enumerate() {
+            let vak_session::types::PresentationSource::ToolCall { tool_use_id } = &record.source
+            else {
+                continue;
+            };
+            super::project_frame(
+                &mut live,
+                crate::events::SeqEvent {
+                    seq: sequence as u64 + 1,
+                    event: vak_agent::AgentEvent::CardRecorded {
+                        tool_use_id: tool_use_id.clone(),
+                        presentation_id,
+                        record: Box::new(record.clone()),
+                    },
+                },
+            );
+        }
+        let settled_cards: Vec<_> = paired_timeline
+            .items
+            .iter()
+            .filter(|item| item.kind == OutputKind::Card)
+            .map(|item| (&item.id, &item.placement))
+            .collect();
+        let live_cards: Vec<_> = live
+            .items
+            .iter()
+            .filter(|item| item.kind == OutputKind::Card)
+            .map(|item| (&item.id, &item.placement))
+            .collect();
+        assert_eq!(
+            live_cards, settled_cards,
+            "accepted identities and anchors survive settlement"
+        );
+        let mut settled_then_late = paired_timeline.clone();
+        let before_late = settled_then_late.items.clone();
+        for item in live.items.clone() {
+            super::apply_stream_event(
+                &mut settled_then_late,
+                vak_delivery::presentation::OutputStreamEvent::ItemStarted { item },
+            );
+        }
+        assert_eq!(
+            settled_then_late.items, before_late,
+            "late live events never overwrite settled card identity or turn attribution"
+        );
+
         let third = call(
             &mut log,
             "c3",
             "emit_list_card",
             serde_json::json!({"items": ["Week 1: run one minute"], "replaces": first}),
+        );
+        let (presentation_id, record) = log
+            .presentations()
+            .last()
+            .map(|(id, record)| (id.clone(), (*record).clone()))
+            .unwrap();
+        super::project_frame(
+            &mut live,
+            crate::events::SeqEvent {
+                seq: 10,
+                event: vak_agent::AgentEvent::CardRecorded {
+                    tool_use_id: "c3".into(),
+                    presentation_id,
+                    record: Box::new(record),
+                },
+            },
+        );
+        assert!(
+            !live.items.iter().any(|item| item.id.starts_with("c1-")),
+            "live replacement hides its exact target"
+        );
+        assert_eq!(
+            live.items
+                .iter()
+                .find(|item| item.id.starts_with("c2-"))
+                .unwrap()
+                .placement
+                .beside
+                .as_deref(),
+            Some(first.as_str()),
+            "live anchor never rebinds to c0"
         );
         let timeline = snapshot("replaces", &log);
         let cards: Vec<String> = timeline
@@ -5481,13 +5681,57 @@ mod tests {
             .filter(|item| item.kind == OutputKind::Card)
             .filter_map(|item| item.provenance.as_ref()?.tool_call_id.clone())
             .collect();
-        assert_eq!(cards, ["c2", "c3"], "c3 takes c1's place");
-        let [outline] = timeline.answers.as_slice() else {
-            panic!("an outline for the placement: {:?}", timeline.answers);
-        };
-        assert!(outline.sections.is_empty(), "no plan, no sections");
-        assert_eq!(outline.beside.len(), 1);
-        assert!(outline.beside[0].starts_with("c2-"), "{:?}", outline.beside);
+        assert_eq!(cards, ["c0", "c2", "c3"], "c3 takes c1's place");
+        assert!(
+            timeline.answers.is_empty(),
+            "a removed placement anchor never rebinds to another card"
+        );
+        let mut covered = timeline.clone();
+        covered.covered_sequence = Some(10);
+        let before = covered.items.clone();
+        let (old_id, old) = log
+            .presentations()
+            .into_iter()
+            .find(|(id, _)| id == &first)
+            .unwrap();
+        assert!(
+            super::project_frame(
+                &mut covered,
+                crate::events::SeqEvent {
+                    seq: 2,
+                    event: vak_agent::AgentEvent::CardRecorded {
+                        tool_use_id: "c1".into(),
+                        presentation_id: old_id,
+                        record: Box::new(old.clone())
+                    }
+                }
+            )
+            .is_none()
+        );
+        assert_eq!(
+            covered.items, before,
+            "covered late events cannot resurrect a retired anchor"
+        );
+        let mut next = old.clone();
+        next.turn_id = "next-directive".into();
+        super::project_frame(
+            &mut covered,
+            crate::events::SeqEvent {
+                seq: 11,
+                event: vak_agent::AgentEvent::CardRecorded {
+                    tool_use_id: "next-card".into(),
+                    presentation_id: "next-pres".into(),
+                    record: Box::new(next),
+                },
+            },
+        );
+        assert!(
+            covered
+                .items
+                .iter()
+                .any(|item| item.id == "next-card-structured-0"),
+            "new turn events remain admitted after the settlement watermark"
+        );
         // A replacement may restore an earlier payload. Deduplication uses
         // active cards, so the retired first payload cannot hide this one.
         call(
@@ -5503,8 +5747,8 @@ mod tests {
             .filter(|item| item.kind == OutputKind::Card)
             .filter_map(|item| item.provenance.as_ref()?.tool_call_id.as_deref())
             .collect();
-        assert_eq!(cards, ["c2", "c4"]);
-        assert_eq!(log.presentations().len(), 4, "history remains intact");
+        assert_eq!(cards, ["c0", "c2", "c4"]);
+        assert_eq!(log.presentations().len(), 5, "history remains intact");
     }
 
     fn channel_log(dir: &tempfile::TempDir, name: &str) -> SessionLog {
@@ -5984,7 +6228,12 @@ mod tests {
         .expect("second user");
 
         let narration = "The sales increased throughout the period.";
-        assert_eq!(super::channel_narration(&log, narration.into()), narration);
+        let (text, metadata) = super::channel_answer(&log, narration.into());
+        assert_eq!(text, narration);
+        assert!(
+            metadata.is_none(),
+            "an earlier turn cannot lend its outcome to this reply"
+        );
     }
 
     #[test]

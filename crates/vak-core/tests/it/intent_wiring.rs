@@ -276,10 +276,10 @@ async fn an_unsupported_modality_fails_typed_instead_of_dropping_the_image() {
     assert!(matches!(outcome, vak_agent::TurnOutcome::Completed { .. }));
 }
 
-/// A turn's intent entry carries its strands, and the next turn's lineage
-/// sees them as open threads.
+/// Intent entries retain every strand without treating ordinary earlier
+/// work as explicit goal threads or certifying a pronoun's dependency.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn strands_are_recorded_and_become_open_threads() {
+async fn strands_are_recorded_without_declaring_historical_dependencies() {
     let (core, _cwd) = core_with("", vec![text("done"), text("done again")]);
     let session = core.start_session().await.unwrap();
     let (tx, _rx) = tokio::sync::mpsc::channel(64);
@@ -317,11 +317,13 @@ async fn strands_are_recorded_and_become_open_threads() {
     );
 
     let threads = vak_core::intent::open_threads(&session);
-    assert_eq!(threads.len(), 2);
-    assert!(threads.iter().any(|t| t.keywords.contains("parser")));
+    assert!(
+        threads.is_empty(),
+        "ordinary strands are not explicit goal threads"
+    );
 
-    // "now explain it in more detail" continues a thread rather than opening
-    // a twin.
+    // A pronoun alone does not certify which historical source supports
+    // this request. The main model resolves it through context and recall.
     let (tx, _rx) = tokio::sync::mpsc::channel(64);
     let (_, session) = core
         .run_turn_with(
@@ -345,10 +347,7 @@ async fn strands_are_recorded_and_become_open_threads() {
         })
         .unwrap();
     assert!(
-        matches!(
-            latest.strands[0].lineage,
-            vak_intent::Lineage::Continues { .. }
-        ),
+        matches!(latest.strands[0].lineage, vak_intent::Lineage::New),
         "{:?}",
         latest.strands[0].lineage
     );

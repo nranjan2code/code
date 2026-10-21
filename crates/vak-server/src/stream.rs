@@ -146,22 +146,7 @@ pub(crate) fn presentation_frames(
     };
     let id = id.to_owned();
     let rx = handle.events_tx.subscribe();
-    let mut timeline = {
-        let guard = handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard
-            .as_ref()
-            .map(|session| crate::live_presentation_snapshot(&handle.core, &id, session))
-            .unwrap_or_else(|| {
-                handle
-                    .presentation
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone()
-            })
-    };
+    let mut timeline = presentation_baseline(&handle, &id);
     let mut last_sequence = live_cursor(&timeline).unwrap_or(0);
     let initial = presentation_frame(&vak_delivery::OutputStreamFrame {
         sequence: Some(last_sequence),
@@ -198,35 +183,24 @@ pub(crate) fn presentation_frames(
                 if let Some(events) = handle.events_tx.replay_after(last_sequence) {
                     for framed in events {
                         last_sequence = framed.seq;
-                        crate::projection::project_frame(&mut timeline, framed);
-                    }
-                } else {
-                    let guard = handle
-                        .session
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    timeline = guard
-                        .as_ref()
-                        .map(|session| {
-                            crate::live_presentation_snapshot(&handle.core, &id, session)
-                        })
-                        .unwrap_or_else(|| {
-                            handle
+                        if matches!(&framed.event, AgentEvent::RunFinished { .. }) {
+                            timeline = handle
                                 .presentation
                                 .lock()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .clone()
-                        });
+                                .clone();
+                        } else {
+                            crate::projection::project_frame(&mut timeline, framed);
+                        }
+                    }
+                } else {
+                    timeline = presentation_baseline(&handle, &id);
                     last_sequence = live_cursor(&timeline).unwrap_or(last_sequence);
                     timeline
                         .diagnostics
                         .push("Presentation stream resynchronized after a gap.".into());
                 }
-                Some(vak_delivery::OutputStreamFrame {
-                    sequence: Some(last_sequence),
-                    delta: None,
-                    snapshot: Some(timeline.clone()),
-                })
+                Some(crate::projection::settled_frame(last_sequence, &timeline))
             }
         };
         std::future::ready(frame.map(|frame| presentation_frame(&frame)))
@@ -236,12 +210,37 @@ pub(crate) fn presentation_frames(
     ))
 }
 
+/// Rebuilt idle baselines retain the handle's event authority boundary.
+fn presentation_baseline(handle: &SessionHandle, id: &str) -> vak_delivery::OutputTimeline {
+    let session = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let cached = handle
+        .presentation
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    session
+        .as_ref()
+        .map(|log| {
+            let mut snapshot = crate::live_presentation_snapshot(&handle.core, id, log);
+            snapshot.covered_sequence = cached.covered_sequence;
+            snapshot
+        })
+        .unwrap_or(cached)
+}
+
 fn live_cursor(timeline: &vak_delivery::OutputTimeline) -> Option<u64> {
-    timeline
+    let live = timeline
         .cursor
         .as_deref()
         .and_then(|cursor| cursor.strip_prefix("live:"))
-        .and_then(|seq| seq.parse().ok())
+        .and_then(|seq| seq.parse::<u64>().ok());
+    match (live, timeline.covered_sequence) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 /// One item of a session's side-chat (`/btw`) subscription, projected
@@ -563,6 +562,25 @@ pub(crate) async fn stream(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn reconnect_baseline_preserves_the_settlement_watermark() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let session = core.start_session().await.unwrap();
+        let id = session.header().unwrap().session_id.clone();
+        let state = AppState::new(core.clone());
+        let handle =
+            crate::register_handle(&state, id.clone(), session, dir.path().to_path_buf(), core);
+        handle.presentation.lock().unwrap().covered_sequence = Some(7);
+        let mut frames = presentation_frames(&state, &id, Some(handle)).unwrap();
+        let initial = frames.next().await.unwrap();
+        assert_eq!(initial.sequence, Some(7));
+        let body: serde_json::Value = serde_json::from_str(&initial.json).unwrap();
+        assert_eq!(body["snapshot"]["covered_sequence"], 7);
+    }
 
     #[test]
     fn a_cursor_round_trips_through_its_event_id_form() {

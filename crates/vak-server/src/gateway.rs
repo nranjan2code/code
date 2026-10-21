@@ -2194,6 +2194,7 @@ const DOCUMENT_INLINE_MAX_BYTES: usize = 64 * 1024;
 /// drafted with `office_apply`, for the channel to get back.
 pub(crate) struct ChatReply {
     pub(crate) text: String,
+    pub(crate) metadata: Option<std::collections::BTreeMap<String, String>>,
     pub(crate) drafts: Vec<TurnDraft>,
     pub(crate) cards: Vec<vak_delivery::StructuredOutput>,
 }
@@ -3333,24 +3334,7 @@ async fn gateway_inbound(
             let cards = reply.cards;
             let (text, files) =
                 return_drafts(&core, reply.text, &reply.drafts, accepts_files).await;
-            let outcome_metadata = binding_session(&state, &key)
-                .as_deref()
-                .and_then(|session_id| state.get(session_id))
-                .and_then(|handle| {
-                    handle.presentation.lock().ok().map(|timeline| {
-                        timeline
-                            .items
-                            .iter()
-                            .rev()
-                            .find_map(|item| match &item.content {
-                                vak_delivery::OutputContent::Document { document } => {
-                                    Some(document.metadata.clone())
-                                }
-                                _ => None,
-                            })
-                    })
-                })
-                .flatten();
+            let outcome_metadata = reply.metadata;
             match crate::delivery::render_response(
                 &core,
                 body.surface.trim(),
@@ -3809,7 +3793,8 @@ async fn execute_turn_chain(
                 Ok((o, log)) => {
                     let err = outcome_is_error(&o);
                     let cards = crate::projection::run_cards(&log);
-                    let mut text = crate::projection::channel_narration(&log, outcome_text(&o));
+                    let (mut text, metadata) =
+                        crate::projection::channel_answer(&log, outcome_text(&o));
                     // A card-only answer sends its cards and no text; the
                     // placeholder is for a reply that carries nothing at all.
                     if text.trim().is_empty() && cards.is_empty() {
@@ -3818,6 +3803,7 @@ async fn execute_turn_chain(
                     if let Some(tx) = reply_tx {
                         let _ = tx.send(ChatReply {
                             text: text.clone(),
+                            metadata,
                             drafts: turn_drafts(&log, core.cwd(), &core.agent_tools()),
                             cards,
                         });
@@ -3843,6 +3829,7 @@ async fn execute_turn_chain(
                     if let Some(tx) = reply_tx {
                         let _ = tx.send(ChatReply {
                             text: text.clone(),
+                            metadata: None,
                             drafts: Vec::new(),
                             cards: Vec::new(),
                         });

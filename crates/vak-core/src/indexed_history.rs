@@ -38,22 +38,32 @@ impl Core {
             .to_string()
         };
         match request {
-            vak_tools::RecallRequest::Search { query, limit } => {
-                let own = self.search_session_turns(session, leaf, &query, limit, cancel);
+            vak_tools::RecallRequest::Search {
+                query,
+                limit,
+                offset,
+            } => {
+                let own =
+                    self.search_session_turns_page(session, leaf, &query, limit, offset, cancel);
                 if own.is_err() {
                     self.queue_history_index(session);
                 }
-                let elsewhere = reach.map(|reach| reach.search(&query, limit));
+                let elsewhere = reach
+                    .filter(|_| offset == 0)
+                    .map(|reach| reach.search(&query, limit));
                 if own.is_err() && !matches!(elsewhere, Some(Ok(_))) {
                     return Err(warming());
                 }
                 let mut notes = vec![
                     "Matches are candidates, not proof: reopen one to verify. What a record says was true then; current facts need fresh evidence.".to_string(),
                 ];
+                let next = own.as_ref().ok().and_then(|found| found.next_offset).map(
+                    |offset| serde_json::json!({"query": query, "limit": limit, "offset": offset}),
+                );
                 let this_conversation: Vec<serde_json::Value> = match own {
                     Ok(found) => {
                         if found.candidate_limit_reached {
-                            notes.push("More of this conversation matched than were read: a more specific query finds the rest.".into());
+                            notes.push("More of this conversation matched than were read: use next to continue, or refine the subject.".into());
                         }
                         found
                             .matches
@@ -80,7 +90,9 @@ impl Core {
                     None => Vec::new(),
                 };
                 let reached_elsewhere = !elsewhere.is_empty();
-                if this_conversation.is_empty() && elsewhere.is_empty() && reach.is_some() {
+                if this_conversation.is_empty() && elsewhere.is_empty() && next.is_some() {
+                    notes.push("This candidate page has no eligible match. Continue with next or refine the subject; this is not evidence that older work is absent.".into());
+                } else if this_conversation.is_empty() && elsewhere.is_empty() && reach.is_some() {
                     notes.push(
                         "Nothing searched holds any of these words. Search again with the \
                          words the earlier answer itself would use, such as a name or a \
@@ -90,7 +102,7 @@ impl Core {
                 }
                 Ok(vak_agent::Recalled {
                     content: serde_json::json!({"this_conversation": this_conversation,
-                        "elsewhere": elsewhere, "note": notes.join(" ")})
+                        "elsewhere": elsewhere, "next": next, "note": notes.join(" ")})
                     .to_string(),
                     reached_elsewhere,
                 })
@@ -104,6 +116,8 @@ impl Core {
                         .to_string(),
                         reached_elsewhere: false,
                     }),
+                    Err(CoreError::HistoryNotFound(_)) => Err(serde_json::json!({"type":"not_found",
+                        "message":"no eligible turn with this id on the selected branch; search by subject or use another exact reference"}).to_string()),
                     Err(CoreError::HistoryNotIndexed(_)) => {
                         self.queue_history_index(session);
                         Err(warming())
@@ -334,6 +348,18 @@ impl Core {
         limit: usize,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<vak_catalog::TurnSearchResult, CoreError> {
+        self.search_session_turns_page(session_id, leaf, query, limit, 0, cancel)
+    }
+
+    pub fn search_session_turns_page(
+        &self,
+        session_id: &str,
+        leaf: &str,
+        query: &str,
+        limit: usize,
+        offset: usize,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<vak_catalog::TurnSearchResult, CoreError> {
         let history = self.scoped_history(session_id)?;
         history
             .catalog
@@ -350,7 +376,7 @@ impl Core {
         }
         let mut hits = history
             .catalog
-            .search_turns(session_id, leaf, query, limit, &stop)?;
+            .search_turns_page(session_id, leaf, query, limit, offset, &stop)?;
         // The catalog ranks and addresses; canonical records supply the prose.
         let started = std::time::Instant::now();
         for hit in &mut hits.matches {
@@ -383,10 +409,18 @@ impl Core {
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<vak_session::Turn, CoreError> {
         let history = self.scoped_history(session_id)?;
-        let record_id = history
+        let Some(record_id) = history
             .catalog
             .locate_turn_record(session_id, turn_id, leaf)?
-            .ok_or_else(|| CoreError::HistoryNotIndexed(turn_id.into()))?;
+        else {
+            return Err(
+                if history.catalog.entry_location(session_id, leaf)?.is_some() {
+                    CoreError::HistoryNotFound(turn_id.into())
+                } else {
+                    CoreError::HistoryNotIndexed(leaf.into())
+                },
+            );
+        };
         // The walk is one turn's own entries, from its closing record back to
         // the directive that opened it: the turn bounds it, and only a cancel
         // ends it early. A cap of a time, a count or a size picked here once

@@ -94,7 +94,7 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// The test
 /// `lexicon_digest_matches_resolver_version` pins the tables to this number so
 /// a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 22;
+pub const RESOLVER_VERSION: u32 = 23;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -432,99 +432,28 @@ fn recompose(strands: &[Strand]) -> Engagement {
     engagement
 }
 
-/// Which thread, if any, a strand belongs to.
-///
-/// An explicit hint always wins and always names a thread — the most
-/// specific match, or the most recent open thread when nothing matches.
-/// Otherwise a strand continues a thread when it shares the act and either
-/// shares at least two topic words covering half the older thread, or is a
-/// short deictic follow-up. A long,
-/// self-contained request may contain local words like "that" or "it"; they
-/// do not identify an older thread. Generic presentation preferences do not
-/// establish topic overlap. A reading
-/// that matches nothing starts a thread of its own; a wrong `New` costs a
-/// duplicate thread, a wrong `Continues` merges unrelated work, so the tie
-/// goes to `New`.
-/// Content words a clause must share with another open thread before it is
-/// read as merging that thread into the one it continues. The overlap must
-/// also cover half the other thread's subject. A single shared word is too
-/// weak to establish either a merge or a continuation: common
-/// planning words linked otherwise unrelated scenarios and pulled their full
-/// histories into later requests. Short follow-ups such as "refactor it"
-/// can still identify a continuation on their own.
-const MERGE_MIN_OVERLAP: usize = 2;
-
-/// A continuation must account for enough of the older thread's subject to
-/// distinguish it from a new request that happens to reuse a few broad words.
-/// Measure against the stored thread so concise follow-ups need not repeat
-/// every current detail.
-fn enough_topic_overlap(shared: usize, thread: &ThreadFact) -> bool {
-    shared >= MERGE_MIN_OVERLAP && shared.saturating_mul(2) >= thread.keywords.len()
-}
-
-const PRESENTATION_WORDS: &[&str] = &[
-    "easy", "scan", "share", "simple", "clear", "short", "brief", "concise", "readable",
-];
-
-fn topic_keywords(text: &str) -> BTreeSet<String> {
-    crate::strand::keywords(text)
-        .into_iter()
-        .filter(|word| !PRESENTATION_WORDS.contains(&word.as_str()))
-        .collect()
-}
-
+/// Only a human control command establishes intent lineage. Natural-language
+/// dependencies are resolved by the main model through addressed recall, not
+/// inferred from words, acts, pronoun length or a recent-thread horizon.
 fn lineage_for(
-    reading: &Reading,
-    deictic: bool,
-    text: &str,
+    _reading: &Reading,
+    _deictic: bool,
+    _text: &str,
     open_threads: &[ThreadFact],
     hint: Option<LineageHint>,
 ) -> Lineage {
-    let keywords = topic_keywords(text);
-    let short_deictic_follow_up = deictic && crate::strand::keywords(text).len() <= 3;
-    let overlap = |thread: &ThreadFact| thread.keywords.intersection(&keywords).count();
-    let candidates: Vec<&ThreadFact> = open_threads
-        .iter()
-        .filter(|thread| reading.acts().contains(&thread.act) || deictic)
-        .collect();
-    let best = candidates
-        .iter()
-        .copied()
-        .max_by_key(|thread| (overlap(thread), reading.acts().contains(&thread.act)))
-        .filter(|thread| {
-            enough_topic_overlap(overlap(thread), thread)
-                || (short_deictic_follow_up && reading.acts().contains(&thread.act))
-        });
+    let Some(thread) = open_threads.last() else {
+        return Lineage::New;
+    };
     match hint {
-        Some(LineageHint::Corrects) => {
-            let thread = best.or(open_threads.last());
-            return thread
-                .map(|t| Lineage::Corrects {
-                    thread_id: t.thread_id.clone(),
-                })
-                .unwrap_or(Lineage::New);
-        }
-        Some(LineageHint::Replaces) => {
-            let thread = best.or(open_threads.last());
-            return thread
-                .map(|t| Lineage::Replaces {
-                    thread_id: t.thread_id.clone(),
-                })
-                .unwrap_or(Lineage::New);
-        }
-        None => {}
+        Some(LineageHint::Corrects) => Lineage::Corrects {
+            thread_id: thread.thread_id.clone(),
+        },
+        Some(LineageHint::Replaces) => Lineage::Replaces {
+            thread_id: thread.thread_id.clone(),
+        },
+        None => Lineage::New,
     }
-    best.map(|t| Lineage::Continues {
-        thread_id: t.thread_id.clone(),
-        merges: candidates
-            .iter()
-            .filter(|other| {
-                other.thread_id != t.thread_id && enough_topic_overlap(overlap(other), other)
-            })
-            .map(|other| other.thread_id.clone())
-            .collect(),
-    })
-    .unwrap_or(Lineage::New)
 }
 
 /// The one reading for the turn: the most consequential strand, widened by
@@ -944,7 +873,7 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            22,
+            23,
             "0053b8ab40fb608ff7145771fc6f38c557612cbd3314f50c8c8be55a7db4f49c",
         );
         let digest = crate::signals::lexicon_digest();
@@ -1085,7 +1014,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sequenced_same_message_step_keeps_a_real_parent_thread() {
+    fn a_sequenced_same_message_step_cannot_inherit_an_old_thread() {
         let mut request = request("How many garden plants remain? Then show it clearly.");
         request.history.open_threads.push(ThreadFact {
             thread_id: "active-garden-thread".into(),
@@ -1101,10 +1030,7 @@ mod tests {
         );
 
         assert_eq!(intent.strands.len(), 2);
-        assert!(matches!(
-            intent.strands[0].lineage,
-            Lineage::Continues { ref thread_id, .. } if thread_id == "active-garden-thread"
-        ));
+        assert_eq!(intent.strands[0].lineage, Lineage::New);
         assert_eq!(
             intent.strands[1].lineage, intent.strands[0].lineage,
             "a local dependent step must remain attached to its parent work"
@@ -1173,7 +1099,50 @@ mod tests {
     }
 
     #[test]
-    fn a_strand_continues_an_open_thread_it_points_at() {
+    fn mixed_historical_and_independent_intents_do_not_share_inferred_lineage() {
+        let mut req = request(
+            "Revise the first earlier proposal. Also compare the two earlier estimates. Also calculate 13 times 4.",
+        );
+        req.turn_id = "mixed-turn";
+        req.history.open_threads = vec![
+            ThreadFact {
+                thread_id: "prior-proposal".into(),
+                act: Act::Modify,
+                domains: BTreeSet::new(),
+                keywords: crate::strand::keywords("revise the first proposal"),
+            },
+            ThreadFact {
+                thread_id: "prior-estimates".into(),
+                act: Act::Answer,
+                domains: BTreeSet::new(),
+                keywords: crate::strand::keywords("compare the two estimates"),
+            },
+        ];
+        let intent = resolve(
+            &req,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        );
+        assert_eq!(intent.strands.len(), 3);
+        for strand in &intent.strands {
+            assert_eq!(strand.lineage, Lineage::New);
+            assert_eq!(strand.thread_id, strand.strand_id);
+        }
+        assert_eq!(
+            intent
+                .strands
+                .iter()
+                .map(|s| &s.thread_id)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            3,
+            "one composite turn must not collapse the parts onto an inferred older thread"
+        );
+    }
+
+    #[test]
+    fn a_pronoun_does_not_establish_a_thread_without_resolution() {
         let mut req = request("now refactor it");
         req.history.turn_index = 2;
         req.history.open_threads = vec![ThreadFact {
@@ -1188,18 +1157,12 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
         );
-        assert_eq!(
-            intent.strands[0].lineage,
-            Lineage::Continues {
-                thread_id: "s0.0".into(),
-                merges: Vec::new(),
-            }
-        );
-        assert_eq!(intent.strands[0].thread_id, "s0.0");
+        assert_eq!(intent.strands[0].lineage, Lineage::New);
+        assert_eq!(intent.strands[0].thread_id, intent.strands[0].strand_id);
     }
 
     #[test]
-    fn two_shared_content_words_continue_without_a_pronoun() {
+    fn shared_words_do_not_establish_a_dependency() {
         let mut req = request("Refactor the parser module");
         req.history.turn_index = 2;
         req.history.open_threads = vec![ThreadFact {
@@ -1216,13 +1179,7 @@ mod tests {
             &ResolverConfig::default(),
         );
 
-        assert_eq!(
-            intent.strands[0].lineage,
-            Lineage::Continues {
-                thread_id: "parser-work".into(),
-                merges: Vec::new(),
-            }
-        );
+        assert_eq!(intent.strands[0].lineage, Lineage::New);
     }
 
     #[test]
@@ -1344,7 +1301,7 @@ mod tests {
     /// A clause that names two open threads continues the closer one and
     /// merges the other; one shared word is not enough to merge.
     #[test]
-    fn strand_continues_two_threads() {
+    fn combining_subjects_does_not_merge_threads_before_retrieval() {
         let thread = |id: &str, text: &str| ThreadFact {
             thread_id: id.into(),
             act: Act::Modify,
@@ -1364,17 +1321,10 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
         );
-        let Lineage::Continues { thread_id, merges } = &intent.strands[0].lineage else {
-            panic!("{:?}", intent.strands[0].lineage);
-        };
-        let mut threads: Vec<&str> = merges.iter().map(String::as_str).collect();
-        threads.push(thread_id);
-        threads.sort_unstable();
         assert_eq!(
-            threads,
-            vec!["s0.0", "s1.0"],
-            "{:?}",
-            intent.strands[0].lineage
+            intent.strands[0].lineage,
+            Lineage::New,
+            "several requested sources must be resolved, never merged by topic words"
         );
     }
 
@@ -1426,10 +1376,7 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
         );
-        assert!(matches!(
-            inferred.strands[0].lineage,
-            Lineage::Continues { .. }
-        ));
+        assert_eq!(inferred.strands[0].lineage, Lineage::New);
 
         req.lineage_hint = Some(LineageHint::Replaces);
         let explicit = resolve(

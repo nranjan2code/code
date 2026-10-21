@@ -453,6 +453,14 @@ impl EventBus {
         )
     }
 
+    /// Highest sequence assigned. After an awaited forwarding drain, a
+    /// settlement covers every event up to this point.
+    pub fn covered_sequence(&self) -> u64 {
+        self.next
+            .load(std::sync::atomic::Ordering::SeqCst)
+            .saturating_sub(1)
+    }
+
     /// Events strictly after `seq`, oldest first.
     ///
     /// `None` means the ring no longer covers that point and the caller

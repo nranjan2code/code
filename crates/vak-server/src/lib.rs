@@ -4767,8 +4767,14 @@ fn default_image_mime() -> String {
 }
 
 pub(crate) fn mpsc_to_broadcast(tx: events::EventBus) -> mpsc::Sender<AgentEvent> {
+    mpsc_to_broadcast_drained(tx).0
+}
+
+fn mpsc_to_broadcast_drained(
+    tx: events::EventBus,
+) -> (mpsc::Sender<AgentEvent>, tokio::task::JoinHandle<()>) {
     let (tx_in, mut rx) = mpsc::channel::<AgentEvent>(512);
-    tokio::spawn(async move {
+    let drained = tokio::spawn(async move {
         // Forward into the BROADCAST channel (sync send). Forwarding into
         // tx_in would feed the channel back into itself.
         //
@@ -4780,7 +4786,7 @@ pub(crate) fn mpsc_to_broadcast(tx: events::EventBus) -> mpsc::Sender<AgentEvent
             let _ = tx.send(ev);
         }
     });
-    tx_in
+    (tx_in, drained)
 }
 
 /// A run cannot start without a working provider credential.
@@ -5114,6 +5120,16 @@ async fn wait_for_external_subscriber(handle: &SessionHandle) {
 /// pair the executor broadcasts as this leg's `RunFinished`.
 type SettleResult = (Option<SessionLog>, String, bool);
 
+/// Publish the canonical ledger projection and its stream boundary together.
+fn publish_settled_presentation(handle: &SessionHandle, id: &str, log: &SessionLog) {
+    let mut snapshot = live_presentation_snapshot(&handle.core, id, log);
+    snapshot.covered_sequence = Some(handle.events_tx.covered_sequence());
+    *handle
+        .presentation
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = snapshot;
+}
+
 /// The one turn-chain executor shared by the HTTP path (`run_prompt`,
 /// `send_steering`) and the gateway (`gateway::execute_turn_chain`).
 /// `start` runs as the first leg; `settle` performs the surface-specific
@@ -5142,7 +5158,7 @@ async fn run_turn_chain<F, Fut>(
             .map(|h| h.session_id.clone())
             .unwrap_or_else(|| handle.id.clone());
         let approver = approver_factory(&session_id);
-        let events = mpsc_to_broadcast(handle.events_tx.clone());
+        let (events, drained) = mpsc_to_broadcast_drained(handle.events_tx.clone());
         let steering = handle.steering.clone();
         let cancel = handle
             .cancel
@@ -5152,6 +5168,10 @@ async fn run_turn_chain<F, Fut>(
         let outcome = start
             .run(&core, taken, cancel, approver, steering, events)
             .await;
+        // All producers have finished: assign every event its sequence before
+        // publishing a durable snapshot or RunFinished. Otherwise a delayed
+        // card can appear newer than the settlement it belongs before.
+        let _ = drained.await;
         // Reset the token so the next leg is not born already-cancelled.
         *handle
             .cancel
@@ -5178,6 +5198,9 @@ async fn run_turn_chain<F, Fut>(
             Err(_) => vak_agent::AgentRunOutcome::Failed,
         };
         let (ledger, summary, _is_error) = settle(&session_id, outcome).await;
+        if let Some(log) = &ledger {
+            publish_settled_presentation(&handle, &session_id, log);
+        }
         let _ = handle.events_tx.send(AgentEvent::RunFinished {
             outcome: agent_outcome,
             summary,
@@ -5255,11 +5278,6 @@ async fn http_settle(
                 data: std::collections::BTreeMap::new(),
             });
             flush_buffered(&handle, &mut session_log);
-            *handle
-                .presentation
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                live_presentation_snapshot(&handle.core, &run_id, &session_log);
             hub.emit_agent_summary(&summary, Some(run_id.clone()));
             catalog_session_later(&handle.core, session_log.path());
             (Some(session_log), summary, is_error)
@@ -5269,11 +5287,6 @@ async fn http_settle(
             // handle does not stay wedged on "run in progress".
             let restored = reopen_ledger(&handle.core, &run_id).map(|mut restored| {
                 flush_buffered(&handle, &mut restored);
-                *handle
-                    .presentation
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                    live_presentation_snapshot(&handle.core, &run_id, &restored);
                 restored
             });
             (restored, format!("error: {e}"), true)
@@ -8541,17 +8554,12 @@ pub(crate) fn context_links_json(s: &SessionLog) -> serde_json::Value {
                 "tool_use_id": record.tool_use_id,
                 "effect": record.effect,
             })),
-            vak_session::EntryPayload::Activity(activity) => {
-                if let Some((plan, leaf)) =
-                    vak_session::WorkingSetPlan::from_activity_data(&activity.data)
-                {
-                    plans.push(serde_json::json!({
-                        "entry_id": entry.id,
-                        "turn_id": entry.at_turn,
-                        "leaf": leaf,
-                        "plan": plan,
-                    }));
-                }
+            vak_session::EntryPayload::ContextSelection(record) => {
+                plans.push(serde_json::json!({
+                    "entry_id": entry.id, "turn_id": entry.at_turn,
+                    "leaf": record.leaf_id, "policy": record.policy_version,
+                    "plan": record.plan,
+                }));
             }
             _ => {}
         }
@@ -9930,7 +9938,7 @@ async fn intent_explain(
 
     let history = match q.session_id.as_deref() {
         Some(sid) => match core.open_session(sid).await {
-            Ok(session) => vak_core::intent::history_facts(&session),
+            Ok(session) => vak_core::intent::history_facts(&session, &q.prompt),
             Err(_) => vak_intent::HistoryFacts::default(),
         },
         None => vak_intent::HistoryFacts::default(),
@@ -20358,7 +20366,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
         wait: Duration::from_secs(core.control_limits().approval_secs),
     });
     let core = core.clone().with_approver(approver.as_ref());
-    let events = mpsc_to_broadcast(handle.events_tx.clone());
+    let (events, drained) = mpsc_to_broadcast_drained(handle.events_tx.clone());
     let steering = Arc::new(SteeringQueues::new());
     let cancel = handle
         .cancel
@@ -20392,6 +20400,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
                 events,
             )
             .await;
+        let _ = drained.await;
         *h2.cancel
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
@@ -20406,10 +20415,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
                 ) {
                     let _ = restored.append_activity(activity);
                 }
-                *h2.presentation
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                    crate::projection::snapshot(&turn_session_id, &restored);
+                publish_settled_presentation(&h2, &turn_session_id, &restored);
                 *h2.session
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -20429,6 +20435,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
                 // Same leak class as side chats: restore from the durable
                 // ledger so the handle is not wedged on "run in progress".
                 if let Some(log) = reopen_ledger(&core, &turn_session_id) {
+                    publish_settled_presentation(&h2, &turn_session_id, &log);
                     *h2.session
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -23233,6 +23240,7 @@ mod sandbox_promotion_tests {
         let turn_id = log.current_turn().unwrap_or_default().to_string();
         let card = |tool_use_id: &str, semantic_type: &str, payload: serde_json::Value| {
             vak_session::types::PresentationRecord {
+                placement: Default::default(),
                 turn_id: turn_id.clone(),
                 source: vak_session::types::PresentationSource::ToolCall {
                     tool_use_id: tool_use_id.into(),
@@ -28188,8 +28196,7 @@ mod scheduler_state_tests {
 mod context_links_tests {
     use super::*;
     use vak_session::types::{
-        ActivityKind, ActivityRecord, ActivityStatus, CallEffect, CallEffectRecord, FrozenContract,
-        MessageRecord, SessionHeader,
+        CallEffect, CallEffectRecord, FrozenContract, MessageRecord, SessionHeader,
     };
 
     fn log(dir: &std::path::Path) -> SessionLog {
@@ -28225,6 +28232,31 @@ mod context_links_tests {
         .unwrap()
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn settlement_drains_forwarding_before_covering_its_events() {
+        let bus = events::EventBus::new();
+        let (sender, drained) = mpsc_to_broadcast_drained(bus.clone());
+        sender
+            .send(AgentEvent::CardDrafting {
+                id: "card-before-settlement".into(),
+                block: "table".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            bus.covered_sequence(),
+            0,
+            "the current-thread pump has not run yet"
+        );
+        drop(sender);
+        drained.await.unwrap();
+        assert_eq!(
+            bus.covered_sequence(),
+            1,
+            "settlement can cover the delayed event only after draining"
+        );
+    }
+
     #[test]
     fn context_shows_links_effects_and_plans() {
         let dir = tempfile::tempdir().unwrap();
@@ -28245,18 +28277,14 @@ mod context_links_tests {
             },
         })
         .unwrap();
-        let mut plan = vak_session::WorkingSetPlan::default();
+        let mut plan = vak_session::WorkingSetPlan {
+            selected_records: Some(Vec::new()),
+            ..Default::default()
+        };
         plan.links
             .insert("t-old".into(), vec!["file:src/parser.rs".into()]);
-        s.append_activity(ActivityRecord {
-            activity_id: "plan-1".into(),
-            kind: ActivityKind::Diagnostic,
-            status: ActivityStatus::Succeeded,
-            label: vak_session::CONTEXT_PLAN_LABEL.into(),
-            detail: None,
-            data: plan.to_activity_data(Some("leaf")),
-        })
-        .unwrap();
+        let leaf = s.tail_id().cloned().unwrap();
+        s.append_context_selection(plan).unwrap();
         let json = context_links_json(&s);
         assert_eq!(json["turns"][0]["turn_id"], turn);
         assert_eq!(json["turns"][0]["links"][0]["node"], "file:src/parser.rs");
@@ -28268,6 +28296,11 @@ mod context_links_tests {
             "file:src/parser.rs"
         );
         assert_eq!(json["plans"][0]["turn_id"], turn);
+        assert_eq!(json["plans"][0]["leaf"], leaf);
+        assert_eq!(
+            json["plans"][0]["policy"],
+            vak_session::turns::CONTEXT_PLAN_POLICY_VERSION
+        );
     }
 }
 
@@ -28439,6 +28472,7 @@ mod saved_page_resource_authorization_tests {
         let page = vak_delivery::page::Page::new(
             "Page".into(),
             vec![vak_delivery::OutputItem {
+                placement: Default::default(),
                 id: "item-1".into(),
                 timestamp: "now".into(),
                 turn_id: "turn".into(),

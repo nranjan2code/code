@@ -1,3 +1,23 @@
+## Unreleased
+
+- Follow-ups use an explicitly labelled recent reference; older or multiple
+  dependencies can be reopened together, and history searches can continue
+  beyond their first candidate page without an age cutoff. Word overlap no
+  longer chooses a prior thread or revives its work automatically.
+- Context planning reads addressed closing records and the active turn,
+  records replayable selections, and uses an explicit configurable resource
+  envelope when a route's capacity is unknown.
+- Answers preserve source order and stable placement anchors while streaming,
+  settled and in Canvas. Grouped forms get space according to their reading
+  widths and stack when they do not fit. Prompt guidance favors complete,
+  concise answers with each block contributing distinct information. Settlement
+  drains pending live events so delayed cards cannot overwrite saved answers
+  or bring back a replaced card.
+
+- Channel replies carry their own settled outcome metadata, so concurrent
+  presentation updates cannot change their notices. Completed answers that
+  require no retrieved evidence no longer receive a false unverified warning.
+
 ## 8.17.1 — 2026-10-21
 
 - Opening a composed result in Canvas now scopes it to that result group, so

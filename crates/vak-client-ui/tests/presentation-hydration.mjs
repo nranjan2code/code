@@ -106,3 +106,15 @@ assert.deepEqual(applied, ["settled", "new", "reconciled"]);
 const broken = coordinator.begin("other");
 assert.throws(() => coordinator.commit("other", broken, "data", true, () => { throw Error("apply failed"); }));
 assert.equal(coordinator.commit("other", coordinator.begin("other"), "data", true, apply("recovered")), true);
+
+const beforeReplacement = {...settled,items:[{...settled.items[0],id:'anchor',provenance:{presentation_id:'pres-anchor'}},{...settled.items[0],id:'beside',placement:{beside:'pres-anchor'}}]};
+const afterReplacement = applyPresentationDelta(beforeReplacement,{type:'item_started',item:{...settled.items[0],id:'replacement',placement:{replaces:'pres-anchor'}}});
+assert.deepEqual(afterReplacement.items.map(item=>item.id),['beside','replacement']);
+assert.equal(afterReplacement.items[0].placement.beside,'pres-anchor');
+console.log('live replacement removes only its addressed target and retains original anchors');
+
+const durableCard = {...settled.items[0],id:'shared-card',provenance:{source:'emit_table_card',presentation_id:'pres-1'}};
+const durableCards = {...settled,items:[durableCard]};
+const lateCard = {...durableCard,turn_id:'directive-id',provenance:{...durableCard.provenance,source:'live_event'}};
+assert.equal(applyPresentationDelta(durableCards,{type:'item_started',item:lateCard}),durableCards);
+console.log('late live cards never replace their authoritative settled item');

@@ -3,6 +3,36 @@
 Status: in progress. The immediate defects are repaired (on main);
 live verification and the lifetime-scale design remain open.
 
+## Review of current behavior, 2026-10-21
+
+The [turn-relations and sizing review](../audits/turn-relations-and-sizing-2026-10-21.md)
+checks current source, the latest installed prompt/tool interface and two real
+runs. Invariant 36 and doc 68 §4 govern current admission; older sections below
+that describe immediate-anaphora admission or Full promotion are historical
+policy descriptions, not active behavior. The lifetime algorithm remains
+proposed. Before activation, reconcile older byte-cache/storage references
+with the existing data catalog and keep one selection implementation. The
+review's clean-contract proposal has not been approved or implemented.
+
+## Implemented request path, 2026-10-21
+
+The approved first implementation removes lexical lineage admission and the
+unused planner graph walk. Ordinary planning reads the active turn and one
+recent addressed closing record, labels that record as a candidate, and writes
+structured ContextSelection records before dispatch. The main model can query
+all indexed history, continue ranked candidate pages, and reopen several exact
+references in one call. Natural-language lineage no longer gates a request's
+work/context. Unknown model capacity has a labelled configurable provisional
+resource envelope. Current-turn recall remains ledgered evidence, not a second
+historical selection store. Shared answer rows preserve source order and exact
+placement anchors across live, settled and Canvas views.
+
+Still open: lazy retained-session handles and other full-history consumers,
+semantic retrieval calibration, large dependency-rich turns, and live
+lifetime-scale measurements. This implementation does not certify arbitrary
+paraphrase resolution or million-turn performance. Older implementation notes
+below are a historical progress record; doc 68 is the current request contract.
+
 ## Evidence
 
 On 2026-09-30, the same Noida weather request took 131 seconds in the

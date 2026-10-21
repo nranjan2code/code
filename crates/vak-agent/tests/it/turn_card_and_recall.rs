@@ -1059,7 +1059,7 @@ async fn open_and_query_together_are_both_answered() {
             _ => None,
         })
         .unwrap();
-    assert!(result["opened"]["messages"].is_array(), "{result}");
+    assert!(result["opened"][0]["messages"].is_array(), "{result}");
     let found = result["found"]["this_conversation"].as_array().unwrap();
     assert!(
         found[0]["record"].as_str().unwrap().contains("Miso"),
@@ -1176,4 +1176,95 @@ async fn recall_skips_a_turn_set_aside_until_it_is_restored() {
     assert!(!result("r3").contains("HELLO"), "{}", result("r3"));
     assert!(result("r4").contains("HELLO WORLD"), "{}", result("r4"));
     assert!(result("r5").contains("HELLO"), "{}", result("r5"));
+}
+
+/// One request may depend on several results arbitrarily far back. Batch
+/// reopening keeps both addressed records; it does not merge them by topic.
+#[tokio::test]
+async fn mixed_intents_can_reopen_several_sources_across_one_thousand_turns() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "distant-batch",
+        vec![
+            text_msg("First established result: amber."),
+            text_msg("Second established result: cobalt."),
+            tool_call_msg(
+                "distant",
+                "recall",
+                serde_json::json!({"opens": ["#1", "#2"]}),
+            ),
+            text_msg("First result: amber. Second result: cobalt. Separately, 6 times 7 is 42."),
+        ],
+        vec![],
+        false,
+    );
+    for prompt in ["Record the first result", "Record the second result"] {
+        assert!(matches!(
+            agent
+                .run(
+                    prompt,
+                    &Default::default(),
+                    CancellationToken::new(),
+                    mpsc::channel(64).0
+                )
+                .await,
+            TurnOutcome::Completed { .. }
+        ));
+    }
+    {
+        let mut log = agent.session.lock().await;
+        let template = log.recent_turn_card().unwrap().1.clone();
+        for ordinal in 0..1000 {
+            let id = log
+                .append_message(vak_session::MessageRecord {
+                    message: vak_llm::Message::user_text(format!("Independent request {ordinal}")),
+                    meta: None,
+                })
+                .unwrap()
+                .id;
+            log.append_message(vak_session::MessageRecord {
+                message: vak_llm::Message::assistant(vec![ContentBlock::text(
+                    "An independent answer.",
+                )]),
+                meta: None,
+            })
+            .unwrap();
+            let mut card = template.clone();
+            card.turn_id = id.clone();
+            card.asked = format!("Independent request {ordinal}");
+            card.answered.narration = "An independent answer.".into();
+            log.append_turn_card(vak_session::TurnCardRecord { turn_id: id, card })
+                .unwrap();
+        }
+    }
+    assert!(matches!(
+        agent
+            .run(
+                "State the first earlier established result. Also state the second earlier established result. Separately calculate 6 times 7.",
+                &Default::default(),
+                CancellationToken::new(),
+                mpsc::channel(64).0
+            )
+            .await,
+        TurnOutcome::Completed { .. }
+    ));
+    let log = agent.session.lock().await;
+    let content = log
+        .message_chain()
+        .into_iter()
+        .flat_map(|(_, message)| message.content)
+        .find_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error: false,
+            } if tool_use_id == "distant" => Some(content),
+            _ => None,
+        })
+        .unwrap();
+    let result: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(result["opened"].as_array().unwrap().len(), 2);
+    assert!(result["opened"][0].to_string().contains("amber"));
+    assert!(result["opened"][1].to_string().contains("cobalt"));
 }

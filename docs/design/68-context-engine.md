@@ -1,8 +1,70 @@
 # 68 — Context engine: measured capacity, turn working set, recallable evidence
 Status: implemented. Crate: `vak-context` (`capacity`, `planner`,
-`assemble`) over the ledger in `vak-session`. Native provider compaction
+`assemble`) over the ledger in `vak-session`. Addressed candidate selection,
+structured replay, model-directed batched recall and candidate pagination
+replace lexical lineage admission (2026-10-21). Session opening still loads
+retained records; this is not a claim of lifetime-scale lazy session handles.
+Native provider compaction
 (§12) is not implemented; the hosted probe ladder is opt-in via
 `[probe] hosted`.
+
+## Current request contract, 2026-10-21
+
+A request carries the current turn and, if it fits, one **recent historical
+candidate**: the newest visible settled TurnCard, skipping empty stopped and
+set-aside turns and respecting handoff resets. The label explicitly says it
+is not a declared dependency, outstanding instruction or current approval.
+No words, inferred thread, file-name match or graph score choose another turn.
+The model resolves an immediate follow-up by meaning and calls `recall` when
+it needs the candidate's exact answer or anything farther back.
+
+`recall` queries all eligible indexed history regardless of age, returning
+candidate records with exact `open` addresses and an optional `next` query
+page. `opens` reopens several references in one call, preserving each result
+and each miss. Several earlier sources need not share or merge a thread.
+Candidates are not proof; relevance, freshness and ambiguity remain the main
+model's work using these tools. No mandatory classification side-dispatch or
+forced retrieval is added. Retrieval can discover a record, not choose the
+user's intent: once verified context leaves several plausible targets or
+changes, the model asks a brief question rather than searching until it can
+make a choice. A revision needs a grounded target and change, without invented
+dates, values or scope. Historical results are logged current-turn tool
+results. A direct independent answer needs no search.
+
+The production planner uses the active turn and the recent closing record;
+it does not construct or cost every older Full projection or perform a graph
+walk. `ContextSelection` records the exact addressed source set and leaf before
+each dispatch. Recall results and the bound interface provide the remainder of
+replay. Selected multi-source allocation covers compact records before Full
+upgrades; it never fills spare capacity with unrelated history.
+
+A turn is **multi-intent**: it has no single related/unrelated classification.
+Each requested outcome may use zero, one or several earlier sources, and one
+source may support several outcomes. A compound request can combine an immediate
+follow-up, distant dependencies and a self-contained question. The request uses
+one bounded context union, with evidence and constraints attributed to the
+outcomes they actually support; it does not copy every old constraint into every
+part or assign independent parts the first strand's history. A missing detail
+blocks only the outcomes that depend on it. The model's plan names the requested
+outcomes; the intent kernel's provisional strand relations do not authorize
+historical admission or certify dependencies. Geometry remains a property of
+each answer block and the available surface, not an inherited relation label.
+
+A route with no discovered/measured bound uses the explicit operator resource
+policy `[control] unmeasured_context_tokens` (65,536 shipped), represented by
+`CapacityProfile.resource_ceiling`; it is not a model-window measurement.
+Metadata/probe bounds take precedence once known. All prompt costs include
+schemas, tail and the current turn; feedback continues to calibrate them.
+
+The old lexical thread list, word-coverage thresholds and diagnostic-only
+planner graph walk are retired. Human `/goal` controls still address declared
+work. Automatic natural-language continuation is handled through query/open,
+not the intent reader. Graph observations remain inspectable provenance;
+consulting a turn does not certify dependence or support.
+
+The ledger/runtime handle still materializes retained session records on open,
+and some other history consumers still fold them. This change bounds ordinary
+selection/projection work, not every lifetime-scale session operation.
 
 ## Why this design
 
@@ -30,8 +92,8 @@ later, and nothing model-visible is cut by a character count.
 1. **Measure, never assume.** Every number that shapes a request — window,
    usable horizon, tokens per char, prefill cost, cache behaviour — is
    discovered from the provider and the model, recorded in the ledger, and
-   revised from every turn's usage. No constant in this design is a cap; the
-   only constants are search ladders and confidence thresholds.
+   revised from every turn's usage. Measured capacity and explicit operator resource policy are distinct;
+   a provisional envelope for an unmeasured route is labelled as policy.
 2. **No blind cuts.** Nothing model-visible is truncated by a character count.
    Content leaves the working set only by (a) being replaced with a
    content-aware digest that the model can expand with a tool call, or (b)
@@ -180,7 +242,8 @@ inference work. A completed inconclusive probe is not retried on every turn.
 
 ### 2. TurnIndex
 
-Built from `chain_to_root()` once per request. A `Turn` is:
+Used by explicit whole-history readers; ordinary request planning reads
+only the active turn and addressed closing record. A `Turn` is:
 
 ```rust
 pub struct Turn {
@@ -253,13 +316,10 @@ ceiling       = min(horizon.tokens, declared_window − output_reserve)
 budget        = ceiling − prefix_tokens − tail_tokens − current_turn_reserve
                 # reserve is model-specific and learned from observed turns
 # never split a turn
-carried     = the compact card of the turn the request follows (the last
-              turn of the thread it continues, else the last turn; a turn
-              stopped before it did or said anything is walked past, since
-              it holds only the person's words), within the budget; nothing
-              older, whatever the request's words
-older turns = reached through recall by the model, never preloaded;
-              unused budget stays unused
+carried     = the newest visible settled turn's addressed candidate card,
+              within budget; no inferred lineage or topical promotion
+older turns = query/open by the main model, at any distance; several may
+              be reopened together; unused budget stays unused
 ```
 
 An older reference may point back hundreds or thousands of turns. The model
@@ -564,9 +624,10 @@ cut a research card's call off at exactly 4,096 tokens. An unknown window
   thinking on, which counts against `num_predict`.
 - No assumed window either. `[agent] context_window` and `max_tokens` are
   operator caps with no default. A model that publishes no window (OpenAI
-  does not) has `declared_window: None`: the prompt ceiling is then the
-  instruction horizon alone, which starts unbounded (the top of its order;
-  every observation only lowers it), and an over-length rejection lowers it
+  does not) has `declared_window: None`: its unknown instruction horizon is
+  represented by the top of its order, while the explicit provisional resource
+  envelope bounds requests until capacity is known. Every observation only
+  lowers the horizon, and an over-length rejection lowers it
   and records the window the rejection states
   (`vak_llm::error::stated_context_window`, every provider's wording). The
   probe ladder with no window is open-ended: past its named sizes it keeps
@@ -812,8 +873,7 @@ evidence ids on every card so it can go one level deeper with
 `recall({ id })`. Nothing is unreachable; the default is just small.
 
 Typical shape under the recall-first request policy: a fresh request carries
-no older turn, regardless of how much prompt space remains. Every request
-carries the one compact card of the turn it follows. A direct request about
+no older turn, regardless of how much prompt space remains. Every request may carry the one recent historical candidate card within budget. A direct request about
 older history searches and reopens only the selected record through `recall`.
 
 The full record, when used, is the turn as recorded with thinking dropped,
@@ -1019,8 +1079,9 @@ following, all fixed with regression tests:
   (call, empty summary or write) records `compaction-failed` and the turn
   carries on with cards, once per turn. `/compact` plans against the bound
   model's cached profile, as the loop does.
-- **Admission.** Every request carries the compact card of the turn it
-  follows, and nothing older; no word list decides it. Topic similarity alone and spare capacity admit no
+- **Admission.** A request may carry the newest visible settled card as a
+  historical candidate within budget, and nothing older; no word list decides
+  it. Topic similarity alone and spare capacity admit no
   history. A request about an older result uses indexed `recall` search and
   reopens the chosen turn after candidate verification.
 - **Projection.** The selected card sits just before the open turn. Other

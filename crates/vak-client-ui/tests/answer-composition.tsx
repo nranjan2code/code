@@ -1,6 +1,6 @@
 import { render } from "solid-js/web";
 import "../src/components/ChatPane";
-import PresentationTimelineView from "../src/components/PresentationRenderer";
+import PresentationTimelineView, { LiveAnswer } from "../src/components/PresentationRenderer";
 import * as store from "../src/store";
 import type { OutputItem, OutputTimeline } from "../src/types";
 import "../src/styles.css";
@@ -12,10 +12,11 @@ const item = (id: string, role: string, kind: string, content: unknown, fallback
 const text = (id: string, text: string) => item(id, "assistant", "outcome", { type: "document", document: doc(text) }, text);
 const table = (id: string, title: string) => item(id, "tool", "card", { type: "structured", output: { semantic_type: "table", block: "table", schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: { title, columns: [{ label: "Item", numeric: false }, { label: "Amount", numeric: true }], rows: [["Value", "9007199254740993"]] } } }, title);
 const fragments = ["Leading context survives.", "Note: the second result uses a different scope.", "The closing explanation survives too."];
+const note = item("paired-note", "tool", "card", { type: "structured", output: { semantic_type: "callout", block: "callout", schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: { tone: "note", text: "A compact note beside a wide table." } } }, "Compact note");
 const timeline = { schema_version: 2, session_id: sid, diagnostics: [], items: [
   item("user", "user", "message", { type: "document", document: doc("Compare both results.") }, "Compare both results."),
-  text("leading", fragments[0]), table("first", "First table"), text("middle", fragments[1]), table("second", "Second table"), text("closing", fragments[2]),
-] } as OutputTimeline;
+  text("leading", fragments[0]), table("first", "First table"), note, text("middle", fragments[1]), table("second", "Second table"), text("closing", fragments[2]),
+], answers: [{ turn_id: "turn-1", sections: [], beside: [["first", "paired-note"]] }] } as OutputTimeline;
 window.fetch = async () => new Response("{}", { headers: { "Content-Type": "application/json" } });
 store.setActiveId(sid);
 store.setTechnicalDetails(false);
@@ -32,10 +33,42 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 80));
   check(order.every((text, index) => body.indexOf(text) >= 0 && (index === 0 || body.indexOf(text) > body.indexOf(order[index - 1]))), "Leading, interleaved and closing prose retain source order around both cards");
   check(fragments.every(text => body.split(text).length === 2), "Every prose fragment appears once");
   check(document.querySelectorAll(".primary-result").length === 1 && document.querySelectorAll(".assistant-turn-head").length === 1, "One result shares one author header");
-  check(document.querySelectorAll(".card-table").length === 2, "Distinct tables survive grouping");
+  check(document.querySelectorAll("table.card-table").length === 2, "Distinct tables survive grouping");
   check(document.documentElement.scrollWidth <= innerWidth, "The composed result fits the viewport");
+  const row = Array.from(document.querySelectorAll<HTMLElement>(".answer-row")).find(row => row.querySelectorAll(".answer-block").length === 2)!;
+  check(Boolean(row), "The exact addressed table/note pair shares one layout group");
+  const [wide, compact] = Array.from(row.querySelectorAll<HTMLElement>(".answer-block"));
+  check(wide.getBoundingClientRect().width <= row.getBoundingClientRect().width + 1 && compact.getBoundingClientRect().width <= row.getBoundingClientRect().width + 1, "Grouped forms fit their available width");
+  if (innerWidth < 600) check(compact.getBoundingClientRect().top >= wide.getBoundingClientRect().bottom, "Phone layout stacks the pair");
+  else if (row.getBoundingClientRect().width >= 48 * 16 + parseFloat(getComputedStyle(row).gap))
+    check(wide.getBoundingClientRect().width > compact.getBoundingClientRect().width, "A fitting pair gives the table more reading width than its note");
+  else check(compact.getBoundingClientRect().top >= wide.getBoundingClientRect().bottom, "A pair stacks until both reading widths fit");
+  const main = document.querySelector("main")!;
+  main.classList.add("answer-in-canvas"); await tick();
+  check(Boolean(row.querySelector(".card-table")) && getComputedStyle(row).display === "flex", "Canvas uses the same addressed layout group");
+  main.classList.remove("answer-in-canvas");
   store.setTechnicalDetails(true); await tick();
-  check(document.querySelectorAll(".card-table").length === 2, "Technical view also retains both cards");
+  check(document.querySelectorAll("table.card-table").length === 2, "Technical view also retains both cards");
   store.setTechnicalDetails(false); await tick();
   return passed;
+};
+
+(window as any).runLivePlacementChecks = async () => {
+  const liveId = 'live-placement-fixture';
+  const host = document.createElement('div'); document.body.append(host);
+  const a = table('live-a','Live anchor');
+  const b = {...note,id:'live-b', placement:{part:null,beside:'live-a',replaces:null}};
+  const liveItem = (value: OutputItem) => ({...value,provenance:{...value.provenance,source:'live_event'}});
+  store.hydrateFromPresentation(liveId,{...timeline,session_id:liveId,items:[liveItem(a),liveItem(b)],answers:[]});
+  const dispose = render(()=><LiveAnswer sessionId={liveId}/>,host);
+  try {
+    await tick();
+    if (!Array.from(host.querySelectorAll('.answer-row')).some(row=>row.querySelectorAll('.answer-block').length===2)) throw new Error('Live accepted anchors did not pair without an outline');
+    const replacement=liveItem({...table('live-replacement','Replacement'),placement:{part:null,beside:null,replaces:'live-a'}});
+    store.applyPresentationEvent(liveId,{sequence:1,delta:{type:'item_started',item:replacement}});
+    await tick();
+    if (host.textContent?.includes('Live anchor') || !host.textContent?.includes('Replacement')) throw new Error('Live replacement did not remove its exact anchor');
+    if (Array.from(host.querySelectorAll('.answer-row')).some(row=>row.querySelectorAll('.answer-block').length===2)) throw new Error('Live replacement rebound a missing anchor');
+    return ['Live accepted anchors pair before outlines arrive','Live store removes exact replacement target','Missing live anchor never rebinds'];
+  } finally { dispose(); host.remove(); }
 };

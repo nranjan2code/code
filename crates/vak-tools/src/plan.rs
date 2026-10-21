@@ -125,7 +125,7 @@ impl Tool for PlanTool {
     fn description(&self) -> &str {
         "Say what your answer will deliver before you produce it: one entry for each part \
          of the answer, in reading order, named in a few words, with how it reaches the \
-         person. An entry shown as cards takes as many cards as its content has parts. \
+         person. Plan the requested outcomes, not optional enrichment or every available card. \
          Vakyartha checks each entry against what you actually produce and tells you if one \
          is missing. For parts that need evidence, declare the questions the sources must \
          settle, including the date or scope that matters. Output receipts do not prove \

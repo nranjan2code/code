@@ -1,14 +1,28 @@
 # 85 — The turn graph: linked context across turns, sessions and years
 
-Status: in progress. G0 is built, and G1 is built (2026-10-03): turn links, recall links, merged
-threads and the planner's two-step `link` signal (§10). G2 and G3 are
-proposed. §2.4 is the audit, taken before G0 started. Phase G1 changes the
-in-session planner and adds no store. Phases G2 and G3 ride
-data-architecture M6 (the data catalog, `docs/design/73-data-architecture-and-lifecycle.md`
-§9) and start only when the maintainer says so. This document extends
-`docs/design/68-context-engine.md` (the planner), `docs/design/47-commitment-kernel.md`
-(strands and threads) and doc 73 §9 (catalog edges). Where it and AGENTS.md
-disagree, AGENTS.md wins until the change is made to both.
+Status: in progress. Addressed in-session turn/provenance records and scoped
+recall are built. The 2026-10-21 request contract retires lexical thread
+admission and the two-step planner walk in favor of model-directed query/open
+at any distance (doc 68). G2/G3 remain proposed, not started by this change.
+The earlier G0/G1 design below is retained as a historical record.
+
+## Current relation boundary, 2026-10-21
+
+The maintainer approved model-directed addressed dependencies and retirement
+of lexical lineage as context authority. Doc 68's current request contract and
+AGENTS.md invariant 36 supersede the admission algorithms below. A recent card
+is labelled a candidate; the model queries/reopens arbitrary-age records and
+can reopen several independently in one call. A natural-language request does
+not merge threads from shared words or inherit old work. Explicit human goal
+controls remain. The diagnostic-only two-hop planner walk is removed; recorded
+file, artifact and presentation links remain provenance. The historical
+`link_recalls` extractor still recognizes older argument shapes, not current
+`open`/`opens`; current consulted addresses are reconstructable from logged tool
+calls/results but are not claimed to populate that old derived graph.
+
+> **Historical record** — the earlier graph design and G0/G1 implementation
+> account below are retained. Their Full-promotion tests and lexical lineage
+> examples no longer describe current request admission. G2/G3 remain proposals.
 
 ## 1. The problem
 

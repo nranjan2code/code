@@ -2,6 +2,17 @@
 Status: implemented in 2.0.0; current contract checked against the code on
 2026-10-14.
 
+## Historical reference ambiguity, 2026-10-21
+
+The code-owned capability contract separates finding earlier records from
+choosing what the user intends to change. When verified context leaves several
+plausible targets or changes, ask a concise clarification; repeated retrieval
+cannot resolve that choice. Ground revisions in the current message and verified
+context without inventing dates, values or scope. The contract survives custom
+operating rules, as the prompt composition test verifies. Multi-intent turns
+resolve dependencies per requested outcome; independent parts do not inherit
+other parts' old constraints and can proceed when another part needs a detail.
+
 ## Current contract
 
 The shipped seed is `crates/vak-core/src/system-prompt.md`. Its block markers
@@ -75,16 +86,19 @@ execution then validates the built payload against the semantic registry.
 For the full call-to-card sequence and fault-isolation guide, see
 `docs/design/30-render-architecture.md` §30.1.
 
-Historical results are not added to each request to fill available space. The
-working-set planner carries the compact card of the turn the request follows,
-whatever its words, and nothing older (invariant 36). Older or larger details
-come from `recall` when the model finds the current request needs them,
-including a reference many turns back.
-The ledger remains complete; the model sees the current turn and the selected
-historical evidence. Keep this instruction next to the multi-card rule so a
-presentation update does not restore stale-context behavior.
+Historical results do not fill spare request space. The recent settled card
+is explicitly a historical candidate, independent of inferred lineage; older
+or multiple sources are reached through `recall` query/open/opens with candidate
+pagination. The main model resolves meaning, dates and uncertainty through
+those tools. Answer guidance favors the smallest complete result and distinct
+information per block rather than a mandatory summary/card sequence.
 
 ## Diff notes
+
+- 2026-10-21: distinguish recent candidates from dependencies and current
+  instructions; describe arbitrary-age, paged, multi-source recall and implicit
+  missing facts/constraints. Make summaries optional and avoid duplicate
+  findings across shapes. The plan description uses the same scope boundary.
 
 > **Historical record**: one note per change to the seed, newest first,
 > each true as of its version; the current wording is the seed itself.

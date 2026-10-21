@@ -71,10 +71,13 @@ export function applyPresentationDelta(
   delta: PresentationDelta,
 ): OutputTimeline | null {
   if (!current) return current;
+  if ((delta.type === "item_started" || delta.type === "item_replaced")
+      && delta.item.provenance?.source === "live_event"
+      && current.items.some(item => item.id === delta.item.id && item.provenance?.source !== "live_event")) return current;
   switch (delta.type) {
     case "item_started":
     case "item_replaced":
-      return { ...current, items: upsertItem(current.items, delta.item) };
+      return { ...current, items: upsertItem(current.items.filter((item) => !delta.item.placement?.replaces || item.provenance?.presentation_id !== delta.item.placement.replaces), delta.item) };
     case "text_delta":
       return {
         ...current,

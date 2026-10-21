@@ -321,6 +321,7 @@ mod tests {
             tool_use_id: "t2".into(),
             presentation_id: "p2".into(),
             record: Box::new(vak_session::types::PresentationRecord {
+                placement: Default::default(),
                 turn_id: "u1".into(),
                 source: vak_session::types::PresentationSource::ToolCall {
                     tool_use_id: "t2".into(),

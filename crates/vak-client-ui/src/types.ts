@@ -198,6 +198,7 @@ export interface TranscriptEntryMeta {
 }
 
 export interface OutputItem {
+  placement?: { part: string | null; beside: string | null; replaces: string | null };
   id: string;
   timestamp: string;
   turn_id: string;
@@ -231,6 +232,7 @@ export interface ResultOutcome {
 }
 
 export interface OutputTimeline {
+  covered_sequence?: number | null;
   schema_version: number;
   session_id: string;
   cursor?: string | null;
@@ -246,8 +248,8 @@ export interface OutputTimeline {
 export interface AnswerOutline {
   turn_id: string;
   sections: AnswerSection[];
-  /** Items the model placed beside the item before them. */
-  beside?: string[];
+  /** Stable anchor/item pairs, resolved by the host before layout. */
+  beside?: [string, string][];
 }
 
 /** A section and the ids of the items that deliver it. An item that named no

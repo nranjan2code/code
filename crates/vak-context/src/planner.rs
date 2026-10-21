@@ -1,13 +1,11 @@
-//! `WorkingSetPlanner` (docs/design/68-context-engine.md §4, §10): keeps the
-//! current turn verbatim and admits only the compact card of the turn it
-//! follows. Historical records are reopened through `recall`.
-//! Pure: no I/O, no locks, no network. The caller
-//! (`vak-agent`'s turn loop) supplies the `CapacityProfile`, the
-//! `TurnIndex`, and the incoming directive; `plan()` returns a `WorkingSetPlan`
-//! that `SessionLog::derive_with_plan` turns into messages.
+//! Addressed request projection (docs/design/68-context-engine.md).
+//! The open turn stays verbatim. The latest visible closing card supplies a
+//! neutral reference candidate; the main model queries/opens missing history
+//! at any distance. Ordinary planning never rebuilds historical Full records.
+//! Pure functions; Core/the broker own indexed retrieval and access checks.
 
 pub use vak_session::{Fidelity, WorkingSetPlan};
-use vak_session::{LinkKind, ReadingKey, SessionLog, TurnCard, TurnIndex};
+use vak_session::{ReadingKey, SessionLog, TurnIndex};
 
 use crate::assemble::messages_chars;
 use crate::capacity::CapacityProfile;
@@ -28,284 +26,38 @@ pub struct PlanInput<'a> {
     pub current_turn_tokens: u64,
 }
 
-/// How much a link of each kind says two turns belong together
-/// (docs/design/85-turn-graph.md §6.1): an observed link (a file a call
-/// touched, a thread a strand opened) weighs more than one the resolver
-/// inferred. Pinned by `link_weights_are_pinned`.
-fn link_weight(kind: LinkKind) -> f64 {
-    match kind {
-        LinkKind::OwnThread | LinkKind::WroteFile | LinkKind::ThisTurn | LinkKind::RecalledTurn => {
-            1.0
-        }
-        LinkKind::ReadFile
-        | LinkKind::FetchedPage
-        | LinkKind::ServesCommitment
-        | LinkKind::NamedFile => 0.8,
-        LinkKind::ContinuesThread => 0.7,
-    }
-}
-
-/// At most this many turns, the most recent, are reached through any one
-/// node, so a node every turn touches cannot pull the whole history in.
-const MAX_TURNS_PER_NODE: usize = 8;
-
-/// How many shared-node steps a walk takes from the open turn: a turn that
-/// shares a node with a turn that shares one with the open turn is reached
-/// at the second step.
-const MAX_LINK_STEPS: usize = 2;
-
-/// What one more step costs: a turn reached at step two is worth at most
-/// half of one reached directly.
-const STEP_DECAY: f64 = 0.5;
-
-/// The workspace files a directive names: tokens shaped like a path or a
-/// file name with an extension (`notes/plan.md`, `` `src/parser.rs` ``,
-/// `README.md`). URLs, e-mail addresses and numbers like `3.5` are not
-/// files. Matched against recorded file nodes by full path or last segment.
-fn named_files(directive: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    for token in directive.split(|c: char| {
-        c.is_whitespace()
-            || matches!(
-                c,
-                '`' | '"' | '\'' | ',' | '(' | ')' | '[' | ']' | '<' | '>'
-            )
-    }) {
-        let token = token
-            .trim_end_matches(['.', ':', ';', '!', '?'])
-            .trim_start_matches("./");
-        if token.contains("://") || token.contains('@') || token.is_empty() {
-            continue;
-        }
-        let Some((stem, extension)) = token.rsplit_once('.') else {
-            continue;
-        };
-        let file = stem.rsplit('/').next().unwrap_or(stem);
-        let is_name = !file.is_empty()
-            && (1..=8).contains(&extension.len())
-            && extension.chars().all(|c| c.is_ascii_alphanumeric())
-            && extension.chars().any(|c| c.is_ascii_alphabetic());
-        if is_name && !names.iter().any(|n| n == token) {
-            names.push(token.to_string());
-        }
-    }
-    names
-}
-
-/// One place a walk continues from: the links to follow, the value they
-/// carry, the path so far, and the turn they belong to (`None` for the open
-/// turn).
-type Frontier<'a> = (&'a [vak_session::TurnLink], f64, Vec<String>, Option<usize>);
-
-/// Each closed turn's link value to the open turn, and the nodes on the path
-/// that reached it. One step: the sum over the nodes a turn shares with the
-/// source of both ends' link weights times the node's inverse-frequency
-/// discount, capped at the source's own value. A node most turns touch (a
-/// manifest, a README) is discounted toward zero, the graph form of a common
-/// word. At most `MAX_TURNS_PER_NODE` turns, the most recent, are reached
-/// through one node, and only the best `MAX_TURNS_PER_NODE` turns of a step
-/// go on to the next, so the walk stays bounded however dense the history.
-fn link_values(
-    closed: &[&vak_session::Turn],
-    open: Option<&vak_session::Turn>,
-    directive: &str,
-) -> std::collections::HashMap<String, (f64, Vec<String>)> {
-    let mut reached: std::collections::HashMap<usize, (f64, Vec<String>)> =
-        std::collections::HashMap::new();
-    let mut holders: std::collections::HashMap<&str, std::collections::BTreeMap<usize, f64>> =
-        std::collections::HashMap::new();
-    for (position, turn) in closed.iter().enumerate() {
-        for link in &turn.links {
-            let weight = holders
-                .entry(link.node.as_str())
-                .or_default()
-                .entry(position)
-                .or_insert(0.0);
-            *weight = weight.max(link_weight(link.kind));
-        }
-    }
-    // The open turn's own links, and the files its directive names: the
-    // only file anchors there are at plan time, because the plan is fixed
-    // before the turn's first call (invariant 36).
-    let mut anchors: Vec<vak_session::TurnLink> =
-        open.map(|turn| turn.links.clone()).unwrap_or_default();
-    for name in named_files(directive) {
-        for node in holders.keys() {
-            let Some(path) = node.strip_prefix("file:") else {
-                continue;
-            };
-            let named = path == name || path.ends_with(&format!("/{name}"));
-            if named && !anchors.iter().any(|anchor| anchor.node == *node) {
-                anchors.push(vak_session::TurnLink {
-                    node: (*node).to_string(),
-                    kind: LinkKind::NamedFile,
-                });
-            }
-        }
-    }
-    if anchors.is_empty() {
-        return std::collections::HashMap::new();
-    }
-    let total = closed.len() as f64;
-    let mut frontier: Vec<Frontier> = vec![(anchors.as_slice(), 1.0, Vec::new(), None)];
-    for _ in 0..MAX_LINK_STEPS {
-        let mut step: std::collections::HashMap<usize, (f64, f64, Vec<String>)> =
-            std::collections::HashMap::new();
-        for (links, carried, path, source) in &frontier {
-            for anchor in *links {
-                let Some(turns) = holders.get(anchor.node.as_str()) else {
-                    continue;
-                };
-                let discount = (1.0 + total / turns.len() as f64).ln() / (1.0 + total).ln();
-                for (&position, &weight) in turns.iter().rev().take(MAX_TURNS_PER_NODE) {
-                    if Some(position) == *source || reached.contains_key(&position) {
-                        continue;
-                    }
-                    let entry = step
-                        .entry(position)
-                        .or_insert((0.0, *carried, path.clone()));
-                    entry.0 += carried * link_weight(anchor.kind) * weight * discount;
-                    entry.1 = entry.1.max(*carried);
-                    if !entry.2.contains(&anchor.node) {
-                        entry.2.push(anchor.node.clone());
-                    }
-                }
-            }
-        }
-        let mut next: Vec<(usize, f64, Vec<String>)> = step
-            .into_iter()
-            .map(|(position, (value, cap, path))| (position, value.min(cap), path))
-            .collect();
-        next.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        for (position, value, path) in &next {
-            reached.insert(*position, (*value, path.clone()));
-        }
-        frontier = next
-            .into_iter()
-            .take(MAX_TURNS_PER_NODE)
-            .map(|(position, value, path)| {
-                (
-                    closed[position].links.as_slice(),
-                    value * STEP_DECAY,
-                    path,
-                    Some(position),
-                )
-            })
-            .collect();
-    }
-    reached
-        .into_iter()
-        .map(|(position, value)| (closed[position].id.clone(), value))
-        .collect()
-}
-
-/// Builds the working-set plan for one request (§4, §10). Never splits a
-/// turn: the current turn is verbatim; at most the compact card of the
-/// turn it follows is included. Historical detail is on demand.
+/// A recent card is a reference candidate, never a judgement of relation.
+/// The model resolves missing dependencies with query/open at any distance.
 pub fn plan(input: PlanInput) -> WorkingSetPlan {
-    let reserve = input
-        .profile
-        .current_turn_reserve(input.current_turn_tokens);
-    let budget = input
-        .profile
-        .budget(input.prefix_tokens, input.tail_tokens, reserve);
-
-    // Only closed turns with a written card can supply a compact referent.
-    // The open turn is always sent verbatim by the caller; turns behind a
-    // reset-with-handoff are invisible to the model.
-    let closed: Vec<&vak_session::Turn> = input
-        .index
-        .turns
-        .iter()
-        .filter(|turn| turn.closed && turn.card.is_some() && !turn.out_of_view())
-        .collect();
-
-    let mut spent: u64 = 0;
-    let retrieved: Vec<String> = Vec::new();
-
-    let open = input.index.turns.last().filter(|turn| !turn.closed);
-    // The open turn follows the last turn of the thread it continues, when
-    // it continues one; otherwise the last turn.
-    let continued: Vec<&str> = open
-        .map(|turn| {
-            turn.links
-                .iter()
-                .filter(|link| link.kind == LinkKind::ContinuesThread)
-                .map(|link| link.node.as_str())
-                .collect()
-        })
-        .unwrap_or_default();
-    // A turn stopped before it did anything is not the exchange a request
-    // follows; the turn before it is.
-    let preceding = closed
-        .iter()
-        .rev()
-        .filter(|turn| !turn.card.as_ref().is_some_and(TurnCard::stopped_empty))
-        .find(|turn| {
-            turn.links
-                .iter()
-                .any(|link| continued.contains(&link.node.as_str()))
-        })
-        .or(closed
-            .iter()
-            .rev()
-            .find(|turn| !turn.card.as_ref().is_some_and(TurnCard::stopped_empty)))
-        .map(|turn| turn.id.clone());
-    // `ContextProfile::Minimal` suppresses link expansion. The preceding
-    // turn's compact card is carried at any context level.
-    let minimal = input
-        .reading
-        .is_some_and(vak_session::ReadingKey::is_minimal);
-    let linked = if minimal {
-        std::collections::HashMap::new()
-    } else {
-        link_values(&closed, open, input.directive)
+    let budget = input.profile.budget(
+        input.prefix_tokens,
+        input.tail_tokens,
+        input
+            .profile
+            .current_turn_reserve(input.current_turn_tokens),
+    );
+    let mut plan = WorkingSetPlan {
+        budget,
+        ..Default::default()
     };
-    // Whether a request refers back is not read from its words: the turn it
-    // follows is always present as one compact card, and nothing older is.
-    // The always-loaded `recall` tool searches older turns when the model
-    // finds that the current request depends on them.
-    let candidate_id = preceding.as_deref();
-    let candidates: Vec<&vak_session::Turn> = closed
-        .iter()
-        .filter(|turn| candidate_id == Some(turn.id.as_str()))
-        .copied()
-        .collect();
-    let mut per_turn: Vec<(String, Fidelity)> = Vec::new();
-    for turn in candidates {
-        let cost = turn.card.as_ref().map(|card| card.tokens_card).unwrap_or(0);
-        if spent.saturating_add(cost) <= budget {
-            spent += cost;
-            per_turn.push((turn.id.clone(), Fidelity::Card));
+    if let Some(turn) = input.index.turns.iter().rev().find(|turn| {
+        turn.closed
+            && !turn.out_of_view()
+            && turn.card.as_ref().is_some_and(|card| !card.stopped_empty())
+    }) && let Some(card) = &turn.card
+    {
+        let cost = input
+            .profile
+            .estimate_tokens(card.addressed_message().len() as u64);
+        if cost <= budget {
+            plan.per_turn.push((turn.id.clone(), Fidelity::Card));
+            plan.spent = cost;
+            if let Some(closing) = &turn.closing_entry_id {
+                plan.selected_records = Some(vec![(turn.id.clone(), closing.clone())]);
+            }
         }
     }
-
-    // Deliberately do not fill spare capacity with other history or build a
-    // packet from unselected turns. Omitted turns remain in the ledger and
-    // are searchable through `recall`.
-    let packet_range = None;
-
-    // Render in chronological order (oldest first), matching `index.turns`.
-    let order: std::collections::HashMap<&str, usize> = closed
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (t.id.as_str(), i))
-        .collect();
-    per_turn.sort_by_key(|(id, _)| order.get(id.as_str()).copied().unwrap_or(usize::MAX));
-
-    let links = per_turn
-        .iter()
-        .filter_map(|(id, _)| linked.get(id).map(|(_, nodes)| (id.clone(), nodes.clone())))
-        .collect();
-    WorkingSetPlan {
-        selected_records: None,
-        per_turn,
-        packet_range,
-        retrieved,
-        links,
-        budget,
-        spent,
-    }
+    plan
 }
 
 /// Plan only scoped, indexed candidates. Unselected history remains on disk;
@@ -323,6 +75,9 @@ pub fn plan_selected(input: PlanInput) -> WorkingSetPlan {
         selected_records: Some(vec![]),
         ..Default::default()
     };
+    // Cover every requested source before enriching one. A large early
+    // source cannot starve the compact identity of a later dependency.
+    let mut upgrades = Vec::new();
     for turn in &input.index.turns {
         if !turn.closed || turn.out_of_view() {
             continue;
@@ -330,73 +85,62 @@ pub fn plan_selected(input: PlanInput) -> WorkingSetPlan {
         let (Some(card), Some(closing)) = (&turn.card, &turn.closing_entry_id) else {
             continue;
         };
-        let full = input
-            .profile
-            .estimate_tokens(messages_chars(&turn.full_record()));
         let compact = input
             .profile
             .estimate_tokens(card.addressed_message().len() as u64);
-        let (fidelity, cost) = if plan.spent.saturating_add(full) <= budget {
-            (Fidelity::Full, full)
-        } else if plan.spent.saturating_add(compact) <= budget {
-            (Fidelity::Card, compact)
-        } else {
+        if plan.spent.saturating_add(compact) > budget {
             continue;
-        };
-        plan.spent = plan.spent.saturating_add(cost);
-        plan.per_turn.push((turn.id.clone(), fidelity));
+        }
+        plan.spent = plan.spent.saturating_add(compact);
+        plan.per_turn.push((turn.id.clone(), Fidelity::Card));
         if let Some(sources) = plan.selected_records.as_mut() {
             sources.push((turn.id.clone(), closing.clone()));
         }
         plan.retrieved.push(turn.id.clone());
+        upgrades.push((plan.per_turn.len() - 1, turn, compact));
+    }
+    for (position, turn, compact) in upgrades {
+        let full = input
+            .profile
+            .estimate_tokens(messages_chars(&turn.full_record()));
+        let expanded = plan.spent.saturating_sub(compact).saturating_add(full);
+        if expanded <= budget {
+            plan.spent = expanded;
+            plan.per_turn[position].1 = Fidelity::Full;
+        }
     }
     plan
 }
 
-/// Plans one request against the ledger as it stands: builds the
-/// `TurnIndex`, gives every closed turn a provisional card so it can be
-/// costed, reads the current directive and its resolved reading, sizes the
-/// open turn's reserve from what will actually be sent
-/// (`open_turn_verbatim`, reset-aware), and delegates to [`plan`]. The one
-/// entry point every caller — the agent loop per step, `/compact`, the
-/// eval gate — plans through, so they can never disagree on what a plan
-/// is computed from.
+/// Production entry point: cost the active turn and the most recent visible
+/// closing record. It never reconstructs the historical TurnIndex, graph or
+/// Full projections just to choose one reference candidate.
 pub fn plan_for_session(
     log: &SessionLog,
     profile: &CapacityProfile,
     prefix_tokens: u64,
     tail_tokens: u64,
 ) -> WorkingSetPlan {
-    let mut index = TurnIndex::from_log(log);
-    index.ensure_cards(&|text| profile.estimate_tokens(text.len() as u64));
-    // Stored costs were measured when the card was written, possibly with
-    // another model/profile. Older cards also counted text_content() alone,
-    // omitting tool-call arguments, and costed index_text() as the card even
-    // though the wire carries line(). Cost the actual two projections now.
-    // This changes no ledger data and sends no new model-visible content.
-    for (number, turn) in index.turns.iter_mut().enumerate() {
-        let full_cost = profile.estimate_tokens(messages_chars(&turn.full_record()));
-        if let Some(card) = &mut turn.card {
-            card.tokens_full = full_cost;
-            card.tokens_card = profile.estimate_tokens(card.line(number + 1).len() as u64);
-        }
-    }
-    let directive = index
-        .turns
-        .last()
-        .map(|turn| turn.directive.text_content())
-        .unwrap_or_default();
-    let current_turn_tokens = profile.estimate_tokens(messages_chars(&log.open_turn_verbatim()));
-    let reading = log.latest_reading();
-    plan(PlanInput {
-        profile,
-        index: &index,
-        directive: &directive,
-        reading: reading.as_ref(),
+    let current = profile.estimate_tokens(messages_chars(&log.open_turn_verbatim()));
+    let budget = profile.budget(
         prefix_tokens,
         tail_tokens,
-        current_turn_tokens,
-    })
+        profile.current_turn_reserve(current),
+    );
+    let mut plan = WorkingSetPlan {
+        budget,
+        selected_records: Some(Vec::new()),
+        ..Default::default()
+    };
+    if let Some((closing, card)) = log.recent_turn_card() {
+        let cost = profile.estimate_tokens(card.addressed_message().len() as u64);
+        if cost <= budget {
+            plan.per_turn.push((card.turn_id.clone(), Fidelity::Card));
+            plan.selected_records = Some(vec![(card.turn_id.clone(), closing.to_string())]);
+            plan.spent = cost;
+        }
+    }
+    plan
 }
 
 #[cfg(test)]
@@ -652,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn linked_turn_promoted_without_shared_words() {
+    fn shared_nodes_do_not_admit_older_records() {
         let dir = tempfile::tempdir().unwrap();
         let unrelated = LinkedTurn {
             text: "weather in paris",
@@ -697,125 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn hub_artifact_does_not_link_everything() {
-        let dir = tempfile::tempdir().unwrap();
-        let hub = LinkedTurn {
-            text: "bump a dependency",
-            tokens_full: 50,
-            files: &[("Cargo.toml", false)],
-            thread: None,
-        };
-        let mut specs: Vec<LinkedTurn> = (0..20).map(|_| LinkedTurn { ..hub }).collect();
-        specs.insert(
-            3,
-            LinkedTurn {
-                text: "rewrite the lexer",
-                tokens_full: 50,
-                files: &[("src/parser.rs", true)],
-                thread: None,
-            },
-        );
-        let (log, ids) = linked_fixture(
-            dir.path(),
-            &specs,
-            &LinkedTurn {
-                text: "fix the build",
-                tokens_full: 0,
-                files: &[("Cargo.toml", false), ("src/parser.rs", false)],
-                thread: None,
-            },
-        );
-        let index = TurnIndex::from_log(&log);
-        let closed: Vec<&vak_session::Turn> = index.turns.iter().filter(|t| t.closed).collect();
-        let values = link_values(&closed, index.turns.last(), "");
-        let special = values.get(&ids[3]).unwrap().0;
-        assert!(
-            special > 0.75,
-            "a rare shared file links strongly: {special}"
-        );
-        let hubs: Vec<f64> = ids
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != 3)
-            .filter_map(|(_, id)| values.get(id).map(|(v, _)| *v))
-            .collect();
-        assert_eq!(
-            hubs.len(),
-            MAX_TURNS_PER_NODE,
-            "fan-out through one node is capped"
-        );
-        assert!(
-            hubs.iter().all(|v| *v < 0.2),
-            "a file every turn reads barely links: {hubs:?}"
-        );
-    }
-
-    #[test]
-    fn a_second_step_reaches_through_a_shared_turn() {
-        let dir = tempfile::tempdir().unwrap();
-        let unrelated = LinkedTurn {
-            text: "weather in paris",
-            tokens_full: 100,
-            files: &[],
-            thread: None,
-        };
-        let (log, ids) = linked_fixture(
-            dir.path(),
-            &[
-                LinkedTurn {
-                    text: "rewrite the lexer",
-                    tokens_full: 100,
-                    files: &[("src/parser.rs", true)],
-                    thread: None,
-                },
-                LinkedTurn {
-                    text: "cover the lexer",
-                    tokens_full: 100,
-                    files: &[("src/parser.rs", false), ("tests/parser.rs", true)],
-                    thread: None,
-                },
-                LinkedTurn { ..unrelated },
-                LinkedTurn { ..unrelated },
-            ],
-            &LinkedTurn {
-                text: "the tests fail",
-                tokens_full: 0,
-                files: &[("tests/parser.rs", false)],
-                thread: None,
-            },
-        );
-        let index = TurnIndex::from_log(&log);
-        let closed: Vec<&vak_session::Turn> = index.turns.iter().filter(|t| t.closed).collect();
-        let values = link_values(&closed, index.turns.last(), "");
-        let direct = values.get(&ids[1]).unwrap();
-        let second = values.get(&ids[0]).unwrap();
-        assert!(
-            second.0 > 0.0 && second.0 <= STEP_DECAY && second.0 < direct.0,
-            "{values:?}"
-        );
-        assert_eq!(
-            second.1,
-            vec![
-                "file:tests/parser.rs".to_string(),
-                "file:src/parser.rs".to_string()
-            ]
-        );
-        assert!(!values.contains_key(&ids[2]) && !values.contains_key(&ids[3]));
-    }
-
-    #[test]
-    fn named_files_are_paths_not_urls_or_numbers() {
-        assert_eq!(
-            named_files(
-                "fix `src/parser.rs` and ./README.md, bump to 3.5, see https://x.io/a.html, mail a@b.com, then plan.md."
-            ),
-            vec!["src/parser.rs", "README.md", "plan.md"]
-        );
-        assert!(named_files("what is the capital of Australia?").is_empty());
-    }
-
-    #[test]
-    fn a_named_file_links_at_plan_time() {
+    fn named_files_require_addressed_recall() {
         let dir = tempfile::tempdir().unwrap();
         let unrelated = LinkedTurn {
             text: "weather in paris",
@@ -852,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn the_preceding_turn_follows_the_thread() {
+    fn inferred_lineage_cannot_redirect_the_recent_candidate() {
         let dir = tempfile::tempdir().unwrap();
         let (log, ids) = linked_fixture(
             dir.path(),
@@ -878,26 +504,10 @@ mod tests {
             },
         );
         let index = TurnIndex::from_log(&log);
-        // "that" points to the release notes in the continued thread; send
-        // its compact card and leave the full history to `recall`.
+        // The resolver's hint is not a resolved reference. The model gets
+        // the actual recent candidate and can reopen the older work.
         let result = plan_for(&index, 200, "do that again, shorter");
-        assert_eq!(result.per_turn, vec![(ids[0].clone(), Fidelity::Card)]);
-    }
-
-    #[test]
-    fn link_weights_are_pinned() {
-        assert_eq!(link_weight(LinkKind::OwnThread), 1.0);
-        assert_eq!(link_weight(LinkKind::WroteFile), 1.0);
-        assert_eq!(link_weight(LinkKind::ReadFile), 0.8);
-        assert_eq!(link_weight(LinkKind::FetchedPage), 0.8);
-        assert_eq!(link_weight(LinkKind::ServesCommitment), 0.8);
-        assert_eq!(link_weight(LinkKind::ContinuesThread), 0.7);
-        assert_eq!(link_weight(LinkKind::ThisTurn), 1.0);
-        assert_eq!(link_weight(LinkKind::RecalledTurn), 1.0);
-        assert_eq!(link_weight(LinkKind::NamedFile), 0.8);
-        assert_eq!(MAX_TURNS_PER_NODE, 8);
-        assert_eq!(MAX_LINK_STEPS, 2);
-        assert_eq!(STEP_DECAY, 0.5);
+        assert_eq!(result.per_turn, vec![(ids[1].clone(), Fidelity::Card)]);
     }
 
     #[test]

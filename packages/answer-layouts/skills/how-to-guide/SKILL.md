@@ -5,6 +5,10 @@ description: Lay out instructions for doing or making something (a repair, a set
 
 # A how-to guide
 
+Use only the blocks needed for this request; a summary is optional. Each block
+must add information or interaction rather than repeat another. The following
+order is a composition guide, not a requirement to emit every listed card.
+
 1. `emit_summary_card`: what the person will have done, how long it takes
    and how hard it is, in one headline and one sentence.
 2. `emit_list_card` with `checkable: true` for what is needed before

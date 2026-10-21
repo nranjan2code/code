@@ -93,9 +93,13 @@ field. Measure both on captured requests before choosing (doc 89).
 A card whose content is larger than the answer column (a long table, a
 schedule, a document, a dashboard) shows an "Open in Canvas" action. The
 Canvas (doc 66) draws the same payload with the same form renderer at
-full size, keeps the answer's value scope live, and lets the person sort,
+full size through the same source-order row composer, keeps the answer's value scope live, and lets the person sort,
 filter, export and edit where the form allows. Nothing is a second
 renderer: the form draws at two sizes.
+
+Canvas and conversation use identical anchored groups (doc 87, 2026-10-21).
+Wider space may let a pair fit, but does not reinterpret reading order as CSS
+columns. A form's reading width determines fit; topic and history age do not.
 
 ## 4. Living pages
 

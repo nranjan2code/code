@@ -595,6 +595,9 @@ pub struct ProbeSettings {
 #[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq)]
 #[serde(default)]
 pub struct ControlSettings {
+    /// Provisional request resource envelope when neither metadata nor a probe
+    /// bounds a route. This is policy, never a claim about model capacity.
+    pub unmeasured_context_tokens: Option<u64>,
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub steps: std::collections::BTreeMap<vak_control::Purpose, vak_control::StepOverride>,
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -617,6 +620,12 @@ fn is_default_limits(limits: &vak_control::ControlLimitsOverride) -> bool {
 }
 
 impl ControlSettings {
+    pub fn unmeasured_context_tokens(&self) -> u64 {
+        self.unmeasured_context_tokens
+            .filter(|limit| *limit > 0)
+            .unwrap_or(vak_control::DEFAULT_UNMEASURED_CONTEXT_TOKENS)
+    }
+
     /// The time limits in force: the shipped ones with the layers applied.
     pub fn control_limits(&self) -> vak_control::ControlLimits {
         vak_control::ControlLimits::shipped().with(self.limits)
@@ -641,6 +650,9 @@ impl ControlSettings {
                 let lower = base.get(&purpose).copied().unwrap_or_default();
                 base.insert(purpose, setting.over(lower));
             }
+        }
+        if over.unmeasured_context_tokens.is_some() {
+            self.unmeasured_context_tokens = over.unmeasured_context_tokens;
         }
         layer(&mut self.steps, over.steps);
         self.limits = over.limits.over(self.limits);

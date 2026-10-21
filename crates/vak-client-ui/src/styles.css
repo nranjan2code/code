@@ -3067,21 +3067,17 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .primary-result-answer .semantic-heading:first-child { margin-top: 0; }
 .primary-result-material {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
   padding: 0 0 var(--space-2);
 }
-/* An answer is one document: its sections add no box of their own, every
-   block spans the answer, and two blocks the model paired share a row when
-   the answer is wide enough. */
 .answer-section { display: contents; }
-.answer-block { grid-column: 1 / -1; min-width: 0; }
+.answer-row { display: flex; flex-wrap: wrap; gap: var(--space-3); min-width: 0; }
+.answer-row > .answer-block { flex: 1 1 var(--answer-min-width, 20rem); max-width: 100%; min-width: 0; }
+.answer-block { min-width: 0; }
 .card-arrive { animation: card-arrive 280ms ease-out both; }
 @keyframes card-arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .card-arrive { animation: none; } }
-@container (min-width: 560px) {
-  .answer-block[data-paired] { grid-column: span 1; }
-}
 
 .answer-block > .adaptive-presentation{
   max-width: none;
@@ -6796,8 +6792,8 @@ html[data-theme="dark"] .map-tiles, html[data-theme="frosted-dark"] .map-tiles, 
 .answer-in-canvas { position: relative; height: 100%; overflow: auto; padding: var(--space-4); background: var(--bg); }
 .answer-in-canvas .semantic-timeline, .answer-in-canvas .semantic-turn, .answer-in-canvas .semantic-document { max-width: none; }
 .answer-in-canvas .primary-result { width: 100%; }
-.answer-in-canvas .primary-result-material { display: block; column-width: 24rem; column-gap: var(--space-4); }
-.answer-in-canvas .answer-block { break-inside: avoid; margin-bottom: var(--space-4); }
+.answer-in-canvas .primary-result-material { width: 100%; }
+.answer-in-canvas .answer-block { min-width: 0; }
 .canvas-card-gone { margin: var(--space-4); color: var(--muted); font-size: var(--fs-control); }
 
 .pack-row { display: flex; flex-wrap: wrap; gap: var(--space-4); }

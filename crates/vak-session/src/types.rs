@@ -894,6 +894,15 @@ pub enum PresentationSource {
     Scheduled { run_session_id: String },
 }
 
+/// Addressed layout of an accepted card. Endpoints are Presentation entry ids,
+/// never the nearest visible neighbour after a replacement.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardPlacement {
+    pub part: Option<String>,
+    pub beside: Option<String>,
+    pub replaces: Option<String>,
+}
+
 /// A validated `emit_*_card` (or fence) presentation, written once at the
 /// moment it validates. Never model-visible raw (`derive_messages` skips it,
 /// like `Receipt`): the current turn already sees the card through the
@@ -903,6 +912,9 @@ pub enum PresentationSource {
 /// nothing is rebuilt from tool arguments after this is written.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PresentationRecord {
+    /// Accepted placement resolved once, before replacements hide earlier cards.
+    #[serde(default)]
+    pub placement: CardPlacement,
     /// The entry id of the user directive this turn answers.
     pub turn_id: String,
     pub source: PresentationSource,

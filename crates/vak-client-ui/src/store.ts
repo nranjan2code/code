@@ -1074,9 +1074,18 @@ export function applyPresentationEvent(id: string, event: PresentationStreamEven
   if (event.delta) {
     const timeline = presentationBySession[id];
     if (!timeline) return;
+    if (event.sequence != null && timeline.covered_sequence != null && event.sequence <= timeline.covered_sequence) return;
     let indices = presentationIndices.get(id);
     if (!indices) { indices = new Map(timeline.items.map((item, index) => [item.id, index])); presentationIndices.set(id, indices); }
     const delta = event.delta;
+    if ((delta.type === "item_started" || delta.type === "item_replaced") && delta.item.placement?.replaces) {
+      const updated = applyPresentationDelta(timeline, delta);
+      if (updated) {
+        presentationIndices.set(id, new Map(updated.items.map((item, index) => [item.id, index])));
+        setPresentationBySession(id, "items", reconcile(updated.items));
+      }
+      return;
+    }
     const key = delta.type === "item_started" || delta.type === "item_replaced" ? delta.item.id : "item_id" in delta ? delta.item_id : null;
     if (!key) return;
     const index = indices.get(key);

@@ -99,20 +99,25 @@ pub fn workspace_facts(cwd: &std::path::Path) -> WorkspaceFacts {
 /// One function for the turn and for every preview of it (`vak intent
 /// explain`, `GET /intent/explain`), so a preview reads a request exactly as
 /// the turn would.
-pub fn history_facts(session: &vak_session::SessionLog) -> HistoryFacts {
-    let chain = session.chain_to_root();
-    let previous_act = chain.iter().rev().find_map(|entry| match &entry.payload {
-        vak_session::EntryPayload::Intent(record) => Some(record.reading.act),
-        _ => None,
-    });
-    let turn_index = chain
-        .iter()
-        .filter(|entry| matches!(entry.payload, vak_session::EntryPayload::Message(_)))
-        .count();
+pub fn history_facts(session: &vak_session::SessionLog, text: &str) -> HistoryFacts {
+    let previous_act = session
+        .active_entries_rev()
+        .find_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Intent(record) => Some(record.reading.act),
+            _ => None,
+        });
     HistoryFacts {
         previous_act,
-        turn_index,
-        open_threads: open_threads(session),
+        // UUID-backed strand ids are independent of conversation length.
+        turn_index: usize::from(session.current_turn().is_some()),
+        open_threads: if matches!(
+            vak_intent::parse_command(text),
+            Some(vak_intent::Command::GoalFix { .. } | vak_intent::Command::GoalReplace { .. })
+        ) {
+            open_threads(session)
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -180,43 +185,33 @@ pub fn resolve_turn(
     vak_intent::resolve(&request, declared, authority, config)
 }
 
-/// The threads still open in a session, for strand lineage.
-///
-/// A thread is open while its most recent strand is not `Replaces`d and no
-/// later turn closed it; the last `MAX_OPEN_THREADS` distinct threads are
-/// kept, newest first, so a long session does not link every request to
-/// something said an hour ago.
+/// The explicit goal's addressed threads, used only by human control
+/// commands. Natural-language references do not consult a lexical thread list.
 pub fn open_threads(session: &vak_session::SessionLog) -> Vec<vak_intent::ThreadFact> {
-    const MAX_OPEN_THREADS: usize = 12;
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    let mut replaced: BTreeSet<String> = BTreeSet::new();
+    let wanted = session.explicit_goal_threads();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let mut seen = BTreeSet::new();
     let mut out = Vec::new();
-    for entry in session.chain_to_root().into_iter().rev() {
+    for entry in session.active_entries_rev() {
         let vak_session::EntryPayload::Intent(record) = &entry.payload else {
             continue;
         };
-        for strand in record.strands.iter().rev() {
-            if let vak_intent::Lineage::Replaces { thread_id } = &strand.lineage {
-                replaced.insert(thread_id.clone());
-            }
-            if replaced.contains(&strand.thread_id) || !seen.insert(strand.thread_id.clone()) {
-                continue;
-            }
-            out.push(vak_intent::ThreadFact {
-                thread_id: strand.thread_id.clone(),
-                act: strand.reading.act,
-                domains: strand.reading.domains.clone(),
-                keywords: vak_intent::strand::keywords(&strand.text),
-            });
-            if out.len() >= MAX_OPEN_THREADS {
-                break;
+        for strand in &record.strands {
+            if wanted.contains(&strand.thread_id) && seen.insert(strand.thread_id.clone()) {
+                out.push(vak_intent::ThreadFact {
+                    thread_id: strand.thread_id.clone(),
+                    act: strand.reading.act,
+                    domains: strand.reading.domains.clone(),
+                    keywords: Default::default(),
+                });
             }
         }
-        if out.len() >= MAX_OPEN_THREADS {
+        if seen.len() == wanted.len() {
             break;
         }
     }
-    // Oldest first, so "the most recent open thread" is `last()`.
     out.reverse();
     out
 }

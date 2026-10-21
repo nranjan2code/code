@@ -5,6 +5,10 @@ description: Lay out a choice between two or more options (products, places, app
 
 # A choice between options
 
+Use only the blocks needed for this request; a summary is optional. Each block
+must add information or interaction rather than repeat another. The following
+order is a composition guide, not a requirement to emit every listed card.
+
 1. `emit_summary_card`: the recommendation as the headline and the reason
    in one sentence. When the choice depends on something the person has
    not said, say what, and lead with the option that fits the common case.
