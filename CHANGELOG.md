@@ -1,4 +1,4 @@
-## Unreleased
+## 8.17.0 — 2026-10-21
 
 - Updated TLS certificate validation and trust roots to reject distrusted
   emSign intermediates (RUSTSEC-2026-0381 and RUSTSEC-2026-0382).
