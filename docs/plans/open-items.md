@@ -1,7 +1,8 @@
 ## Canvas workspace architecture review (2026-10-22)
 
-- [ ] Preserve unknown subject entries through restore, mutation, recovery and
-  save; an unavailable viewer must not erase a tab or its unsent work.
+- [ ] Replace partial Canvas restoration with atomic current-contract
+  validation and explicit unavailable-plugin state; never save a reduced
+  snapshot after silently skipping a subject. No legacy/compatibility reader.
 - [ ] Replace inline/answer-subset short-hash identity with canonical scoped
   identity and explicit revision. The inline collision is reproduced.
 - [ ] Define viewer-independent dirty state, checkpoint/suspend/restore and
@@ -10,8 +11,10 @@
   preserve conversation access in split mode.
 - [ ] Review the proposed full-workspace host contract before implementation:
   namespaced plugin contributions, scoped resources, commands, Agent context,
-  state versions, revocation and an explicitly designed isolated execution
-  boundary. This proposal does not authorize a new executable UI runtime.
+  state schemas, revocation and an explicitly designed isolated execution
+  boundary. Build one clean shared web/desktop implementation, remove
+  superseded paths, and add no migration/backward-compatibility layer.
+  This proposal does not authorize a new executable UI runtime.
   See the [architecture review](../audits/canvas-workspace-architecture-2026-10-22.md).
 
 ## Turn navigator and automatic Topics (2026-10-22)

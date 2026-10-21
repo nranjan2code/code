@@ -1,5 +1,11 @@
 # Decisions
 
+- 2026-10-22: For the Canvas workspace redesign, the maintainer requires one
+  common web/desktop core and a clean end-state implementation: no stale
+  parallel paths, migrations or backward-compatibility code. Remove what a
+  change supersedes; plugin unavailability remains an explicit current state.
+  See the [review constraints](audits/canvas-workspace-architecture-2026-10-22.md#maintainer-constraint-clean-replacement-no-compatibility-layer).
+
 - 2026-10-22: The maintainer requested dial-style turn navigation with mouse
   and keyboard, retained delayed loading and no added border decoration; use
   existing plan names for previews. See [the contract](design/75-visual-refresh.md#turn-navigator-2026-10-22).

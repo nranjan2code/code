@@ -101,7 +101,7 @@ sources = "[Security hardening acceptance](../docs/audits/security-hardening-202
 
 [[finding]]
 id = "F6"
-tag = "Compatibility"
+tag = "Structure"
 verdict = "Defects found by review"
 title = "Canvas restoration can discard unknown tabs and alias inline content"
 evidence = """
@@ -112,8 +112,8 @@ identity omits session resource scope and uses a rolling digest with a \
 reproduced collision; `HtmlViewer` loads by that unchanged identity. No \
 production incident is established by these probes.
 """
-matters = "Mixed client versions can silently lose work, and a reused inline tab can retain bytes from a different subject. Plugin workspaces would amplify these existing identity and compatibility gaps."
-fix = "Preserve opaque unavailable entries through mutation and recovery, and give content canonical scoped identity with an explicit revision. Add focused regression probes before opening the registry to extensions."
+matters = "Partial restoration can silently discard work, and a reused inline tab can retain bytes from a different subject. Plugin workspaces require explicit unavailable states and sound resource identity."
+fix = "Validate the current contract atomically, represent unavailable plugins explicitly, and give content canonical scoped identity with an explicit revision. Replace superseded paths without legacy readers or migration adapters, as the maintainer directed."
 sources = "[Canvas workspace architecture review](../docs/audits/canvas-workspace-architecture-2026-10-22.md), C1 and C2; `canvasStack.ts`, `canvasSubject.ts`, `HtmlViewer.tsx`."
 
 [[keep]]

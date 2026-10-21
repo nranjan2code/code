@@ -23,6 +23,25 @@ This review proposes a direction and acceptance gates, not a new schedule for
 implementation. In particular, executable plugin UI needs a separately designed
 and approved isolation contract; ordinary HTML page-code permission is not one.
 
+## Maintainer constraint: clean replacement, no compatibility layer
+
+The maintainer stated on 2026-10-22 that there is no user base to preserve and
+requested clean design and fixes without stale code, migration paths or
+backward-compatibility machinery. Build the end state directly in the common
+web/desktop core and client. Remove superseded paths in the same change;
+do not add dual readers/writers, legacy subject adapters, old-schema converters
+or parallel runtimes to keep the prior Canvas working. Existing legacy Canvas
+conversion code is not a pattern to retain in the replacement.
+
+Protocol/state schema identifiers may validate the current contract; they do
+not promise support for earlier contracts. Reject unsupported input explicitly
+and atomically rather than partially reading it and saving a reduced result.
+Plugin disable/removal and temporarily unavailable capabilities are ordinary
+states of the current design: preserve the work's canonical resource identity
+and show an unavailable surface, without keeping an obsolete renderer alive.
+Artifact versions and parent lineage remain domain data, not compatibility code.
+This review does not authorize deleting real data or resetting an installation.
+
 ## What exists and should be preserved
 
 | Layer | Current implementation | Assessment |
@@ -56,13 +75,16 @@ and would apply to unavailable extensions under the same design.
 Probe: receive `file:s:known.txt` plus `extension:scene:1` with a note; restore,
 open `other.txt`, serialise. The next write contains only the two known files.
 
-**Fix:** preserve opaque entries through every read, mutation, recovery and
-write path; draw an unavailable-viewer placeholder. Unsupported versioned state
-must remain recoverable. An old client must never erase state by omission.
+**Fix:** the current contract must validate the complete Canvas atomically;
+reject invalid or unsupported state without rewriting a reduced snapshot.
+Represent a disabled or missing plugin explicitly through the current workspace
+subject and canonical resource identity, with an unavailable-surface view.
+Do not add support for unknown legacy subject shapes or mixed client versions.
 
 Evidence: `canvasStack.ts` `fromStored`/`toStored`, `canvasSubject.ts`
 `isCanvasSubject`, `canvasSync.ts` `validShape`, `vak-server/src/canvas.rs`
-`check`. Envelope-schema refusal already exists; do not weaken it.
+`check`. Current-schema validation should remain explicit; existing legacy
+conversion is not part of the proposed replacement.
 
 ### C2 — Subject identity can alias different inline documents
 
@@ -176,7 +198,7 @@ smallest common primitives that support genuinely different workspaces.
 
 | Contract | Host owns | Extension owns |
 | --- | --- | --- |
-| Registration | Namespaced type, supported contract/state versions, package digest, availability, priority/explicit viewer choice, policy admission | Format declarations and capability requests |
+| Registration | Namespaced type, current contract/state schema, package digest, availability, priority/explicit viewer choice, policy admission | Format declarations and capability requests |
 | Subject | Principal/Agent/space/resource identity, pinned version or explicit live-head mode, provenance | Domain object references inside the admitted resource |
 | Surface | Tabs, conversation relationship, focused/split layout, theme tokens, accessible host chrome, unavailable/crashed state | Stage, domain tools, inspectors, internal panes and specialised gestures |
 | State | Validated bounded checkpoints, revision/CAS, conflicts, encryption, recovery, erasure and sharing | Domain edit model and state schema; camera/slice/viewport preferences |
@@ -286,8 +308,9 @@ boundary test than several static previews of different file extensions.
 
 ## Suggested order and exit gates
 
-1. Repair unknown-subject preservation and inline identity; add focused
-   regression coverage for mixed clients and collisions.
+1. Replace partial subject restoration with atomic current-contract validation
+   and explicit unavailable-plugin state; fix inline identity. Test refusal
+   without reduced writes, plugin disable/removal and identity collisions.
 2. Define subject/resource identity and viewer-independent dirty/checkpoint
    lifecycle. Exercise tab switch, eviction, reload, crash, concurrent edits
    and plugin removal; never silently drop work.
@@ -297,7 +320,8 @@ boundary test than several static previews of different file extensions.
    workspace packages. Prove that forged/replayed messages, disabled plugins,
    changed permissions and unavailable renderers fail safely.
 5. Add workspace declarations to the existing plugin lifecycle; install,
-   update, rollback, disable and reopen across supported client versions.
+   update, rollback, disable and reopen against the current shared contract;
+   reject incompatible packages explicitly, without compatibility adapters.
 6. Qualify a real 3D/editing prototype and the existing forms workspace in the
    running web client at 1440×900 and 390×844, light/dark, then native WebKit.
    Include large data, memory pressure, keyboard operation, cancellation and

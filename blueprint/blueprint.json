@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.19.0",
-  "revision": "b94c2f55f",
+  "version": "8.20.0",
+  "revision": "a015c09f5",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.19.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 80,
    "lock_crates": 764,
-   "total_commits": 2440,
+   "total_commits": 2443,
    "days": 63,
    "peak_day": 174,
    "design_docs": 97,
@@ -134,7 +134,7 @@
     "section": "Canvas workspace architecture review (2026-10-22)",
     "open": 5,
     "items": [
-     "Preserve unknown subject entries through restore, mutation, recovery and save;",
+     "Replace partial Canvas restoration with atomic current-contract validation and explicit unavailable-plugin state;",
      "Replace inline/answer-subset short-hash identity with canonical scoped identity and explicit revision.",
      "Define viewer-independent dirty state, checkpoint/suspend/restore and close/eviction handling for domain edits, beyond the frame's comment note.",
      "Qualify focused Canvas keyboard entry, containment and focus return;",
@@ -396,19 +396,19 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 497,
+  "commits": 500,
   "areas": [
    [
     "docs",
-    409
+    410
    ],
    [
     "(root)",
-    282
+    285
    ],
    [
     "vak-core",
-    208
+    209
    ],
    [
     "vak-server",
@@ -416,7 +416,7 @@
    ],
    [
     "vak-client-ui",
-    117
+    118
    ],
    [
     "vak-agent",
@@ -456,7 +456,7 @@
    [
     "client",
     "Workspace client",
-    98
+    99
    ],
    [
     "turn",
@@ -466,7 +466,7 @@
    [
     "cards",
     "Cards and presentation",
-    92
+    93
    ],
    [
     "loop",
@@ -506,7 +506,7 @@
    [
     "engineering",
     "Build, gate and release",
-    41
+    42
    ],
    [
     "state",
@@ -531,7 +531,7 @@
    [
     "workers",
     "Workers and delegation",
-    26
+    27
    ],
    [
     "automations",
@@ -654,19 +654,24 @@
     9
    ],
    [
-    "prompt",
-    "Prompt layers",
-    7
-   ],
-   [
     "commitments",
     "Commitments",
+    8
+   ],
+   [
+    "prompt",
+    "Prompt layers",
     7
    ],
    [
     "backup",
     "Backup and restore",
     7
+   ],
+   [
+    "intake",
+    "Intake and feeds",
+    6
    ],
    [
     "voice",
@@ -676,11 +681,6 @@
    [
     "sync",
     "Sync",
-    5
-   ],
-   [
-    "intake",
-    "Intake and feeds",
     5
    ],
    [
@@ -760,6 +760,34 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "a015c09f5",
+    "date": "2026-10-22",
+    "subject": "Finalize 8.20.0 changelog",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "e151eeca4",
+    "date": "2026-10-22",
+    "subject": "Bump version to 8.20.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "b05801713",
+    "date": "2026-10-22",
+    "subject": "Improve turn navigation and agent work labels",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs",
+     "vak-client-ui",
+     "vak-core"
+    ]
+   },
    {
     "hash": "b94c2f55f",
     "date": "2026-10-22",
@@ -893,50 +921,9 @@
     "areas": [
      "(root)"
     ]
-   },
-   {
-    "hash": "e8ba8825c",
-    "date": "2026-10-21",
-    "subject": "Page conversation history and patch TLS verification",
-    "areas": [
-     "(root)",
-     ".cargo",
-     "blueprint",
-     "docs",
-     "scripts",
-     "vak-agent",
-     "vak-catalog",
-     "vak-client-ui",
-     "vak-intent",
-     "vak-server",
-     "vak-session",
-     "vak-storage"
-    ]
-   },
-   {
-    "hash": "81ba0df87",
-    "date": "2026-10-20",
-    "subject": "Record 8.16.1 macOS signing limitation",
-    "areas": [
-     "docs"
-    ]
-   },
-   {
-    "hash": "66d3a278f",
-    "date": "2026-10-20",
-    "subject": "Release 8.16.1",
-    "areas": [
-     "(root)"
-    ]
    }
   ],
-  "unreleased": [
-   "The turn navigator rolls with the mouse wheel, trackpad, drag and keyboard;",
-   "Topic navigation keeps its turn positions aligned, uses recorded plan names for previews, and labels paged turn counts as loaded.",
-   "Details follows current work or pins an earlier request, with Activity, Files and Evidence scoped to that request.",
-   "Activity names recorded operations, folds repeated successful calls, keeps failures and decisions visible, and preserves open details and reading position during streaming.",
-   "File details read current Library state, evidence distinguishes links from verification, and unavailable checks are shown as unavailable."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1589,9 +1576,9 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 515,
+   "commits": 516,
    "fixes": 74,
-   "recent": 98,
+   "recent": 99,
    "fix_density": 3.9,
    "out": [
     {
@@ -5637,9 +5624,9 @@
     "crates/vak-agent/src/write_lease.rs",
     "crates/vak-client-ui/src/components/WorkersPanel.tsx"
    ],
-   "commits": 87,
+   "commits": 88,
    "fixes": 9,
-   "recent": 26,
+   "recent": 27,
    "fix_density": 2.6,
    "out": [
     {
@@ -7051,9 +7038,9 @@
     "crates/vak-core/src/commitments.rs",
     "crates/vak-core/src/tools_commitments.rs"
    ],
-   "commits": 29,
+   "commits": 30,
    "fixes": 3,
-   "recent": 7,
+   "recent": 8,
    "fix_density": 0.7,
    "out": [
     {
@@ -14806,9 +14793,9 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 307,
+   "commits": 308,
    "fixes": 53,
-   "recent": 92,
+   "recent": 93,
    "fix_density": 2.7,
    "out": [
     {
@@ -16825,9 +16812,9 @@
     "crates/vak-intake/src/text.rs",
     "crates/vak-server/src/intake.rs"
    ],
-   "commits": 9,
+   "commits": 10,
    "fixes": 0,
-   "recent": 5,
+   "recent": 6,
    "fix_density": 0.0,
    "out": [
     {
@@ -21775,9 +21762,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 128,
+   "commits": 129,
    "fixes": 21,
-   "recent": 41,
+   "recent": 42,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -30572,6 +30559,31 @@
  ],
  "replay": [
   {
+   "hash": "a015c09f5",
+   "date": "2026-10-22",
+   "subject": "Finalize 8.20.0 changelog",
+   "subsystems": []
+  },
+  {
+   "hash": "e151eeca4",
+   "date": "2026-10-22",
+   "subject": "Bump version to 8.20.0",
+   "subsystems": []
+  },
+  {
+   "hash": "b05801713",
+   "date": "2026-10-22",
+   "subject": "Improve turn navigation and agent work labels",
+   "subsystems": [
+    "cards",
+    "client",
+    "commitments",
+    "engineering",
+    "intake",
+    "workers"
+   ]
+  },
+  {
    "hash": "b94c2f55f",
    "date": "2026-10-22",
    "subject": "Make request details turn-focused",
@@ -35646,7 +35658,7 @@
    "src": 39154,
    "tests": 324,
    "files": 195,
-   "commits": 653,
+   "commits": 654,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35857,7 +35869,7 @@
    "src": 62336,
    "tests": 10484,
    "files": 74,
-   "commits": 659,
+   "commits": 660,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -37264,8 +37276,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1396,
-  "hot": 653
+  "docs_commits": 1397,
+  "hot": 654
  },
  "findings": [
   {
@@ -37300,12 +37312,12 @@
   },
   {
    "id": "F6",
-   "tag": "Compatibility",
+   "tag": "Structure",
    "verdict": "Defects found by review",
    "title": "Canvas restoration can discard unknown tabs and alias inline content",
    "evidence": "The direct production-function probes of 2026-10-22 reproduce both paths. `fromStored` omits an unrecognised subject and `toStored` sends the reduced set on a later write, including omission of its unsent note. Inline subject identity omits session resource scope and uses a rolling digest with a reproduced collision; `HtmlViewer` loads by that unchanged identity. No production incident is established by these probes.",
-   "matters": "Mixed client versions can silently lose work, and a reused inline tab can retain bytes from a different subject. Plugin workspaces would amplify these existing identity and compatibility gaps.",
-   "fix": "Preserve opaque unavailable entries through mutation and recovery, and give content canonical scoped identity with an explicit revision. Add focused regression probes before opening the registry to extensions.",
+   "matters": "Partial restoration can silently discard work, and a reused inline tab can retain bytes from a different subject. Plugin workspaces require explicit unavailable states and sound resource identity.",
+   "fix": "Validate the current contract atomically, represent unavailable plugins explicitly, and give content canonical scoped identity with an explicit revision. Replace superseded paths without legacy readers or migration adapters, as the maintainer directed.",
    "sources": "[Canvas workspace architecture review](../docs/audits/canvas-workspace-architecture-2026-10-22.md), C1 and C2; `canvasStack.ts`, `canvasSubject.ts`, `HtmlViewer.tsx`."
   }
  ],
