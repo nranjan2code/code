@@ -1,6 +1,6 @@
 {
  "meta": {
-  "version": "8.18.0",
+  "version": "8.19.0",
   "revision": "12fb91326",
   "first_date": "2026-08-21",
   "last_date": "2026-10-21",
@@ -13,7 +13,7 @@
    "ts_crates": 2,
    "rust_src": 345905,
    "rust_tests": 87619,
-   "ts_src": 63615,
+   "ts_src": 63781,
    "routes": 401,
    "forms": 20,
    "worker_tasks": 14,
@@ -23,7 +23,7 @@
    "days": 62,
    "peak_day": 174,
    "design_docs": 97,
-   "agents_words": 20522,
+   "agents_words": 20576,
    "subsystems": 64,
    "connections": 828,
    "flows": 11
@@ -101,11 +101,8 @@
   "health": [
    {
     "check": "records",
-    "ok": false,
-    "problems": [
-     "FAIL: 1 record problem(s):",
-     "CHANGELOG.md: 8.18.0 is released; start a `## Unreleased` section"
-    ]
+    "ok": true,
+    "problems": []
    },
    {
     "check": "doc paths",
@@ -128,6 +125,21 @@
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "Focused Review and shared controls (2026-10-21)",
+    "open": 1,
+    "items": [
+     "Qualify the rebuilt controls and focused Review in the native WebKit desktop host;"
+    ]
+   },
+   {
+    "section": "HTML permissions and Review layout (2026-10-21)",
+    "open": 2,
+    "items": [
+     "Qualify the changed code in the installed native WebKit desktop host;",
+     "Fully offline arbitrary JavaScript still requires an enforceable browser network boundary."
+    ]
+   },
    {
     "section": "Topics (2026-10-21)",
     "open": 4,
@@ -348,7 +360,7 @@
     ]
    }
   ],
-  "open_total": 93,
+  "open_total": 96,
   "measures_revision": "431a828ac"
  },
  "activity": {
@@ -1359,7 +1371,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 85548,
+   "lines": 85714,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1457,7 +1469,7 @@
    ],
    "modules": 66,
    "parts": [],
-   "lines": 18740,
+   "lines": 18756,
    "largest": [
     3210,
     "crates/vak-client-ui/src/api.ts"
@@ -2243,6 +2255,16 @@
    ],
    "in": [
     {
+     "from": "canvas",
+     "to": "client",
+     "kind": "code",
+     "weight": 37,
+     "example": [
+      "crates/vak-client-ui/src/artifactPreview.ts",
+      "crates/vak-client-ui/src/api.ts"
+     ]
+    },
+    {
      "from": "cards",
      "to": "client",
      "kind": "code",
@@ -2250,16 +2272,6 @@
      "example": [
       "crates/vak-client-ui/src/components/PresentationRenderer.tsx",
       "crates/vak-client-ui/src/App.tsx"
-     ]
-    },
-    {
-     "from": "canvas",
-     "to": "client",
-     "kind": "code",
-     "weight": 36,
-     "example": [
-      "crates/vak-client-ui/src/artifactPreview.ts",
-      "crates/vak-client-ui/src/api.ts"
      ]
     },
     {
@@ -9931,7 +9943,7 @@
    ],
    "modules": 13,
    "parts": [],
-   "lines": 6840,
+   "lines": 6877,
    "largest": [
     2569,
     "crates/vak-sandbox/src/lib.rs"
@@ -15426,9 +15438,9 @@
     "L6",
     "L7"
    ],
-   "modules": 35,
+   "modules": 36,
    "parts": [],
-   "lines": 4843,
+   "lines": 4957,
    "largest": [
     794,
     "crates/vak-server/src/preview.rs"
@@ -15461,6 +15473,7 @@
     "crates/vak-client-ui/src/canvasSyncState.ts",
     "crates/vak-client-ui/src/canvasViewers.ts",
     "crates/vak-client-ui/src/components/ArtifactCanvas.tsx",
+    "crates/vak-client-ui/src/components/HtmlPreview.tsx",
     "crates/vak-client-ui/src/components/LivePreviewPanel.tsx",
     "crates/vak-client-ui/src/components/canvas/AnswerViewer.tsx",
     "crates/vak-client-ui/src/components/canvas/AutomationViewer.tsx",
@@ -15496,7 +15509,7 @@
      "from": "canvas",
      "to": "client",
      "kind": "code",
-     "weight": 36,
+     "weight": 37,
      "example": [
       "crates/vak-client-ui/src/artifactPreview.ts",
       "crates/vak-client-ui/src/api.ts"
@@ -15671,7 +15684,7 @@
      "weight": 1,
      "example": [
       "crates/vak-client-ui/src/components/LibraryPreview.tsx",
-      "crates/vak-client-ui/src/previewTheme.ts"
+      "crates/vak-client-ui/src/components/HtmlPreview.tsx"
      ]
     }
    ],
@@ -15696,7 +15709,7 @@
    ],
    "modules": 13,
    "parts": [],
-   "lines": 8020,
+   "lines": 8019,
    "largest": [
     3118,
     "crates/vak-server/src/library.rs"
@@ -15889,7 +15902,7 @@
      "weight": 1,
      "example": [
       "crates/vak-client-ui/src/components/LibraryPreview.tsx",
-      "crates/vak-client-ui/src/previewTheme.ts"
+      "crates/vak-client-ui/src/components/HtmlPreview.tsx"
      ]
     },
     {
@@ -21750,8 +21763,8 @@
   }
  ],
  "coverage": {
-  "units": 715,
-  "claimed": 715,
+  "units": 716,
+  "claimed": 716,
   "routes": 401,
   "routes_claimed": 401,
   "verbs": 36,
@@ -21772,6 +21785,16 @@
  },
  "connections": [
   {
+   "from": "canvas",
+   "to": "client",
+   "kind": "code",
+   "weight": 37,
+   "example": [
+    "crates/vak-client-ui/src/artifactPreview.ts",
+    "crates/vak-client-ui/src/api.ts"
+   ]
+  },
+  {
    "from": "cards",
    "to": "client",
    "kind": "code",
@@ -21779,16 +21802,6 @@
    "example": [
     "crates/vak-client-ui/src/components/PresentationRenderer.tsx",
     "crates/vak-client-ui/src/App.tsx"
-   ]
-  },
-  {
-   "from": "canvas",
-   "to": "client",
-   "kind": "code",
-   "weight": 36,
-   "example": [
-    "crates/vak-client-ui/src/artifactPreview.ts",
-    "crates/vak-client-ui/src/api.ts"
    ]
   },
   {
@@ -28678,7 +28691,7 @@
    "weight": 1,
    "example": [
     "crates/vak-client-ui/src/components/LibraryPreview.tsx",
-    "crates/vak-client-ui/src/previewTheme.ts"
+    "crates/vak-client-ui/src/components/HtmlPreview.tsx"
    ]
   },
   {
@@ -35840,9 +35853,9 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 38652,
+   "src": 38818,
    "tests": 324,
-   "files": 192,
+   "files": 193,
    "commits": 651,
    "deps": [],
    "used_by": [],
