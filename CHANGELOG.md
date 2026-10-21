@@ -1,4 +1,4 @@
-## Unreleased
+## 8.17.1 — 2026-10-21
 
 - Opening a composed result in Canvas now scopes it to that result group, so
   other results from the same turn do not appear alongside it.
