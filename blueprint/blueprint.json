@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.16.1",
-  "revision": "e8ba8825c",
+  "version": "8.17.0",
+  "revision": "66b44448c",
   "first_date": "2026-08-21",
   "last_date": "2026-10-21",
   "prose_reviewed": "8.16.0 · 2026-10-20"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2428,
+   "total_commits": 2429,
    "days": 62,
    "peak_day": 174,
    "design_docs": 96,
@@ -327,12 +327,12 @@
    }
   ],
   "open_total": 87,
-  "measures_revision": "6fa02ac29"
+  "measures_revision": "66b44448c"
  },
  "activity": {
   "since": "2026-10-07",
   "until": "2026-10-21",
-  "commits": 510,
+  "commits": 511,
   "areas": [
    [
     "docs",
@@ -340,7 +340,7 @@
    ],
    [
     "(root)",
-    282
+    283
    ],
    [
     "vak-core",
@@ -697,6 +697,14 @@
   ],
   "recent": [
    {
+    "hash": "66b44448c",
+    "date": "2026-10-21",
+    "subject": "Release 8.17.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "e8ba8825c",
     "date": "2026-10-21",
     "subject": "Page conversation history and patch TLS verification",
@@ -846,22 +854,9 @@
      "(root)",
      "vak-llm"
     ]
-   },
-   {
-    "hash": "a045409c2",
-    "date": "2026-10-19",
-    "subject": "Run the coding-turn outcome test with the real worker",
-    "areas": [
-     "vak-core",
-     "vak-server"
-    ]
    }
   ],
-  "unreleased": [
-   "Updated TLS certificate validation and trust roots to reject distrusted emSign intermediates (RUSTSEC-2026-0381 and RUSTSEC-2026-0382).",
-   "Conversations open with recent turns and load earlier messages on scroll.",
-   "Conversation lists use catalog-backed summary pages."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30269,6 +30264,12 @@
  ],
  "replay": [
   {
+   "hash": "66b44448c",
+   "date": "2026-10-21",
+   "subject": "Release 8.17.0",
+   "subsystems": []
+  },
+  {
    "hash": "e8ba8825c",
    "date": "2026-10-21",
    "subject": "Page conversation history and patch TLS verification",
@@ -37019,61 +37020,61 @@
     "score": 193,
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 1850
+    "line": 1881
    },
    {
     "score": 137,
     "name": "merge_into",
     "file": "crates/vak-config/src/lib.rs",
-    "line": 4154
+    "line": 4169
    },
    {
     "score": 106,
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6636
+    "line": 6646
    },
    {
     "score": 96,
     "name": "unknown_key_warnings",
     "file": "crates/vak-config/src/lib.rs",
-    "line": 3802
+    "line": 3817
    },
    {
     "score": 83,
     "name": "snapshot_inner",
     "file": "crates/vak-server/src/projection.rs",
-    "line": 849
+    "line": 892
    },
    {
     "score": 75,
     "name": "load_with_trust",
     "file": "crates/vak-config/src/lib.rs",
-    "line": 2994
+    "line": 3009
    },
    {
     "score": 68,
     "name": "tick",
     "file": "crates/vak-server/src/surfaces/telegram.rs",
-    "line": 236
+    "line": 234
    },
    {
     "score": 61,
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5648
+    "line": 5685
    },
    {
     "score": 46,
     "name": "execute_one",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 8597
+    "line": 8804
    },
    {
     "score": 43,
     "name": "execute_batch_calls",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 7462
+    "line": 7669
    },
    {
     "score": 42,
@@ -37099,7 +37100,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 193 (rank 1 of 4,414 library functions) and `Core::run_turn_recorded` at 106 (rank 3); the median is 3 and the 99th percentile 24. 154 commits changed the first (6% of all) and 214 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.5 per thousand lines, against a median of 4.4 over 404 files; file size alone does not predict the rate (ρ = -0.13).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 193 (rank 1 of 4,468 library functions) and `Core::run_turn_recorded` at 106 (rank 3); the median is 3 and the 99th percentile 24. 154 commits changed the first (6% of all) and 214 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.5 per thousand lines, against a median of 4.4 over 404 files; file size alone does not predict the rate (ρ = -0.13).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
