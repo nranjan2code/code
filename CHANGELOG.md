@@ -1,5 +1,7 @@
 ## Unreleased
 
+## 8.20.0 — 2026-10-22
+
 - The turn navigator rolls with the mouse wheel, trackpad, drag and keyboard;
   it loads history at page edges and previews accepted plan names. Partial
   history counts say loaded. Agent subtitles name the latest work instead of
