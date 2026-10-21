@@ -1,4 +1,4 @@
-## Unreleased
+## 8.18.0 — 2026-10-21
 
 - A synchronous channel reply waits for the turn's settlement and session
   handoff, so an immediate follow-up is not accidentally queued as steering
