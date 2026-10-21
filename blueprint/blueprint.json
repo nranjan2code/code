@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.19.0",
-  "revision": "12fb91326",
+  "revision": "244c22cd6",
   "first_date": "2026-08-21",
   "last_date": "2026-10-21",
   "prose_reviewed": "8.16.0 · 2026-10-20"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 80,
    "lock_crates": 764,
-   "total_commits": 2438,
+   "total_commits": 2439,
    "days": 62,
    "peak_day": 174,
    "design_docs": 97,
@@ -366,15 +366,15 @@
  "activity": {
   "since": "2026-10-07",
   "until": "2026-10-21",
-  "commits": 520,
+  "commits": 521,
   "areas": [
    [
     "docs",
-    428
+    429
    ],
    [
     "(root)",
-    291
+    292
    ],
    [
     "vak-core",
@@ -386,7 +386,7 @@
    ],
    [
     "vak-client-ui",
-    121
+    122
    ],
    [
     "vak-agent",
@@ -406,7 +406,7 @@
    ],
    [
     "vak-admin-ui",
-    55
+    56
    ],
    [
     "vak-config",
@@ -426,7 +426,7 @@
    [
     "client",
     "Workspace client",
-    102
+    103
    ],
    [
     "turn",
@@ -456,7 +456,7 @@
    [
     "admin",
     "Admin console",
-    53
+    54
    ],
    [
     "control",
@@ -471,16 +471,16 @@
    [
     "library",
     "Library and file state",
-    44
-   ],
-   [
-    "state",
-    "State registry and baseline",
-    40
+    45
    ],
    [
     "engineering",
     "Build, gate and release",
+    41
+   ],
+   [
+    "state",
+    "State registry and baseline",
     40
    ],
    [
@@ -529,13 +529,13 @@
     23
    ],
    [
-    "abilities",
-    "Self-evolving abilities",
-    20
-   ],
-   [
     "canvas",
     "Canvas and previews",
+    21
+   ],
+   [
+    "abilities",
+    "Self-evolving abilities",
     20
    ],
    [
@@ -544,14 +544,14 @@
     20
    ],
    [
-    "storage",
-    "Storage substrate",
+    "sandbox",
+    "Sandbox and execution",
     19
    ],
    [
-    "sandbox",
-    "Sandbox and execution",
-    18
+    "storage",
+    "Storage substrate",
+    19
    ],
    [
     "memory",
@@ -731,6 +731,18 @@
   ],
   "recent": [
    {
+    "hash": "244c22cd6",
+    "date": "2026-10-21",
+    "subject": "Release 8.19.0 with focused reviews and controls",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs",
+     "vak-admin-ui",
+     "vak-client-ui"
+    ]
+   },
+   {
     "hash": "12fb91326",
     "date": "2026-10-21",
     "subject": "Record 8.18.0 release and verified local installation",
@@ -897,22 +909,6 @@
      "vak-server",
      "vak-session",
      "vak-tools"
-    ]
-   },
-   {
-    "hash": "3213a256f",
-    "date": "2026-10-20",
-    "subject": "Improve voice setup and add discovered multi-provider speech packs",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-admin-ui",
-     "vak-client-ui",
-     "vak-config",
-     "vak-core",
-     "vak-llm",
-     "vak-server",
-     "vak-voice"
     ]
    }
   ],
@@ -1567,9 +1563,9 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 513,
+   "commits": 514,
    "fixes": 74,
-   "recent": 102,
+   "recent": 103,
    "fix_density": 3.9,
    "out": [
     {
@@ -2983,9 +2979,9 @@
     "crates/vak-server/src/client_ui.rs",
     "crates/vak-server/src/embedded_ui.rs"
    ],
-   "commits": 281,
+   "commits": 282,
    "fixes": 48,
-   "recent": 53,
+   "recent": 54,
    "fix_density": 2.1,
    "out": [
     {
@@ -9980,9 +9976,9 @@
     "crates/vak-tools/src/sandbox.rs",
     "crates/vak-tools/src/sandbox_events.rs"
    ],
-   "commits": 131,
+   "commits": 132,
    "fixes": 19,
-   "recent": 18,
+   "recent": 19,
    "fix_density": 2.8,
    "out": [
     {
@@ -15500,9 +15496,9 @@
     "crates/vak-server/src/canvas.rs",
     "crates/vak-server/src/preview.rs"
    ],
-   "commits": 69,
+   "commits": 70,
    "fixes": 5,
-   "recent": 20,
+   "recent": 21,
    "fix_density": 1.0,
    "out": [
     {
@@ -15760,9 +15756,9 @@
     "crates/vak-server/src/library.rs",
     "crates/vak-tools/src/artifact.rs"
    ],
-   "commits": 51,
+   "commits": 52,
    "fixes": 4,
-   "recent": 44,
+   "recent": 45,
    "fix_density": 0.5,
    "out": [
     {
@@ -21753,9 +21749,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 127,
+   "commits": 128,
    "fixes": 21,
-   "recent": 40,
+   "recent": 41,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -30550,6 +30546,19 @@
  ],
  "replay": [
   {
+   "hash": "244c22cd6",
+   "date": "2026-10-21",
+   "subject": "Release 8.19.0 with focused reviews and controls",
+   "subsystems": [
+    "admin",
+    "canvas",
+    "client",
+    "engineering",
+    "library",
+    "sandbox"
+   ]
+  },
+  {
    "hash": "12fb91326",
    "date": "2026-10-21",
    "subject": "Record 8.18.0 release and verified local installation",
@@ -35685,7 +35694,7 @@
    "src": 24963,
    "tests": 0,
    "files": 31,
-   "commits": 264,
+   "commits": 265,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35856,7 +35865,7 @@
    "src": 38818,
    "tests": 324,
    "files": 193,
-   "commits": 651,
+   "commits": 652,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -37474,8 +37483,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1394,
-  "hot": 651
+  "docs_commits": 1395,
+  "hot": 652
  },
  "findings": [
   {
