@@ -1,4 +1,4 @@
-## Unreleased
+## 8.17.2 — 2026-10-21
 
 - Follow-ups use an explicitly labelled recent reference; older or multiple
   dependencies can be reopened together, and history searches can continue
@@ -17,6 +17,8 @@
 - Channel replies carry their own settled outcome metadata, so concurrent
   presentation updates cannot change their notices. Completed answers that
   require no retrieved evidence no longer receive a false unverified warning.
+
+## Unreleased
 
 ## 8.17.1 — 2026-10-21
 
