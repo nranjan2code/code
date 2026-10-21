@@ -3,7 +3,10 @@
 use crate::support;
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
@@ -43,6 +46,45 @@ impl Provider for Scripted {
             }
             None => sink.close_error(LlmError::Parse("exhausted".into())).await,
         }
+        Ok(rx)
+    }
+}
+
+struct GatedInboundProvider {
+    calls: AtomicUsize,
+    first_started: tokio::sync::Notify,
+    release_first: tokio::sync::Notify,
+    second_started: tokio::sync::Notify,
+    release_second: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl Provider for GatedInboundProvider {
+    fn name(&self) -> &str {
+        "gated-inbound"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        crate::support::CapacityKey::default().0
+    }
+
+    async fn stream(
+        &self,
+        _request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        let (started, release, answer) = match self.calls.fetch_add(1, Ordering::SeqCst) {
+            0 => (&self.first_started, &self.release_first, "first reply"),
+            _ => (&self.second_started, &self.release_second, "steered reply"),
+        };
+        started.notify_one();
+        release.notified().await;
+        let (mut sink, rx) = stream::channel(64);
+        let message = text(answer);
+        sink.push(stream::StreamEvent::Start {
+            partial: message.clone(),
+        });
+        sink.close_message(message).await;
         Ok(rx)
     }
 }
@@ -319,6 +361,97 @@ async fn inbound_wait_roundtrip_reuses_binding() {
     // block now rides in the per-turn tail, not the projection
     // (docs/design/68-context-engine.md §6).
     assert_eq!(t["count"].as_u64(), Some(4));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn inbound_wait_reply_follows_leg_decision_while_steering_continues() {
+    let provider = Arc::new(GatedInboundProvider {
+        calls: AtomicUsize::new(0),
+        first_started: tokio::sync::Notify::new(),
+        release_first: tokio::sync::Notify::new(),
+        second_started: tokio::sync::Notify::new(),
+        release_second: tokio::sync::Notify::new(),
+    });
+    let (base, token, _home, _server) = spawn_gateway(provider.clone()).await;
+    let client = client_with(&token);
+
+    let first_client = client.clone();
+    let first_base = base.clone();
+    let first = tokio::spawn(async move {
+        inbound(
+            &first_client,
+            &first_base,
+            serde_json::json!({
+                "surface": "webhook",
+                "chat": "ci",
+                "text": "first request",
+                "wait": true
+            }),
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), provider.first_started.notified())
+        .await
+        .expect("first model step starts");
+
+    // The first turn owns the ledger while the provider is gated, so this
+    // inbound is durably queued as steering before the first turn settles.
+    let queued = inbound(
+        &client,
+        &base,
+        serde_json::json!({
+            "surface": "webhook",
+            "chat": "ci",
+            "text": "steer the running turn"
+        }),
+    )
+    .await;
+    assert_eq!(queued.status(), 202);
+    let queued_body: serde_json::Value = queued.json().await.unwrap();
+    assert_eq!(queued_body["state"], "steering_queued");
+
+    provider.release_first.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), provider.second_started.notified())
+        .await
+        .expect("queued steering reaches its continuation turn");
+    let response = tokio::time::timeout(Duration::from_secs(5), first)
+        .await
+        .expect("the first leg's wait response follows its continuation decision")
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["state"], "completed");
+    assert_eq!(body["text"], "first reply");
+    let session_id = body["session_id"].as_str().unwrap();
+    assert!(
+        session_running(&client, &base, session_id).await,
+        "the queued continuation is still busy after the first reply"
+    );
+
+    provider.release_second.notify_one();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut transcript = String::new();
+    while std::time::Instant::now() < deadline {
+        let response = client
+            .get(format!("{base}/sessions/{session_id}/transcript"))
+            .send()
+            .await
+            .unwrap();
+        if response.status().is_success() {
+            let value: serde_json::Value = response.json().await.unwrap();
+            transcript = serde_json::to_string(&value).unwrap();
+            if transcript.contains("steer the running turn") && transcript.contains("steered reply")
+            {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        transcript.contains("steer the running turn"),
+        "{transcript}"
+    );
+    assert!(transcript.contains("steered reply"), "{transcript}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

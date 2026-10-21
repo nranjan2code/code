@@ -3780,12 +3780,20 @@ async fn execute_turn_chain(
     };
 
     let settle_core = core.clone();
+    // The HTTP waiter may immediately send the next message after receiving
+    // its reply. The shared executor's after-leg callback runs only after it
+    // has made the atomic continue-or-release decision, so an idle ledger is
+    // visible before this reply while a real continuation remains busy.
+    let deferred_reply = Arc::new(std::sync::Mutex::new(None));
+    let deferred_reply_settle = deferred_reply.clone();
+    let deferred_reply_after_leg = deferred_reply.clone();
     let settle = move |session_id: &str,
                        outcome: Result<
         (vak_agent::TurnOutcome, vak_session::SessionLog),
         vak_core::CoreError,
     >| {
         let core = settle_core.clone();
+        let deferred_reply_settle = deferred_reply_settle.clone();
         let reply_tx = reply.take();
         let session_id = session_id.to_string();
         async move {
@@ -3801,12 +3809,17 @@ async fn execute_turn_chain(
                         text = "(no text)".into();
                     }
                     if let Some(tx) = reply_tx {
-                        let _ = tx.send(ChatReply {
-                            text: text.clone(),
-                            metadata,
-                            drafts: turn_drafts(&log, core.cwd(), &core.agent_tools()),
-                            cards,
-                        });
+                        *deferred_reply_settle
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((
+                            tx,
+                            ChatReply {
+                                text: text.clone(),
+                                metadata,
+                                drafts: turn_drafts(&log, core.cwd(), &core.agent_tools()),
+                                cards,
+                            },
+                        ));
                     }
                     (Some(log), short_summary(&text), err)
                 }
@@ -3827,12 +3840,17 @@ async fn execute_turn_chain(
                     )
                     .to_string();
                     if let Some(tx) = reply_tx {
-                        let _ = tx.send(ChatReply {
-                            text: text.clone(),
-                            metadata: None,
-                            drafts: Vec::new(),
-                            cards: Vec::new(),
-                        });
+                        *deferred_reply_settle
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((
+                            tx,
+                            ChatReply {
+                                text: text.clone(),
+                                metadata: None,
+                                drafts: Vec::new(),
+                                cards: Vec::new(),
+                            },
+                        ));
                     }
                     (recovered, short_summary(&text), true)
                 }
@@ -3847,6 +3865,15 @@ async fn execute_turn_chain(
         crate::TurnStart::message(prompt),
         approver_factory,
         settle,
+        move || {
+            if let Some((tx, reply)) = deferred_reply_after_leg
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                let _ = tx.send(reply);
+            }
+        },
     )
     .await;
 }

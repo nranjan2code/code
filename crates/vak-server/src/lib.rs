@@ -5115,6 +5115,121 @@ fn continue_or_release(
     }
 }
 
+/// Make the after-leg callback observe the settled busy/idle decision. A
+/// waiter may submit its next request as soon as the callback returns, so the
+/// no-continuation branch releases the ledger and settles the admitted run
+/// first. A real continuation remains busy and is handed to the next leg.
+fn continue_after_leg(
+    handle: &SessionHandle,
+    ledger: SessionLog,
+    settle_admitted: impl FnOnce(),
+    after_leg_settle: &mut impl FnMut(),
+) -> Option<(SessionLog, vak_llm::Message)> {
+    match continue_or_release(handle, ledger) {
+        None => {
+            settle_admitted();
+            after_leg_settle();
+            None
+        }
+        Some((ledger, merged)) => {
+            after_leg_settle();
+            Some((ledger, merged))
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod turn_chain_release_tests {
+    use super::*;
+
+    fn session_log(dir: &std::path::Path) -> SessionLog {
+        use vak_session::types::{FrozenContract, SessionHeader};
+
+        SessionLog::create(
+            vak_session::SessionPath::new_session_file(dir, dir, "s1"),
+            SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
+                agent: None,
+                session_id: "s1".into(),
+                created_at: chrono::Utc::now(),
+                cwd: dir.to_path_buf(),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "scripted".into(),
+                    model: "test-model".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "workspace-write".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn no_continuation_callback_observes_idle_ledger_after_run_settlement() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        let handle = SessionHandle {
+            id: "s1".into(),
+            core,
+            cwd: dir.path().to_path_buf(),
+            session: Arc::new(Mutex::new(None)),
+            intent: Arc::new(Mutex::new(None)),
+            steering: Arc::new(SteeringQueues::new()),
+            cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
+            events_tx: events::EventBus::new(),
+            coworking_comments_tx: tokio::sync::broadcast::channel(1).0,
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            activity_buffer: Arc::new(Mutex::new(Vec::new())),
+            presentation: Arc::new(Mutex::new(vak_delivery::OutputTimeline::empty("s1"))),
+            subscribed: Arc::new(tokio::sync::Notify::new()),
+            side_events_tx: events::EventBus::new(),
+            last_touched: Mutex::new(std::time::Instant::now()),
+            side_cancel: Arc::new(std::sync::Mutex::new(CancellationToken::new())),
+            admissions: Arc::new(Mutex::new(HashSet::new())),
+        };
+
+        let run_settled = std::cell::Cell::new(false);
+        let callback_count = std::cell::Cell::new(0);
+        let mut callback = || {
+            callback_count.set(callback_count.get() + 1);
+            assert!(
+                run_settled.get(),
+                "admitted run settles before reply callback"
+            );
+            assert!(
+                handle
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_some(),
+                "ledger is idle before reply callback"
+            );
+        };
+        let next = continue_after_leg(
+            &handle,
+            session_log(dir.path()),
+            || run_settled.set(true),
+            &mut callback,
+        );
+        assert!(next.is_none(), "no queued input completes the chain");
+        assert_eq!(callback_count.get(), 1);
+    }
+}
+
 /// Give an SSE consumer a moment to attach before a freshly admitted chain
 /// starts, so its terminal event is seen — but only when nobody is
 /// watching yet. `handle.subscribed` is a single-permit `Notify`: the first
@@ -5161,6 +5276,7 @@ async fn run_turn_chain<F, Fut>(
     mut start: TurnStart,
     approver_factory: impl Fn(&str) -> Arc<dyn Approver>,
     mut settle: F,
+    mut after_leg_settle: impl FnMut(),
 ) where
     F: FnMut(&str, Result<(vak_agent::TurnOutcome, SessionLog), vak_core::CoreError>) -> Fut,
     Fut: std::future::Future<Output = SettleResult>,
@@ -5221,19 +5337,20 @@ async fn run_turn_chain<F, Fut>(
 
         let Some(ledger) = ledger else {
             settle_admitted(leg_outcome);
+            after_leg_settle();
             return;
         };
 
-        match continue_or_release(&handle, ledger) {
-            None => {
-                settle_admitted(leg_outcome);
-                return;
-            }
-            Some((ledger, merged)) => {
-                taken = ledger;
-                start = TurnStart::message(merged);
-            }
-        }
+        let Some((ledger, merged)) = continue_after_leg(
+            &handle,
+            ledger,
+            || settle_admitted(leg_outcome),
+            &mut after_leg_settle,
+        ) else {
+            return;
+        };
+        taken = ledger;
+        start = TurnStart::message(merged);
     }
 }
 
@@ -5352,6 +5469,7 @@ fn spawn_http_turn_chain(
                 let run_id = leg_session_id.to_string();
                 async move { http_settle(handle, hub, run_id, outcome).await }
             },
+            || {},
         )
         .await;
 

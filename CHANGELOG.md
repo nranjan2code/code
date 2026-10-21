@@ -1,5 +1,10 @@
 ## Unreleased
 
+- A synchronous channel reply waits for the turn's settlement and session
+  handoff, so an immediate follow-up is not accidentally queued as steering
+  for a completed run. The initial reply still arrives promptly when already
+  queued work continues.
+
 - Topics organise ongoing work under each Agent, with model-selected placement,
   human corrections, direct navigation, pinning and explicit archive/reopen.
   Automatic organisation can be turned off; Topics preserve the original

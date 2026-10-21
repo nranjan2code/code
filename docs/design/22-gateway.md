@@ -86,7 +86,10 @@ outbound reply. The universal surface adapter is plain HTTP:
 - `POST /gateway/inbound` `{surface, chat, sender?, text, wait?, capabilities?}` →
   - `202 {state:"started"|"steering_queued", session_id}` or, with
     `"wait": true`, `200 {state:"completed", text, session_id, delivery}` after the
-    turn finishes (240s cap). A curl one-liner is a complete adapter:
+    initial turn has settled and its ledger has been released or handed to
+    already queued steering (240s cap). With no queued continuation, an
+    immediate follow-up can open a new turn. The initial response does not
+    wait for later steering work to finish. A curl one-liner is a complete adapter:
     message in, final assistant text out. Streaming consumers use the
     existing per-session SSE instead.
 - `GET /gateway/status` → enabled flag + binding table.
