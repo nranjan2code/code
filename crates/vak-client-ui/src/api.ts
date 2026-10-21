@@ -954,8 +954,11 @@ export function rejectProposal(id: string, agent?: string): Promise<{ rejected: 
 
 // ---- sessions ---------------------------------------------------------------
 
-export function listSessions(): Promise<{ sessions: SessionSummary[] }> {
-  return req("/sessions");
+export function listSessions(options?: { before?: string; visible?: string[] }): Promise<{ sessions: SessionSummary[]; older?: string | null }> {
+  const query = new URLSearchParams();
+  if (options?.before) query.set("before", options.before);
+  if (options?.visible?.length) query.set("visible", options.visible.join(","));
+  return req(`/sessions${query.size ? `?${query}` : ""}`);
 }
 
 export function attachSession(id: string): Promise<{ session_id: string }> {
@@ -977,14 +980,22 @@ export function transcript(id: string): Promise<{
 }
 
 /** Transcript identities and output from one immutable ledger revision. */
-export function conversationSnapshot(id: string): Promise<{
+export interface ConversationSnapshot {
   session_id: string;
   cursor?: string | null;
   running: boolean;
+  revision?: string;
+  not_modified?: boolean;
+  page?: { older: string | null; newer: string | null; end: string; total_turns: number; first_turn?: number | null; request?: string | null };
   transcript: Awaited<ReturnType<typeof transcript>>;
   presentation: OutputTimeline;
-}> {
-  return req(`/sessions/${encodeURIComponent(id)}/snapshot`);
+}
+export function conversationSnapshot(id: string, options?: { before?: string; since?: string; around?: string; signal?: AbortSignal }): Promise<ConversationSnapshot> {
+  const query = new URLSearchParams();
+  if (options?.before) query.set("before", options.before);
+  if (options?.since) query.set("since", options.since);
+  if (options?.around) query.set("around", options.around);
+  return req(`/sessions/${encodeURIComponent(id)}/snapshot${query.size ? `?${query}` : ""}`, { signal: options?.signal });
 }
 
 /** Sets a turn aside so later turns no longer see it, or restores it
@@ -1007,8 +1018,9 @@ export function retryTurn(id: string, turn: string): Promise<{ request_id: strin
   });
 }
 
-export function sandboxExecutions(id: string): Promise<{ session_id: string; events: Array<Record<string, unknown>> }> {
-  return req(`/sessions/${encodeURIComponent(id)}/sandbox/executions`);
+export function sandboxExecutions(id: string, calls?: string[]): Promise<{ session_id: string; events: Array<Record<string, unknown>> }> {
+  const query = calls ? `?calls=${encodeURIComponent(JSON.stringify(calls))}` : "";
+  return req(`/sessions/${encodeURIComponent(id)}/sandbox/executions${query}`);
 }
 
 export function presentation(id: string): Promise<OutputTimeline> {

@@ -303,6 +303,34 @@ impl RecordChain {
         Ok(rows)
     }
 
+    /// One catalog-addressed row, checked against the canonical frame's
+    /// digest. Shared rows retain their sealed content fields for restoration
+    /// under the owning scope by the caller.
+    pub fn read_indexed(
+        &self,
+        segment: u64,
+        offset: u64,
+        length: u64,
+        digest: &str,
+    ) -> Result<serde_json::Value, SessionError> {
+        let segments = vak_storage::segments::SegmentSet::at(&self.dir);
+        let open = segments.log_path(segment);
+        let path = if open.exists() {
+            open
+        } else {
+            segments.sealed_path(segment)
+        };
+        let key = crate::keys::of(&self.dir)?;
+        let bytes = vak_storage::segments::read_entry(&path, offset, length, key.as_ref())
+            .map_err(storage_error)?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|error| SessionError::Objects(error.to_string()))?;
+        if crate::types::line_digest(text) != digest {
+            return Err(SessionError::Objects("indexed row changed".into()));
+        }
+        serde_json::from_slice(&bytes).map_err(|error| SessionError::Objects(error.to_string()))
+    }
+
     /// The rows as JSON, one per line, in order: a plain-text rendering for
     /// inspection and tests. Not a format anything parses back.
     pub fn text(&self) -> String {

@@ -9,6 +9,11 @@ use vak_session::tail::{self, Position};
 /// One source of rows, with its own cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
+    /// Sandbox execution events, or the shared draft/review record chain.
+    Sandbox {
+        dir: PathBuf,
+        session: Option<String>,
+    },
     /// A session ledger directory.
     Session(PathBuf),
     /// The run records.
@@ -39,6 +44,7 @@ impl Source {
     /// The cursor's key: the kind and the path.
     pub fn key(&self) -> String {
         let (kind, path) = match self {
+            Self::Sandbox { dir, .. } => ("sandbox", dir),
             Self::Session(path) => ("session", path),
             Self::Runs(path) => ("runs", path),
             Self::Effects(path) => ("effects", path),
@@ -58,6 +64,7 @@ impl Source {
     /// Whether rows lie past `from`.
     pub fn has_more(&self, from: Position) -> Result<bool, vak_session::types::SessionError> {
         Ok(match self {
+            Self::Sandbox { dir, .. } => chain_has_more(dir, from),
             Self::Grants(dir) => {
                 let mut more = false;
                 tail::try_tail(dir, from, |_, _| {
@@ -160,7 +167,24 @@ pub fn discover(data: &Path) -> Vec<Source> {
             })
             .collect();
         ledgers.sort();
-        found.extend(ledgers.into_iter().map(Source::Session));
+        for ledger in ledgers {
+            if let Some(id) = vak_config::scope::ledger_session_id(&ledger) {
+                let events = scope.sandbox_executions(&id);
+                if events.is_dir() {
+                    found.push(Source::Sandbox {
+                        dir: events,
+                        session: Some(id),
+                    });
+                }
+            }
+            found.push(Source::Session(ledger));
+        }
+        if scope.sandbox_records().is_dir() {
+            found.push(Source::Sandbox {
+                dir: scope.sandbox_records(),
+                session: None,
+            });
+        }
         let commitments = scope.commitments();
         if commitments.is_dir() {
             found.push(Source::Commitments {

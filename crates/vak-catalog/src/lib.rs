@@ -40,7 +40,9 @@ mod history;
 mod ingest;
 mod sources;
 
-pub use history::{EntryLocation, TurnSearchHit, TurnSearchResult, compact_turn_record};
+pub use history::{
+    EntryLocation, HistoryFrame, TurnSearchHit, TurnSearchResult, compact_turn_record,
+};
 pub use sources::Source;
 
 /// The catalog's directory in a tenant home (doc 73 §6), holding the
@@ -52,7 +54,7 @@ pub const FILE_NAME: &str = "catalog.db";
 /// The schema this build writes, and what it derives from the records (5:
 /// a call's outcome as its status, `done` or `failed`). A catalog stamped with another is dropped and rebuilt,
 /// never adapted: it is derived.
-const SCHEMA_VERSION: u32 = 9;
+const SCHEMA_VERSION: u32 = 10;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
@@ -312,6 +314,8 @@ impl Catalog {
                 "calls",
                 "cursors",
                 "entries",
+                "history_frames",
+                "sandbox_frames",
                 "turn_records",
                 "grants",
                 "broken",
@@ -424,6 +428,45 @@ impl Catalog {
         drop(statement);
         tx.commit()?;
         Ok(found)
+    }
+
+    /// Stable keyset page of conversation summaries. The catalog's normal
+    /// audience filter runs before the page limit; callers still recheck the
+    /// current lifecycle and canonical header before exposing a conversation.
+    pub fn session_page(
+        &self,
+        audience: &Audience,
+        before: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<Vec<Node>, CatalogError> {
+        let mut conn = self.conn()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        catch_up_source_tx(&tx, &self.grant_source())?;
+        let (filter, args) = audience_filter(audience, 1);
+        let mut values = args;
+        let boundary = if let Some((updated, id)) = before {
+            let next = values.len() + 1;
+            values.push(updated.to_string().into());
+            values.push(id.to_string().into());
+            format!(
+                "AND (IFNULL(n.updated_at, n.created_at), n.id) < (?{next}, ?{})",
+                next + 1
+            )
+        } else {
+            String::new()
+        };
+        let mut query = tx.prepare(&format!(
+            "SELECT {NODE_COLUMNS} FROM nodes n
+            WHERE n.kind = 'session' AND {filter} {boundary}
+            ORDER BY IFNULL(n.updated_at, n.created_at) DESC, n.id DESC LIMIT {}",
+            limit.clamp(1, 200)
+        ))?;
+        let rows = query
+            .query_map(rusqlite::params_from_iter(values), row_node)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(query);
+        tx.commit()?;
+        Ok(rows)
     }
 
     /// The calls of `tool` the audience may see, made at or after `since`
@@ -652,7 +695,12 @@ impl Catalog {
                         .collect();
                     ids.extend(found);
                 }
-                for table in ["entries", "turn_records"] {
+                for table in [
+                    "entries",
+                    "history_frames",
+                    "sandbox_frames",
+                    "turn_records",
+                ] {
                     tx.execute(
                         &format!("DELETE FROM {table} WHERE session = ?1 OR session = ?2"),
                         [session, &node],
@@ -782,6 +830,7 @@ fn initialize_schema(conn: &Connection) -> Result<(), CatalogError> {
              locator TEXT);
          CREATE INDEX IF NOT EXISTS nodes_kind ON nodes (kind, created_at);
          CREATE INDEX IF NOT EXISTS nodes_session ON nodes (session);
+         CREATE INDEX IF NOT EXISTS nodes_recent ON nodes (kind, IFNULL(updated_at, created_at) DESC, id DESC);
          CREATE TABLE IF NOT EXISTS edges (
              src TEXT NOT NULL, kind TEXT NOT NULL, dst TEXT NOT NULL,
              PRIMARY KEY (src, kind, dst));
@@ -809,6 +858,25 @@ fn initialize_schema(conn: &Connection) -> Result<(), CatalogError> {
              frame INTEGER NOT NULL, parent TEXT, depth INTEGER NOT NULL, reset TEXT,
              jump TEXT, jump_depth INTEGER,
              PRIMARY KEY (session, entry_id));
+         CREATE INDEX IF NOT EXISTS entries_depth ON entries (session, depth);
+         CREATE INDEX IF NOT EXISTS entries_physical ON entries (session, segment DESC, frame DESC);
+         CREATE TABLE IF NOT EXISTS history_frames (
+             session TEXT NOT NULL, entry_id TEXT NOT NULL, offset INTEGER NOT NULL,
+             length INTEGER NOT NULL, bytes INTEGER NOT NULL, digest TEXT NOT NULL,
+             directive INTEGER NOT NULL, target TEXT, turn_id TEXT, turns INTEGER NOT NULL,
+             input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+             goal_head TEXT, goal_revision TEXT, goal_parent TEXT, selection_head TEXT,
+             PRIMARY KEY (session, entry_id));
+         CREATE TABLE IF NOT EXISTS sandbox_frames (
+             source TEXT NOT NULL, segment INTEGER NOT NULL, frame INTEGER NOT NULL,
+             offset INTEGER NOT NULL, length INTEGER NOT NULL, digest TEXT NOT NULL,
+             session TEXT, execution TEXT, candidate TEXT,
+             PRIMARY KEY (source, segment, frame));
+         CREATE INDEX IF NOT EXISTS sandbox_execution ON sandbox_frames (source, session, execution);
+         CREATE INDEX IF NOT EXISTS sandbox_candidate ON sandbox_frames (source, session, candidate);
+         CREATE INDEX IF NOT EXISTS history_targets ON history_frames (session, target);
+         CREATE INDEX IF NOT EXISTS history_turns ON history_frames (session, turn_id);
+         CREATE INDEX IF NOT EXISTS history_numbers ON history_frames (session, turns);
          CREATE TABLE IF NOT EXISTS turn_records (
              session TEXT NOT NULL, entry_id TEXT NOT NULL, turn_id TEXT NOT NULL,
              record TEXT NOT NULL, recorded_at TEXT NOT NULL,

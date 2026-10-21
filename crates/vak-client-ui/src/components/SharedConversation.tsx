@@ -37,7 +37,10 @@ export default function SharedConversation() {
   const [error, setError] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [updatedAt, setUpdatedAt] = createSignal<Date | null>(null);
-  const [visibleCount, setVisibleCount] = createSignal(40);
+  const [page, setPage] = createSignal<{ older?: string | null; newer?: string | null }>();
+  let pageRequest: string | undefined;
+  let revision: string | undefined;
+  const [draftsShown, setDraftsShown] = createSignal(false);
   const [openFile, setOpenFile] = createSignal<{ candidateId: string; path: string; content?: string; imageUrl?: string; kind: string } | null>(null);
   const [comments, setComments] = createSignal<SharedComment[]>([]);
   /** Which artifact version each draft file is: where its thread is read and written. */
@@ -88,7 +91,7 @@ export default function SharedConversation() {
     setCandidates([]);
     setSharedResults([]);
     setUpdatedAt(null);
-    setVisibleCount(40);
+    setPage(undefined); pageRequest = undefined; revision = undefined; setDraftsShown(false);
     if (openFile()?.imageUrl) URL.revokeObjectURL(openFile()!.imageUrl!);
     setOpenFile(null);
     setComments([]);
@@ -126,17 +129,27 @@ export default function SharedConversation() {
     return response.json();
   };
 
-  const refresh = async () => {
+  const refresh = async (before = pageRequest, force = false) => {
     const current = credential();
     if (!current || loading()) return;
     setLoading(true);
     try {
-      const [transcript, records, presentation, pending] = await Promise.all([
-        read(current.conversationId, current.token, "/transcript"),
-        read(current.conversationId, current.token, "/sandbox/records"),
-        read(current.conversationId, current.token, "/presentation"),
+      const query = new URLSearchParams();
+      if (before) query.set("before", before);
+      if (!force && before === pageRequest && revision) query.set("since", revision);
+      const [snapshot, pending] = await Promise.all([
+        read(current.conversationId, current.token, `/snapshot${query.size ? `?${query}` : ""}`),
         read(current.conversationId, current.token, "/coworking/approvals"),
       ]);
+      if (credential()?.token !== current.token) return;
+      setApprovals(pending.approvals ?? []);
+      if (snapshot.not_modified) { setUpdatedAt(new Date()); return; }
+      const transcript = snapshot.transcript;
+      const presentation = snapshot.presentation;
+      pageRequest = before;
+      revision = snapshot.revision;
+      setPage(snapshot.page);
+      const records = draftsShown() ? await read(current.conversationId, current.token, "/sandbox/records") : { records: [], artifacts: [] };
       if (credential()?.token !== current.token) return;
       if (transcript) setMessages((transcript.messages ?? []).map((message: Message, index: number) => ({
         ...message,
@@ -389,13 +402,15 @@ export default function SharedConversation() {
       <Show when={error()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>
       <Show when={approvals().length > 0}><section class="shared-approvals" aria-label="Decisions requested"><h2>Decision needed</h2><For each={approvals()}>{(approval) => <article class="shared-approval"><strong>{agent().name} wants to use {approvalTitle(approval.tool, approval.args_json)}</strong><For each={approvalSubjects(approvalArgs(approval))}>{(subject) => <code class="ap-primary"><span class="ap-primary-key">{subject.key}</span>{subject.value}</code>}</For><p>{approval.reason || "This action needs a person’s decision before work can continue."}</p><details><summary>Review exact request</summary><pre>{approvalArgs(approval)}</pre></details><div><button type="button" class="btn primary" disabled={approvalBusy() === approval.request_id} onClick={() => void answerApproval(approval.request_id, true)}>Allow once</button><button type="button" class="btn danger" disabled={approvalBusy() === approval.request_id} onClick={() => void answerApproval(approval.request_id, false)}>Deny</button></div><span>This answers only this request. It cannot create a rule or accept files.</span></article>}</For></section></Show>
       <section class="shared-messages" aria-label="Conversation">
-        <Show when={messages().length > visibleCount()}><button type="button" class="btn" onClick={() => setVisibleCount(visibleCount() + 40)}>Show earlier messages</button></Show>
-        <For each={messages().slice(-visibleCount())} fallback={<p class="shared-empty">No visible messages yet.</p>}>
+        <Show when={page()?.older}><button type="button" class="btn" disabled={loading()} onClick={() => void refresh(page()!.older!)}>Earlier messages</button></Show>
+        <For each={messages()} fallback={<p class="shared-empty">No visible messages yet.</p>}>
           {(message) => <Show when={visibleText(message)}>{(text) => <article class="shared-message"><span class="shared-message-author"><Show when={message.role.toLowerCase() === "assistant"} fallback={<>{message.author_name || "Owner"}</>}><AgentMark character={agent().character} motion={agent().animation} size={18} /><span>{agent().name}</span></Show></span><p>{text()}</p></article>}</Show>}
         </For>
       </section>
+      <Show when={page()?.newer}><button type="button" class="btn" disabled={loading()} onClick={() => void refresh(page()!.newer!)}>Newer messages</button></Show>
       <Show when={canMessage()}><form class="shared-message-composer" onSubmit={(event) => void postMessage(event)}><label for="shared-message-text">Add to the conversation</label><textarea id="shared-message-text" value={messageText()} onInput={(event) => setMessageText(event.currentTarget.value)} maxLength={32768} rows={3} placeholder={`Message ${agent().name} and the people here`} required /><div><span>Your message is included when the owner next asks the Agent to work.</span><button type="submit" class="btn primary" disabled={messageBusy() || !messageText().trim()}>{messageBusy() ? "Sending…" : "Send message"}</button></div></form></Show>
       <Show when={sharedResults().length > 0}><section class="shared-results" aria-label="Shared results"><h2>Results</h2><For each={sharedResults()}>{(item) => <article class="shared-result" data-result-id={item.outcome?.result_id ?? item.id}><Show when={item.content.type === "structured"}>{item.content.type === "structured" && <StructuredView output={item.content.output} fallback={item.fallback_text} />}</Show><Show when={item.content.type === "adaptive"}>{item.content.type === "adaptive" && <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />}</Show></article>}</For></section></Show>
+      <Show when={!draftsShown()}><button type="button" class="btn" onClick={() => { setDraftsShown(true); void refresh(pageRequest, true); }}>Show saved drafts</button></Show>
       <Show when={candidates().length > 0}><section class="shared-drafts"><h2>Saved drafts</h2><For each={candidates()}>{(record) => <div class="shared-draft"><strong>Draft {record.record.candidate?.candidate_id.slice(0, 8)}</strong><span>{record.record.candidate?.files.length ?? 0} files</span><ul><For each={record.record.candidate?.files ?? []}>{(file) => <li><button type="button" onClick={() => void showFile(record.record.candidate!.candidate_id, file.path)}><Icon name="file" size={13} />{file.path}</button></li>}</For></ul></div>}</For></section></Show>
       <Show when={fileError()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>
       <Show when={openFile()}>{(file) => <Show when={file().kind === "office"} fallback={<section class="shared-file"><div class="shared-file-head"><h2>{file().path}</h2><span>Saved draft {file().candidateId.slice(0, 8)}</span><button type="button" class="btn" onClick={() => { if (file().imageUrl) URL.revokeObjectURL(file().imageUrl!); setOpenFile(null); }}>Close</button></div><Show when={file().kind === "text"}><pre>{file().content}</pre></Show><Show when={file().kind === "image"}><img src={file().imageUrl} alt={file().path} /></Show><Show when={file().kind === "binary"}><p>This saved file has no inline preview in the shared view.</p></Show></section>}><section class="shared-office-overlay"><OfficeWorkspacePane

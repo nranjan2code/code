@@ -48,7 +48,12 @@ impl Provider for Scripted {
         let (mut sink, rx) = stream::channel(16);
         match next {
             Some(m) => sink.close_message(m).await,
-            None => sink.close_error(LlmError::Parse("exhausted".into())).await,
+            // A finite fixture has no next response. This is terminal test
+            // input, not a transient parse failure for endurance to retry.
+            None => {
+                sink.close_error(LlmError::InvalidRequest("exhausted".into()))
+                    .await
+            }
         }
         Ok(rx)
     }

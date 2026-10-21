@@ -33,6 +33,16 @@ pub struct GoalUpdate {
     pub explicit: bool,
 }
 
+impl GoalUpdate {
+    /// Whether this update changes retained goal state beyond its revision.
+    pub fn changes_state(&self) -> bool {
+        !matches!(
+            self.relation,
+            GoalRelation::Independent | GoalRelation::Status
+        ) || self.supersedes_revision.is_some()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalControlState {

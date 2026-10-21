@@ -5,7 +5,7 @@ import { host } from "./host";
 import { interfaceFonts, contentFonts, codeFonts } from "./typography";
 import { watchSession, watchStatus } from "./streamHub";
 import {
-  activeId,
+  activeId, earlierSessions, setEarlierSessions, sessionsPageRequest, setSessionsPageRequest,
   armStopRun,
   appendSystem,
   appendNeedsAiService,
@@ -35,6 +35,7 @@ import {
   setCoworkingPresence,
   setUsageFor,
   hydrateFromTranscript,
+  hydrateHistoryPage, historyPages, historyLoading, setHistoryLoading, setHistoryErrors, setHistoryPages, evictHistoryViews,
   hydrateSetAside,
   branchBeforeTurn,
   hydrateFromPresentation,
@@ -157,6 +158,17 @@ import { holdsOnlyLiveGates } from "./liveGates";
 const streams = new Map<string, () => void>();
 const sideStreams = new Map<string, () => void>();
 
+export async function showEarlierConversations() {
+  const before = earlierSessions();
+  if (!before) return;
+  setSessionsPageRequest(before);
+  await refreshSessions();
+}
+export async function showRecentConversations() {
+  setSessionsPageRequest(undefined);
+  await refreshSessions();
+}
+
 export async function refreshSessions() {
   const source = api.backendUrl();
   // Web clients authenticate with the same-origin session cookie, so their
@@ -164,8 +176,9 @@ export async function refreshSessions() {
   // ready at all (the desktop host has no live server yet).
   if (!api.isBackendReady()) return;
   try {
-    const res = await api.listSessions();
+    const res = await api.listSessions({ before: sessionsPageRequest(), visible: [activeId(), splitId()].filter((id): id is string => !!id) });
     if (source === api.backendUrl()) {
+      setEarlierSessions(res.older ?? null);
       setSessions((prev) => {
         const active = prev.find((s) => s.session_id === activeId());
         const next = active && !res.sessions.some((s) => s.session_id === active.session_id) ? [active, ...res.sessions] : res.sessions;
@@ -273,8 +286,9 @@ export async function retryHydrate(id: string) {
   await restoreLiveGates(id);
 }
 
-async function readableSnapshot(id: string): ReturnType<typeof api.conversationSnapshot> {
-  const snapshot = await api.conversationSnapshot(id);
+async function readableSnapshot(id: string, options?: Parameters<typeof api.conversationSnapshot>[1]): ReturnType<typeof api.conversationSnapshot> {
+  const snapshot = await api.conversationSnapshot(id, options);
+  if (snapshot.not_modified && snapshot.session_id === id) return snapshot;
   const transcript = snapshot.transcript;
   const presentation = snapshot.presentation;
   if (snapshot.session_id !== id || typeof snapshot.running !== "boolean"
@@ -302,25 +316,39 @@ async function hydrate(id: string, background = false) {
   const version = conversationHydration.begin(id);
   if (!background) setHydratingId(id);
   try {
-    const [snapshot, sandbox] = await Promise.all([
-      readableSnapshot(id),
-      api.sandboxExecutions(id).catch((error) => ({ events: [], session_id: id, error: error instanceof Error ? error.message : String(error) })),
-    ]);
-    const { transcript: t, presentation } = snapshot;
+    let previous = historyPages[id];
+    let snapshot;
+    try {
+      snapshot = await readableSnapshot(id, { before: previous?.request, since: background ? previous?.revision : undefined });
+    } catch (error) {
+      if (!(error instanceof api.ApiError) || error.status !== 409 || !previous?.request) throw error;
+      // A retry can replace the branch behind an older cursor. Recover once
+      // from the current branch rather than repeatedly polling that cursor.
+      snapshot = await readableSnapshot(id);
+      previous = undefined!;
+    }
     if (!conversationHydration.current(id, version)) return;
-    const read = JSON.stringify([t ?? null, presentation ?? null, sandbox]);
-    // Transcript identity and its output projection become visible together.
-    // A running read is not acknowledged until it can actually be applied.
+    if (snapshot.not_modified) {
+      if (!snapshot.running && isRunning(id)) markRunning(id, false);
+      return;
+    }
+    const { transcript: t, presentation } = snapshot;
+    const read = snapshot.revision ? `${snapshot.revision}:${snapshot.page?.end ?? ""}` : JSON.stringify([t ?? null, presentation ?? null]);
     conversationHydration.commit(id, version, read,
-      Boolean(t && ((!snapshot.running && !isRunning(id)) || holdsOnlyLiveGates(itemsOf(id)))), () => batch(() => {
-        hydrateFromTranscript(id, t.messages, t.entries, isRunning(id));
-        hydrateSetAside(id, t.set_aside);
-        if (presentation) hydrateFromPresentation(id, presentation);
+      Boolean(t && ((!snapshot.running && !isRunning(id)) || itemsOf(id).length === 0 || holdsOnlyLiveGates(itemsOf(id)))), () => batch(() => {
+        if (snapshot.page) hydrateHistoryPage(id, { ...snapshot, page: snapshot.page }, background && previous?.revision ? "update" : "refresh");
+        else {
+          hydrateFromTranscript(id, t.messages, t.entries, isRunning(id));
+          hydrateSetAside(id, t.set_aside);
+          if (presentation) hydrateFromPresentation(id, presentation);
+        }
         setUsageFor(id, t.usage);
       }));
-    if (activeId() === id) {
-      setWorkbenchLoadError("error" in sandbox ? sandbox.error : null);
-    }
+    // Execution output is fetched only when the durable revision changed.
+    const calls = [...new Set(presentation.items.flatMap(item => item.provenance?.tool_call_id ? [item.provenance.tool_call_id] : []))];
+    const sandbox = await api.sandboxExecutions(id, calls).catch((error) => ({ events: [], session_id: id, error: error instanceof Error ? error.message : String(error) }));
+    if (!conversationHydration.current(id, version)) return;
+    if (activeId() === id) setWorkbenchLoadError("error" in sandbox ? sandbox.error : null);
     hydrateWorkbenchExecutions(id, sandbox.events, isRunning(id));
   } catch (error) {
     // The server can admit a new turn between a settled-session snapshot and
@@ -330,6 +358,41 @@ async function hydrate(id: string, background = false) {
     }
   } finally {
     if (!background && conversationHydration.current(id, version)) setHydratingId((current) => (current === id ? null : current));
+  }
+}
+
+export async function showLatestHistory(id: string) {
+  if (historyPages[id]) setHistoryPages(id, { ...historyPages[id], request: undefined, revision: undefined });
+  conversationHydration.invalidate(id);
+  await hydrate(id, true);
+}
+
+const historyReads = new Map<string, AbortController>();
+export async function loadHistoryPage(id: string, direction: "older" | "newer"): Promise<boolean> {
+  if (historyLoading[id]) return false;
+  const before = historyPages[id]?.[direction];
+  if (!before) return false;
+  const controller = new AbortController();
+  historyReads.set(id, controller);
+  setHistoryLoading(id, true);
+  setHistoryErrors(id, null);
+  try {
+    const snapshot = await readableSnapshot(id, { before, signal: controller.signal });
+    if (controller.signal.aborted || !snapshot.page) return false;
+    const page = snapshot.page;
+    batch(() => hydrateHistoryPage(id, { ...snapshot, page }, direction));
+    const calls = [...new Set(snapshot.presentation.items.flatMap(item => item.provenance?.tool_call_id ? [item.provenance.tool_call_id] : []))];
+    const sandbox = await api.sandboxExecutions(id, calls).catch(() => null);
+    if (!controller.signal.aborted && sandbox) hydrateWorkbenchExecutions(id, sandbox.events, isRunning(id));
+    return !controller.signal.aborted;
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      if (error instanceof api.ApiError && error.status === 409) await showLatestHistory(id);
+      setHistoryErrors(id, error instanceof Error ? error.message : "Could not load this part of the conversation.");
+    }
+    return false;
+  } finally {
+    if (historyReads.get(id) === controller) { historyReads.delete(id); setHistoryLoading(id, false); }
   }
 }
 
@@ -344,6 +407,8 @@ const resyncingSessions = new Set<string>();
  */
 function pruneStreams() {
   const visible = new Set([activeId(), splitId()].filter((x): x is string => !!x));
+  for (const [id, controller] of historyReads) if (!visible.has(id)) controller.abort();
+  for (const id of evictHistoryViews(visible)) conversationHydration.invalidate(id);
   for (const followed of [streams, sideStreams]) {
     for (const [id, stop] of followed) {
       if (visible.has(id)) continue;
@@ -507,7 +572,7 @@ function onFinished(id: string, summary: string) {
   }
 }
 
-export async function activate(id: string) {
+export async function activate(id: string): Promise<boolean | undefined> {
   // Choosing a task always lands back in the workspace view.
   setInboxOpen(false);
   setAutomationsOpen(false);
@@ -537,15 +602,6 @@ export async function activate(id: string) {
     markRunning(id, true);
   }
   pruneStreams();
-  // Persisted sessions must be attached server-side before they can accept
-  // runs; for live sessions the server keeps the existing handle (idempotent).
-  try {
-    await api.attachSession(id);
-  } catch (e) {
-    setHydratingId((current) => (current === id ? null : current));
-    appendSystem(id, `could not resume this task: ${e instanceof Error ? e.message : String(e)}`);
-    return false;
-  }
   if (matchedAgent) lastSessionByAgent.set(matchedAgent.id, id);
   if (activeId() === id) {
     const route = `#/s/${encodeURIComponent(id)}`;

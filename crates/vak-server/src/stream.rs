@@ -207,7 +207,9 @@ pub(crate) fn presentation_frames(
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                     timeline = guard
                         .as_ref()
-                        .map(|session| crate::projection::snapshot(&id, session))
+                        .map(|session| {
+                            crate::live_presentation_snapshot(&handle.core, &id, session)
+                        })
                         .unwrap_or_else(|| {
                             handle
                                 .presentation
@@ -403,6 +405,34 @@ fn client_event_json(event: &crate::client_events::ClientEvent) -> String {
     })
 }
 
+fn live_session_frames(
+    state: &AppState,
+    id: &str,
+    handle: Arc<SessionHandle>,
+    resume: Option<u64>,
+) -> Frames<Muxed> {
+    let mut parts: Vec<Frames<Muxed>> = Vec::new();
+    let session = id.to_string();
+    parts.push(Box::pin(
+        agent_frames(&handle, resume).map(move |frame| Muxed::Agent(session.clone(), frame)),
+    ));
+    if let Some(frames) = presentation_frames(state, id, Some(handle.clone())) {
+        let session = id.to_string();
+        parts.push(Box::pin(
+            frames.map(move |frame| Muxed::Presentation(session.clone(), frame)),
+        ));
+    }
+    let session = id.to_string();
+    parts.push(Box::pin(
+        side_frames(&handle).map(move |event| Muxed::Side(session.clone(), event)),
+    ));
+    let session = id.to_string();
+    parts.push(Box::pin(
+        coworking_frames(&handle).map(move |()| Muxed::Coworking(session.clone())),
+    ));
+    Box::pin(stream::select_all(parts))
+}
+
 /// `GET /stream` — every subscription a client holds, on one connection.
 ///
 /// Query: `session=<id>` (repeatable), `host=1`, `config=1`, and optionally
@@ -455,47 +485,32 @@ pub(crate) async fn stream(
     // dropped from the set must not be resumed from a stale position later.
     let mut cursor = BTreeMap::new();
     for id in &interest.sessions {
-        let handle = crate::ensure_session_handle(&state, id)
-            .await
-            .ok()
-            .map(|(_, handle)| handle);
-        let presentation = presentation_frames(&state, id, handle.clone());
-        let Some(handle) = handle else {
-            match presentation {
-                Some(frames) => {
-                    let session = id.clone();
-                    parts.push(Box::pin(
-                        frames.map(move |frame| Muxed::Presentation(session.clone(), frame)),
-                    ));
-                }
-                None => parts.push(Box::pin(stream::once(std::future::ready(Muxed::Unknown(
-                    id.clone(),
-                ))))),
-            }
-            continue;
-        };
         let resume = interest.cursor.get(id).copied();
         if let Some(seq) = resume {
             cursor.insert(id.clone(), seq);
         }
+        let state = state.clone();
         let session = id.clone();
-        parts.push(Box::pin(
-            agent_frames(&handle, resume).map(move |frame| Muxed::Agent(session.clone(), frame)),
-        ));
-        if let Some(frames) = presentation {
-            let session = id.clone();
-            parts.push(Box::pin(
-                frames.map(move |frame| Muxed::Presentation(session.clone(), frame)),
-            ));
-        }
-        let session = id.clone();
-        parts.push(Box::pin(
-            side_frames(&handle).map(move |event| Muxed::Side(session.clone(), event)),
-        ));
-        let session = id.clone();
-        parts.push(Box::pin(
-            coworking_frames(&handle).map(move |()| Muxed::Coworking(session.clone())),
-        ));
+        // Subscribe before checking the map: admission cannot fall between
+        // discovery and registration. Reading an old chat never opens its
+        // full runtime ledger; the live subscription waits for real work.
+        let mut registered = state.session_registered.subscribe();
+        let awaiting = stream::once(async move {
+            loop {
+                if let Some(handle) = state.get(&session) {
+                    return live_session_frames(&state, &session, handle, resume);
+                }
+                if crate::locate_session(&state.core, &session).is_none() {
+                    return Box::pin(stream::once(std::future::ready(Muxed::Unknown(session))))
+                        as Frames<Muxed>;
+                }
+                if registered.changed().await.is_err() {
+                    return Box::pin(stream::empty()) as Frames<Muxed>;
+                }
+            }
+        })
+        .flatten();
+        parts.push(Box::pin(awaiting));
     }
 
     let frames = stream::select_all(parts).map(move |item| {

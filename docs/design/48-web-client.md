@@ -1117,3 +1117,42 @@ until an enforceable network boundary is available; layout, native form
 controls and local media remain. Explicitly started live dev servers are a
 separate capability. The [security acceptance](../audits/security-hardening-2026-10-20.md)
 records the probe and regression.
+
+
+## Conversation history pages
+
+The human history read is `GET /sessions/{id}/snapshot`, shared by desktop,
+web, participant readers and the transcript dialog. It pairs transcript and
+presentation from one committed branch prefix. The default page contains up
+to 40 recent turns. `before` is an opaque session/branch/end cursor;
+`around` addresses a canonical directive. Responses expose older/newer
+cursors and total branch turns. An incompatible branch returns 409 and the
+owner client recovers from its current page. `since` returns a small
+`not_modified` response when the durable revision is unchanged.
+
+The derived catalog stores frame addresses, digests, cumulative usage, branch
+ancestry and overlay pointers. Page bodies come from canonical encrypted
+frames, with scope-key and digest checks. Reads check conversation lifecycle
+before and after projection. Erasure races refuse the response; concurrent
+appends leave the response at its starting revision for the next poll to
+observe. Reading an old chat does not attach a full runtime session. Streams
+wait for actual admission and project the live turn at stream boundaries.
+Sandbox presentation and execution details use execution-specific frame
+addresses instead of replaying unrelated chains.
+
+The main client retains reloadable pages with an 8 MiB serialized-data
+budget, evicting pages furthest from the reader. One whole page is the
+minimum. Inactive settled views are evicted. DOM turn windows remain bounded;
+canonical identities and a visible-turn anchor preserve scroll on prepend.
+Per-item delta updates avoid reconciling the entire loaded presentation on
+every token. A refresh updates its page while keeping adjacent cached pages.
+Conversation summaries use catalog keyset pages and targeted visible/running
+status recovery, with initial discovery performed once per server state.
+
+Limits are deliberate and measurable: 2 MiB is a soft canonical-frame target
+at a whole-turn boundary, so one large turn can exceed it; the byte cache
+budget measures serialized pages, not JavaScript heap. First discovery/index
+construction scales with retained data, and revision checks inspect segment
+metadata. Explicit exports and model-context construction remain separate
+from display paging. Neither this contract nor the synthetic browser fixture
+is a production-capacity claim.

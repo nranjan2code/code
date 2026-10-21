@@ -146,6 +146,16 @@ pub fn tail(
     from: Position,
     mut visit: impl FnMut(Position, &[u8]) -> bool,
 ) -> Position {
+    located_tail(dir, from, |at, frame| visit(at, &frame.entry))
+}
+
+/// As [`tail`], including canonical frame byte locations for a rebuildable
+/// index. Frame offsets remain unchanged when an encrypted segment seals.
+pub fn located_tail(
+    dir: &Path,
+    from: Position,
+    mut visit: impl FnMut(Position, &vak_storage::records::LocatedEntry) -> bool,
+) -> Position {
     let mut at = from;
     let Ok(segments) = vak_storage::segments::SegmentSet::open(dir) else {
         return at;
@@ -188,12 +198,58 @@ pub fn tail(
                 segment: number,
                 frames: index + 1,
             };
-            if !visit(at, &frame.entry) {
+            if !visit(at, frame) {
                 return at;
             }
         }
     }
     at
+}
+
+/// Incremental catalog ingestion from an indexed byte boundary. Only the
+/// unread suffix is opened; a torn append leaves the position unchanged.
+pub fn indexed_tail(
+    dir: &Path,
+    from: Position,
+    offset: u64,
+    mut visit: impl FnMut(Position, &vak_storage::records::LocatedEntry) -> bool,
+) -> Result<Position, SessionError> {
+    let segments = vak_storage::segments::SegmentSet::at(dir);
+    let key = crate::keys::of(dir)?;
+    let numbers = crate::log::try_segment_numbers(dir)?;
+    if from != Position::default() && !numbers.iter().any(|(number, _)| *number == from.segment) {
+        return Err(corrupt("the chain no longer holds the reader's position"));
+    }
+    let mut at = from;
+    for (number, open) in numbers {
+        if number < from.segment {
+            continue;
+        }
+        let path = if open {
+            segments.log_path(number)
+        } else {
+            segments.sealed_path(number)
+        };
+        let start = if number == from.segment { offset } else { 0 };
+        let bytes = vak_storage::segments::frame_suffix(&path, start).map_err(corrupt)?;
+        let frames =
+            vak_storage::records::located_slice(&bytes, start, key.as_ref()).map_err(corrupt)?;
+        let skip = if number == from.segment {
+            from.frames
+        } else {
+            0
+        };
+        for (index, frame) in frames.iter().enumerate() {
+            at = Position {
+                segment: number,
+                frames: skip + index as u64 + 1,
+            };
+            if !visit(at, frame) {
+                return Ok(at);
+            }
+        }
+    }
+    Ok(at)
 }
 
 /// The frame just after `at`: what an index that recorded `at` for an entry
@@ -236,6 +292,8 @@ mod tests {
     fn strict_empty_reads_create_nothing_and_missing_sealed_history_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rows");
+        assert!(crate::SessionLog::segment_files(&path).is_empty());
+        assert!(!path.exists(), "segment metadata reads create nothing");
         assert_eq!(try_head(&path).unwrap(), Position::default());
         assert!(!path.exists());
         let chain = crate::chain::RecordChain::at(&path);

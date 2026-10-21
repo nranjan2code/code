@@ -489,6 +489,54 @@ pub(crate) fn append_sandbox_artifacts(
     home: &std::path::Path,
     session_id: &str,
 ) {
+    let path = vak_config::scope::AgentScope::new(home).sandbox_executions(session_id);
+    let events = crate::sandbox_records::events::<vak_tools::SandboxEvent>(&path);
+    let records =
+        crate::sandbox_records::load(&vak_config::scope::AgentScope::new(home).sandbox_records())
+            .ok();
+    append_sandbox_artifact_rows(timeline, home, session_id, events, records);
+}
+
+pub(crate) fn append_sandbox_artifacts_page(
+    timeline: &mut OutputTimeline,
+    home: &std::path::Path,
+    session_id: &str,
+    catalog: &vak_catalog::Catalog,
+) -> Result<(), vak_catalog::CatalogError> {
+    let calls: Vec<String> = timeline
+        .items
+        .iter()
+        .filter_map(|item| item.provenance.as_ref()?.tool_call_id.clone())
+        .collect();
+    let scope = vak_config::scope::AgentScope::new(home);
+    let decode = |error: serde_json::Error| vak_session::SessionError::Objects(error.to_string());
+    let events = catalog
+        .sandbox_rows(
+            &scope.sandbox_executions(session_id),
+            Some(session_id),
+            session_id,
+            &calls,
+        )?
+        .into_iter()
+        .filter(|row| row.get("kind").and_then(serde_json::Value::as_str) != Some("Output"))
+        .map(|row| serde_json::from_value(row).map_err(decode))
+        .collect::<Result<Vec<vak_tools::SandboxEvent>, _>>()?;
+    let records = catalog
+        .sandbox_rows(&scope.sandbox_records(), None, session_id, &calls)?
+        .into_iter()
+        .map(|row| serde_json::from_value(row).map_err(decode))
+        .collect::<Result<Vec<vak_sandbox::DurableRecord>, _>>()?;
+    append_sandbox_artifact_rows(timeline, home, session_id, events, Some(records));
+    Ok(())
+}
+
+fn append_sandbox_artifact_rows(
+    timeline: &mut OutputTimeline,
+    _home: &std::path::Path,
+    session_id: &str,
+    events: Vec<vak_tools::SandboxEvent>,
+    records: Option<Vec<vak_sandbox::DurableRecord>>,
+) {
     // A sandbox execution id is the brokered tool-call id. Resolve it back
     // to the durable turn before appending sidecar artifacts, so the result
     // stays one coherent turn on reconnect. The old synthetic
@@ -515,8 +563,6 @@ pub(crate) fn append_sandbox_artifacts(
                 .map(|outcome| (item.turn_id.clone(), outcome))
         })
         .collect();
-    let path = vak_config::scope::AgentScope::new(home).sandbox_executions(session_id);
-    let events = crate::sandbox_records::events::<vak_tools::SandboxEvent>(&path);
     let reviewable_roots = events
         .iter()
         .filter_map(|event| match event {
@@ -532,10 +578,7 @@ pub(crate) fn append_sandbox_artifacts(
         .collect::<HashMap<_, _>>();
     // Unreadable records leave every draft's status unknown rather than
     // reporting a version the records may contradict.
-    let drafts =
-        crate::sandbox_records::load(&vak_config::scope::AgentScope::new(home).sandbox_records())
-            .ok()
-            .map(|records| DraftVersions::new(records, session_id));
+    let drafts = records.map(|records| DraftVersions::new(records, session_id));
     for event in events {
         let vak_tools::SandboxEvent::ArtifactGenerated {
             execution_id,

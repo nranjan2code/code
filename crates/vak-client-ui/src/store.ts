@@ -12,7 +12,8 @@ import { createStore, reconcile, unwrap } from "solid-js/store";
 import * as api from "./api";
 export { stripControlScaffolding } from "./structured";
 import { stripControlScaffolding } from "./structured";
-import { mergePresentationSnapshot, applyPresentationDelta } from "./presentationHydration";
+import { mergePresentationSnapshot, mergeTurnSnapshot, applyPresentationDelta } from "./presentationHydration";
+import { HistoryPages, type LoadedHistory } from "./historyPages";
 import { interfaceFonts, contentFonts, codeFonts } from "./typography";
 import type { InterfaceFont, ContentFont, CodeFont } from "./typography";
 import type {
@@ -304,7 +305,12 @@ export function hydrateWorkbenchExecutions(sessionId: string, events: Array<Reco
     else if (kind === "ProcessTelemetry") Object.assign(current, { durationMs: Number(raw.elapsed_ms ?? 0), cpuPercent: Number(raw.cpu_percent ?? 0), memoryBytes: Number(raw.memory_bytes ?? 0) });
     else if (kind === "ExecutionFinished") Object.assign(current, { status: Number(raw.exit_code ?? 1) === 0 ? "completed" : "failed", exitCode: Number(raw.exit_code ?? 1), durationMs: Number(raw.duration_ms ?? 0) });
   }
-  if (rebuilt.size) setWorkbenchExecutionsFor(sessionId, (prev) => { const merged = new Map(prev.map((item) => [item.id, item])); for (const [id, item] of rebuilt) if (!preferLive || !merged.has(id)) merged.set(id, item); return [...merged.values()]; });
+  const calls = new Set(presentationBySession[sessionId]?.items.flatMap(item => item.provenance?.tool_call_id ? [item.provenance.tool_call_id] : []) ?? []);
+  setWorkbenchExecutionsFor(sessionId, (prev) => {
+    const merged = new Map(prev.filter(item => calls.has(item.id) || item.id === activeExecutionId() || (preferLive && item.status === "running")).map(item => [item.id, item]));
+    for (const [id, item] of rebuilt) if (!preferLive || !merged.has(id)) merged.set(id, item);
+    return [...merged.values()];
+  });
 }
 
 /**
@@ -858,6 +864,51 @@ const [stoppingMap, setStoppingMap] = createStore<Record<string, boolean>>({});
 const [usageBySession, setUsageBySession] = createStore<Record<string, Usage>>({});
 const [presentationBySession, setPresentationBySession] = createStore<Record<string, OutputTimeline | null>>({});
 const [presentationErrors, setPresentationErrors] = createStore<Record<string, string | null>>({});
+export const [earlierSessions, setEarlierSessions] = createSignal<string | null>(null);
+export const [sessionsPageRequest, setSessionsPageRequest] = createSignal<string | undefined>();
+const historyWindows = new Map<string, HistoryPages>();
+const presentationIndices = new Map<string, Map<string, number>>();
+export const [historyPages, setHistoryPages] = createStore<Record<string, { older: string | null; newer: string | null; totalTurns: number; request?: string; revision?: string }>>({});
+export const [historyLoading, setHistoryLoading] = createStore<Record<string, boolean>>({});
+export const [historyErrors, setHistoryErrors] = createStore<Record<string, string | null>>({});
+
+export function hydrateHistoryPage(id: string, page: LoadedHistory, direction: "older" | "newer" | "refresh" | "update") {
+  let window = historyWindows.get(id);
+  if (!window) { window = new HistoryPages(); historyWindows.set(id, window); }
+  window.add(page, direction);
+  const merged = window.merged();
+  if (!merged) return;
+  const incoming = keepUnchanged(itemsBySession[id] ?? [], transcriptToItems(id, merged.messages, merged.entries, isRunning(id)));
+  setItemsBySession(id, keepLiveGates(itemsBySession[id] ?? [], incoming));
+  hydrateSetAside(id, merged.setAside);
+  const current = presentationBySession[id];
+  const liveItems = isRunning(id) ? current?.items.filter(item => item.turn_id.startsWith("live") || item.provenance?.source === "live_event") ?? [] : [];
+  const liveTurns = new Set(liveItems.map(item => item.turn_id));
+  const presentation = liveItems.length && current
+    ? mergePresentationSnapshot(merged.presentation, { ...current, cursor: "live:history-merge", items: liveItems, answers: current.answers?.filter(answer => liveTurns.has(answer.turn_id)) })
+    : merged.presentation;
+  setPresentationBySession(id, reconcile(presentation, { key: "id" }));
+  presentationIndices.delete(id);
+  setPresentationErrors(id, null);
+  setHistoryPages(id, { older: window.older, newer: window.newer, totalTurns: window.totalTurns,
+    revision: page.revision, request: page.page.request ?? undefined });
+}
+
+export function evictHistoryViews(keep: ReadonlySet<string>): string[] {
+  const evicted: string[] = [];
+  for (const id of historyWindows.keys()) {
+    if (keep.has(id) || isRunning(id)) continue;
+    evicted.push(id);
+    historyWindows.delete(id);
+    setWorkbenchExecutionsFor(id, []);
+    presentationIndices.delete(id);
+    setItemsBySession(id, []);
+    setPresentationBySession(id, null);
+    setHistoryPages(id, undefined!);
+    setHistoryErrors(id, null);
+  }
+  return evicted;
+}
 /** Card calls still being written, by session: only that a call started and
  *  the form its tool declares, for the Details steps (docs/design/96, Q2). */
 export type DraftingCard = { id: string; block: string };
@@ -988,7 +1039,17 @@ export function toggleItemExpanded(id: string) {
 
 export function hydrateFromPresentation(id: string, timeline: OutputTimeline) {
   if (timeline.schema_version !== 2 || timeline.session_id !== id) throw new Error("Unsupported presentation snapshot");
-  setPresentationBySession(id, reconcile(mergePresentationSnapshot(presentationBySession[id] ?? null, timeline), { key: "id" }));
+  const window = historyWindows.get(id);
+  let current = presentationBySession[id] ?? null;
+  if (window && current) {
+    const loaded = window.itemIds();
+    const items = current.items.filter(item => loaded.has(item.id));
+    const turns = new Set(items.map(item => item.turn_id));
+    current = { ...current, items, answers: current.answers?.filter(answer => turns.has(answer.turn_id)) };
+  }
+  const merge = window ? mergeTurnSnapshot : mergePresentationSnapshot;
+  setPresentationBySession(id, reconcile(merge(current, timeline), { key: "id" }));
+  presentationIndices.delete(id);
   setPresentationErrors(id, null);
 }
 
@@ -1011,10 +1072,23 @@ export function applyPresentationEvent(id: string, event: PresentationStreamEven
     return;
   }
   if (event.delta) {
-    setPresentationBySession(
-      id,
-      reconcile(applyPresentationDelta(presentationBySession[id] ?? null, event.delta), { key: "id" }),
-    );
+    const timeline = presentationBySession[id];
+    if (!timeline) return;
+    let indices = presentationIndices.get(id);
+    if (!indices) { indices = new Map(timeline.items.map((item, index) => [item.id, index])); presentationIndices.set(id, indices); }
+    const delta = event.delta;
+    const key = delta.type === "item_started" || delta.type === "item_replaced" ? delta.item.id : "item_id" in delta ? delta.item_id : null;
+    if (!key) return;
+    const index = indices.get(key);
+    if (index === undefined) {
+      if (delta.type === "item_started" || delta.type === "item_replaced") {
+        indices.set(key, timeline.items.length);
+        setPresentationBySession(id, "items", timeline.items.length, delta.item);
+      }
+      return;
+    }
+    const updated = applyPresentationDelta({ ...timeline, items: [timeline.items[index]] }, delta)?.items[0];
+    if (updated) setPresentationBySession(id, "items", index, reconcile(updated));
   }
 }
 
@@ -1133,7 +1207,7 @@ export function transcriptToItems(
       const displayText = authorPrefix && joined.startsWith(authorPrefix) ? joined.slice(authorPrefix.length) : joined;
       if (displayText || files.length || artifacts.length) next.push({ kind: "user", text: displayText, entryId: meta?.entry_id, authorId: meta?.author_id ?? undefined, authorName: meta?.author_name ?? undefined, scheduled: meta?.scheduled ? { ...meta.scheduled, at: meta.at } : undefined, files: files.length ? files : undefined, artifacts: artifacts.length ? artifacts : undefined });
     } else {
-      const baseKey = `${id}-h${assistantSeq++}`;
+      const baseKey = meta?.entry_id ?? `${id}-h${assistantSeq++}`;
       const hasText = m.content.some(
         (b): b is Extract<ContentBlock, { type: "text" }> =>
           b.type === "text" && b.text.trim().length > 0,
@@ -1611,6 +1685,8 @@ export function setUsageFor(id: string, usage: Usage | Record<string, number>) {
 // ---- session registry ------------------------------------------------------
 
 export function resetSessionView(id: string) {
+  historyWindows.delete(id);
+  presentationIndices.delete(id);
   for (const key of [K("main", id), K("side", id)]) {
     setItemsBySession(key, []);
     setRunningMap(key, false);

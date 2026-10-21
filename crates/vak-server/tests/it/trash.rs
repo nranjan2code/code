@@ -162,6 +162,9 @@ async fn trashed_session_absent_from_every_search() {
         assert!(mentions(&body, &gone), "{reader} before trash: {body}");
         assert!(mentions(&body, &kept), "{reader} before trash: {body}");
     }
+    let (status, snapshot) = get(format!("/sessions/{gone}/snapshot")).await;
+    assert_eq!(status, 200, "snapshot before trash: {snapshot}");
+    assert!(mentions(&snapshot, &gone));
     assert!(reach_search().contains(&gone));
     for path in [
         format!("/nodes/ses_{gone}"),
@@ -206,6 +209,7 @@ async fn trashed_session_absent_from_every_search() {
     assert!(found.contains(&kept), "recall: {found}");
 
     for path in [
+        format!("/sessions/{gone}/snapshot"),
         format!("/sessions/{gone}/transcript"),
         format!("/sessions/{gone}/transcript.md"),
         format!("/nodes/ses_{gone}"),

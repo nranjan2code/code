@@ -42,6 +42,266 @@ pub struct EntryLocation {
     pub parent: Option<String>,
 }
 
+/// A canonical frame address. No conversation body is duplicated in this
+/// index; every reader checks the digest after opening the encrypted frame.
+#[derive(Debug, Clone)]
+pub struct HistoryFrame {
+    pub id: String,
+    pub parent: Option<String>,
+    pub segment: u64,
+    pub offset: u64,
+    pub length: u64,
+    pub bytes: u64,
+    pub digest: String,
+    pub directive: bool,
+    pub turns: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub goal_head: Option<String>,
+    pub goal_revision: Option<String>,
+    pub goal_parent: Option<String>,
+    pub selection_head: Option<String>,
+}
+
+pub(crate) fn index_frame(
+    tx: &Transaction<'_>,
+    session: &str,
+    entry: &Entry,
+    offset: u64,
+    length: u64,
+    bytes: &[u8],
+) -> rusqlite::Result<()> {
+    let target = match &entry.payload {
+        EntryPayload::CardAction(record) => Some(record.presentation_id.clone()),
+        EntryPayload::TurnSetAside(record) | EntryPayload::TurnRestored(record) => {
+            Some(record.turn.clone())
+        }
+        EntryPayload::GoalUpdate(_) => Some("goal".into()),
+        EntryPayload::Activity(record)
+            if record.kind == vak_session::types::ActivityKind::PresentationSelection =>
+        {
+            Some("selection".into())
+        }
+        _ => None,
+    };
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    let (mut turns, mut input, mut output): (i64, i64, i64) = match entry.parent_id.as_deref() {
+        Some(parent) => tx.query_row("SELECT turns, input_tokens, output_tokens FROM history_frames WHERE session = ?1 AND entry_id = ?2",
+            params![session, parent], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.unwrap_or_default(),
+        None => (0, 0, 0),
+    };
+    let (mut goal_head, mut goal_revision, mut selection_head): (Option<String>, Option<String>, Option<String>) = match entry.parent_id.as_deref() {
+        Some(parent) => tx.query_row("SELECT goal_head, goal_revision, selection_head FROM history_frames WHERE session = ?1 AND entry_id = ?2",
+            params![session, parent], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.unwrap_or_default(),
+        None => (None, None, None),
+    };
+    let mut goal_parent = None;
+    if let EntryPayload::GoalUpdate(update) = &entry.payload {
+        goal_revision = Some(entry.id.clone());
+        if update.changes_state() {
+            goal_parent = goal_head.clone();
+            goal_head = Some(entry.id.clone());
+        }
+    }
+    if target.as_deref() == Some("selection") {
+        selection_head = Some(entry.id.clone());
+    }
+    turns += i64::from(entry.is_directive());
+    if let EntryPayload::Message(record) = &entry.payload
+        && let Some(usage) = record.meta.as_ref().and_then(|meta| meta.usage.as_ref())
+    {
+        input += usage.input_tokens as i64;
+        output += usage.output_tokens as i64;
+    }
+    tx.execute("INSERT OR IGNORE INTO history_frames
+        (session, entry_id, offset, length, bytes, digest, directive, target, turns, input_tokens, output_tokens, turn_id, goal_head, goal_revision, goal_parent, selection_head)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)", params![session, entry.id, offset as i64,
+        length as i64, bytes.len() as i64, vak_session::types::line_digest(text), entry.is_directive(), target, turns, input, output, entry.at_turn, goal_head, goal_revision, goal_parent, selection_head])?;
+    Ok(())
+}
+
+const FRAME_COLUMNS: &str = "e.entry_id, e.parent, e.segment, h.offset, h.length, h.bytes, h.digest, h.directive, h.turns, h.input_tokens, h.output_tokens, h.goal_head, h.goal_revision, h.goal_parent, h.selection_head";
+
+fn frame_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryFrame> {
+    Ok(HistoryFrame {
+        id: row.get(0)?,
+        parent: row.get(1)?,
+        segment: row.get::<_, i64>(2)? as u64,
+        offset: row.get::<_, i64>(3)? as u64,
+        length: row.get::<_, i64>(4)? as u64,
+        bytes: row.get::<_, i64>(5)? as u64,
+        digest: row.get(6)?,
+        directive: row.get(7)?,
+        turns: row.get::<_, i64>(8)? as u64,
+        input_tokens: row.get::<_, i64>(9)? as u64,
+        output_tokens: row.get::<_, i64>(10)? as u64,
+        goal_head: row.get(11)?,
+        goal_revision: row.get(12)?,
+        goal_parent: row.get(13)?,
+        selection_head: row.get(14)?,
+    })
+}
+
+impl Catalog {
+    /// Sandbox rows for the calls in a human history page, read from their
+    /// canonical frames. Index catch-up opens only the unread suffix.
+    pub fn sandbox_rows(
+        &self,
+        dir: &std::path::Path,
+        owner: Option<&str>,
+        session: &str,
+        executions: &[String],
+    ) -> Result<Vec<serde_json::Value>, CatalogError> {
+        if executions.is_empty() || !dir.is_dir() {
+            return Ok(Vec::new());
+        }
+        let source = crate::Source::Sandbox {
+            dir: dir.into(),
+            session: owner.map(str::to_string),
+        };
+        self.catch_up_source(&source)?;
+        let key = source.key();
+        let addresses = {
+            let conn = self.conn()?;
+            let mut query = conn.prepare("SELECT segment, frame, offset, length, digest FROM sandbox_frames
+                WHERE source = ?1 AND session = ?2 AND (execution = ?3 OR candidate IN
+                    (SELECT candidate FROM sandbox_frames WHERE source = ?1 AND session = ?2 AND execution = ?3 AND candidate IS NOT NULL))")?;
+            let mut found = std::collections::BTreeMap::new();
+            for execution in executions {
+                let rows = query.query_map(params![key, session, execution], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)? as u64,
+                        row.get::<_, i64>(1)? as u64,
+                        row.get::<_, i64>(2)? as u64,
+                        row.get::<_, i64>(3)? as u64,
+                        row.get::<_, String>(4)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (segment, frame, offset, length, digest) = row?;
+                    found.insert((segment, frame), (offset, length, digest));
+                }
+            }
+            found
+        };
+        let chain = vak_session::chain::RecordChain::at(dir);
+        let mut rows = Vec::new();
+        for ((segment, _), (offset, length, digest)) in addresses {
+            let mut row = chain.read_indexed(segment, offset, length, &digest)?;
+            if vak_session::content::restore(&mut row)? == vak_session::content::Restored::Whole {
+                rows.push(row);
+            }
+        }
+        Ok(rows)
+    }
+
+    pub fn history_header(&self, session: &str) -> Result<Option<HistoryFrame>, CatalogError> {
+        let conn = self.conn()?;
+        Ok(conn
+            .query_row(
+                &format!(
+                    "SELECT {FRAME_COLUMNS} FROM entries e JOIN history_frames h
+            USING (session, entry_id) WHERE e.session = ?1 AND e.depth = 0 LIMIT 1"
+                ),
+                [ingest::session_node(session)],
+                frame_row,
+            )
+            .optional()?)
+    }
+    pub fn history_frame(
+        &self,
+        session: &str,
+        id: &str,
+    ) -> Result<Option<HistoryFrame>, CatalogError> {
+        let conn = self.conn()?;
+        Ok(conn
+            .query_row(
+                &format!(
+                    "SELECT {FRAME_COLUMNS} FROM entries e JOIN history_frames h
+            USING (session, entry_id) WHERE e.session = ?1 AND e.entry_id = ?2"
+                ),
+                params![ingest::session_node(session), id],
+                frame_row,
+            )
+            .optional()?)
+    }
+
+    /// Physical append order identifies the active leaf, including a retry
+    /// whose new branch is shorter than the branch it replaced.
+    pub fn history_head(&self, session: &str) -> Result<Option<String>, CatalogError> {
+        let conn = self.conn()?;
+        Ok(conn
+            .query_row(
+                "SELECT entry_id FROM entries WHERE session = ?1
+            ORDER BY segment DESC, frame DESC LIMIT 1",
+                [ingest::session_node(session)],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn history_turn_end(
+        &self,
+        session: &str,
+        turn: &str,
+        leaf: &str,
+    ) -> Result<Option<String>, CatalogError> {
+        let conn = self.conn()?;
+        let key = ingest::session_node(session);
+        let mut query = conn.prepare("SELECT h.entry_id FROM history_frames h JOIN entries e USING (session, entry_id)
+            WHERE h.session = ?1 AND (h.turn_id = ?2 OR h.entry_id = ?2) ORDER BY e.segment DESC, e.frame DESC")?;
+        let candidates = query.query_map(params![key, turn], |row| row.get::<_, String>(0))?;
+        for id in candidates {
+            let id = id?;
+            if is_ancestor(&conn, &key, &id, leaf)? {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn history_page_end_after(
+        &self,
+        session: &str,
+        end: &str,
+        leaf: &str,
+        turns: u64,
+    ) -> Result<Option<String>, CatalogError> {
+        let current = self.history_frame(session, end)?.map_or(0, |row| row.turns);
+        let conn = self.conn()?;
+        let key = ingest::session_node(session);
+        let mut query = conn.prepare("SELECT h.entry_id FROM history_frames h JOIN entries e USING (session, entry_id)
+            WHERE h.session = ?1 AND h.turns > ?2 AND h.turns <= ?3 ORDER BY e.segment DESC, e.frame DESC")?;
+        let candidates = query.query_map(
+            params![key, current as i64, current.saturating_add(turns) as i64],
+            |row| row.get::<_, String>(0),
+        )?;
+        for id in candidates {
+            let id = id?;
+            if is_ancestor(&conn, &key, &id, leaf)? {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Candidate overlay addresses for a page, checked against its current
+    /// branch by the caller. Targets are turn/presentation ids, never text.
+    pub fn history_overlays(
+        &self,
+        session: &str,
+        target: &str,
+    ) -> Result<Vec<HistoryFrame>, CatalogError> {
+        let conn = self.conn()?;
+        let mut query = conn.prepare(&format!("SELECT {FRAME_COLUMNS} FROM history_frames h JOIN entries e
+            USING (session, entry_id) WHERE h.session = ?1 AND h.target = ?2 ORDER BY e.segment, e.frame"))?;
+        Ok(query
+            .query_map(params![ingest::session_node(session), target], frame_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+}
+
 /// The bounded discovery projection of a settled turn, regenerated from its
 /// canonical card. Bounded by whole words, never by a character count.
 pub fn compact_turn_record(record: &vak_session::TurnCardRecord) -> String {
@@ -440,6 +700,93 @@ impl Catalog {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(clippy::disallowed_macros)] // Explicit test measurements, never runtime output.
+    fn summary_pages_cover_tied_timestamps_at_chat_scale() {
+        vak_config::paths::isolate_home_for_tests();
+        for count in [100, 1_000, 10_000] {
+            let dir = tempfile::tempdir().unwrap();
+            let catalog = Catalog::open(&dir.path().join("catalog.db"), dir.path()).unwrap();
+            catalog.seed(|tx| {
+                for number in 0..count {
+                    tx.execute("INSERT INTO nodes (id, kind, created_at, updated_at) VALUES (?1, 'session', '2026-10-21', '2026-10-21')", [format!("ses_{number:05}")])?;
+                }
+                Ok(())
+            }).unwrap();
+            let started = std::time::Instant::now();
+            let first = catalog
+                .session_page(&crate::Audience::default(), None, 40)
+                .unwrap();
+            assert_eq!(first.len(), 40);
+            let first_ms = started.elapsed().as_millis();
+            let mut seen = std::collections::HashSet::new();
+            let mut boundary: Option<(String, String)> = None;
+            loop {
+                let rows = catalog
+                    .session_page(
+                        &crate::Audience::default(),
+                        boundary.as_ref().map(|(at, id)| (at.as_str(), id.as_str())),
+                        40,
+                    )
+                    .unwrap();
+                if rows.is_empty() {
+                    break;
+                }
+                for row in &rows {
+                    assert!(seen.insert(row.id.clone()));
+                }
+                let last = rows.last().unwrap();
+                boundary = Some((last.updated_at.clone().unwrap(), last.id.clone()));
+            }
+            assert_eq!(seen.len(), count);
+            println!(
+                "chats={count} first_page_ms={first_ms} summaries={}",
+                first.len()
+            );
+        }
+    }
+
+    #[test]
+    fn sandbox_addresses_select_only_requested_execution_and_catch_up() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = Catalog::open(&dir.path().join("catalog.db"), dir.path()).unwrap();
+        let path = dir.path().join("executions");
+        let chain =
+            vak_session::chain::RecordChain::at(&path).of_conversation("sandbox-history-test");
+        chain.append_all(&[
+            serde_json::json!({"kind":"ExecutionStarted","execution_id":"a","code_preview":"first"}),
+            serde_json::json!({"kind":"ExecutionStarted","execution_id":"b","code_preview":"unrelated"}),
+            serde_json::json!({"kind":"ExecutionFinished","execution_id":"a","exit_code":0}),
+        ]).unwrap();
+        let rows = catalog
+            .sandbox_rows(
+                &path,
+                Some("sandbox-history-test"),
+                "sandbox-history-test",
+                &["a".into()],
+            )
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row["execution_id"] == "a"));
+        chain.append(&serde_json::json!({"kind":"ArtifactGenerated","execution_id":"a","path":"draft.txt"})).unwrap();
+        let rows = catalog
+            .sandbox_rows(
+                &path,
+                Some("sandbox-history-test"),
+                "sandbox-history-test",
+                &["a".into()],
+            )
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(
+            catalog
+                .sandbox_rows(&path, Some("sandbox-history-test"), "other", &["a".into()])
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn recall_search_ranks_the_turn_that_carries_the_subject_first() {

@@ -63,6 +63,7 @@ mod catalog_api;
 mod channels;
 mod client_events;
 mod client_ui;
+mod conversation_history;
 mod core_pool;
 mod coworking;
 mod delivery;
@@ -226,6 +227,8 @@ pub struct AppState {
     /// process being inspected.
     ops_port: u16,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
+    session_registered: tokio::sync::watch::Sender<u64>,
+    catalog_discovered: Arc<Mutex<bool>>,
     /// Ephemeral, observation-based coworking presence. It is deliberately
     /// outside the append-only work ledger and expires without disconnect
     /// bookkeeping when a browser vanishes.
@@ -318,6 +321,8 @@ impl AppState {
             started_at: Instant::now(),
             ops_port: vak_ops::OpsConfig::detect().port,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            session_registered: tokio::sync::watch::channel(0).0,
+            catalog_discovered: Arc::new(Mutex::new(false)),
             coworking_presence: Arc::new(Mutex::new(HashMap::new())),
             best_runs: Arc::new(Mutex::new(HashMap::new())),
             scheduler_started_at: Utc::now(),
@@ -4222,6 +4227,21 @@ fn live_presentation_snapshot(
     session_id: &str,
     session: &SessionLog,
 ) -> vak_delivery::OutputTimeline {
+    match session.latest_turn_view() {
+        Ok(view) => {
+            let mut timeline = project_presentation(core, session_id, &view);
+            conversation_history::canonical_turns(&mut timeline, &view);
+            timeline
+        }
+        Err(_) => vak_delivery::OutputTimeline::empty(session_id),
+    }
+}
+
+fn project_presentation(
+    core: &Core,
+    session_id: &str,
+    session: &SessionLog,
+) -> vak_delivery::OutputTimeline {
     let planner = delivery::merged_presentation_skills(core);
     let adaptive_store =
         vak_core::presentation_store::PresentationStore::new(core.scope().presentations());
@@ -4234,11 +4254,19 @@ fn live_presentation_snapshot(
         }
         Err(_) => crate::projection::snapshot_with_skills(session_id, session, &planner),
     };
-    crate::projection::append_sandbox_artifacts(
-        &mut timeline,
-        &core.scope().into_root(),
-        session_id,
-    );
+    if let Ok(catalog) = core.catalog()
+        && let Err(error) = crate::projection::append_sandbox_artifacts_page(
+            &mut timeline,
+            &core.scope().into_root(),
+            session_id,
+            &catalog,
+        )
+    {
+        timeline
+            .diagnostics
+            .push("Some file details could not be loaded.".into());
+        tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "history file details could not be projected");
+    }
     timeline
 }
 
@@ -4425,6 +4453,9 @@ pub(crate) fn register_handle(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(id, handle.clone());
+    state
+        .session_registered
+        .send_modify(|revision| *revision = revision.wrapping_add(1));
     state.evict_idle_sessions();
     handle
 }
@@ -4628,197 +4659,34 @@ fn resolve_process_core_for_cwd(state: &AppState, active: &Core, cwd: &std::path
 
 #[derive(serde::Deserialize, Default)]
 struct ListSessionsQuery {
-    /// Lists the trash instead: only the sessions moved there, so a person
-    /// can restore one. Nothing else reads a trashed session.
     #[serde(default)]
     trash: bool,
+    before: Option<String>,
+    visible: Option<String>,
 }
 
-/// Sidebar projection over the persisted store: one summary per JSONL file.
 async fn list_sessions(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<ListSessionsQuery>,
-) -> Json<serde_json::Value> {
-    // Sessions are stored per workspace, so this follows the workspace the
-    // client has open rather than the one the process started in.
-    let active = state.active_core();
-    let dir = state.core.scope().sessions_dir(active.cwd());
-    let active_cwd = active.cwd().to_string_lossy().into_owned();
-    let archive_map = read_archive(&state.core);
-    let trashed = vak_core::trash::trashed(&state.core.shared_scope());
-    let states: HashMap<String, _> = if query.trash {
-        vak_core::trash::states(&state.core.shared_scope())
-            .into_iter()
-            .collect()
-    } else {
-        HashMap::new()
-    };
-    let mut sessions = Vec::new();
-    let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(&dir)
-        .map(|read| read.flatten().collect())
-        .unwrap_or_default();
-    // A workspace can be renamed or canonicalized between runs (notably
-    // `/var` vs `/private/var` on macOS). Recover sessions by their durable
-    // header cwd when the hashed directory no longer matches, while still
-    // filtering strictly to the active workspace.
-    if let Ok(projects) = std::fs::read_dir(state.core.scope().sessions_root()) {
-        for project in projects.flatten() {
-            if let Ok(files) = std::fs::read_dir(project.path()) {
-                for file in files.flatten() {
-                    let duplicate = entries
-                        .iter()
-                        .any(|existing| existing.path() == file.path());
-                    if !duplicate {
-                        entries.push(file);
-                    }
-                }
-            }
-        }
+) -> axum::response::Response {
+    match tokio::task::spawn_blocking(move || {
+        conversation_history::list(
+            &state,
+            query.trash,
+            query.before.as_deref(),
+            query.visible.as_deref(),
+        )
+    })
+    .await
+    {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(status)) => (
+            status,
+            Json(serde_json::json!({"error": "Conversations could not be listed."})),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
-    let shared_home = state.core.shared_scope().into_root();
-    if let Ok(agents) = std::fs::read_dir(shared_home.join("agents")) {
-        for agent in agents.flatten() {
-            if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
-                for project in projects.flatten() {
-                    if let Ok(files) = std::fs::read_dir(project.path()) {
-                        for file in files.flatten() {
-                            let duplicate = entries
-                                .iter()
-                                .any(|existing| existing.path() == file.path());
-                            if !duplicate {
-                                entries.push(file);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    for entry in entries {
-        let path = entry.path();
-        let Some(session_id) = vak_config::scope::ledger_session_id(&path) else {
-            continue;
-        };
-        if trashed.contains(&session_id) != query.trash {
-            continue;
-        }
-        // An erased conversation is not in the trash: nothing restores it.
-        let in_trash = states.get(&session_id);
-        if in_trash.is_some_and(|state| state.erased_at.is_some()) {
-            continue;
-        }
-        let updated_at = vak_session::SessionLog::modified(&path)
-            .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
-        let (created_at, title, entry_count, cwd, agent, conversation) = summarize_jsonl(&path);
-        // A user-created Agent lives in its own isolated workspace (see
-        // agent_chats::open / agent_workspace), independent of whichever
-        // default workspace the browser client currently has open — that
-        // switch only ever applied to the built-in "vak" identity, which
-        // still shares the process's default workspace. So only the "vak"
-        // (or header-less/legacy) sessions are filtered by `active_cwd`;
-        // every other Agent's sessions are always its own to show.
-        let is_default_agent = agent.as_ref().is_none_or(|a| a.id == "vak");
-        if is_default_agent && cwd.as_deref() != Some(active_cwd.as_str()) {
-            continue;
-        }
-        // Header-only sessions are abandoned drafts (for example, creating a
-        // task and immediately switching away). Keep the ledger append-only,
-        // but do not let empty drafts accumulate in the task switcher. This
-        // applies equally to built-in and user-created Agents, but actively
-        // registered sessions must remain discoverable.
-        let is_active = state.get(&session_id).is_some();
-        if entry_count <= 1 && !is_active {
-            continue;
-        }
-        let running = state.get(&session_id).is_some_and(|handle| {
-            handle
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_none()
-        });
-        let archived = archive_map.get(&session_id).copied().unwrap_or(false);
-        let trashed_at = in_trash.and_then(|state| state.trashed_at);
-        let held = trashed_at.is_some() && state.core.conversation_held(&session_id);
-        sessions.push(serde_json::json!({
-            "trashed_at": trashed_at,
-            "erase_on": trashed_at.map(|at| at + vak_core::lifecycle::trash_window()),
-            "held": held,
-            "session_id": session_id,
-            "cwd": cwd.unwrap_or_else(|| state.core.cwd().to_string_lossy().into_owned()),
-            "created_at": created_at,
-            "updated_at": updated_at,
-            "entries": entry_count,
-            "agent": agent,
-            "conversation": conversation,
-            "title": title,
-            "running": running,
-            "archived": archived,
-        }));
-    }
-    sessions.sort_by_key(|s| s["updated_at"].as_str().unwrap_or("").to_string());
-    sessions.reverse();
-    Json(serde_json::json!({ "sessions": sessions }))
-}
-
-/// Bounded scan: header line for created_at + first user message as title.
-#[allow(clippy::type_complexity)]
-fn summarize_jsonl(
-    path: &std::path::Path,
-) -> (
-    Option<String>,
-    Option<String>,
-    u64,
-    Option<String>,
-    Option<vak_session::types::AgentIdentity>,
-    Option<vak_session::types::ConversationContext>,
-) {
-    let mut created_at = None;
-    let mut title = None;
-    let mut cwd = None;
-    let mut agent = None;
-    let mut conversation = None;
-    let mut seen = 0u64;
-    let entries = vak_session::SessionLog::scan(path, |entry| {
-        seen += 1;
-        if let Some(entry) = entry.cloned() {
-            match entry.payload {
-                vak_session::EntryPayload::Header(h) => {
-                    created_at = Some(h.created_at.to_rfc3339());
-                    cwd = Some(h.cwd.to_string_lossy().into_owned());
-                    agent = h.agent;
-                    conversation = h.conversation;
-                }
-                vak_session::EntryPayload::Message(rec) => {
-                    if title.is_none() {
-                        title = rec.conversation_title();
-                    }
-                }
-                vak_session::EntryPayload::Compaction(_) => {}
-                vak_session::EntryPayload::Receipt(_) => {}
-                vak_session::EntryPayload::Goal(_) => {}
-                vak_session::EntryPayload::GoalUpdate(_) => {}
-                vak_session::EntryPayload::Activity(_) => {}
-                vak_session::EntryPayload::Work(_) => {}
-                vak_session::EntryPayload::Intent(_) => {}
-                vak_session::EntryPayload::TurnCapabilitiesBound(_)
-                | vak_session::EntryPayload::TurnCapabilitiesRef(_) => {}
-                vak_session::EntryPayload::ChildRun { .. } => {}
-                vak_session::EntryPayload::Presentation(_) => {}
-                vak_session::EntryPayload::TurnCard(_) => {}
-                vak_session::EntryPayload::EvidenceBody(_)
-                | vak_session::EntryPayload::CallEffect(_)
-                | vak_session::EntryPayload::Decision(_)
-                | vak_session::EntryPayload::CardAction(_)
-                | vak_session::EntryPayload::TurnSetAside(_)
-                | vak_session::EntryPayload::TurnRestored(_)
-                | vak_session::EntryPayload::TurnRetried(_) => {}
-                vak_session::EntryPayload::ContextSelection(_) => {}
-            }
-        }
-        !(title.is_some() && seen > 400)
-    });
-    (created_at, title, entries, cwd, agent, conversation)
 }
 
 #[derive(serde::Deserialize)]
@@ -8293,54 +8161,11 @@ async fn presentation_events_sse(
 /// One revision supplies both message identity and rendered output. A client
 /// must not pair independently sampled transcript and presentation reads.
 async fn conversation_snapshot(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
+    state: State<AppState>,
+    path: Path<String>,
+    query: axum::extract::Query<conversation_history::PageQuery>,
 ) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let project = |core: &Core, session: &SessionLog, running: bool| {
-        let presentation = live_presentation_snapshot(core, &id, session);
-        Json(serde_json::json!({
-            "session_id": id,
-            "cursor": presentation.cursor,
-            "running": running,
-            "transcript": transcript_json(session),
-            "presentation": presentation,
-        }))
-        .into_response()
-    };
-    if let Some(handle) = state.get(&id) {
-        let guard = handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(session) = guard.as_ref() {
-            return project(&handle.core, session, false);
-        }
-        // The runner owns the log. Both projections read the same committed
-        // prefix; live events continue updating the client until settlement.
-        return match open_historical_session(&state, &id) {
-            Some(session) => project(&handle.core, &session, true),
-            None => (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({"error": "run in progress"})),
-            )
-                .into_response(),
-        };
-    }
-    match open_historical_session(&state, &id) {
-        Some(session) => {
-            let core = session
-                .header()
-                .map(|header| resolve_core_for_header(&state, header))
-                .unwrap_or_else(|| state.active_core());
-            project(&core, &session, false)
-        }
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "unknown session"})),
-        )
-            .into_response(),
-    }
+    conversation_history::snapshot(state, path, query).await
 }
 
 async fn transcript(
@@ -13720,12 +13545,38 @@ async fn read_execution_artifact_office(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct SandboxExecutionsQuery {
+    calls: Option<String>,
+}
+
 async fn session_sandbox_executions(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<SandboxExecutionsQuery>,
 ) -> axum::response::Response {
-    use axum::response::IntoResponse;
     let path = session_sandbox_events_path(&state, &id);
+    if let Some(calls) = query.calls {
+        if calls.len() > 65536 {
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+        let calls: Vec<String> = match serde_json::from_str(&calls) {
+            Ok(calls) => calls,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        return match tokio::task::spawn_blocking(move || {
+            let catalog = state.core.catalog()?;
+            catalog
+                .sandbox_rows(&path, Some(&id), &id, &calls)
+                .map(|events| serde_json::json!({"session_id":id,"events":events}))
+                .map_err(vak_core::CoreError::from)
+        })
+        .await
+        {
+            Ok(Ok(value)) => Json(value).into_response(),
+            _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        };
+    }
     let events = crate::sandbox_records::events::<serde_json::Value>(&path);
     Json(serde_json::json!({ "session_id": id, "events": events })).into_response()
 }

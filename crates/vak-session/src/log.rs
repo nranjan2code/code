@@ -196,6 +196,7 @@ pub struct SessionLog {
     entries: Vec<Entry>,
     by_id: HashMap<String, usize>,
     tail_id: Option<String>,
+    view_chain: Option<Vec<usize>>,
     warnings: Vec<String>,
     /// The turn later appends belong to: the latest directive on the active
     /// chain, or the id reserved by `begin_turn` for the next one.
@@ -292,6 +293,7 @@ impl SessionLog {
             entries: Vec::new(),
             by_id: HashMap::new(),
             tail_id: None,
+            view_chain: None,
             warnings: Vec::new(),
             current_turn: None,
             reserved_turn: None,
@@ -389,10 +391,9 @@ impl SessionLog {
                 message: "invalid indexed record size".into(),
             });
         }
-        let bytes = vak_storage::segments::frame_bytes(path).map_err(storage_error)?;
         let key = crate::keys::of_segment(path)?
             .ok_or_else(|| SessionError::Unencrypted(path.to_path_buf()))?;
-        let entry_bytes = vak_storage::records::entry_at(&bytes, offset, length, Some(&key))
+        let entry_bytes = vak_storage::segments::read_entry(path, offset, length, Some(&key))
             .map_err(|_| SessionError::Corrupt {
                 line: 0,
                 message: "indexed record is outside the ledger".into(),
@@ -418,6 +419,26 @@ impl SessionLog {
             });
         }
         Ok(entry)
+    }
+
+    /// Reads a catalog-addressed frame in this ledger, whether its segment
+    /// is open or sealed. Ownership/trash checks belong to the caller.
+    pub fn read_indexed_frame(
+        dir: &Path,
+        segment: u64,
+        offset: u64,
+        length: u64,
+        id: &str,
+        digest: &str,
+    ) -> Result<Entry, SessionError> {
+        let segments = vak_storage::segments::SegmentSet::at(dir);
+        let open = segments.log_path(segment);
+        let path = if open.exists() {
+            open
+        } else {
+            segments.sealed_path(segment)
+        };
+        Self::read_record_at(&path, offset, length, id, digest)
     }
 
     pub fn open(path: PathBuf) -> Result<Self, SessionError> {
@@ -471,6 +492,7 @@ impl SessionLog {
             entries: parsed.entries,
             by_id: parsed.by_id,
             tail_id: parsed.tail_id,
+            view_chain: None,
             warnings: parsed.warnings,
             current_turn: None,
             reserved_turn: None,
@@ -500,6 +522,7 @@ impl SessionLog {
             entries: parsed.entries,
             by_id: parsed.by_id,
             tail_id: parsed.tail_id,
+            view_chain: None,
             warnings: parsed.warnings,
             current_turn: None,
             reserved_turn: None,
@@ -548,14 +571,9 @@ impl SessionLog {
                 message: "empty session ledger".into(),
             })?;
         let key = crate::keys::of_ledger(path)?;
-        let bytes = vak_storage::segments::frame_bytes(&first).map_err(storage_error)?;
-        let located =
-            vak_storage::records::located_entries(&bytes, 0, Some(&key)).map_err(storage_error)?;
-        let entry = located.first().ok_or_else(|| SessionError::Corrupt {
-            line: 0,
-            message: "empty session ledger".into(),
-        })?;
-        match serde_json::from_slice::<Entry>(&entry.entry) {
+        let bytes =
+            vak_storage::segments::read_first_entry(&first, Some(&key)).map_err(storage_error)?;
+        match serde_json::from_slice::<Entry>(&bytes) {
             Ok(Entry {
                 payload: EntryPayload::Header(header),
                 ..
@@ -629,9 +647,7 @@ impl SessionLog {
 
     /// The segment files of this ledger, oldest first: what an index reads.
     pub fn segment_files(path: &Path) -> Vec<PathBuf> {
-        let Ok(segments) = vak_storage::segments::SegmentSet::open(path) else {
-            return Vec::new();
-        };
+        let segments = vak_storage::segments::SegmentSet::at(path);
         segment_numbers(path)
             .into_iter()
             .map(|(number, open)| {
@@ -2603,6 +2619,12 @@ impl SessionLog {
     }
 
     pub fn chain_to_root(&self) -> Vec<&Entry> {
+        if let Some(indices) = &self.view_chain {
+            return indices
+                .iter()
+                .filter_map(|index| self.entries.get(*index))
+                .collect();
+        }
         let mut chain = Vec::new();
         let mut cursor = self.tail_id.clone();
         while let Some(id) = cursor {
@@ -2615,6 +2637,70 @@ impl SessionLog {
         }
         chain.reverse();
         chain
+    }
+
+    /// A read-only human projection of canonical entries already addressed
+    /// and checked by Core/the server. This never rewrites parent links and
+    /// cannot append. It is not a complete model conversation.
+    pub fn read_view(path: PathBuf, entries: Vec<Entry>) -> Result<Self, SessionError> {
+        let key = crate::keys::of_ledger(&path)?;
+        let by_id = entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.id.clone(), index))
+            .collect();
+        let view_chain = Some((0..entries.len()).collect());
+        let tail_id = entries.last().map(|entry| entry.id.clone());
+        Ok(Self {
+            ledger: LedgerDir {
+                segments: vak_storage::segments::SegmentSet::at(&path),
+                writer: None,
+                lock: None,
+                key,
+            },
+            path,
+            entries,
+            by_id,
+            tail_id,
+            view_chain,
+            warnings: Vec::new(),
+            current_turn: None,
+            reserved_turn: None,
+            objects: None,
+            fetched: Default::default(),
+            account_results: HashMap::new(),
+            body_scopes: HashMap::new(),
+        })
+    }
+
+    /// The newest human turn for the live presentation baseline. Walks only
+    /// the tail, leaving historical projection to the paged reader.
+    pub fn latest_turn_view(&self) -> Result<Self, SessionError> {
+        let mut entries = Vec::new();
+        let mut cursor = self.tail_id.as_ref();
+        while let Some(id) = cursor {
+            let Some(&index) = self.by_id.get(id) else {
+                break;
+            };
+            let entry = &self.entries[index];
+            entries.push(entry.clone());
+            if entry.is_directive() {
+                break;
+            }
+            cursor = entry.parent_id.as_ref();
+        }
+        entries.reverse();
+        if let Some(header) = self
+            .entries
+            .first()
+            .filter(|entry| matches!(entry.payload, EntryPayload::Header(_)))
+            && entries.first().is_none_or(|entry| entry.id != header.id)
+        {
+            entries.insert(0, header.clone());
+        }
+        let mut view = Self::read_view(self.path.clone(), entries)?;
+        view.objects = self.objects.clone();
+        Ok(view)
     }
 
     /// Message entries along the active path, root→leaf, with their entry

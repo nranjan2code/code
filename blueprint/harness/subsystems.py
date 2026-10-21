@@ -177,7 +177,7 @@ SUBSYSTEMS = [
     # ---- Data --------------------------------------------------------------
     ("ledger", "Ledgers and records",
      "Sealed append-only ledgers, record chains, objects, fencing, documents, turns",
-     ["crates/vak-session/src/**"],
+     ["crates/vak-session/src/**", "crates/vak-server/src/conversation_history.rs"],
      ["/sessions", "/conversations/{id}/gone"],
      ["sessions", "export"], ["02-sessions.md", "73-data-architecture-and-lifecycle.md"]),
     ("storage", "Storage substrate",

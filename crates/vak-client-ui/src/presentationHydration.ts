@@ -1,5 +1,17 @@
 import type { OutputTimeline, OutputItem, PresentationDelta } from "./types";
 
+/** Stream snapshots describe the current turn, while historical pages keep
+ * their own authority. Replace those turns and stale live items only. */
+export function mergeTurnSnapshot(current: OutputTimeline | null, incoming: OutputTimeline): OutputTimeline {
+  if (!current) return incoming;
+  if (incoming.cursor?.startsWith("live:")) return mergePresentationSnapshot(current, incoming);
+  const turns = new Set(incoming.items.map(item => item.turn_id));
+  const retained = current.items.filter(item => !turns.has(item.turn_id)
+    && !item.turn_id.startsWith("live") && item.provenance?.source !== "live_event");
+  return { ...incoming, items: [...retained, ...incoming.items],
+    answers: [...(current.answers ?? []).filter(answer => !turns.has(answer.turn_id)), ...(incoming.answers ?? [])] };
+}
+
 /**
  * Merge a presentation snapshot at the boundary where the durable projection
  * and the live event projection meet.

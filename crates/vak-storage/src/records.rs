@@ -221,8 +221,19 @@ pub fn located_entries(
     from: u64,
     key: Option<&ScopeKey>,
 ) -> Result<Vec<LocatedEntry>> {
+    let start = usize::try_from(from).map_err(|_| StorageError::Malformed("offset"))?;
+    located_slice(
+        data.get(start..).ok_or(StorageError::Malformed("offset"))?,
+        from,
+        key,
+    )
+}
+
+/// Opens a suffix read directly from disk, preserving each frame's original
+/// offset as its AEAD identity.
+pub fn located_slice(data: &[u8], base: u64, key: Option<&ScopeKey>) -> Result<Vec<LocatedEntry>> {
     let mut out = Vec::new();
-    let mut pos = usize::try_from(from).map_err(|_| StorageError::Malformed("offset"))?;
+    let mut pos = 0usize;
     while pos < data.len() {
         let rest = &data[pos..];
         if rest.len() < 4 {
@@ -237,9 +248,9 @@ pub fn located_entries(
             break;
         }
         out.push(LocatedEntry {
-            offset: pos as u64,
+            offset: base + pos as u64,
             len: total as u64,
-            entry: open_body(&rest[4..4 + len], pos as u64, key)?,
+            entry: open_body(&rest[4..4 + len], base + pos as u64, key)?,
             sealed: rest[4] & SEALED != 0,
         });
         pos += total;
@@ -289,6 +300,16 @@ pub fn entry_at(data: &[u8], offset: u64, len: u64, key: Option<&ScopeKey>) -> R
         .get(start..start.saturating_add(total))
         .filter(|frame| frame.len() == total && total > 4 + HASH)
         .ok_or(StorageError::Malformed("frame out of range"))?;
+    entry_frame(frame, offset, key)
+}
+
+/// Opens an isolated frame using its original segment offset as authenticated
+/// identity. The caller checks the resulting entry against its indexed digest.
+pub fn entry_frame(frame: &[u8], offset: u64, key: Option<&ScopeKey>) -> Result<Vec<u8>> {
+    let total = frame.len();
+    if total <= 4 + HASH || total > MAX_FRAME + 4 + HASH {
+        return Err(StorageError::Malformed("frame length"));
+    }
     let body_len = u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
     if 4 + body_len + HASH != total {
         return Err(StorageError::Malformed("frame length"));

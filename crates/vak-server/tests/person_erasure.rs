@@ -42,7 +42,12 @@ impl Provider for Scripted {
                 sink.push(stream::StreamEvent::Start { partial: m.clone() });
                 sink.close_message(m).await;
             }
-            None => sink.close_error(LlmError::Parse("exhausted".into())).await,
+            // Exhausting a finite fixture must end the request rather than
+            // entering the runtime's transient-provider endurance loop.
+            None => {
+                sink.close_error(LlmError::InvalidRequest("exhausted".into()))
+                    .await
+            }
         }
         Ok(rx)
     }
@@ -148,6 +153,7 @@ async fn person_erasure_spans_agents_and_chats() {
             text("four"),
             text("five"),
             text("six"),
+            text("seven"),
         ])),
     });
     let (base, token, cwd, _server) = spawn_gateway(provider).await;

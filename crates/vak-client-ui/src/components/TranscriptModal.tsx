@@ -14,6 +14,7 @@ import Skeleton from "./Skeleton";
 export default function TranscriptModal() {
   const [items, setItems] = createSignal<Item[] | null>(null);
   const [count, setCount] = createSignal(0);
+  const [page, setPage] = createSignal<api.ConversationSnapshot["page"]>();
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   let scroller!: HTMLDivElement;
@@ -21,28 +22,29 @@ export default function TranscriptModal() {
   const title = () =>
     sessions().find((s) => s.session_id === transcriptViewId())?.title || "Untitled task";
 
+  const load = async (id: string, before?: string) => {
+    setError(null);
+    setLoading(true);
+    try {
+      const snapshot = await api.conversationSnapshot(id, { before });
+      if (transcriptViewId() !== id) return;
+      const t = snapshot.transcript;
+      setItems(transcriptToItems(id, t.messages, t.entries));
+      setPage(snapshot.page);
+      setCount(snapshot.page?.total_turns ?? t.count);
+      requestAnimationFrame(() => scroller?.scrollTo({ top: before ? 0 : scroller.scrollHeight }));
+    } catch (error) {
+      if (transcriptViewId() === id) setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (transcriptViewId() === id) setLoading(false);
+    }
+  };
   createEffect(() => {
     const id = transcriptViewId();
     if (!id) return;
     setItems(null);
-    setError(null);
-    setLoading(true);
-    void (async () => {
-      try {
-        const t = await api.transcript(id);
-        if (transcriptViewId() !== id) return; // a newer open won
-        setItems(transcriptToItems(id, t.messages, t.entries));
-        setCount(t.count);
-        // Transcripts read like chats: land pinned to the latest turn once
-        // the rows exist to measure.
-        requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
-      } catch (e) {
-        if (transcriptViewId() !== id) return;
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (transcriptViewId() === id) setLoading(false);
-      }
-    })();
+    setPage(undefined);
+    void load(id);
   });
 
   return (
@@ -50,7 +52,7 @@ export default function TranscriptModal() {
       size="wide"
       class="transcript-modal"
       title={title()}
-      subtitle={loading() || error() ? "Read only" : `Read only · ${count()} events`}
+      subtitle={loading() || error() ? "Read only" : `Read only · ${count()} turns`}
       onClose={() => setTranscriptViewId(null)}
     >
         <div class="transcript-actions">
@@ -94,9 +96,11 @@ export default function TranscriptModal() {
           <Show when={!loading()} fallback={
             <Skeleton kind="transcript" class="transcript-skeleton" label="Loading the conversation" />
           }>
+            <Show when={page()?.older}><button class="btn sm" disabled={loading()} onClick={() => void load(transcriptViewId()!, page()!.older!)}>Earlier messages</button></Show>
             <For each={items()}>
               {(it) => <ItemView item={it} />}
             </For>
+            <Show when={page()?.newer}><button class="btn sm" disabled={loading()} onClick={() => void load(transcriptViewId()!, page()!.newer!)}>Newer messages</button></Show>
             <Show when={items()?.length === 0 && !error()}>
               <div class="dock-empty">This task has no recorded events.</div>
             </Show>

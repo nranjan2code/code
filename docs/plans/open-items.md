@@ -1,3 +1,31 @@
+## TLS compatibility dependency (2026-10-21)
+
+- [ ] Move the WebSocket/NATS dependency graph off `webpki-roots` 0.26.11,
+  then remove its RUSTSEC-2026-0381 exception from `.cargo/audit.toml` and
+  the corresponding guard in `scripts/check-advisories.sh`. This version
+  only re-exports the patched 1.0.10 root set; the guard refuses vulnerable
+  actual roots or a shim that resolves to an unpatched parent.
+
+## Conversation history growth (2026-10-21)
+
+The [review](../audits/conversation-history-growth-2026-10-21.md) led to the
+[history-page contract](../design/48-web-client.md#conversation-history-pages).
+
+- [x] Recent atomic transcript/presentation pages, revision-only unchanged
+  reads, canonical frame addressing, branch-scoped cursors and late overlays.
+- [x] Live-turn snapshots and per-item deltas, bounded reloadable page caches,
+  inactive-view eviction and anchored scroll-driven older/newer loading.
+- [x] Shared/read-only paging, complete explicit exports, targeted sandbox
+  details and catalog-backed conversation summary pages.
+- [ ] Qualify the running native desktop host and adversarial multi-process
+  paging/erasure interleavings. Browser checks cover 1440 × 900 and 390 × 844,
+  light/dark; synthetic turn/chat scale checks are not production capacity.
+- [ ] Bound exceptional single-turn payloads and long goal-state overlay
+  chains with lazy details/authoritative projections. The current 2 MiB page
+  target ends at whole-turn boundaries, and one page may exceed the cache
+  byte budget. Metadata revision checks still scale with segment count;
+  initial discovery/indexing scales with retained data.
+
 ## Data integrity and hostile prompts (2026-10-20)
 
 The [initial audit](../audits/security-integrity-2026-10-20.md) preserves the

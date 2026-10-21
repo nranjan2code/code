@@ -157,6 +157,16 @@ pub(crate) fn source(
     source: &Source,
     from: Position,
 ) -> Result<(Position, usize), CatalogError> {
+    // Erasure removes indexed addresses before destroying the scope key.
+    // Consult that authoritative tombstone before using an old byte cursor.
+    // A missing/unreadable key still reaches the strict reader and fails.
+    if let Source::Session(dir) | Source::Sandbox { dir, .. } = source
+        && let Some(scope) = vak_session::keys::scope_of(dir)
+        && vak_session::objects::TenantObjects::for_tenant(&vak_config::paths::local_tenant_home())?
+            .scope_destroyed(&scope)
+    {
+        return Ok((from, 0));
+    }
     let mut rows = 0;
     let mut failed: Option<rusqlite::Error> = None;
     let mut walk =
@@ -181,11 +191,98 @@ pub(crate) fn source(
             })
         };
     let to = match source {
+        Source::Sandbox { dir, session } => {
+            let key = source.key();
+            let offset = if from.frames == 0 {
+                0
+            } else {
+                tx.query_row("SELECT offset + length FROM sandbox_frames WHERE source = ?1 AND segment = ?2 AND frame = ?3",
+                    params![key, from.segment as i64, from.frames.saturating_sub(1) as i64], |row| row.get::<_, i64>(0))? as u64
+            };
+            let mut failure = None;
+            let at = tail::indexed_tail(dir, from, offset, |after, frame| {
+                let result = (|| -> Result<(), CatalogError> {
+                    let mut row: Value = serde_json::from_slice(&frame.entry)
+                        .map_err(|error| vak_session::SessionError::Objects(error.to_string()))?;
+                    let restored = vak_session::content::restore(&mut row)?;
+                    let session = session
+                        .as_deref()
+                        .or_else(|| row.pointer("/record/session_id").and_then(Value::as_str));
+                    let execution = row
+                        .get("execution_id")
+                        .or_else(|| row.pointer("/record/execution_id"))
+                        .and_then(Value::as_str);
+                    let candidate = row
+                        .pointer("/record/candidate/candidate_id")
+                        .or_else(|| row.pointer("/record/candidate_id"))
+                        .and_then(Value::as_str);
+                    let text = std::str::from_utf8(&frame.entry)
+                        .map_err(|error| vak_session::SessionError::Objects(error.to_string()))?;
+                    tx.execute("INSERT OR IGNORE INTO sandbox_frames (source,segment,frame,offset,length,digest,session,execution,candidate)
+                        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![key,after.segment as i64, after.frames.saturating_sub(1) as i64,
+                        frame.offset as i64, frame.len as i64, vak_session::types::line_digest(text), session, execution,
+                        if restored == vak_session::content::Restored::Erased { None } else { candidate }])?;
+                    rows += 1;
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    failure = Some(error);
+                    false
+                } else {
+                    true
+                }
+            })
+            // Destroyed scopes keep unreadable canonical bytes. A catalog
+            // rebuild omits them; missing keys and corruption still fail.
+            .or_else(|error| match error {
+                vak_session::SessionError::Erased(_) => Ok(from),
+                error => Err(error),
+            })?;
+            if let Some(error) = failure {
+                return Err(error);
+            }
+            at
+        }
         Source::Session(dir) => {
             let mut session = SessionContext::load(tx, dir)?;
-            walk(dir, &mut rows, &mut |at, bytes| {
-                session_entry(tx, &mut session, dir, at, bytes)
+            let offset = if from.frames == 0 {
+                0
+            } else {
+                tx.query_row("SELECT h.offset + h.length FROM entries e JOIN history_frames h USING (session, entry_id)
+                    WHERE e.session = ?1 AND e.segment = ?2 AND e.frame = ?3",
+                    params![session.node, from.segment as i64, from.frames.saturating_sub(1) as i64],
+                    |row| row.get::<_, i64>(0))? as u64
+            };
+            tail::indexed_tail(dir, from, offset, |after, frame| {
+                let at = Position {
+                    segment: after.segment,
+                    frames: after.frames.saturating_sub(1),
+                };
+                match session_entry(
+                    tx,
+                    &mut session,
+                    dir,
+                    at,
+                    &frame.entry,
+                    frame.offset,
+                    frame.len,
+                ) {
+                    Ok(()) => {
+                        rows += 1;
+                        true
+                    }
+                    Err(error) => {
+                        failed = Some(error);
+                        false
+                    }
+                }
             })
+            // Destroyed scopes keep unreadable canonical bytes. A catalog
+            // rebuild omits them; missing keys and corruption still fail.
+            .or_else(|error| match error {
+                vak_session::SessionError::Erased(_) => Ok(from),
+                error => Err(error),
+            })?
         }
         Source::Runs(dir) => walk(dir, &mut rows, &mut |_, bytes| run_row(tx, bytes)),
         Source::Effects(dir) => walk(dir, &mut rows, &mut |_, bytes| effect_row(tx, bytes)),
@@ -318,15 +415,16 @@ fn session_entry(
     dir: &std::path::Path,
     at: Position,
     bytes: &[u8],
+    offset: u64,
+    length: u64,
 ) -> rusqlite::Result<()> {
-    let Some(entry) = vak_session::SessionLog::decode(bytes) else {
-        return Ok(());
-    };
+    let entry = vak_session::SessionLog::decode(bytes).ok_or(rusqlite::Error::InvalidQuery)?;
     let Some(session_id) = session.node.clone() else {
         return Ok(());
     };
     let created = entry.ts.to_rfc3339();
     crate::history::index_entry(tx, &session_id, at, &entry)?;
+    crate::history::index_frame(tx, &session_id, &entry, offset, length, bytes)?;
     tx.execute(
         "UPDATE nodes SET size = IFNULL(size, 0) + 1, updated_at = ?2 WHERE id = ?1",
         params![session_id, created],

@@ -1,3 +1,15 @@
+## Unreleased
+
+- Updated TLS certificate validation and trust roots to reject distrusted
+  emSign intermediates (RUSTSEC-2026-0381 and RUSTSEC-2026-0382).
+
+- Conversations open with recent turns and load earlier messages on scroll.
+  Shared readers and transcript views use the same pages; explicit exports
+  remain complete. Unchanged chats use revision checks, live updates affect
+  the current turn, and inactive chat views release reloadable history.
+- Conversation lists use catalog-backed summary pages. History reads address
+  canonical sealed frames directly and preserve branch, turn and entry identities.
+
 ## 8.16.1 — 2026-10-20
 
 - Automatic document previews block arbitrary scripts, which can send WebRTC

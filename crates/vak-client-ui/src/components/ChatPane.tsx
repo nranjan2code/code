@@ -1,8 +1,8 @@
 import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, turnsSetAside, turnSettled, setTurnAside, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item, openInLibrary } from "../store";
-import { activate, approve, isApprovalPending, openFileSmart, retryTurn } from "../App";
+import { earlierSessions, sessionsPageRequest, historyPages, historyLoading, historyErrors, activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, turnsSetAside, turnSettled, setTurnAside, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item, openInLibrary } from "../store";
+import { showEarlierConversations, showRecentConversations, loadHistoryPage, showLatestHistory, activate, approve, isApprovalPending, openFileSmart, retryTurn } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
 import AgentMark from "./AgentMark";
@@ -62,17 +62,17 @@ function EmptyChat(props: { hasSession: boolean }) {
   onCleanup(() => setGreetingsShown((n) => n - 1));
   // Only this Agent's own conversations: another Agent's results are not its home (invariant 37).
   const ownSessions = createMemo(() => sessions().filter((session) => (session.agent?.id ?? "vak") === activeAgentId()));
-  const ongoing = createMemo(() => ownSessions().filter((session) => session.running).slice(0, 3));
+  const ongoing = createMemo(() => ownSessions().filter((session) => session.running));
   // A conversation with no title has had no message yet: nothing to resume.
-  const completed = createMemo(() => ownSessions().filter((session) => !session.running && session.title).slice(0, 3));
+  const completed = createMemo(() => ownSessions().filter((session) => !session.running && session.title));
   const [previews, setPreviews] = createSignal<Record<string, string>>({});
   const [previewLoaded, setPreviewLoaded] = createSignal<ReadonlySet<string>>(new Set());
   createEffect(() => {
-    const targets = completed();
+    const targets = completed().slice(0, 3);
     for (const session of targets) {
       if (previewLoaded().has(session.session_id)) continue;
       setPreviewLoaded((current) => new Set([...current, session.session_id]));
-      void api.presentation(session.session_id).then((timeline) => {
+      void api.conversationSnapshot(session.session_id).then(({ presentation: timeline }) => {
         const result = [...timeline.items].reverse().find((item) =>
           (item.role === "assistant" || item.role === "worker") &&
           (item.status === "succeeded" || item.status === "partial") &&
@@ -107,11 +107,13 @@ function EmptyChat(props: { hasSession: boolean }) {
         </Show>
         <Show when={completed().length > 0}>
           <div class="home-recent" aria-label="Recent results">
-            <div class="home-ongoing-heading"><span>Recent results</span><small>Pick up where you left off</small></div>
+            <div class="home-ongoing-heading"><span>{sessionsPageRequest() ? "Earlier results" : "Recent results"}</span><small>Pick up where you left off</small></div>
             <For each={completed()}>{(session) => <button type="button" class="home-result-row" onClick={() => void activate(session.session_id)}><span class="home-result-mark"><Icon name="check" size={14} /></span><span><strong>{session.title || "Untitled conversation"}</strong><small>{previews()[session.session_id] || "Open this conversation to see the result."}</small></span><em>Open</em></button>}</For>
           </div>
         </Show>
       </Show>
+      <Show when={!props.hasSession && earlierSessions()}><button type="button" class="btn sm" onClick={() => void showEarlierConversations()}>Earlier conversations</button></Show>
+      <Show when={!props.hasSession && sessionsPageRequest()}><button type="button" class="btn sm" onClick={() => void showRecentConversations()}>Recent conversations</button></Show>
       <div class="chat-empty-examples" aria-label="Things Vakyartha can help with">
         <For each={STARTERS}>
           {(starter) => (
@@ -904,6 +906,29 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   // An empty conversation shows the greeting, which reads from the top.
   const showsGreeting = createMemo(() => !sid() || !(visibleItems(itemsOf(sid())).length || working()));
 
+  const loadPage = async (direction: "older" | "newer") => {
+    const id = sid();
+    if (!id || loadingWindow || historyLoading[id]) return;
+    loadingWindow = true;
+    const anchor = [...content.querySelectorAll<HTMLElement>("[data-turn-id]")]
+      .find(element => element.getBoundingClientRect().bottom > scroller.getBoundingClientRect().top);
+    const anchorId = anchor?.dataset.turnId;
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    pinned = false;
+    setAtBottom(false);
+    const loaded = await loadHistoryPage(id, direction);
+    if (sid() !== id) { loadingWindow = false; return; }
+    if (loaded) {
+      const index = turns().findIndex(turn => turn.some(item => item.kind === "user" && item.entryId === anchorId));
+      if (index >= 0) setTurnWindow({ start: Math.max(0, index - 40), end: Math.min(turns().length, index + 80) });
+      else setTurnWindow({ start: 0, end: Math.min(turns().length, 120) });
+      requestAnimationFrame(() => {
+        const restored = [...content.querySelectorAll<HTMLElement>("[data-turn-id]")].find(element => element.dataset.turnId === anchorId);
+        if (restored && anchorTop !== undefined) scroller.scrollTop += restored.getBoundingClientRect().top - anchorTop;
+        loadingWindow = false;
+      });
+    } else loadingWindow = false;
+  };
   const onScroll = () => {
     if (restoring) return;
     const nearBottom = turnWindow().end >= turns().length && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2;
@@ -914,7 +939,11 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     setAtBottom(pinned);
     updateActiveTurn();
     if (renderedSid) readingPositions.set(renderedSid, { top: scroller.scrollTop, pinned, ...turnWindow() });
-    if (scroller.scrollTop < 160 && turnWindow().start > 0 && !loadingWindow) {
+    if (scroller.scrollTop < 160 && turnWindow().start === 0 && historyPages[sid() ?? ""]?.older && !loadingWindow) {
+      void loadPage("older");
+    } else if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160 && turnWindow().end >= turns().length && historyPages[sid() ?? ""]?.newer && !loadingWindow) {
+      void loadPage("newer");
+    } else if (scroller.scrollTop < 160 && turnWindow().start > 0 && !loadingWindow) {
       loadingWindow = true;
       const anchor = [...content.querySelectorAll<HTMLElement>("[data-turn-index]")]
         .find((element) => element.getBoundingClientRect().bottom > scroller.getBoundingClientRect().top);
@@ -949,6 +978,11 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const markUserScrollIntent = () => { userScrollIntentUntil = performance.now() + 1000; };
   const scrollToBottom = (force = false) => {
     if (force) {
+      const id = sid();
+      if (id && historyPages[id]?.newer) {
+        void showLatestHistory(id).then(() => { if (sid() === id) scheduleScroll(true); });
+        return;
+      }
       const count = turns().length;
       if (turnWindow().end < count || count - turnWindow().start > 120) {
         setTurnWindow({ start: Math.max(0, count - 40), end: count });
@@ -986,7 +1020,8 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   createEffect(() => {
     const id = sid();
     renderedSid = id;
-    const saved = id ? readingPositions.get(id) : undefined;
+    const remembered = id ? readingPositions.get(id) : undefined;
+    const saved = remembered && untrack(() => itemsOf(id).length > 0) ? remembered : undefined;
     pinned = saved?.pinned ?? true;
     userScrollIntentUntil = 0;
     setAtBottom(pinned);
@@ -1053,7 +1088,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   });
   createEffect(() => {
     const count = turns().length;
-    if (count > observedTurnCount && pinned) {
+    if (count > observedTurnCount && (pinned || observedTurnCount === 0)) {
       setTurnWindow((window) => ({
         start: observedTurnCount === 0 ? Math.max(0, count - 40) : count - window.start > 120 ? Math.max(0, count - 80) : window.start,
         end: count,
@@ -1138,7 +1173,13 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
             <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={itemsOf(sid()).some((item) => item.kind === "user")} />}>
-                <Index each={displayedTurns()}>{(entry) => { const arrived = untrack(() => settledSid() === sid()); const directive = () => { const user = entry().turn.find((item) => item.kind === "user"); return user?.kind === "user" ? user.entryId : undefined; }; const aside = () => { const id = directive(); return !!id && turnsSetAside(sid()).includes(id); }; const [shown, setShown] = createSignal(false); return <div class={arrived ? "chat-turn arrived" : "chat-turn"} classList={{ "chat-turn-aside": aside() }} data-turn-index={entry().index}>
+                <Show when={historyPages[sid() ?? ""]?.older && turnWindow().start === 0}>
+                  <button type="button" class="btn sm" disabled={historyLoading[sid() ?? ""]} onClick={() => void loadPage("older")}>
+                    {historyLoading[sid() ?? ""] ? "Loading earlier messages…" : "Load earlier messages"}
+                  </button>
+                </Show>
+                <Show when={historyErrors[sid() ?? ""]}><p role="status">{historyErrors[sid() ?? ""]}</p></Show>
+                <Index each={displayedTurns()}>{(entry) => { const arrived = untrack(() => settledSid() === sid()); const directive = () => { const user = entry().turn.find((item) => item.kind === "user"); return user?.kind === "user" ? user.entryId : undefined; }; const aside = () => { const id = directive(); return !!id && turnsSetAside(sid()).includes(id); }; const [shown, setShown] = createSignal(false); return <div class={arrived ? "chat-turn arrived" : "chat-turn"} classList={{ "chat-turn-aside": aside() }} data-turn-index={entry().index} data-turn-id={directive()}>
                 <Show when={aside()}>
                   <div class="turn-aside" role="group" aria-label="Turn set aside">
                     <Icon name="archive" size={14} />
@@ -1170,6 +1211,11 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 </div>
                 </Show>
               </div>; }}</Index>
+                <Show when={historyPages[sid() ?? ""]?.newer && turnWindow().end >= turns().length}>
+                  <button type="button" class="btn sm" disabled={historyLoading[sid() ?? ""]} onClick={() => void loadPage("newer")}>
+                    {historyLoading[sid() ?? ""] ? "Loading newer messages…" : "Load newer messages"}
+                  </button>
+                </Show>
             </Show>
           </Show>
         </Show>

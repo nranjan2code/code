@@ -285,3 +285,9 @@ listed here unless the maintainer reopens it.
   affordable models across reachable providers, with multilingual coverage
   including Indian languages, using account discovery rather
   than a static model list. Evidence and limits: [voice experience review](audits/voice-experience-2026-10-20.md).
+
+- 2026-10-21 — Before launch, replace complete conversation hydration with
+  recent history pages and scroll-driven loading; keep model context and
+  retention separate. Maintainer approval: “lets do it”. Contract and current
+  limits: [web client](design/48-web-client.md#conversation-history-pages);
+  original [review](audits/conversation-history-growth-2026-10-21.md).

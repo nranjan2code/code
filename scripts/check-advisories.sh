@@ -11,6 +11,29 @@
 set -eu
 cd "$(dirname "$0")/.."
 
+# RUSTSEC-2026-0381 also flags the 0.26.11 compatibility shim, whose
+# source only re-exports v1's roots. Its advisory exception is valid only
+# while every real root set and the shim's resolved parent are patched.
+python3 - <<'PYCODE'
+import tomllib
+from pathlib import Path
+
+packages = tomllib.loads(Path("Cargo.lock").read_text())["package"]
+roots = [p for p in packages if p["name"] == "webpki-roots"]
+def patched(version):
+    return tuple(map(int, version.split("."))) >= (1, 0, 10)
+patched_versions = {p["version"] for p in roots if patched(p["version"])}
+for package in roots:
+    if patched(package["version"]):
+        continue
+    if package["version"] == "0.26.11" and any(
+        f"webpki-roots {version}" in package.get("dependencies", [])
+        for version in patched_versions
+    ):
+        continue
+    raise SystemExit("check-advisories: webpki-roots must resolve to patched 1.0.10+ roots")
+PYCODE
+
 if ! cargo audit --version >/dev/null 2>&1; then
     echo "check-advisories: cargo-audit is not installed; run: cargo install cargo-audit --locked" >&2
     exit 1

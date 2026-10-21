@@ -124,6 +124,110 @@ pub fn frame_bytes(path: &Path) -> Result<Vec<u8>> {
     }
 }
 
+/// The canonical frame bytes after an indexed byte position. Encrypted
+/// sealed segments retain their frame layout and can be sought directly.
+pub fn frame_suffix(path: &Path, offset: u64) -> Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = fs::File::open(path)?;
+    let envelope = if path.extension().is_some_and(|ext| ext == "sealed") {
+        let mut header = [0; 9];
+        file.read_exact(&mut header)?;
+        if &header[..8] != MAGIC {
+            return Err(StorageError::Malformed("sealed segment header"));
+        }
+        match header[8] {
+            0 => 9,
+            1 => {
+                return frame_bytes(path)?
+                    .get(offset as usize..)
+                    .map(<[u8]>::to_vec)
+                    .ok_or(StorageError::Malformed("offset"));
+            }
+            _ => return Err(StorageError::Malformed("sealed segment flag")),
+        }
+    } else {
+        0
+    };
+    let at = offset
+        .checked_add(envelope)
+        .ok_or(StorageError::Malformed("offset"))?;
+    if at > file.metadata()?.len() {
+        return Err(StorageError::Malformed("offset"));
+    }
+    file.seek(SeekFrom::Start(at))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// Opens one frame without reading/decrypting its segment prefix. Encrypted
+/// segments use the uncompressed sealed envelope; legacy compressed envelopes
+/// retain the existing decoder.
+pub fn read_entry(
+    path: &Path,
+    offset: u64,
+    length: u64,
+    key: Option<&records::ScopeKey>,
+) -> Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    if length <= 36 || length > 64 * 1024 * 1024 + 36 {
+        return Err(StorageError::Malformed("frame length"));
+    }
+    let mut file = fs::File::open(path)?;
+    let envelope = if path.extension().is_some_and(|ext| ext == "sealed") {
+        let mut header = vec![0; MAGIC.len() + 1];
+        file.read_exact(&mut header)?;
+        if &header[..MAGIC.len()] != MAGIC {
+            return Err(StorageError::Malformed("sealed segment header"));
+        }
+        match header[MAGIC.len()] {
+            0 => header.len() as u64,
+            1 => return records::entry_at(&frame_bytes(path)?, offset, length, key),
+            _ => return Err(StorageError::Malformed("sealed segment flag")),
+        }
+    } else {
+        0
+    };
+    file.seek(SeekFrom::Start(
+        offset
+            .checked_add(envelope)
+            .ok_or(StorageError::Malformed("offset"))?,
+    ))?;
+    let mut frame = vec![0; length as usize];
+    file.read_exact(&mut frame)?;
+    records::entry_frame(&frame, offset, key)
+}
+
+/// The first frame, used to check immutable session ownership without
+/// decoding any later conversation content.
+pub fn read_first_entry(path: &Path, key: Option<&records::ScopeKey>) -> Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = fs::File::open(path)?;
+    if path.extension().is_some_and(|ext| ext == "sealed") {
+        let mut header = [0; 9];
+        file.read_exact(&mut header)?;
+        if &header[..8] != MAGIC {
+            return Err(StorageError::Malformed("sealed segment header"));
+        }
+        if header[8] == 1 {
+            let bytes = frame_bytes(path)?;
+            let first = bytes
+                .get(..4)
+                .ok_or(StorageError::Malformed("frame length"))?;
+            let len = u32::from_le_bytes([first[0], first[1], first[2], first[3]]) as u64;
+            return records::entry_at(&bytes, 0, len + 36, key);
+        }
+        if header[8] != 0 {
+            return Err(StorageError::Malformed("sealed segment flag"));
+        }
+    } else {
+        file.seek(SeekFrom::Start(0))?;
+    }
+    let mut prefix = [0; 4];
+    file.read_exact(&mut prefix)?;
+    read_entry(path, 0, u32::from_le_bytes(prefix) as u64 + 36, key)
+}
+
 pub struct SegmentSet {
     dir: PathBuf,
 }
