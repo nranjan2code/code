@@ -5,7 +5,7 @@ import { host } from "./host";
 import { interfaceFonts, contentFonts, codeFonts } from "./typography";
 import { watchSession, watchStatus } from "./streamHub";
 import {
-  activeId, earlierSessions, setEarlierSessions, sessionsPageRequest, setSessionsPageRequest,
+  activeId, activeTopic, setActiveTopic, earlierSessions, setEarlierSessions, sessionsPageRequest, setSessionsPageRequest,
   armStopRun,
   appendSystem,
   appendNeedsAiService,
@@ -501,15 +501,30 @@ export async function applyRoute(hash: string) {
   const match = /^#\/s\/([^?]+)(?:\?(.*))?$/.exec(hash);
   if (!match) return;
   const [, sessionId, query] = match;
+  const topicId = new URLSearchParams(query ?? "").get("topic");
+  let routeTopic: Awaited<ReturnType<typeof api.getSessionTopic>> | null = null;
+  if (topicId) {
+    try { routeTopic = await api.getSessionTopic(sessionId, topicId); }
+    catch (error) {
+      setActiveTopic(null);
+      setNotice({ kind: "error", text: `Could not open this topic: ${error instanceof Error ? error.message : String(error)}` });
+      return;
+    }
+  }
   if (sessionId === activeId()) {
     // Already shown: on load `openAgentChat` has just activated it and set
     // this route. Activating again would attach and hydrate it twice.
     setInboxOpen(false);
     if (narrowViewport()) setSidebarOpen(false);
   } else {
-    if (!sessions().some((s) => s.session_id === sessionId)) await refreshSessions();
-    if (!sessions().some((s) => s.session_id === sessionId) && await explainGone(sessionId)) return;
+    if (!topicId && !sessions().some((s) => s.session_id === sessionId)) await refreshSessions();
+    if (!topicId && !sessions().some((s) => s.session_id === sessionId) && await explainGone(sessionId)) return;
     await activate(sessionId);
+  }
+  setActiveTopic(topicId && routeTopic ? { sessionId, topicId, title: routeTopic.topic.title, archived: routeTopic.topic.archived } : null);
+  if (topicId && routeTopic) {
+    const turnId = routeTopic.placements.map((placement) => placement.turn_id).sort().at(-1);
+    if (turnId) await focusTopicTurn(sessionId, turnId);
   }
   const approval = new URLSearchParams(query ?? "").get("approval");
   if (!approval) return;
@@ -576,6 +591,7 @@ export async function activate(id: string): Promise<boolean | undefined> {
   // Choosing a task always lands back in the workspace view.
   setInboxOpen(false);
   setAutomationsOpen(false);
+  setActiveTopic(null);
   // On a narrow viewport the sidebar is an overlay covering the very
   // transcript the tap asked for, so choosing dismisses it.
   if (narrowViewport()) setSidebarOpen(false);
@@ -617,6 +633,32 @@ export async function activate(id: string): Promise<boolean | undefined> {
   // to an Agent, leaving its pane stuck on "Loading task".
   if (activeId() === id || splitId() === id) openStream(id);
   return true;
+}
+
+async function focusTopicTurn(sessionId: string, turnId: string): Promise<void> {
+  try {
+    const snapshot = await readableSnapshot(sessionId, { around: turnId });
+    if (!snapshot.page) throw new Error("The requested part of this conversation is unavailable.");
+    batch(() => hydrateHistoryPage(sessionId, { ...snapshot, page: snapshot.page! }, "refresh"));
+    const calls = [...new Set(snapshot.presentation.items.flatMap(item => item.provenance?.tool_call_id ? [item.provenance.tool_call_id] : []))];
+    const sandbox = await api.sandboxExecutions(sessionId, calls).catch(() => null);
+    if (sandbox) hydrateWorkbenchExecutions(sessionId, sandbox.events, isRunning(sessionId));
+  } catch (error) {
+    setNotice({ kind: "error", text: `Could not open this part of the conversation: ${error instanceof Error ? error.message : String(error)}` });
+  }
+}
+
+export async function openTopic(sessionId: string, topicId: string, agent?: Pick<api.Agent, "id" | "name" | "revision" | "character" | "animation" | "voice">, focusTurnId?: string): Promise<void> {
+  // The source endpoint is the authority check for deep links and cross-Agent
+  // topic navigation; the client never reconstructs placement from text.
+  const result = await api.getSessionTopic(sessionId, topicId);
+  await activate(sessionId);
+  if (agent && !sessions().some((session) => session.session_id === sessionId && session.agent)) setActiveAgent(agent);
+  setActiveTopic({ sessionId, topicId, title: result.topic.title, archived: result.topic.archived });
+  const route = `#/s/${encodeURIComponent(sessionId)}?topic=${encodeURIComponent(topicId)}`;
+  if (window.location.hash !== route) window.history.replaceState({}, "", route);
+  const target = focusTurnId ?? result.placements.map((placement) => placement.turn_id).sort().at(-1);
+  if (target) await focusTopicTurn(sessionId, target);
 }
 
 let openingAgent: Promise<string | null> | null = null;
@@ -746,6 +788,16 @@ export async function sendPrompt(
     id = await openAgentChat("vak");
     if (!id) return;
   }
+  const selectedTopic = activeTopic();
+  const topicId = selectedTopic?.sessionId === id ? selectedTopic.topicId : undefined;
+  if (topicId && selectedTopic?.archived) {
+    appendSystem(id, "This topic is archived. Reopen it from Topics before sending a message.");
+    return;
+  }
+  if (topicId && isRunning(id)) {
+    setNotice({ kind: "info", text: "This Agent is working. Send to this Topic when it finishes." });
+    return;
+  }
   // Goal mode (docs/design/27 Phase H): /goal arms, bare /goal shows
   // status, /goal off disarms — mirroring the TUI. Shares one signal
   // (store.ts `armedGoal`) with the composer's own goal-mode form, so
@@ -829,7 +881,7 @@ export async function sendPrompt(
     const requestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    if (isRunning(id)) {
+    if (isRunning(id) && !topicId) {
       if (attachments?.files.length) {
         throw new Error("files can be attached once this turn finishes");
       }
@@ -857,7 +909,7 @@ export async function sendPrompt(
         };
         let admission: api.RunAdmission;
         try {
-          admission = await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments, requestId, routing);
+          admission = await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments, requestId, routing, topicId);
         } catch (firstError) {
           // A lost HTTP response must recover the same admission. Retry only
           // transport-shaped failures; server rejections remain visible and
@@ -865,7 +917,7 @@ export async function sendPrompt(
           const message = firstError instanceof Error ? firstError.message.toLowerCase() : String(firstError).toLowerCase();
           const transportFailure = firstError instanceof TypeError || /network|fetch|timeout|connection|failed to fetch/.test(message);
           if (!transportFailure) throw firstError;
-          admission = await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments, requestId, routing);
+          admission = await api.runPrompt(id, text, goal ?? thisGoal ?? undefined, attachments, requestId, routing, topicId);
         }
         // "started" is the ordinary path and needs no notice. "queued"
         // means another admission on this session is ahead of it -- a

@@ -93,6 +93,9 @@ Read before changing behaviour in these areas:
   `workers` tool, pause and stop now); the direction for workers that
   outlive a turn is `100-workers.md` (proposal, deferred).
 - **Turn graph** — `85-turn-graph.md` (turn ids, turn and recall links).
+- **Topics** — `101-topics.md` (dynamic work organisation, Agent/human access,
+  membership corrections and archive). Topic membership never admits history or
+  grants authority; use the main model, never domain lists or keyword routing.
 - **Experience** — `64-agent-owned-platform.md` (the product model; see
   below), `61-adaptive-assistant-experience.md`,
   `65-universal-adaptive-platform.md`, `66-immersive-artifact-canvas.md`,

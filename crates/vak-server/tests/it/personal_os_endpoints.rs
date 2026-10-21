@@ -462,6 +462,7 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
             "self version parity",
             "retired plugins",
             "agent roster",
+            "Topics data",
         ]
     );
     assert!(

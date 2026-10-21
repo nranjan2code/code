@@ -2,6 +2,8 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 import { host } from "../host";
 import {
   activeId,
+  topicsOpen,
+  setTopicsOpen,
   openConnect,
   setupEpoch,
   dockTab,
@@ -41,6 +43,8 @@ import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
 import CoworkingShare from "./CoworkingShare";
 import Icon, { type IconName } from "./Icon";
 import AgentPresence from "./AgentPresence";
+import Sheet from "./Sheet";
+import TopicsPanel from "./TopicsPanel";
 
 const INBOX_POLL_MS = 20_000;
 
@@ -258,6 +262,7 @@ export default function WorkspaceHeader() {
       <div class="workspace-actions" aria-label="Workspace tools">
         <Show when={activeId()}>
           <button type="button" class="workspace-details-button" aria-label="Today" title="Today's mail and calendar" onClick={() => openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: agentForSession(activeId()).id })}><Icon name="grid" size={14} /><span>Today</span></button>
+          <button type="button" class="workspace-details-button" aria-label="Topics" title="Organize this conversation" aria-expanded={topicsOpen()} onClick={() => setTopicsOpen(true)}><Icon name="tag" size={14} /><span>Topics</span></button>
           <button type="button" class="workspace-details-button" aria-label="Share" title="Share" onClick={() => setSharing(true)}><Icon name="chat" size={14} /><span>Share</span></button>
           <button
             type="button"
@@ -299,6 +304,6 @@ export default function WorkspaceHeader() {
           </div>
         </details>
       </div>
-    </header><ConfirmModal config={confirmConfig()} onClose={() => setConfirmConfig(null)} /><Show when={sharing() && activeId()}>{(id) => <CoworkingShare sessionId={id()} onClose={() => setSharing(false)} />}</Show></>
+    </header><ConfirmModal config={confirmConfig()} onClose={() => setConfirmConfig(null)} /><Show when={topicsOpen() && activeId()}>{(id) => <Sheet title="Topics" subtitle="Organize answers from this conversation. Active work and schedules continue independently." size="wide" onClose={() => setTopicsOpen(false)}><TopicsPanel sessionId={id()} /></Sheet>}</Show><Show when={sharing() && activeId()}>{(id) => <CoworkingShare sessionId={id()} onClose={() => setSharing(false)} />}</Show></>
   );
 }

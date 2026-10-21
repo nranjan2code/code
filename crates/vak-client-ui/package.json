@@ -11,7 +11,8 @@
     "build:web": "tsc --noEmit && VAK_HOST=web vite build && node scripts/stamp.mjs dist-web",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "typecheck:mail-calendar-fixture": "tsc --noEmit -p tsconfig.mail-calendar-fixture.json"
+    "typecheck:mail-calendar-fixture": "tsc --noEmit -p tsconfig.mail-calendar-fixture.json",
+    "typecheck:topics-fixture": "tsc --noEmit -p tsconfig.topics-fixture.json"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",

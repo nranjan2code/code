@@ -7348,3 +7348,17 @@ button.inbox-meta-tag:hover {
 .lifecycle-facts dd { margin: 0; }
 .rules-days { width: 84px; height: 30px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 8px; color: inherit; background: var(--surface); font: inherit; }
 .lifecycle-sender { width: 260px; }
+.topic-auto-control { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+.topic-admin-create { display: flex; gap: 8px; max-width: 620px; margin: 18px 0; }
+.topic-admin-create input { flex: 1; min-width: 0; min-height: 38px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface); font: inherit; }
+.topic-admin-list { display: grid; gap: 8px; margin: 12px 0 22px; }
+.topic-admin-row, .topic-admin-placement { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); }
+.topic-admin-row > div:first-child, .topic-admin-placement > div:first-child { display: grid; gap: 4px; }
+.topic-admin-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.topic-admin-placements { display: grid; gap: 8px; margin-top: 10px; }
+.topic-admin-checks { display: flex; gap: 8px 16px; flex-wrap: wrap; }
+.topic-admin-checks label { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; }
+.topic-admin-provenance { margin-top: 4px; font-size: 14px; }
+.topic-admin-provenance summary { color: var(--muted); cursor: pointer; }
+.topic-admin-provenance code { display: block; margin-top: 4px; overflow-wrap: anywhere; color: var(--text-soft); }
+@media (max-width: 620px) { .topic-admin-row, .topic-admin-placement { align-items: flex-start; flex-direction: column; } .topic-admin-create { align-items: stretch; } }

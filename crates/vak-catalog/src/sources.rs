@@ -26,6 +26,14 @@ pub enum Source {
     Trigger(PathBuf),
     /// A memory Document of `agent`; its cursor counts versions.
     Memory { path: PathBuf, agent: String },
+    /// A conversation's sealed topic metadata Document. `tenant` reads the
+    /// conversation lifecycle and key revocation state.
+    Topics {
+        path: PathBuf,
+        session: String,
+        agent: String,
+        tenant: PathBuf,
+    },
     /// An intake source Document; its cursor counts versions.
     IntakeSource(PathBuf),
     /// The intake chain, with the tenant whose objects hold item bodies.
@@ -51,6 +59,7 @@ impl Source {
             Self::Commitments { dir, .. } => ("commitments", dir),
             Self::Trigger(path) => ("trigger", path),
             Self::Memory { path, .. } => ("memory", path),
+            Self::Topics { path, .. } => ("topics", path),
             Self::IntakeSource(path) => ("source", path),
             Self::Intake { dir, .. } => ("intake", dir),
             Self::Artifacts(dir) => ("artifacts", dir),
@@ -81,6 +90,19 @@ impl Source {
             | Self::Erasures(dir) => chain_has_more(dir, from),
             Self::Trigger(path) | Self::IntakeSource(path) | Self::Memory { path, .. } => {
                 vak_session::documents::version_count(path) as u64 > from.frames
+            }
+            Self::Topics {
+                path,
+                session,
+                tenant,
+                ..
+            } => {
+                let hidden = vak_session::conversation_state::get(tenant, session)?.hidden()
+                    || vak_session::objects::TenantObjects::for_tenant(tenant)?
+                        .scope_destroyed(&vak_session::objects::conversation_scope(session));
+                let hidden_cursor = from.segment == 1;
+                vak_session::documents::version_count(path) as u64 > from.frames
+                    || hidden != hidden_cursor
             }
         })
     }
@@ -168,16 +190,32 @@ pub fn discover(data: &Path) -> Vec<Source> {
             .collect();
         ledgers.sort();
         for ledger in ledgers {
+            let mut topic_source = None;
             if let Some(id) = vak_config::scope::ledger_session_id(&ledger) {
                 let events = scope.sandbox_executions(&id);
                 if events.is_dir() {
                     found.push(Source::Sandbox {
                         dir: events,
-                        session: Some(id),
+                        session: Some(id.clone()),
+                    });
+                }
+                let path = scope.work_threads(&id);
+                if vak_session::documents::version_count(&path) > 0 {
+                    topic_source = Some(Source::Topics {
+                        path,
+                        session: id.clone(),
+                        agent: agent.clone(),
+                        tenant: vak_config::paths::tenant_home_at(
+                            data,
+                            vak_config::paths::LOCAL_TENANT,
+                        ),
                     });
                 }
             }
             found.push(Source::Session(ledger));
+            if let Some(source) = topic_source {
+                found.push(source);
+            }
         }
         if scope.sandbox_records().is_dir() {
             found.push(Source::Sandbox {

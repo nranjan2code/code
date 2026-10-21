@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Topics responsive fixture</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <style>
+      .topics-fixture-page { display: flex; flex-direction: column; height: 100dvh; min-height: 0; background: var(--bg); color: var(--text); }
+      .topics-fixture-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; min-height: 42px; padding: 6px 14px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 14px; }
+      .topics-fixture-controls label { display: inline-flex; align-items: center; gap: 6px; }
+      .topics-fixture-controls select { min-height: 30px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--surface); font: inherit; }
+      #root { flex: 1; min-height: 0; }
+      .topics-fixture-content { flex: 1; overflow: auto; padding: clamp(20px, 6vw, 64px); }
+      .topics-fixture-content h1 { font-size: 24px; }
+      .topics-fixture-content p { max-width: 64ch; line-height: 1.6; }
+      .fixture-sample-request { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; max-width: 720px; margin-top: 36px; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+      .fixture-sample-request > div { flex: 1 1 260px; }
+      .fixture-sample-request p { margin: 8px 0 0; }
+      .fixture-sample-request > button { min-height: 36px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--link); cursor: pointer; font: inherit; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div class="topics-fixture-page">
+      <div class="topics-fixture-controls">
+        <strong>Topics UI fixture</strong>
+        <label>Theme <select id="fixture-theme"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+        <label>Width <select id="fixture-width"><option value="wide">Wide</option><option value="phone">Phone</option></select></label>
+        <span>Open Topics in the workspace header to edit the live fixture data.</span>
+      </div>
+      <div id="root"></div>
+    </div>
+    <script type="module" src="/tests/topics-fixture.tsx"></script>
+  </body>
+</html>

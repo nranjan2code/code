@@ -3423,6 +3423,56 @@ html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, ht
 .sb-agent-item:disabled { cursor: wait; opacity: 0.6; }
 .sb-agent-history { margin: var(--space-3); overflow: auto; }
 .sb-agent-history summary { cursor: pointer; color: var(--muted); padding: var(--space-2); }
+.sb-agent-group { display: flex; flex-direction: column; gap: 0; }
+.sb-topics { margin: 0 0 var(--space-1) 38px; color: var(--text-soft); }
+.sb-topics > summary, .sb-topics-archived > summary { min-height: 32px; padding: 6px 8px; cursor: pointer; font-size: var(--fs-control); }
+.sb-topic-link { display: flex; align-items: center; gap: 6px; width: calc(100% - 8px); min-height: 34px; margin: 2px 4px; padding: 6px 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text-soft); text-align: left; cursor: pointer; font: inherit; font-size: var(--fs-control); }
+.sb-topic-link:hover { border-color: var(--border-soft); background: var(--surface-raised); color: var(--text); }
+.sb-topic-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-topic-link.archived { color: var(--muted); }
+.sb-topic-empty, .sb-topics-error { display: block; padding: 4px 8px 8px; color: var(--muted); font-size: var(--fs-control); }
+.sb-topics-error button, .sb-topic-more { border: 0; background: transparent; color: var(--link); cursor: pointer; font: inherit; font-size: var(--fs-control); }
+.sb-topic-more { margin: 4px 8px 8px; }
+.sb-topics-archived { margin-left: 8px; }
+
+.topics-panel { display: flex; flex-direction: column; gap: var(--space-3); color: var(--text); }
+.topics-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.topics-panel-head h2 { margin: 0; font-size: var(--fs-section); }
+.topics-panel-head p { margin: 4px 0 0; color: var(--muted); font-size: var(--fs-control); }
+.topics-auto { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; font-size: var(--fs-control); }
+.topics-create, .topics-rename { display: flex; gap: 8px; }
+.topics-create input, .topics-rename input { flex: 1; min-width: 0; }
+.topics-create input, .topics-rename input { min-height: 40px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
+.topics-create button, .topics-rename button, .topics-row-actions button, .topics-archived-toggle { min-height: 36px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: var(--fs-control); }
+.topics-create button:disabled, .topics-rename button:disabled, .topics-row-actions button:disabled { opacity: .55; cursor: wait; }
+.topics-list { display: flex; flex-direction: column; gap: 8px; }
+.topics-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); }
+.topics-row > strong { min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-ui); }
+.topics-row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.topics-placement { padding: 10px 0; border-top: 1px solid var(--border-soft); }
+.topics-placements h3 { margin: 0 0 6px; font-size: var(--fs-ui); }
+.topics-placement-label { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.topics-placement-label strong { font-size: var(--fs-control); }
+.topics-placement-label span { color: var(--muted); font-size: var(--fs-control); }
+.topics-placement-links { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.topics-placement-links button { min-height: 30px; padding: 4px 8px; border: 1px solid var(--border-soft); border-radius: 7px; background: var(--surface); color: var(--link); cursor: pointer; font: inherit; font-size: var(--fs-control); }
+.topics-checks { display: flex; gap: 8px 16px; flex-wrap: wrap; }
+.topics-checks label { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; font-size: var(--fs-control); }
+.topic-turn-control { position: relative; display: flex; justify-content: flex-end; margin: -4px 0 10px; }
+.topic-turn-button { border: 0; background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: var(--fs-control); text-decoration: underline; text-underline-offset: 3px; padding: 4px 6px; }
+.topic-turn-button:hover { color: var(--text); }
+.topic-turn-popover { position: absolute; z-index: 4; right: 0; top: 100%; display: grid; gap: 10px; min-width: min(320px, calc(100vw - 40px)); max-width: 360px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); box-shadow: 0 8px 28px color-mix(in srgb, var(--text) 14%, transparent); }
+.topic-turn-popover label { display: flex; gap: 8px; align-items: flex-start; font-size: var(--fs-control); }
+.topic-turn-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.topic-turn-actions button { min-height: 34px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: var(--fs-control); }
+.topics-empty, .topics-error { margin: 0; padding: 8px; color: var(--muted); font-size: var(--fs-control); }
+.topics-error { color: var(--red); }
+.topics-archived-toggle { align-self: flex-start; }
+.topic-filter-banner { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: -42px auto 18px; padding: 8px 12px; max-width: 900px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text-soft); box-shadow: 0 2px 10px color-mix(in srgb, var(--text) 8%, transparent); font-size: var(--fs-control); }
+.composer-topic { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 7px 12px; border: 1px solid var(--border-soft); border-radius: 9px; color: var(--text-soft); background: var(--surface-raised); font-size: var(--fs-control); }
+.composer-topic.archived { border-color: color-mix(in srgb, var(--yellow) 48%, var(--border)); }
+.composer-topic-queued { color: var(--muted); }
+.composer-topic button { margin-left: auto; min-height: 32px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--link); background: var(--surface); cursor: pointer; font: inherit; font-size: var(--fs-control); }
 
 /* ---- Workers dock panel ------------------------------------------------ */
 

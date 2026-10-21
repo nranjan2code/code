@@ -642,6 +642,9 @@ pub struct AgentConfig {
     /// conversation. Standalone fixtures may omit it, and then `recall`
     /// searches this conversation alone; production Core always supplies it.
     pub history_recall: Option<HistoryRecall>,
+    /// The Topics store opened for this exact admitted session and agent.
+    /// Broker-owned in the loop; never forwarded to worker processes.
+    pub topic_store: Option<Arc<vak_session::work_threads::TopicStore>>,
     /// Schedule an incremental derived-index refresh after settlement.
     pub history_refresh: Option<Arc<dyn Fn() + Send + Sync>>,
     pub hook_recorder: Option<HookRecorder>,
@@ -823,6 +826,7 @@ impl AgentConfig {
             before_effect: None,
             presentation_rebuild: None,
             history_recall: None,
+            topic_store: None,
             history_refresh: None,
             hook_recorder: None,
             tool_activity_recorder: None,
@@ -6267,14 +6271,21 @@ impl Agent {
         // (docs/design/86-model-plans-runtime-checks.md §2).
         let (plan_calls, calls): (Vec<_>, Vec<_>) =
             calls.into_iter().partition(|call| call.name == "plan");
+        // Topics is answered by the loop against the TopicStore Core opened
+        // for this admitted session. It never crosses the worker broker
+        // boundary (invariant 14); placements are references only and do not
+        // admit historical messages into context.
+        let (topic_calls, calls): (Vec<_>, Vec<_>) =
+            calls.into_iter().partition(|call| call.name == "topics");
         // A card is the loop's own display channel (docs/design/
         // 87-composed-answers.md §2): each call is checked by its tool and
         // recorded as a card of the answer, in every permission mode.
         let (card_calls, calls): (Vec<_>, Vec<_>) = calls
             .into_iter()
             .partition(|call| self.tool_presents_cards(&call.name));
-        let mut results =
-            Vec::with_capacity(recall_calls.len() + plan_calls.len() + card_calls.len());
+        let mut results = Vec::with_capacity(
+            recall_calls.len() + plan_calls.len() + topic_calls.len() + card_calls.len(),
+        );
         for call in plan_calls {
             loop_call_started(events, &call).await;
             let output = match vak_tools::parse_plan_args(&call.input) {
@@ -6319,6 +6330,12 @@ impl Agent {
                         .to_string(),
                 ),
             };
+            loop_call_ended(events, &call, &output).await;
+            results.push((call.id, output));
+        }
+        for call in topic_calls {
+            loop_call_started(events, &call).await;
+            let output = self.resolve_topics(&call.input).await;
             loop_call_ended(events, &call, &output).await;
             results.push((call.id, output));
         }
@@ -6408,6 +6425,214 @@ impl Agent {
         }
         results.extend(self.execute_batch_inner(calls, cancel, events).await?);
         Ok((results, history_misses))
+    }
+
+    async fn resolve_topics(&self, input: &serde_json::Value) -> ToolRunOutput {
+        use vak_session::work_threads::TopicId;
+        use vak_tools::TopicRequest;
+        let request = match vak_tools::parse_topics_args(input) {
+            Ok(request) => request,
+            Err(message) => {
+                return ToolRunOutput::Err(
+                    Fault::Shape,
+                    serde_json::json!({"type":"invalid_arguments","message":message}).to_string(),
+                );
+            }
+        };
+        let Some(store) = &self.config.topic_store else {
+            return ToolRunOutput::Err(Fault::Tool, "Topics is unavailable for this run.".into());
+        };
+        let Some(trace) = self.config.trace.as_ref() else {
+            return ToolRunOutput::Err(
+                Fault::Tool,
+                "Topics needs an admitted run identity.".into(),
+            );
+        };
+        let agent_id = self
+            .session
+            .lock()
+            .await
+            .header()
+            .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()))
+            .unwrap_or_else(|| "vak".into());
+        // The model authors organisation in both human-requested and scheduled
+        // runs. Preserve the represented person when the Agent already acts
+        // for them, rather than recording the Agent as acting for itself.
+        let author = vak_session::trace::local::agent_principal(&agent_id);
+        let on_behalf_of = if trace.actor == Some(author) {
+            trace.on_behalf_of
+        } else {
+            trace.actor.or(trace.on_behalf_of)
+        };
+        let model_trace = trace.child().acting(author, on_behalf_of);
+        let current_turn_id = self.session.lock().await.current_turn().map(str::to_owned);
+        let result: Result<String, String> = (|| {
+            let snapshot = store.snapshot().map_err(topic_error_for_model)?;
+            match request {
+                TopicRequest::List {
+                    query,
+                    offset,
+                    limit,
+                } => {
+                    let needle = query.as_deref().map(str::to_lowercase);
+                    let mut matching: Vec<_> = snapshot
+                        .topics
+                        .iter()
+                        .filter(|topic| {
+                            needle
+                                .as_ref()
+                                .is_none_or(|q| topic.title.to_lowercase().contains(q))
+                        })
+                        .collect();
+                    matching.sort_by(|left, right| {
+                        right
+                            .pinned
+                            .cmp(&left.pinned)
+                            .then_with(|| right.updated_at.cmp(&left.updated_at))
+                            .then_with(|| right.id.cmp(&left.id))
+                    });
+                    let page: Vec<_> = matching
+                        .iter()
+                        .skip(offset)
+                        .take(limit)
+                        .map(|topic| {
+                            let count = snapshot
+                                .placements
+                                .iter()
+                                .filter(|placement| placement.topic_ids.contains(&topic.id))
+                                .count();
+                            serde_json::json!({
+                                "id":topic.id,
+                                "title":topic.title,
+                                "archived":topic.archived,
+                                "pinned":topic.pinned,
+                                "placement_count":count
+                            })
+                        })
+                        .collect();
+                    Ok(serde_json::json!({"topics":page,"offset":offset,"limit":limit,"total":matching.len(),"has_more":offset.saturating_add(page.len()) < matching.len(),"automatic":snapshot.automatic,"revision":snapshot.revision}).to_string())
+                }
+                TopicRequest::Open { id, offset, limit } => {
+                    let id =
+                        TopicId::parse(&id).map_err(|_| "That topic id is invalid.".to_string())?;
+                    let topic = snapshot
+                        .topics
+                        .iter()
+                        .find(|topic| topic.id == id)
+                        .ok_or("That topic was not found.")?;
+                    let mut matching: Vec<_> = snapshot
+                        .placements
+                        .iter()
+                        .filter(|placement| placement.topic_ids.contains(&id))
+                        .collect();
+                    matching.sort_by(|left, right| {
+                        right
+                            .updated_at
+                            .cmp(&left.updated_at)
+                            .then_with(|| right.turn_id.cmp(&left.turn_id))
+                            .then_with(|| left.outcome.cmp(&right.outcome))
+                    });
+                    let placements: Vec<_> = matching.iter().skip(offset).take(limit).map(|placement| {
+                        serde_json::json!({"address":format!("turn:{}", placement.turn_id),"turn_id":placement.turn_id,"outcome":placement.outcome,"source":placement.source,"updated_at":placement.updated_at})
+                    }).collect();
+                    let topic = serde_json::json!({"id":topic.id,"title":topic.title,"archived":topic.archived,"pinned":topic.pinned});
+                    Ok(serde_json::json!({"topic":topic,"placements":placements,"offset":offset,"limit":limit,"total":matching.len(),"has_more":offset.saturating_add(placements.len()) < matching.len(),"automatic":snapshot.automatic,"revision":snapshot.revision,"note":"Turn addresses identify membership; use recall to read a turn. Membership does not load its contents."}).to_string())
+                }
+                TopicRequest::Create {
+                    title,
+                    pinned,
+                    outcomes,
+                } => {
+                    if !snapshot.automatic {
+                        return Err("Automatic Topics is off. The person can create or change topics in Topics controls.".into());
+                    }
+                    let guarded = store.as_ref().clone().while_automatic();
+                    if outcomes.is_empty() {
+                        let id = guarded
+                            .create(&title, pinned, &model_trace)
+                            .map_err(topic_error_for_model)?;
+                        Ok(
+                            serde_json::json!({"created":id,"title":title,"pinned":pinned})
+                                .to_string(),
+                        )
+                    } else {
+                        let turn_id = current_turn_id
+                            .clone()
+                            .ok_or("There is no current turn to group.")?;
+                        let id = guarded
+                            .create_for_outcomes(&title, pinned, &turn_id, &outcomes, &model_trace)
+                            .map_err(topic_error_for_model)?;
+                        Ok(serde_json::json!({"created":id,"title":title,"pinned":pinned,"turn_id":turn_id,"assigned_outcomes":outcomes}).to_string())
+                    }
+                }
+                TopicRequest::Rename { id, title } => {
+                    if !snapshot.automatic {
+                        return Err("Automatic Topics is off. The person can create or change topics in Topics controls.".into());
+                    }
+                    let id =
+                        TopicId::parse(&id).map_err(|_| "That topic id is invalid.".to_string())?;
+                    store
+                        .as_ref()
+                        .clone()
+                        .while_automatic()
+                        .rename(&id, &title, &model_trace)
+                        .map_err(topic_error_for_model)?;
+                    Ok(serde_json::json!({"renamed":id,"title":title}).to_string())
+                }
+                TopicRequest::Pin { id, pinned } => {
+                    if !snapshot.automatic {
+                        return Err("Automatic Topics is off. The person can create or change topics in Topics controls.".into());
+                    }
+                    let id =
+                        TopicId::parse(&id).map_err(|_| "That topic id is invalid.".to_string())?;
+                    store
+                        .as_ref()
+                        .clone()
+                        .while_automatic()
+                        .set_pinned(&id, pinned, &model_trace)
+                        .map_err(topic_error_for_model)?;
+                    Ok(serde_json::json!({"topic_id":id,"pinned":pinned}).to_string())
+                }
+                // Archive/reopen are human control actions. The Agent may
+                // never infer or self-authorize them from a turn's wording.
+                TopicRequest::Archive { .. } | TopicRequest::Reopen { .. } => {
+                    Err("Only a person's Topics controls can archive or reopen a topic.".into())
+                }
+                TopicRequest::Automatic { enabled } => {
+                    let _ = enabled;
+                    Err("Only a person can change the automatic Topics setting.".into())
+                }
+                TopicRequest::Assign { outcome, topic_ids } => {
+                    let turn_id = current_turn_id
+                        .clone()
+                        .ok_or("There is no current turn to group.")?;
+                    let topic_ids = topic_ids
+                        .iter()
+                        .map(|id| {
+                            TopicId::parse(id).map_err(|_| "A topic id is invalid.".to_string())
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let changed = store
+                        .assign_model(&turn_id, &outcome, topic_ids, &model_trace)
+                        .map_err(topic_error_for_model)?;
+                    if changed {
+                        Ok(serde_json::json!({"assigned":true,"turn_id":turn_id,"outcome":outcome}).to_string())
+                    } else {
+                        Ok(serde_json::json!({"assigned":false,"turn_id":turn_id,"outcome":outcome,"reason":"Automatic placement is off or a person's correction already controls this outcome."}).to_string())
+                    }
+                }
+            }
+        })();
+        match result {
+            Ok(content) => ToolRunOutput::Ok(content),
+            Err(message)
+                if message.starts_with("Only a person")
+                    || message.starts_with("Automatic Topics is off") =>
+            {
+                ToolRunOutput::Err(Fault::Refused, message)
+            }
+            Err(message) => ToolRunOutput::Err(Fault::Target, message),
+        }
     }
 
     async fn record_card_verdict(
@@ -8340,6 +8565,36 @@ impl Agent {
 /// Only the LAST succeeded call, in issue order, that matches either list
 /// decides the outcome — everything else in the batch is irrelevant to it.
 /// A call that never succeeded doesn't count as either kind of evidence.
+fn topic_error_for_model(error: vak_session::work_threads::TopicError) -> String {
+    use vak_session::work_threads::TopicError;
+    match error {
+        TopicError::Conflict => "Topics changed while this call was running. Read the current topic state and try again.".into(),
+        TopicError::AutomaticDisabled => "Automatic Topics is off. The person can create or change topics in Topics controls.".into(),
+        TopicError::Invalid(message) => {
+            if message.contains("archived") {
+                "That topic is archived and cannot receive this placement.".into()
+            } else if message.contains("does not exist") {
+                "That topic was not found. List Topics and use a current topic id.".into()
+            } else if message.contains("decode") || message.contains("snapshot") {
+                "Topics data is corrupt and cannot be read safely. Do not retry this operation; ask the person to repair Topics.".into()
+            } else {
+                "Topics rejected the value. Check the topic id and text, then try again.".into()
+            }
+        }
+        TopicError::Store(message) => {
+            if message.contains("archived") {
+                "That topic is archived and cannot receive this placement.".into()
+            } else if message.contains("does not exist") {
+                "That topic was not found. List Topics and use a current topic id.".into()
+            } else if message.contains("work-topic") || message.contains("snapshot") {
+                "Topics data is corrupt and cannot be read safely. Do not retry this operation; ask the person to repair Topics.".into()
+            } else {
+                "Topics could not save this change. The stored state is unavailable.".into()
+            }
+        }
+    }
+}
+
 fn resolve_verification_stale(
     call_issue_order: &[String],
     bash_ids: &[&str],
@@ -10716,8 +10971,52 @@ mod model_call_budget_tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod compaction_error_tests {
-    use super::{Agent, AgentConfig, apply_recorded_outcome};
+    use super::{Agent, AgentConfig, PendingToolCall, ToolRunOutput, apply_recorded_outcome};
     use std::sync::Arc;
+
+    fn topics_fixture(
+        dir: &std::path::Path,
+        session_id: &str,
+        turn_id: &str,
+    ) -> (
+        Arc<vak_session::work_threads::TopicStore>,
+        vak_session::trace::TraceKey,
+        vak_session::SessionLog,
+    ) {
+        use vak_session::trace::{self, Cause, TraceKey};
+        let home = vak_config::paths::isolate_home_for_tests();
+        let agent_id = "topic-runtime-test-agent".to_owned();
+        let scope =
+            vak_config::scope::AgentScope::new(vak_config::paths::agent_home_at(&home, &agent_id));
+        let trace = TraceKey::root(
+            trace::local::tenant(),
+            trace::local::space(dir),
+            trace::local::agent(&agent_id),
+            Cause::User {
+                request_id: uuid::Uuid::now_v7().hyphenated().to_string(),
+            },
+        )
+        .in_turn(session_id, turn_id)
+        .acting(trace::local::local_owner(), None);
+        let store =
+            Arc::new(vak_session::work_threads::TopicStore::new(&scope, session_id).unwrap());
+        let mut header = test_header(dir, session_id);
+        header.agent = Some(vak_session::types::AgentIdentity {
+            id: agent_id,
+            revision: 1,
+            name: "Topics test Agent".into(),
+            character: String::new(),
+            personality: String::new(),
+            animation: String::new(),
+            voice: String::new(),
+            behaviour: String::new(),
+            responsibilities: String::new(),
+            instructions: String::new(),
+        });
+        let mut log = vak_session::SessionLog::create(dir.join("session"), header).unwrap();
+        log.begin_turn(turn_id).unwrap();
+        (store, trace, log)
+    }
 
     fn test_header(dir: &std::path::Path, session_id: &str) -> vak_session::types::SessionHeader {
         vak_session::types::SessionHeader {
@@ -10794,6 +11093,24 @@ mod compaction_error_tests {
         ) -> Result<vak_llm::EventStream, vak_llm::LlmError> {
             Err(vak_llm::LlmError::Parse("provider unused".into()))
         }
+    }
+
+    async fn topics_call(agent: &Agent, input: serde_json::Value) -> ToolRunOutput {
+        let (events, _receiver) = tokio::sync::mpsc::channel(16);
+        let mut results = agent
+            .execute_batch(
+                vec![PendingToolCall {
+                    id: "topic-call".into(),
+                    name: "topics".into(),
+                    input,
+                }],
+                &tokio_util::sync::CancellationToken::new(),
+                &events,
+            )
+            .await
+            .unwrap()
+            .0;
+        results.pop().unwrap().1
     }
 
     #[tokio::test]
@@ -10885,6 +11202,153 @@ mod compaction_error_tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::panic)]
+    async fn topics_assignment_roundtrips_membership_and_model_cannot_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_id = uuid::Uuid::now_v7().hyphenated().to_string();
+        let turn_id = uuid::Uuid::now_v7().hyphenated().to_string();
+        let (store, trace, log) = topics_fixture(dir.path(), &session_id, &turn_id);
+        let agent = Agent::new(Arc::new(UnusedProvider), log, {
+            let mut config = AgentConfig::new("sys");
+            config.tools = vec![Arc::new(vak_tools::TopicsTool)];
+            config.topic_store = Some(store.clone());
+            config.trace = Some(trace.clone());
+            config
+        });
+
+        let created = topics_call(
+            &agent,
+            serde_json::json!({"action":"create","title":"Project notes","outcomes":["Prepare the brief"]}),
+        )
+        .await;
+        let ToolRunOutput::Ok(created) = created else {
+            panic!("model should create a topic through the broker");
+        };
+        let created: serde_json::Value = serde_json::from_str(&created).unwrap();
+        let topic = vak_session::work_threads::TopicId::parse(created["created"].as_str().unwrap())
+            .unwrap();
+        let topic_record = store.get(&topic).unwrap();
+        assert_eq!(
+            topic_record.created_by,
+            vak_session::trace::local::agent_principal("topic-runtime-test-agent")
+        );
+        assert_eq!(topic_record.trace.on_behalf_of, trace.actor);
+
+        let assigned = store.snapshot().unwrap().placements;
+        assert!(assigned.iter().any(|placement| {
+            placement.turn_id == turn_id
+                && placement.outcome == "Prepare the brief"
+                && placement.topic_ids == vec![topic.clone()]
+                && placement.source == vak_session::work_threads::PlacementSource::Model
+        }));
+        let opened = topics_call(
+            &agent,
+            serde_json::json!({"action":"open","topic_id":topic.as_str()}),
+        )
+        .await;
+        let ToolRunOutput::Ok(opened) = opened else {
+            panic!("topic open should return membership addresses");
+        };
+        let opened: serde_json::Value = serde_json::from_str(&opened).unwrap();
+        assert_eq!(opened["placements"][0]["turn_id"], turn_id);
+        assert_eq!(
+            opened["placements"][0]["address"],
+            format!("turn:{turn_id}")
+        );
+
+        let archived = topics_call(
+            &agent,
+            serde_json::json!({"action":"archive","topic_id":topic.as_str()}),
+        )
+        .await;
+        assert!(matches!(archived, ToolRunOutput::Err(_, _)));
+        assert!(!store.get(&topic).unwrap().archived);
+    }
+
+    #[tokio::test]
+    async fn topics_organisation_preserves_the_person_a_scheduled_agent_represents() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_id = uuid::Uuid::now_v7().hyphenated().to_string();
+        let turn_id = uuid::Uuid::now_v7().hyphenated().to_string();
+        let (store, trace, log) = topics_fixture(dir.path(), &session_id, &turn_id);
+        let author = vak_session::trace::local::agent_principal("topic-runtime-test-agent");
+        let owner = trace.actor;
+        let mut scheduled = trace.acting(author, owner);
+        scheduled.cause = vak_session::trace::Cause::Heartbeat;
+        let agent = Agent::new(Arc::new(UnusedProvider), log, {
+            let mut config = AgentConfig::new("sys");
+            config.tools = vec![Arc::new(vak_tools::TopicsTool)];
+            config.topic_store = Some(store.clone());
+            config.trace = Some(scheduled);
+            config
+        });
+        let created = topics_call(
+            &agent,
+            serde_json::json!({
+                "action": "create", "title": "Scheduled review", "outcomes": ["Review the result"]
+            }),
+        )
+        .await;
+        assert!(matches!(created, ToolRunOutput::Ok(_)));
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot.topics[0].created_by, author);
+        assert_eq!(snapshot.topics[0].trace.on_behalf_of, owner);
+        assert_ne!(snapshot.topics[0].trace.on_behalf_of, Some(author));
+    }
+
+    #[tokio::test]
+    async fn automatic_off_refuses_agent_mutations_and_preserves_human_placement() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_id = uuid::Uuid::now_v7().hyphenated().to_string();
+        let turn_id = uuid::Uuid::now_v7().hyphenated().to_string();
+        let (store, trace, log) = topics_fixture(dir.path(), &session_id, &turn_id);
+        let topic = store.create("Human choice", false, &trace).unwrap();
+        let snapshot = store.snapshot().unwrap();
+        store
+            .as_ref()
+            .clone()
+            .at_revision(snapshot.revision)
+            .assign_human(&turn_id, "Draft", vec![topic.clone()], &trace)
+            .unwrap();
+        store.set_automatic(false, &trace).unwrap();
+        let agent = Agent::new(Arc::new(UnusedProvider), log, {
+            let mut config = AgentConfig::new("sys");
+            config.tools = vec![Arc::new(vak_tools::TopicsTool)];
+            config.topic_store = Some(store.clone());
+            config.trace = Some(trace);
+            config
+        });
+
+        let create = topics_call(
+            &agent,
+            serde_json::json!({"action":"create","title":"New topic"}),
+        )
+        .await;
+        assert!(matches!(create, ToolRunOutput::Err(_, _)));
+        let assign = topics_call(
+            &agent,
+            serde_json::json!({
+                "action":"assign",
+                "outcome":"Draft",
+                "topic_ids":[topic.as_str()]
+            }),
+        )
+        .await;
+        assert!(matches!(assign, ToolRunOutput::Ok(_)));
+        let snapshot = store.snapshot().unwrap();
+        let placement = snapshot
+            .placements
+            .iter()
+            .find(|placement| placement.turn_id == turn_id && placement.outcome == "Draft")
+            .unwrap();
+        assert_eq!(
+            placement.source,
+            vak_session::work_threads::PlacementSource::Human
+        );
+        assert_eq!(placement.topic_ids, vec![topic]);
     }
 
     #[test]

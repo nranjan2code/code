@@ -62,6 +62,16 @@ work. Automatic natural-language continuation is handled through query/open,
 not the intent reader. Graph observations remain inspectable provenance;
 consulting a turn does not certify dependence or support.
 
+[Topics](101-topics.md) provide compact, paged organisational addresses through
+the same main model, across CLI and server surfaces. Opening a Topic returns
+membership addresses rather than copying its conversation into the prompt;
+the model reopens needed evidence with `recall`. An explicit human destination
+is recorded with the admitted message and excluded from the person's requested
+outcomes. Topic membership, name matching and archive state never choose an
+automatic historical Full projection. Token savings require measured retrieval
+comparisons; pagination alone is not a claim of semantic summaries or bounded
+lifetime session opening.
+
 The ledger/runtime handle still materializes retained session records on open,
 and some other history consumers still fold them. This change bounds ordinary
 selection/projection work, not every lifetime-scale session operation.

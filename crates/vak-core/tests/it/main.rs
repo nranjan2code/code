@@ -23,5 +23,6 @@ mod permissions_local;
 mod recall_reach;
 mod side_ledger_trace;
 mod state_registry;
+mod topics;
 mod turn_path_reads_flat;
 mod worktree;

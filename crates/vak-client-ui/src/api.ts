@@ -790,6 +790,32 @@ export function openAgent(id: string, createNew = false): Promise<{session_id: s
   return req(`/agents/${encodeURIComponent(id)}/open`, {method: "POST", body: JSON.stringify({create_new: createNew})});
 }
 
+export type TopicPlacement = { turn_id: string; outcome: string; whole_turn?: boolean; topic_ids: string[]; source: "model" | "person" | string; actor?: string | null; trace?: string | null; updated_at?: string | null };
+export type Topic = { id: string; title: string; archived: boolean; pinned: boolean; created_by?: string | null; updated_by?: string | null; trace?: string | null };
+export type SessionTopics = { topics: Topic[]; placements: TopicPlacement[]; automatic: boolean; revision: number; last_mutation?: unknown };
+export type AgentTopic = Topic & { session_id: string; placements: TopicPlacement[] };
+export type TopicAction =
+  | { action: "create"; title: string }
+  | { action: "rename"; topic_id: string; title: string }
+  | { action: "pin"; topic_id: string; pinned: boolean }
+  | { action: "archive" | "reopen"; topic_id: string }
+  | { action: "assign"; turn_id: string; outcome: string; topic_ids: string[]; whole_turn?: boolean }
+  | { action: "automatic"; automatic: boolean };
+
+export function listSessionTopics(sessionId: string): Promise<SessionTopics> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/topics`);
+}
+export function listAgentTopics(agentId: string, before?: string): Promise<{ topics: AgentTopic[]; next?: string | null }> {
+  const query = before ? `?before=${encodeURIComponent(before)}` : "";
+  return req(`/agents/${encodeURIComponent(agentId)}/topics${query}`);
+}
+export function getSessionTopic(sessionId: string, topicId: string): Promise<{ topic: Topic; placements: TopicPlacement[]; revision: number }> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/topics/${encodeURIComponent(topicId)}`);
+}
+export function updateSessionTopics(sessionId: string, body: TopicAction, revision: number): Promise<SessionTopics & { created_topic_id?: string }> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/topics`, { method: "POST", body: JSON.stringify({ ...body, revision }) });
+}
+
 export interface AgentTemplate {
   template_id: string;
   domain: string;
@@ -1166,6 +1192,7 @@ export function runPrompt(
   attachments?: Attachments,
   requestId?: string,
   routing?: RoutingEnvelope,
+  topicId?: string,
 ): Promise<RunAdmission> {
   return req(`/sessions/${id}/run`, {
     method: "POST",
@@ -1175,6 +1202,7 @@ export function runPrompt(
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
       routing,
+      topic_id: topicId,
       // This client draws a worker's question and sends the answer back.
       can_show_questions: true,
       goal: goal?.objective,

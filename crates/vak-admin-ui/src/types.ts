@@ -13,6 +13,40 @@ export interface SessionListItem {
   running?: boolean;
 }
 
+export interface TopicPlacement {
+  turn_id: string;
+  outcome: string;
+  whole_turn?: boolean;
+  topic_ids: string[];
+  source: "model" | "person" | string;
+  actor?: string | null;
+  trace?: string | null;
+  updated_at?: string | null;
+}
+export interface SessionTopic {
+  id: string;
+  title: string;
+  archived: boolean;
+  pinned: boolean;
+  created_by?: string | null;
+  updated_by?: string | null;
+  trace?: string | null;
+}
+export interface SessionTopics {
+  topics: SessionTopic[];
+  placements: TopicPlacement[];
+  automatic: boolean;
+  revision: number;
+  last_mutation?: unknown;
+}
+export type TopicAction =
+  | { action: "create"; title: string }
+  | { action: "rename"; topic_id: string; title: string }
+  | { action: "pin"; topic_id: string; pinned: boolean }
+  | { action: "archive" | "reopen"; topic_id: string }
+  | { action: "assign"; turn_id: string; outcome: string; topic_ids: string[]; whole_turn?: boolean }
+  | { action: "automatic"; automatic: boolean };
+
 export interface CapabilityDescriptor {
   name: string;
   kind: "tool" | "skill" | "mcp-server" | "hook" | "command" | "presentation" | string;

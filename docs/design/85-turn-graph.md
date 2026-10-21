@@ -8,6 +8,11 @@ The earlier G0/G1 design below is retained as a historical record.
 
 ## Current relation boundary, 2026-10-21
 
+[Topics](101-topics.md) add model-authored and human-correctable organisational
+membership over addressed turns. Their catalog edges describe placement, not
+semantic support or context admission. They preserve the source conversation
+and do not implement the historical graph-walk or cross-session capsule stages.
+
 The maintainer approved model-directed addressed dependencies and retirement
 of lexical lineage as context authority. Doc 68's current request contract and
 AGENTS.md invariant 36 supersede the admission algorithms below. A recent card

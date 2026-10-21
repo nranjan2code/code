@@ -444,6 +444,22 @@ pub struct MessageMeta {
     /// chose an option on a card (docs/design/96, Q3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card_action: Option<String>,
+    /// A person-selected destination for this turn. Admission validates this
+    /// against the active TopicStore and records a whole-turn human placement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic: Option<TopicFocus>,
+}
+
+/// A Topics selection carried with the user's message through admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TopicFocus {
+    pub id: String,
+    pub title: String,
+    /// Index of the runtime-authored destination note in the message. It is
+    /// excluded from intent reading while remaining in the logged message.
+    #[serde(default)]
+    pub block: usize,
 }
 
 /// Which automation run a delivered turn came from.

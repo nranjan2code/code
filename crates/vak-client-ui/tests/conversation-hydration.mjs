@@ -8,7 +8,7 @@ import { ConversationHydration } from "../src/presentationHydration.ts";
 // guards. The browser fixture separately exercises Solid and the real ChatPane.
 const source = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const start = source.indexOf("async function hydrate(id:");
-const end = source.indexOf("\nconst resyncingSessions", start);
+const end = source.indexOf("\nexport async function showLatestHistory", start);
 assert(start >= 0 && end > start);
 const actual = ts.transpile(source.slice(start, end), { target: ts.ScriptTarget.ES2022 });
 const coordinator = new ConversationHydration();
@@ -24,6 +24,7 @@ const snapshot = (label = "answer") => ({
 });
 const context = {
   conversationHydration: coordinator,
+  historyPages: {},
   readableSnapshot: () => new Promise((resolve, reject) => reads.push({ resolve, reject })),
   api: { sandboxExecutions: async () => ({ events: [] }) },
   isRunning: () => running, holdsOnlyLiveGates: () => false,

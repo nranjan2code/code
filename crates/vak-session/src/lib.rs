@@ -28,6 +28,7 @@ pub mod turns;
 pub mod types;
 pub mod verify;
 pub mod work;
+pub mod work_threads;
 
 pub use log::{SessionLog, SessionPath, TailSections};
 pub use turns::{
@@ -39,8 +40,8 @@ pub use types::{
     ActivityKind, ActivityRecord, ActivityStatus, ArtifactMode, AttachedArtifact, AttachedFile,
     CapabilityDescriptor, CapabilityInvocation, CapabilityKind, CompactionEntry,
     ConversationContext, ConversationOrigin, Entry, EntryPayload, FrozenContract, MessageMeta,
-    MessageRecord, PromptLayerDescriptor, SessionError, SessionHeader, TranscriptMessage,
-    TurnBinding, TurnCapabilitiesBound, TurnCapabilitiesRef, TurnCardRecord,
+    MessageRecord, PromptLayerDescriptor, SessionError, SessionHeader, TopicFocus,
+    TranscriptMessage, TurnBinding, TurnCapabilitiesBound, TurnCapabilitiesRef, TurnCardRecord,
 };
 pub use work::{
     WorkError, WorkProjection, project_work, validate_contract, validate_contract_for_admission,

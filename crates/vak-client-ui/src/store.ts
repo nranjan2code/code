@@ -86,6 +86,8 @@ export function setCoworkingPresence(sessionId: string, participants: CoworkingP
   setCoworkingPresenceBySession(sessionId, participants);
 }
 export const [activeId, setActiveId] = createSignal<string | null>(null);
+export const [activeTopic, setActiveTopic] = createSignal<{ sessionId: string; topicId: string; title?: string; archived?: boolean } | null>(null);
+export const [topicsChanged, setTopicsChanged] = createSignal(0);
 const [armedStopSession, setArmedStopSession] = createSignal<string | null>(null);
 export const stopRunArmed = (id: string | null) => !!id && armedStopSession() === id;
 export function armStopRun(id: string | null) { setArmedStopSession(id); }
@@ -796,6 +798,7 @@ export const [pendingMailCalendarCitation, setPendingMailCalendarCitation] = cre
 export const [transcriptViewId, setTranscriptViewId] = createSignal<string | null>(null);
 // Time-travel (checkpoints) modal.
 export const [historyOpen, setHistoryOpen] = createSignal(false);
+export const [topicsOpen, setTopicsOpen] = createSignal(false);
 // Dispatch-forensics (receipts) modal.
 export const [receiptsOpen, setReceiptsOpen] = createSignal(false);
 export const [workOpen, setWorkOpen] = createSignal(false);
@@ -1479,7 +1482,7 @@ export function applyEvent(
       return [...list.slice(0, at), ...list.slice(at + 1)];
     });
   } else if ("RunFinished" in ev) {
-    if (b === "main") settleDrafting(id);
+    if (b === "main") { settleDrafting(id); setTopicsChanged((count) => count + 1); }
     markRunning(id, false, b);
     noteRetry(id, false);
     // Close every in-flight item. A finished run cannot still have a tool

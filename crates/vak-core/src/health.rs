@@ -588,6 +588,7 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
     checks.push(version_parity_check(&install::resolve_manifest_path(None)));
     checks.push(retired_plugins_check(core));
     checks.push(agent_roster_check(core));
+    checks.push(topics_integrity_check(core));
     let failures = checks.iter().filter(|c| c.failed()).count();
 
     let mut facts = vec![
@@ -694,6 +695,280 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         facts,
         ladder,
         failures,
+    }
+}
+
+/// Read-only consistency check for sealed Topic metadata and its derived
+/// catalog rows. It reads only conversations already known to the catalog,
+/// through a no-catch-up, Agent-scoped diagnostic view. New conversations
+/// outside that index are explicitly unobserved until normal catalog intake.
+fn topics_integrity_check(core: &Core) -> HealthCheck {
+    use vak_catalog::Source;
+
+    let label = "Topics data".to_string();
+    let shared = core.shared_scope();
+    let data = shared.root();
+    let tenant = vak_config::paths::tenant_home_at(data, vak_config::paths::LOCAL_TENANT);
+    let catalog_path = tenant
+        .join(vak_catalog::DIR_NAME)
+        .join(vak_catalog::FILE_NAME);
+    if !catalog_path.is_file() {
+        return HealthCheck {
+            label,
+            detail: Ok("no indexed conversations yet; Topic coverage is unobserved".into()),
+        };
+    }
+    let catalog = match vak_catalog::Catalog::open_read_only(&catalog_path, data) {
+        Ok(catalog) => catalog,
+        Err(_) => {
+            return HealthCheck {
+                label,
+                detail: Err(
+                    "Topics status is unavailable because the catalog cannot be read".into(),
+                ),
+            };
+        }
+    };
+
+    let mut audience = core.catalog_audience();
+    audience.exclude_sessions = crate::trash::trashed(&core.shared_scope());
+    audience.principal = None;
+    audience.held = false;
+    let mut before: Option<(String, String)> = None;
+    let mut sessions = 0usize;
+    let mut documents = 0usize;
+    let mut automatic_off = 0usize;
+    let mut pending = 0usize;
+    let mut unreadable = 0usize;
+    let mut unavailable = 0usize;
+    let mut invalid_turns = 0usize;
+    let mut catalog_mismatches = 0usize;
+    let mut incomplete_page = false;
+
+    loop {
+        let page = match catalog.cached_session_page(
+            &audience,
+            before
+                .as_ref()
+                .map(|(updated, id)| (updated.as_str(), id.as_str())),
+            100,
+        ) {
+            Ok(page) => page,
+            Err(_) => {
+                return HealthCheck {
+                    label,
+                    detail: Err(
+                        "Topics status is unavailable because the catalog cannot be read".into(),
+                    ),
+                };
+            }
+        };
+        if page.is_empty() {
+            break;
+        }
+        for node in &page {
+            let Some(session_id) = node.id.strip_prefix("ses_") else {
+                unreadable += 1;
+                continue;
+            };
+            sessions += 1;
+            // The owner Doctor may inspect every indexed Agent; each source
+            // is still resolved through its canonical header and Agent scope.
+            if crate::trash::is_trashed(&core.shared_scope(), session_id) {
+                continue;
+            }
+            let session_state = vak_session::conversation_state::get(&tenant, session_id);
+            let Ok(session_state) = session_state else {
+                unavailable += 1;
+                continue;
+            };
+            let objects = match vak_session::objects::TenantObjects::for_tenant(&tenant) {
+                Ok(objects) => objects,
+                Err(_) => {
+                    unavailable += 1;
+                    continue;
+                }
+            };
+            if session_state.hidden()
+                || objects.scope_destroyed(&vak_session::objects::conversation_scope(session_id))
+            {
+                continue;
+            }
+            let Some(session_path) = catalog.session_dir(session_id).ok().flatten() else {
+                unreadable += 1;
+                continue;
+            };
+            let header = match SessionLog::read_header(&session_path) {
+                Ok(header) => header,
+                Err(_) => {
+                    unreadable += 1;
+                    continue;
+                }
+            };
+            if header.session_id != session_id {
+                unreadable += 1;
+                continue;
+            }
+            if header.agent.as_ref().is_some_and(|agent| {
+                core.agent_identity()
+                    .is_some_and(|current| current.id != agent.id)
+            }) {
+                unreadable += 1;
+                continue;
+            }
+            let agent_name = header
+                .agent
+                .as_ref()
+                .map_or("vak", |agent| agent.id.as_str());
+            let expected_agent = vak_session::trace::local::agent(agent_name).to_string();
+            if node.agent.as_deref() != Some(expected_agent.as_str()) {
+                catalog_mismatches += 1;
+                continue;
+            }
+
+            let session_source = Source::Session(session_path);
+            let session_pending = match catalog.source_state(&session_source) {
+                Ok((_, pending)) => pending,
+                Err(_) => {
+                    unavailable += 1;
+                    continue;
+                }
+            };
+            let agent_scope = shared.agent(agent_name);
+            let topic_count =
+                vak_session::documents::version_count(&agent_scope.work_threads(session_id));
+            if topic_count == 0 {
+                if session_pending {
+                    pending += 1;
+                }
+                continue;
+            }
+            documents += 1;
+            let store = match vak_session::work_threads::TopicStore::new(&agent_scope, session_id) {
+                Ok(store) => store,
+                Err(_) => {
+                    unreadable += 1;
+                    continue;
+                }
+            };
+            let snapshot = match store.snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(_) => {
+                    unreadable += 1;
+                    continue;
+                }
+            };
+            if !snapshot.automatic {
+                automatic_off += 1;
+            }
+            let topic_source = Source::Topics {
+                path: agent_scope.work_threads(session_id),
+                session: session_id.to_string(),
+                agent: agent_name.to_string(),
+                tenant: tenant.clone(),
+            };
+            let topic_pending = match catalog.source_state(&topic_source) {
+                Ok((_, pending)) => pending,
+                Err(_) => {
+                    unavailable += 1;
+                    continue;
+                }
+            };
+            if session_pending || topic_pending {
+                pending += 1;
+                continue;
+            }
+
+            for topic in &snapshot.topics {
+                let indexed = match catalog.open_node(&format!("topic:{}", topic.id.as_str())) {
+                    Ok(Some(indexed)) => indexed,
+                    Ok(None) => {
+                        catalog_mismatches += 1;
+                        continue;
+                    }
+                    Err(_) => {
+                        unavailable += 1;
+                        continue;
+                    }
+                };
+                let expected_session = format!("ses_{session_id}");
+                if indexed.kind != "topic"
+                    || indexed.session.as_deref() != Some(expected_session.as_str())
+                    || indexed.title.as_deref() != Some(topic.title.as_str())
+                    || indexed.agent.as_deref() != Some(expected_agent.as_str())
+                    || indexed.status.as_deref()
+                        != Some(if topic.archived { "archived" } else { "open" })
+                {
+                    catalog_mismatches += 1;
+                }
+            }
+            for placement in &snapshot.placements {
+                if !placement.topic_ids.is_empty() {
+                    match catalog.history_frame(session_id, &placement.turn_id) {
+                        Ok(Some(frame)) if frame.directive => {}
+                        Ok(_) => invalid_turns += 1,
+                        Err(_) => unavailable += 1,
+                    }
+                }
+            }
+        }
+        let Some(last) = page.last() else {
+            break;
+        };
+        let Some(updated) = last.updated_at.as_ref().or(last.created_at.as_ref()) else {
+            incomplete_page = true;
+            break;
+        };
+        before = Some((updated.clone(), last.id.clone()));
+    }
+
+    let mut issues = Vec::new();
+    if unreadable > 0 {
+        issues.push(format!(
+            "{unreadable} conversation or Topic record(s) could not be read; run `vak data verify`"
+        ));
+    }
+    if unavailable > 0 {
+        issues.push(format!("{unavailable} Topic check(s) are unavailable"));
+    }
+    if invalid_turns > 0 {
+        issues.push(format!(
+            "{invalid_turns} Topic placement(s) refer to a missing turn; run `vak data verify`"
+        ));
+    }
+    if catalog_mismatches > 0 {
+        issues.push(format!(
+            "{catalog_mismatches} Topic catalog row(s) are missing or out of date; run `vak data rebuild-catalog`"
+        ));
+    }
+    if pending > 0 {
+        issues.push(format!(
+            "catalog indexing is pending for {pending} indexed conversation(s); run `vak data rebuild-catalog` to refresh it"
+        ));
+    }
+    if incomplete_page {
+        issues.push("catalog session listing is incomplete; Topic coverage is unavailable".into());
+    }
+    if !issues.is_empty() {
+        return HealthCheck {
+            label,
+            detail: Err(issues.join("; ")),
+        };
+    }
+    let detail = if sessions == 0 {
+        "no indexed conversations yet; Topic coverage is unobserved".to_string()
+    } else if documents == 0 {
+        format!(
+            "checked {sessions} indexed conversations; none has Topic metadata; new or unindexed conversations are unobserved"
+        )
+    } else {
+        format!(
+            "checked {sessions} indexed conversations and {documents} Topic document(s); automatic placement is off for {automatic_off} (valid); new or unindexed conversations are unobserved"
+        )
+    };
+    HealthCheck {
+        label,
+        detail: Ok(detail),
     }
 }
 
@@ -810,6 +1085,66 @@ mod tests {
     use super::*;
     use crate::discovery::ModelDiscoveryStatus;
     use std::time::Duration;
+
+    fn topics_fixture() -> (Core, tempfile::TempDir, SessionLog, String) {
+        let workspace = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
+        vak_config::spaces::bind(workspace.path()).unwrap();
+        let core = Core::new(workspace.path().to_path_buf()).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            data.path().to_path_buf(),
+        ));
+        let session = futures::executor::block_on(core.start_session()).unwrap();
+        let session_id = session.header().unwrap().session_id.clone();
+        (core, data, session, session_id)
+    }
+
+    fn topic_trace(session_id: &str, turn_id: &str) -> vak_session::trace::TraceKey {
+        use vak_session::trace::{self, Cause};
+        vak_session::trace::TraceKey::root(
+            trace::local::tenant(),
+            trace::local::space(Path::new("/tmp/doctor-topics")),
+            trace::local::agent("vak"),
+            Cause::User {
+                request_id: uuid::Uuid::now_v7().hyphenated().to_string(),
+            },
+        )
+        .in_turn(session_id, turn_id)
+        .acting(trace::local::local_owner(), None)
+    }
+
+    fn topic_source(core: &Core, session_id: &str) -> vak_catalog::Source {
+        let scope = core.shared_scope().agent("vak");
+        vak_catalog::Source::Topics {
+            path: scope.work_threads(session_id),
+            session: session_id.to_string(),
+            agent: "vak".into(),
+            tenant: vak_config::paths::tenant_home_at(
+                core.shared_scope().root(),
+                vak_config::paths::LOCAL_TENANT,
+            ),
+        }
+    }
+
+    fn index_topics_fixture(core: &Core, session: &SessionLog, session_id: &str) {
+        let catalog = core.catalog().unwrap();
+        catalog
+            .catch_up_source(&catalog.session_source(session.path()))
+            .unwrap();
+        let source = topic_source(core, session_id);
+        catalog.catch_up_source(&source).unwrap();
+    }
+
+    fn add_directive(session: &mut SessionLog, turn_id: &str) {
+        session.begin_turn(turn_id).unwrap();
+        session
+            .append_message(vak_session::MessageRecord {
+                message: vak_llm::Message::user_text("a small diagnostic request"),
+                meta: None,
+            })
+            .unwrap();
+    }
 
     #[test]
     fn route_discovery_fact_names_the_reason_and_the_retry() {
@@ -1006,6 +1341,7 @@ mod tests {
                 "self version parity",
                 "retired plugins",
                 "agent roster",
+                "Topics data",
             ]
         );
         assert_eq!(
@@ -1235,5 +1571,187 @@ mod tests {
         assert!(detail.contains("2 agent workspace(s) verified"));
         assert!(detail.contains("researcher"));
         assert!(detail.contains("writer"));
+    }
+
+    #[test]
+    fn topics_doctor_fails_closed_on_a_corrupt_sealed_document_without_advancing_catalog() {
+        let (core, _data, mut session, session_id) = topics_fixture();
+        let turn_id = uuid::Uuid::now_v7().hyphenated().to_string();
+        add_directive(&mut session, &turn_id);
+        let path = core.scope().work_threads(&session_id);
+        let session_path = session.path().to_path_buf();
+        drop(session);
+        let scope = vak_session::objects::conversation_scope(&session_id);
+        vak_session::documents::create_sealed(&path, &scope, "not a Topic snapshot").unwrap();
+
+        let catalog = core.catalog().unwrap();
+        catalog
+            .catch_up_source(&catalog.session_source(&session_path))
+            .unwrap();
+        let topic_source = topic_source(&core, &session_id);
+        let before = catalog.source_state(&topic_source).unwrap();
+        assert!(before.1, "the corrupt document has not been indexed");
+
+        let check = topics_integrity_check(&core);
+        let detail = check.detail.unwrap_err();
+        assert!(detail.contains("could not be read"), "{detail}");
+        assert_eq!(catalog.source_state(&topic_source).unwrap(), before);
+        assert_eq!(vak_session::documents::version_count(&path), 1);
+    }
+
+    #[test]
+    fn topics_doctor_accepts_multi_membership_archived_topics_and_automatic_off() {
+        let (core, _data, mut session, session_id) = topics_fixture();
+        let turn_id = uuid::Uuid::now_v7().hyphenated().to_string();
+        add_directive(&mut session, &turn_id);
+        let trace = topic_trace(&session_id, &turn_id);
+        let store = vak_session::work_threads::TopicStore::new(&core.scope(), &session_id).unwrap();
+        let first = store.create("First work", false, &trace).unwrap();
+        let second = store.create("Second work", false, &trace).unwrap();
+        store
+            .assign_model(
+                &turn_id,
+                "shared outcome",
+                vec![first.clone(), second],
+                &trace,
+            )
+            .unwrap();
+        store.archive(&first, &trace).unwrap();
+        store.set_automatic(false, &trace).unwrap();
+        index_topics_fixture(&core, &session, &session_id);
+        let catalog = core.catalog().unwrap();
+        let session_source = catalog.session_source(session.path());
+        let topic_source = topic_source(&core, &session_id);
+        let session_cursor = catalog.source_state(&session_source).unwrap();
+        let topic_cursor = catalog.source_state(&topic_source).unwrap();
+        assert!(!session_cursor.1 && !topic_cursor.1);
+        drop(session);
+
+        let check = topics_integrity_check(&core);
+        let detail = check.detail.expect("valid Topic metadata should pass");
+        assert!(
+            detail.contains("automatic placement is off for 1 (valid)"),
+            "{detail}"
+        );
+        assert_eq!(
+            catalog.source_state(&session_source).unwrap(),
+            session_cursor
+        );
+        assert_eq!(catalog.source_state(&topic_source).unwrap(), topic_cursor);
+    }
+
+    #[test]
+    fn topics_doctor_reports_a_membership_that_names_a_missing_turn() {
+        let (core, _data, mut session, session_id) = topics_fixture();
+        let actual_turn = uuid::Uuid::now_v7().hyphenated().to_string();
+        add_directive(&mut session, &actual_turn);
+        let missing_turn = uuid::Uuid::now_v7().hyphenated().to_string();
+        let trace = topic_trace(&session_id, &missing_turn);
+        let store = vak_session::work_threads::TopicStore::new(&core.scope(), &session_id).unwrap();
+        let topic = store
+            .create("Work with a stale link", false, &trace)
+            .unwrap();
+        store
+            .assign_model(&missing_turn, "stale outcome", vec![topic], &trace)
+            .unwrap();
+        index_topics_fixture(&core, &session, &session_id);
+        drop(session);
+
+        let check = topics_integrity_check(&core);
+        let detail = check.detail.unwrap_err();
+        assert!(
+            detail.contains("placement(s) refer to a missing turn"),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn topics_doctor_uses_the_header_agent_scope_for_custom_agents() {
+        let workspace = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
+        vak_config::spaces::bind(workspace.path()).unwrap();
+        let identity = vak_session::types::AgentIdentity {
+            id: "scribe".into(),
+            revision: 1,
+            name: "Scribe".into(),
+            character: "vak".into(),
+            personality: "Careful".into(),
+            animation: "subtle".into(),
+            voice: "default".into(),
+            behaviour: "Writing".into(),
+            responsibilities: "Drafting".into(),
+            instructions: "Write carefully".into(),
+        };
+        let agent_core = Core::new(workspace.path().to_path_buf())
+            .unwrap()
+            .with_agent_identity(Some(identity));
+        agent_core.set_shared_scope(vak_config::scope::SharedScope::new(data.path()));
+        let mut session = futures::executor::block_on(agent_core.start_session()).unwrap();
+        let session_id = session.header().unwrap().session_id.clone();
+        let turn_id = uuid::Uuid::now_v7().hyphenated().to_string();
+        add_directive(&mut session, &turn_id);
+        let trace = {
+            use vak_session::trace::{self, Cause};
+            vak_session::trace::TraceKey::root(
+                trace::local::tenant(),
+                trace::local::space(workspace.path()),
+                trace::local::agent("scribe"),
+                Cause::User {
+                    request_id: uuid::Uuid::now_v7().hyphenated().to_string(),
+                },
+            )
+            .in_turn(&session_id, &turn_id)
+            .acting(trace::local::local_owner(), None)
+        };
+        let store =
+            vak_session::work_threads::TopicStore::new(&agent_core.scope(), &session_id).unwrap();
+        let topic = store.create("Scribe topic", false, &trace).unwrap();
+        store
+            .assign_model(&turn_id, "Scribe outcome", vec![topic], &trace)
+            .unwrap();
+        let catalog = agent_core.catalog().unwrap();
+        catalog
+            .catch_up_source(&catalog.session_source(session.path()))
+            .unwrap();
+        catalog
+            .catch_up_source(&vak_catalog::Source::Topics {
+                path: agent_core.scope().work_threads(&session_id),
+                session: session_id.clone(),
+                agent: "scribe".into(),
+                tenant: vak_config::paths::tenant_home_at(
+                    agent_core.shared_scope().root(),
+                    vak_config::paths::LOCAL_TENANT,
+                ),
+            })
+            .unwrap();
+        let indexed_sessions = catalog
+            .cached_session_page(&vak_catalog::Audience::default(), None, 100)
+            .unwrap();
+        assert!(
+            !indexed_sessions.is_empty(),
+            "session should be indexed: {session_id}"
+        );
+        let tenant =
+            vak_config::paths::tenant_home_at(data.path(), vak_config::paths::LOCAL_TENANT);
+        let readonly = vak_catalog::Catalog::open_read_only(
+            &tenant
+                .join(vak_catalog::DIR_NAME)
+                .join(vak_catalog::FILE_NAME),
+            data.path(),
+        )
+        .unwrap();
+        assert!(
+            !readonly
+                .cached_session_page(&vak_catalog::Audience::default(), None, 100)
+                .unwrap()
+                .is_empty(),
+            "read-only catalog should see custom Agent session"
+        );
+        drop(session);
+
+        let check = topics_integrity_check(&agent_core);
+        let detail = check.detail.expect("custom Agent Topics are inspected");
+        assert!(detail.contains("1 Topic document"), "{detail}");
     }
 }

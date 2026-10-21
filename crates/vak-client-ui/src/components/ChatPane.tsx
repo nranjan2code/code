@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { earlierSessions, sessionsPageRequest, historyPages, historyLoading, historyErrors, activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, turnsSetAside, turnSettled, setTurnAside, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item, openInLibrary } from "../store";
+import { earlierSessions, sessionsPageRequest, historyPages, historyLoading, historyErrors, activeId, activeTopic, topicsChanged, setActiveTopic, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, turnsSetAside, turnSettled, setTurnAside, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item, openInLibrary } from "../store";
 import { showEarlierConversations, showRecentConversations, loadHistoryPage, showLatestHistory, activate, approve, isApprovalPending, openFileSmart, retryTurn } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
@@ -9,6 +9,7 @@ import AgentMark from "./AgentMark";
 import SetupBanner from "./SetupBanner";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
+import TopicTurnControl from "./TopicTurnControl";
 import PresentationTimelineView, { Artifact, LiveAnswer, ResultCard, ScheduledHead, StructuredView } from "./PresentationRenderer";
 import { attachFiles } from "../attachFiles";
 import type { OutputItem } from "../types";
@@ -802,6 +803,28 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   // In split view each pane renders ITS OWN session; without the prop the
   // pane follows the global focus (previous behavior, unchanged).
   const sid = () => props.sessionId ?? activeId();
+  const [topicPlacements, setTopicPlacements] = createSignal<api.TopicPlacement[]>([]);
+  const [topicTitle, setTopicTitle] = createSignal("");
+  const [topicLoading, setTopicLoading] = createSignal(false);
+  createEffect(() => {
+    topicsChanged();
+    const selected = activeTopic();
+    if (!selected || selected.sessionId !== sid()) { setTopicPlacements([]); setTopicTitle(""); return; }
+    setTopicLoading(true);
+    void api.getSessionTopic(selected.sessionId, selected.topicId).then((result) => {
+      if (activeTopic()?.topicId === selected.topicId) {
+        setTopicPlacements(result.placements);
+        setTopicTitle(result.topic.title);
+        if (selected.title !== result.topic.title || selected.archived !== result.topic.archived)
+          setActiveTopic({ ...selected, title: result.topic.title, archived: result.topic.archived });
+      }
+    }).catch((error) => {
+      if (activeTopic()?.topicId === selected.topicId) {
+        setTopicPlacements([]);
+        setNotice({ kind: "error", text: `Could not load topic: ${error instanceof Error ? error.message : String(error)}` });
+      }
+    }).finally(() => setTopicLoading(false));
+  });
   let scroller!: HTMLDivElement;
   let content!: HTMLDivElement;
   let pinned = true;
@@ -825,7 +848,14 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       }
       grouped[grouped.length - 1].push(item);
     }
-    return grouped;
+    const selected = activeTopic();
+    if (!selected || selected.sessionId !== sid()) return grouped;
+    const placed = new Set(topicPlacements().map((placement) => placement.turn_id));
+    return grouped.filter((turn) => {
+      const user = turn.find((item) => item.kind === "user");
+      const serverTurn = user?.kind === "user" ? serverTurnFor(user.entryId, presentationOf(sid())?.items ?? []) : null;
+      return !!serverTurn && placed.has(serverTurn);
+    });
   });
   const displayedTurns = createMemo(() => {
     const all = turns();
@@ -1166,6 +1196,9 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         </nav>
       </Show>
       <div class="chat" ref={scroller} onScroll={onScroll} onWheel={markUserScrollIntent} onTouchStart={markUserScrollIntent} onPointerDown={markUserScrollIntent} onKeyDown={(event) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markUserScrollIntent(); }}>
+        <Show when={activeTopic()?.sessionId === sid()}>
+          <div class="topic-filter-banner"><span>Showing <strong>{topicTitle() || "topic"}</strong>{topicLoading() ? " · loading" : ""}</span><button type="button" class="btn sm" onClick={() => { setActiveTopic(null); const route = `#/s/${encodeURIComponent(sid() ?? "")}`; window.history.replaceState({}, "", route); }}>All conversation</button></div>
+        </Show>
         <div ref={content}>
         <Show when={sid()} fallback={<EmptyChat hasSession={false} />}>
           <Show when={hydratingId() !== sid() || itemsOf(sid()).length > 0} fallback={<TranscriptSkeleton />}>
@@ -1179,7 +1212,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                   </button>
                 </Show>
                 <Show when={historyErrors[sid() ?? ""]}><p role="status">{historyErrors[sid() ?? ""]}</p></Show>
-                <Index each={displayedTurns()}>{(entry) => { const arrived = untrack(() => settledSid() === sid()); const directive = () => { const user = entry().turn.find((item) => item.kind === "user"); return user?.kind === "user" ? user.entryId : undefined; }; const aside = () => { const id = directive(); return !!id && turnsSetAside(sid()).includes(id); }; const [shown, setShown] = createSignal(false); return <div class={arrived ? "chat-turn arrived" : "chat-turn"} classList={{ "chat-turn-aside": aside() }} data-turn-index={entry().index} data-turn-id={directive()}>
+                <Index each={displayedTurns()}>{(entry) => { const arrived = untrack(() => settledSid() === sid()); const directive = () => { const user = entry().turn.find((item) => item.kind === "user"); return user?.kind === "user" ? user.entryId : undefined; }; const request = () => entry().turn.find((item) => item.kind === "user"); const serverTurn = () => serverTurnFor(directive(), presentationOf(sid())?.items ?? []); const aside = () => { const id = directive(); return !!id && turnsSetAside(sid()).includes(id); }; const [shown, setShown] = createSignal(false); return <div class={arrived ? "chat-turn arrived" : "chat-turn"} classList={{ "chat-turn-aside": aside() }} data-turn-index={entry().index} data-turn-id={directive()}>
                 <Show when={aside()}>
                   <div class="turn-aside" role="group" aria-label="Turn set aside">
                     <Icon name="archive" size={14} />
@@ -1196,6 +1229,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 <Show when={!aside() || shown()}>
                 <div class="chat-turn-body">
                 <Index each={visibleItems(entry().turn).filter((item) => item.kind === "user")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
+                <Show when={Boolean(sid() && serverTurn() && request()?.kind === "user")}><TopicTurnControl sessionId={sid()!} turnId={serverTurn()!} request={request()?.kind === "user" ? stripControlScaffolding(request()!.text).replace(/\s+/g, " ").trim() : "This request"} /></Show>
                 <Show when={entry().index === turns().length - 1 && working()}>
                   <div class="assistant-working-state" role="status" aria-live="polite">
                     <AgentMark character={agentForSession(sid()).character} motion={agentForSession(sid()).animation} size={28} state="working" class="assistant-working-mark" />

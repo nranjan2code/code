@@ -431,6 +431,13 @@ pub const REGISTRY: &[StateEntry] = &[
         "vak-server",
         Class::Document,
     ),
+    // Per-conversation organizational metadata, sealed under that
+    // conversation's scope key (docs/design/73 §5).
+    agent_entry(
+        "agents/{agent}/work-threads",
+        "vak-session",
+        Class::Document,
+    ),
     // What a skill program's own tests found, one Document per program
     // digest (docs/design/93-self-evolving-capabilities.md, E2).
     agent_entry(

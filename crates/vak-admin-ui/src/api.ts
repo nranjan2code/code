@@ -76,6 +76,8 @@ import type {
   IntentExplain,
   IntentPolicy,
   SessionListItem,
+  SessionTopics,
+  TopicAction,
   Verdict,
   SkillItem,
   SkillProposal,
@@ -326,6 +328,16 @@ export const api = {
     if (agent && agent !== "all") q.set("agent", agent);
     return fetch(`/admin/api/sessions?${q}`).then((r) => handle(r));
   },
+
+  sessionTopics: (sessionId: string): Promise<SessionTopics> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/topics`).then((r) => handle(r)),
+
+  updateSessionTopics: (sessionId: string, action: TopicAction, revision: number): Promise<SessionTopics & { created_topic_id?: string }> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/topics`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...action, revision }),
+    }).then((r) => handle(r)),
 
   agents: (): Promise<{ agents: Array<{ id: string; name: string; personality?: string; behaviour?: string }> }> =>
     fetch("/agents").then((r) => handle(r)),

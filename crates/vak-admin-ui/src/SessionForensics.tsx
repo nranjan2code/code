@@ -1429,7 +1429,7 @@ export function SessionsList() {
 
 export function SessionForensics(props: { sessionId: string }) {
   const [activeTab, setActiveTab] = createSignal<
-    "dag" | "log" | "drift" | "receipts" | "checkpoints" | "lineage" | "lifecycle"
+    "dag" | "log" | "drift" | "receipts" | "checkpoints" | "lineage" | "lifecycle" | "topics"
   >("dag");
   const [selectedTurnIndex, setSelectedTurnIndex] = createSignal<number>(1);
   const [selectedNodeId, setSelectedNodeId] = createSignal<string>("ingress");
@@ -1512,6 +1512,22 @@ export function SessionForensics(props: { sessionId: string }) {
       return { ...newest, entries, offset };
     },
   );
+
+  const [topicData, { refetch: refetchTopics }] = createResource(() => props.sessionId, (id) => api.sessionTopics(id));
+  const [topicDraft, setTopicDraft] = createSignal("");
+  const [topicBusy, setTopicBusy] = createSignal(false);
+  const updateTopics = async (action: import("./types").TopicAction) => {
+    const revision = topicData()?.revision;
+    if (revision == null) return;
+    setTopicBusy(true);
+    try { await api.updateSessionTopics(props.sessionId, action, revision); await refetchTopics(); pushToast("info", "Topics updated"); }
+    catch (error) {
+      const message = String(error instanceof Error ? error.message : error);
+      if (message.includes("409")) { await refetchTopics(); pushToast("alert", "Topics changed elsewhere. The latest choices are shown; review before trying again."); }
+      else pushToast("alert", message);
+    }
+    finally { setTopicBusy(false); }
+  };
 
   const [receiptsData, { refetch: refetchReceipts }] = createResource(
     () => props.sessionId,
@@ -1895,6 +1911,7 @@ export function SessionForensics(props: { sessionId: string }) {
         >
           Lifecycle
         </button>
+        <button type="button" class="forensics-tab-btn" classList={{ active: activeTab() === "topics" }} onClick={() => setActiveTab("topics")}>Topics</button>
       </div>
 
       {/* TAB CONTENTS */}
@@ -2453,6 +2470,32 @@ export function SessionForensics(props: { sessionId: string }) {
 
         <Match when={activeTab() === "lifecycle"}>
           <LifecycleTab sessionId={props.sessionId} />
+        </Match>
+
+        <Match when={activeTab() === "topics"}>
+          <section class="panel" style={{ padding: "20px" }}>
+            <div class="panel-title-row"><div><h2>Topics</h2><p class="dim">Agent-owned navigation over this conversation’s original turns. Topic organization does not change its history.</p></div><label class="topic-auto-control"><input type="checkbox" checked={topicData()?.automatic ?? false} disabled={!topicData() || topicBusy()} onChange={(event) => void updateTopics({ action: "automatic", automatic: event.currentTarget.checked })} />Organize automatically</label></div>
+            <form class="topic-admin-create" onSubmit={(event) => { event.preventDefault(); const title = topicDraft().trim(); if (title) void updateTopics({ action: "create", title }).then(() => setTopicDraft("")); }}>
+              <input aria-label="New topic name" placeholder="Name a topic" value={topicDraft()} onInput={(event) => setTopicDraft(event.currentTarget.value)} />
+              <button class="primary small" type="submit" disabled={!topicDraft().trim() || topicBusy()}>Add topic</button>
+            </form>
+            <Show when={!topicData.loading} fallback={<div class="empty">Loading topic records…</div>}>
+              <Show when={topicData()} fallback={<div class="empty">Topics are unavailable for this conversation.</div>}>
+                {(data) => <>
+                  <Show when={data().topics.length > 0} fallback={<div class="empty">No topics recorded.</div>}>
+                    <div class="topic-admin-list"><For each={data().topics}>{(topic) => <div class="topic-admin-row"><div><strong>{topic.title}</strong><span class="dim">{topic.archived ? "Archived" : topic.pinned ? "Pinned" : "Active"}</span><details class="topic-admin-provenance"><summary>Record provenance</summary><code>Created by {topic.created_by || "unknown"} · updated by {topic.updated_by || "unknown"}{topic.trace ? ` · trace ${topic.trace}` : ""}</code></details></div><div class="topic-admin-actions"><button class="ghost small" disabled={topicBusy()} onClick={() => void updateTopics({ action: "pin", topic_id: topic.id, pinned: !topic.pinned })}>{topic.pinned ? "Unpin" : "Pin"}</button><button class="ghost small" disabled={topicBusy()} onClick={() => { const title = window.prompt("Rename topic", topic.title)?.trim(); if (title && title !== topic.title) void updateTopics({ action: "rename", topic_id: topic.id, title }); }}>Rename</button><button class="ghost small" disabled={topicBusy()} onClick={() => void updateTopics({ action: topic.archived ? "reopen" : "archive", topic_id: topic.id })}>{topic.archived ? "Reopen" : "Archive"}</button></div></div>}</For></div>
+                  </Show>
+                  <Show when={data().placements.length > 0}>
+                    <h3>Answer placement and source</h3>
+                    <div class="topic-admin-placements"><For each={data().placements}>{(placement) => <div class="topic-admin-placement"><div><strong>{placement.outcome || "This request"}</strong><span class="dim">{placement.source === "model" ? "Organized by the model" : "Corrected by a person"}</span><details class="topic-admin-provenance"><summary>Placement provenance</summary><code>{placement.actor || "unknown actor"}{placement.updated_at ? ` · ${placement.updated_at}` : ""}{placement.trace ? ` · trace ${placement.trace}` : ""}</code></details></div><div class="topic-admin-checks"><For each={data().topics.filter((topic) => !topic.archived)}>{(topic) => <label><input type="checkbox" checked={placement.topic_ids.includes(topic.id)} disabled={topicBusy()} onChange={(event) => {
+                      const topicIds = event.currentTarget.checked ? [...placement.topic_ids, topic.id] : placement.topic_ids.filter((id) => id !== topic.id);
+                      void updateTopics({ action: "assign", turn_id: placement.turn_id, outcome: placement.outcome, whole_turn: placement.whole_turn, topic_ids: topicIds });
+                    }} />{topic.title}</label>}</For></div></div>}</For></div>
+                  </Show>
+                </>}
+              </Show>
+            </Show>
+          </section>
         </Match>
 
         <Match when={activeTab() === "checkpoints"}>

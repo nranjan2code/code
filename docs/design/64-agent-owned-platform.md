@@ -37,6 +37,17 @@ The interface never asks a normal user to choose a model, session, sandbox,
 flow, task, bot token, or permission engine. Those are Details, Settings, or
 Admin concerns.
 
+### Topics within an Agent
+
+[Topics](101-topics.md) organise addressed turns for both people and the main
+model. People can write naturally, browse Topics under an Agent, correct
+placement, and explicitly archive/reopen a view. The main model supplies dynamic
+names and outcome memberships using broker-owned tools; it does not use a fixed
+domain taxonomy or a separate classification dispatch. A Topic remains a view
+of a source conversation, with its audience and lifecycle, rather than a new
+conversation ledger or execution owner. Membership grants neither access nor
+permission and does not admit historical instructions into a model request.
+
 ## Runtime model
 
 ```text

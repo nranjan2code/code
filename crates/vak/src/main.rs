@@ -31,6 +31,7 @@ mod question_prompt;
 mod runs;
 mod setup;
 mod sync;
+mod topics;
 mod triggers;
 mod update_check;
 
@@ -713,6 +714,12 @@ async fn main() {
             run_sessions_list(cwd);
             0
         }
+        Some(Command::Topics {
+            session,
+            agent,
+            revision,
+            action,
+        }) => topics::run_topics(cwd, session, agent, revision, action).await,
         Some(Command::Self_ { action }) => match action {
             cli::SelfAction::State { verify } => setup::run_state(verify),
             cli::SelfAction::Install { prefix, force } => install::run_install(prefix, force),

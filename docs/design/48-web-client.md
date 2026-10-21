@@ -12,6 +12,12 @@ Status: **implemented: Phases 0–4** (checked against the code on 2026-10-14). 
 the places implementation corrected the plan called out in place. Phase E
 (multi-user cloud) remains explicitly out of scope.
 
+The shared desktop/web client exposes [Topics](101-topics.md) under each Agent,
+with exact-turn history navigation, per-request correction, explicit archive/
+reopen and automatic-placement controls. Topic selection establishes the
+composer's destination; it does not load the Topic's whole history or change
+permissions. A focused draft waits while its source conversation is busy.
+
 Related: 13-server (HTTP+SSE contract), 33-admin-console (the *operations* surface, which this does
 not replace), 34-channel-onboarding (CorePool), 46-stabilization (trust and
 onboarding), 47-commitment-kernel (intent/commitments).

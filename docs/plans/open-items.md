@@ -1,3 +1,27 @@
+## Topics (2026-10-21)
+
+The [Topic contract](../design/101-topics.md) records the approved dynamic,
+Agent-owned organisation and its acceptance boundary.
+
+- [x] Conversation-scoped Topic storage, model tools, human controls, CLI, Admin,
+  catalog membership reconciliation and direct history navigation. Focused
+  storage/runtime/HTTP checks and responsive shared component acceptance pass;
+  a local discovered OpenAI Luna run completed. See the
+  [acceptance record](../audits/topics-acceptance-2026-10-21.md).
+- [x] Shared Doctor checks cover Topic record integrity, addressed turns and
+  index consistency; read-only inspection does not repair records or change
+  preferences. The health suite passes (20 checks).
+- [ ] Cross-conversation Topic identities, incremental lifetime-scale organisation,
+  semantic summaries and related-work enrichment remain outside the initial
+  conversation-scoped views. No separate semantic worker or classifier is built.
+- [ ] Support explicit Topic focus on managed/automatic/goal admission without
+  losing the execution contract; these combinations currently fail explicitly.
+- [ ] Preserve destination metadata in independent queued requests before
+  allowing focused Topic sends while another run is active. The initial UI
+  retains the draft and waits; the server refuses busy focused admission.
+- [ ] Natural-language archive/reopen with an explicit human lifecycle approval;
+  the initial archive/reopen controls are human UI actions.
+
 ## Turn relations, context and answer sizing (2026-10-21)
 
 The maintainer approved the [review's clean contract](../audits/turn-relations-and-sizing-2026-10-21.md).

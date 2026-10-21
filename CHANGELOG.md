@@ -1,3 +1,12 @@
+## Unreleased
+
+- Topics organise ongoing work under each Agent, with model-selected placement,
+  human corrections, direct navigation, pinning and explicit archive/reopen.
+  Automatic organisation can be turned off; Topics preserve the original
+  conversation and do not change access, approvals or historical context rules.
+- Doctor reports Topic record integrity, missing turn references and catalog
+  indexing status through the shared CLI, terminal, web and Admin health report.
+
 ## 8.17.2 — 2026-10-21
 
 - Follow-ups use an explicitly labelled recent reference; older or multiple
@@ -18,7 +27,6 @@
   presentation updates cannot change their notices. Completed answers that
   require no retrieved evidence no longer receive a false unverified warning.
 
-## Unreleased
 
 ## 8.17.1 — 2026-10-21
 

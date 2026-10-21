@@ -2,6 +2,8 @@ import { createEffect, createMemo, createSignal, onCleanup, onMount, For, Show, 
 import {
   activeAgentId,
   activeId,
+  activeTopic,
+  setActiveTopic,
   armedGoal,
   health,
   isRunning,
@@ -487,6 +489,10 @@ export default function Composer(props: { cwd: string }) {
 
   const submit = async () => {
     if (agentOpening()) return;
+    if (activeTopic()?.sessionId === activeId() && !activeTopic()?.archived && isRunning(activeId())) {
+      setComposerError("This Agent is working. Send to this Topic when it finishes.");
+      return;
+    }
     const t = text().trim();
     const files = pendingFiles();
     const chips = inboxFiles();
@@ -780,12 +786,19 @@ export default function Composer(props: { cwd: string }) {
             </For>
           </div>
         </Show>
+        <Show when={activeTopic()?.sessionId === activeId()}>
+          <div class="composer-topic" classList={{ archived: activeTopic()?.archived }}>
+            <span>{activeTopic()?.archived ? "Archived topic · read only" : `Sending to ${activeTopic()?.title || "topic"}`}</span>
+            <Show when={!activeTopic()?.archived && isRunning(activeId())}><span class="composer-topic-queued">This Agent is working. Send to this Topic when it finishes.</span></Show>
+            <button type="button" onClick={() => { setActiveTopic(null); const route = `#/s/${encodeURIComponent(activeId() ?? "")}`; window.history.replaceState({}, "", route); }}>All conversation</button>
+          </div>
+        </Show>
         <textarea
           ref={ta}
           rows={1}
-          disabled={agentOpening()}
+          disabled={agentOpening() || (activeTopic()?.sessionId === activeId() && (!!activeTopic()?.archived || isRunning(activeId())))}
           aria-label={`Message ${agentForSession(activeId()).name}`}
-          placeholder={`Ask ${agentForSession(activeId()).name} anything…`}
+          placeholder={activeTopic()?.sessionId === activeId() && !activeTopic()?.archived ? `Ask ${agentForSession(activeId()).name} in ${activeTopic()?.title || "this topic"}…` : `Ask ${agentForSession(activeId()).name} anything…`}
           value={text()}
           onInput={(event) => {
             setText(event.currentTarget.value);
@@ -863,7 +876,7 @@ export default function Composer(props: { cwd: string }) {
                   class="send-button"
                   title="Send prompt (Enter)"
                   aria-label="Send prompt"
-                  disabled={!text().trim() && pendingFiles().length === 0 && artifactChips().length === 0}
+                  disabled={(activeTopic()?.sessionId === activeId() && !!activeTopic()?.archived) || (!text().trim() && pendingFiles().length === 0 && artifactChips().length === 0)}
                   onClick={submit}
                 >
                   <Icon name="send" size={15} />

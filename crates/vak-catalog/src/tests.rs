@@ -454,6 +454,87 @@ fn search_respects_audience() {
 }
 
 #[test]
+fn topic_documents_are_searchable_in_their_conversation_audience_and_follow_trash() {
+    let (_lock, cwd, data, folder) = home();
+    let (trace, session, turn, _) =
+        run_with_turn(&data, &folder, "scout", "telegram:42", "work on analysis");
+    let scope = vak_config::scope::AgentScope::new(agent_home(&data, "scout"));
+    let topics = vak_session::work_threads::TopicStore::new(&scope, &session).unwrap();
+    let topic = topics.create("Aurora migration", false, &trace).unwrap();
+    topics
+        .assign_model(&turn, "migration notes", vec![topic.clone()], &trace)
+        .unwrap();
+
+    let catalog = catalog(&cwd, &data, "catalog-topics.db");
+    catalog.catch_up().unwrap();
+    let chat = Audience {
+        agents: Some(vec![local::agent("scout").to_string()]),
+        audience: Some("telegram:42".into()),
+        ..Default::default()
+    };
+    let hits = catalog
+        .search("Aurora migration", &chat, &Scope::default(), 10)
+        .unwrap();
+    assert!(hits.iter().any(|hit| {
+        hit.node.kind == "topic"
+            && hit.node.session.as_deref() == Some(format!("ses_{session}").as_str())
+            && hit.node.agent.as_deref() == Some(local::agent("scout").to_string().as_str())
+            && hit.node.actor.is_some()
+            && hit.node.run.is_some()
+            && hit.node.cause.is_some()
+    }));
+
+    topics
+        .assign_human(&turn, "migration notes", Vec::new(), &trace)
+        .unwrap();
+    catalog.catch_up().unwrap();
+    let conn = catalog
+        .conn
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let topic_id = format!("topic:{}", topic.as_str());
+    let memberships: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM edges WHERE kind = 'assigned_to' AND dst = ?1",
+            [&topic_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(memberships, 0, "removed membership leaves no stale edge");
+    drop(conn);
+
+    vak_session::conversation_state::update(
+        &vak_config::paths::local_tenant_home(),
+        &session,
+        |state| state.trashed_at = Some(chrono::Utc::now()),
+    )
+    .unwrap();
+    catalog.catch_up().unwrap();
+    assert!(
+        catalog
+            .search("Aurora migration", &chat, &Scope::default(), 10)
+            .unwrap()
+            .iter()
+            .all(|hit| hit.node.kind != "topic")
+    );
+
+    vak_session::conversation_state::update(
+        &vak_config::paths::local_tenant_home(),
+        &session,
+        |state| state.trashed_at = None,
+    )
+    .unwrap();
+    catalog.catch_up().unwrap();
+    assert!(
+        catalog
+            .search("Aurora migration", &chat, &Scope::default(), 10)
+            .unwrap()
+            .iter()
+            .any(|hit| hit.node.kind == "topic")
+    );
+}
+
+#[test]
 fn lineage_from_any_artifact_to_cause() {
     let (_lock, cwd, data, folder) = home();
     let (trace, session, turn, effect) =

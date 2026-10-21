@@ -103,6 +103,20 @@ pub(crate) enum Command {
     },
     /// List recorded sessions for this project
     Sessions,
+    /// Organize conversation work into human and Agent-owned Topics
+    Topics {
+        /// Operate on one conversation; omit for catalog-wide list/open
+        #[arg(long, global = true)]
+        session: Option<String>,
+        /// Limit catalog-wide discovery to an Agent id or name
+        #[arg(long, global = true)]
+        agent: Option<String>,
+        /// Require the Topic state to still have this revision before a human change
+        #[arg(long, global = true)]
+        revision: Option<u64>,
+        #[command(subcommand)]
+        action: TopicsAction,
+    },
     /// Static flow DAGs: list, check, run
     Flow {
         #[command(subcommand)]
@@ -402,6 +416,62 @@ pub(crate) enum Command {
     Effects {
         #[command(subcommand)]
         action: Option<EffectsAction>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum TopicsAction {
+    /// List Topics, optionally filtered by display text
+    List {
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Open a Topic and page through its turn addresses
+    Open {
+        id: String,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Create a Topic in --session
+    Create {
+        title: String,
+        #[arg(long, default_value_t = false)]
+        pinned: bool,
+    },
+    /// Rename a Topic in --session
+    Rename { id: String, title: String },
+    /// Pin or unpin a Topic in --session
+    Pin {
+        id: String,
+        #[arg(action = clap::ArgAction::Set)]
+        pinned: bool,
+    },
+    /// Archive a Topic in --session
+    Archive { id: String },
+    /// Reopen an archived Topic in --session
+    Reopen { id: String },
+    /// Set automatic Agent placement in --session
+    Automatic {
+        #[arg(action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
+    /// Assign a turn to one or more Topics in --session
+    Assign {
+        #[arg(long)]
+        turn: String,
+        #[arg(long)]
+        outcome: String,
+        /// Repeat to assign Topics; omit to clear the selected outcome's placement
+        #[arg(long = "topic", num_args = 1..)]
+        topics: Vec<String>,
+        #[arg(long, default_value_t = false)]
+        whole_turn: bool,
     },
 }
 
@@ -1215,6 +1285,62 @@ mod tests {
                 ..
             }
         ));
+        assert!(matches!(
+            parse(&[
+                "topics",
+                "--session",
+                "018f0f1e-7b3a-7abc-8def-0123456789ab",
+                "assign",
+                "--turn",
+                "018f0f1e-7b3a-7abc-8def-0123456789ac",
+                "--outcome",
+                "Draft"
+            ]),
+            Command::Topics {
+                action: TopicsAction::Assign { topics, .. },
+                ..
+            } if topics.is_empty()
+        ));
+    }
+
+    #[test]
+    fn topics_cli_parses_scoped_human_mutations_and_paged_reads() {
+        assert!(matches!(
+            parse(&[
+                "topics",
+                "--session",
+                "018f0f1e-7b3a-7abc-8def-0123456789ab",
+                "list",
+                "--offset",
+                "40"
+            ]),
+            Command::Topics {
+                action: TopicsAction::List { offset: 40, .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse(&[
+                "topics",
+                "--session",
+                "018f0f1e-7b3a-7abc-8def-0123456789ab",
+                "assign",
+                "--turn",
+                "018f0f1e-7b3a-7abc-8def-0123456789ac",
+                "--outcome",
+                "Draft",
+                "--topic",
+                "top_018f0f1e-7b3a-7abc-8def-0123456789ab",
+                "--whole-turn"
+            ]),
+            Command::Topics {
+                action: TopicsAction::Assign {
+                    whole_turn: true,
+                    ..
+                },
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1628,6 +1754,37 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn topics_cli_accepts_explicit_false_for_boolean_controls() {
+        assert!(matches!(
+            parse(&[
+                "topics",
+                "--session",
+                "018f0f1e-7b3a-7abc-8def-0123456789ab",
+                "automatic",
+                "false"
+            ]),
+            Command::Topics {
+                action: TopicsAction::Automatic { enabled: false },
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse(&[
+                "topics",
+                "--session",
+                "018f0f1e-7b3a-7abc-8def-0123456789ab",
+                "pin",
+                "top_018f0f1e-7b3a-7abc-8def-0123456789ab",
+                "false"
+            ]),
+            Command::Topics {
+                action: TopicsAction::Pin { pinned: false, .. },
+                ..
+            }
+        ));
     }
 }
 

@@ -171,6 +171,14 @@ impl AgentScope {
             .join(format!("{session_id}.json"))
     }
 
+    /// The Agent-owned organizational view for one conversation. Its
+    /// contents are sealed under that conversation's scope key.
+    pub fn work_threads(&self, session_id: &str) -> PathBuf {
+        self.root
+            .join("work-threads")
+            .join(format!("{session_id}.json"))
+    }
+
     /// `agents/`, which holds the homes of the Agents beneath this one.
     pub fn agents_dir(&self) -> PathBuf {
         self.root.join("agents")

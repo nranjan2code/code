@@ -227,6 +227,34 @@ impl Catalog {
         })
     }
 
+    /// Opens an existing catalog for inspection without initializing schema,
+    /// creating keys, making directories, or enabling journal writes.
+    pub fn open_read_only(path: &Path, data: &Path) -> Result<Self, CatalogError> {
+        if !path.is_file() {
+            return Err(CatalogError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "catalog is not present",
+            )));
+        }
+        let tenant_home = vak_config::paths::tenant_home_at(data, vak_config::paths::LOCAL_TENANT);
+        let tenant = vak_session::objects::TenantObjects::for_tenant(&tenant_home)
+            .map_err(|_| CatalogError::Protection)?;
+        let key = tenant
+            .scope_key("catalog")
+            .map_err(|_| CatalogError::Protection)?;
+        let conn = connect_read_only(path, &key.0)?;
+        if schema_stamp(&conn)?.as_deref() != Some(&SCHEMA_VERSION.to_string()) {
+            return Err(CatalogError::Protection);
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            data: data.to_path_buf(),
+            tenant,
+            conn: Mutex::new(conn),
+            retired: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -469,6 +497,55 @@ impl Catalog {
         Ok(rows)
     }
 
+    /// A read-only page of sessions already present in the index. Unlike
+    /// `session_page`, this never catches up grants or any source; Doctor uses
+    /// it to inspect the catalog as it stands without changing it. Callers
+    /// must be owner/internal diagnostics and apply the intended audience
+    /// filter. Doctor may intentionally inspect all Agents for the owner.
+    pub fn cached_session_page(
+        &self,
+        audience: &Audience,
+        before: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<Vec<Node>, CatalogError> {
+        let conn = self.conn()?;
+        let (filter, mut values) = audience_filter(audience, 1);
+        let boundary = if let Some((updated, id)) = before {
+            let next = values.len() + 1;
+            values.push(updated.to_string().into());
+            values.push(id.to_string().into());
+            format!(
+                "AND (IFNULL(n.updated_at, n.created_at), n.id) < (?{next}, ?{})",
+                next + 1
+            )
+        } else {
+            String::new()
+        };
+        let sql = format!(
+            "SELECT {NODE_COLUMNS} FROM nodes n
+             WHERE n.kind = 'session' AND {filter} {boundary}
+             ORDER BY IFNULL(n.updated_at, n.created_at) DESC, n.id DESC LIMIT {}",
+            limit.clamp(1, 200)
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(values), row_node)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Inspect one known source's saved cursor and whether its current source
+    /// has advanced. This is read-only and intentionally accepts a source
+    /// resolved from a catalog-known session; it never discovers sources by
+    /// walking the data home.
+    pub fn source_state(
+        &self,
+        source: &Source,
+    ) -> Result<(vak_session::tail::Position, bool), CatalogError> {
+        let conn = self.conn()?;
+        let position = cursor(&conn, &source.key())?;
+        let has_more = source.has_more(position)?;
+        Ok((position, has_more))
+    }
+
     /// The calls of `tool` the audience may see, made at or after `since`
     /// (RFC 3339) when given, newest first: where a tool's uses are found.
     pub fn calls_of(
@@ -493,6 +570,41 @@ impl Catalog {
             }),
         ];
         values.extend(args);
+        let mut statement = tx.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(values), row_node)?;
+        let found = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        tx.commit()?;
+        Ok(found)
+    }
+
+    /// Stable keyset page of Topics visible to this audience, newest first.
+    pub fn topic_page(
+        &self,
+        audience: &Audience,
+        before: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<Vec<Node>, CatalogError> {
+        let mut conn = self.conn()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        catch_up_source_tx(&tx, &self.grant_source())?;
+        let (filter, mut values) = audience_filter(audience, 1);
+        let boundary = if let Some((created, id)) = before {
+            let next = values.len() + 1;
+            values.push(created.to_string().into());
+            values.push(id.to_string().into());
+            format!(
+                "AND (IFNULL(n.created_at, ''), n.id) < (?{next}, ?{})",
+                next + 1
+            )
+        } else {
+            String::new()
+        };
+        let sql = format!(
+            "SELECT {NODE_COLUMNS} FROM nodes n WHERE n.kind = 'topic' AND {filter} {boundary}
+             ORDER BY IFNULL(n.created_at, '') DESC, n.id DESC LIMIT {}",
+            limit.clamp(1, 200)
+        );
         let mut statement = tx.prepare(&sql)?;
         let rows = statement.query_map(rusqlite::params_from_iter(values), row_node)?;
         let found = rows.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -798,6 +910,27 @@ fn connect(path: &Path, key: &[u8; 32]) -> Result<Connection, CatalogError> {
     .map_err(|_| CatalogError::Protection)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
+    Ok(conn)
+}
+
+fn connect_read_only(path: &Path, key: &[u8; 32]) -> Result<Connection, CatalogError> {
+    let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let key_hex = key
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    conn.execute_batch(&format!("PRAGMA key = \"x'{key_hex}'\";"))
+        .map_err(|_| CatalogError::Protection)?;
+    let cipher_version: Result<String, _> =
+        conn.pragma_query_value(None, "cipher_version", |row| row.get(0));
+    if !cipher_version.is_ok_and(|version| !version.trim().is_empty()) {
+        return Err(CatalogError::Protection);
+    }
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+        row.get::<_, i64>(0)
+    })
+    .map_err(|_| CatalogError::Protection)?;
     Ok(conn)
 }
 

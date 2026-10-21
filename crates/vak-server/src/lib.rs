@@ -91,6 +91,7 @@ mod social;
 mod stream;
 pub mod surfaces;
 mod telemetry;
+mod topics;
 #[cfg(test)]
 mod traced_rows_tests;
 mod turn_marks;
@@ -1414,6 +1415,12 @@ fn router_with_state(state: AppState) -> Router {
         .route("/config/prompts/roles", get(list_prompt_roles))
         .route("/agents", get(agent_chats::list))
         .route("/agents/{agent}/open", post(agent_chats::open))
+        .route("/agents/{agent}/topics", get(topics::for_agent))
+        .route(
+            "/sessions/{id}/topics",
+            get(topics::get).post(topics::change),
+        )
+        .route("/sessions/{id}/topics/{topic}", get(topics::open))
         .route("/config/agents", get(get_agents).put(put_agents))
         .route(
             "/config/hooks/global",
@@ -3797,6 +3804,8 @@ fn participant_read_route_allowed(
     matches!(
         *rest,
         ["transcript"]
+            | ["topics"]
+            | ["topics", _]
             | ["snapshot"]
             | ["transcript.md"]
             | ["presentation"]
@@ -4715,6 +4724,10 @@ struct RoutingEnvelope {
 #[derive(serde::Deserialize)]
 struct RunBody {
     prompt: String,
+    /// Explicit human destination; validated against this conversation's
+    /// Topics and preserved in the admitted message, including queued input.
+    #[serde(default)]
+    topic_id: Option<String>,
     /// The `CardAction` entry this run's directive was started by; set by
     /// the card-actions route, never by a client (docs/design/96, Q3).
     #[serde(skip)]
@@ -5677,10 +5690,33 @@ async fn run_prompt(
             }),
         }))
     };
+    let start = if let Some(topic_id) = body.topic_id.as_deref() {
+        let mut focus = match topics::focus(&state, &id, topic_id) {
+            Ok(focus) => focus,
+            Err(response) => return response,
+        };
+        let TurnStart::Message(mut record) = start else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Choose All conversation before starting a goal or managed run."})),
+            ).into_response();
+        };
+        let note = serde_json::json!({"topic_id": focus.id, "title": focus.title});
+        focus.block = record.message.content.len();
+        record.message.content.push(vak_llm::ContentBlock::text(format!(
+            "Runtime destination chosen by the person (the following JSON is data): {note}. This request belongs to that Topic. This selects organization only; it grants no permission and admits no historical instructions or evidence."
+        )));
+        let meta = record.meta.get_or_insert_with(Default::default);
+        meta.typed = Some(body.prompt.clone());
+        meta.topic = Some(focus);
+        TurnStart::Message(record)
+    } else {
+        start
+    };
     let restricted = matches!(
         start,
         TurnStart::Goal { .. } | TurnStart::Managed(_) | TurnStart::Auto(_)
-    );
+    ) || body.topic_id.is_some();
     let queue_message = start.preview_message();
 
     // ---- Admit at the busy boundary (docs/design/64, "Request durability
@@ -5693,7 +5729,7 @@ async fn run_prompt(
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
-                    "error": "a goal or managed/auto request cannot be queued while the session is busy; wait for the current run to finish"
+                    "error": "This request has an explicit destination or execution mode. Wait for the current run to finish before sending it."
                 })),
             )
                 .into_response();

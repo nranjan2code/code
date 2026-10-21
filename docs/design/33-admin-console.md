@@ -8,6 +8,12 @@ TUI and desktop use.
 Status: **implemented** (checked against the code on 2026-10-14). All endpoints live behind the standard
 auth stack; nothing here bypasses permission checks or brokered tools.
 
+Conversation forensics includes a Topics tab over the source Agent's sealed
+organisation records: automatic-placement preference, pin/archive/reopen,
+membership corrections and actor/trace detail. It uses the same revision-checked
+conversation routes as the shared client, not an Admin-specific store. See
+[Topics](101-topics.md) for the scope and lifecycle contract.
+
 ## Goals
 
 - **Single deployment**: the SPA is embedded in `vak-server`

@@ -4091,6 +4091,7 @@ impl Core {
         tools.push(Arc::new(vak_tools::PlanTool::with_forms(
             vak_delivery::FORMS,
         )));
+        tools.push(Arc::new(vak_tools::TopicsTool));
         tools.push(Arc::new(tools_automations::AutomationsTool {
             shared: self.shared_scope(),
             runs: self.runs(),
@@ -6692,6 +6693,7 @@ impl Core {
                         .iter()
                         .map(|file| file.block)
                         .chain(meta.artifacts.iter().map(|artifact| artifact.block))
+                        .chain(meta.topic.iter().map(|topic| topic.block))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -7220,6 +7222,65 @@ impl Core {
         let (history_recall, history_refresh) = self.history_services(sid.clone(), reach.clone());
         cfg.history_recall = Some(history_recall);
         cfg.history_refresh = Some(history_refresh);
+        // Topics are agent-owned and session-bound. Open only after the
+        // source session id is admitted; a child turn must bind its own
+        // store and never inherit this handle.
+        cfg.topic_store = match vak_session::work_threads::TopicStore::new(&self.scope(), &sid) {
+            Ok(store) => Some(std::sync::Arc::new(store)),
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = %vak_telemetry::error_kind(&error),
+                    "Topics store could not be opened for the admitted session"
+                );
+                None
+            }
+        };
+        if let Some(focus) = prompt_meta.as_ref().and_then(|meta| meta.topic.as_ref()) {
+            use vak_session::work_threads::{TopicError, TopicId};
+            let topic_id = TopicId::parse(&focus.id)
+                .map_err(|_| CoreError::InvalidConfig("the selected Topic id is invalid".into()))?;
+            let store = cfg.topic_store.as_ref().ok_or_else(|| {
+                CoreError::InvalidConfig("Topics is unavailable for this conversation".into())
+            })?;
+            let topic = store.get(&topic_id).map_err(|error| match error {
+                TopicError::Invalid(_) => {
+                    CoreError::InvalidConfig("the selected Topic no longer exists".into())
+                }
+                TopicError::Conflict => CoreError::InvalidConfig(
+                    "Topics changed during admission; retry the request".into(),
+                ),
+                TopicError::AutomaticDisabled => {
+                    CoreError::InvalidConfig("Topics automatic placement is disabled".into())
+                }
+                TopicError::Store(_) => {
+                    CoreError::InvalidConfig("Topics data is unavailable or corrupt".into())
+                }
+            })?;
+            if topic.archived {
+                return Err(CoreError::InvalidConfig(
+                    "the selected Topic is archived; choose an active Topic".into(),
+                ));
+            }
+            // The assignment is written after the run has opened and uses
+            // its actual trace. The store rechecks archive state in its CAS
+            // closure, so an archive racing admission fails closed.
+            store
+                .assign_turn_human(&turn_id, vec![topic_id], &run_trace)
+                .map_err(|error| match error {
+                    TopicError::Invalid(_) => CoreError::InvalidConfig(
+                        "the selected Topic became unavailable during admission".into(),
+                    ),
+                    TopicError::Conflict => CoreError::InvalidConfig(
+                        "Topics changed during admission; retry the request".into(),
+                    ),
+                    TopicError::AutomaticDisabled => {
+                        CoreError::InvalidConfig("Topics automatic placement is disabled".into())
+                    }
+                    TopicError::Store(_) => {
+                        CoreError::InvalidConfig("Topics data is unavailable or corrupt".into())
+                    }
+                })?;
+        }
         // Construct child capabilities only after the child's identity exists.
         cfg.child_services = Some(self.child_services_factory(reach));
         let turn_gate = self.spend_gate_for(&sid);
@@ -7420,8 +7481,20 @@ impl Core {
                 tail: cfg.tail.clone(),
                 role_prompts,
                 model: model.clone(),
-                tools: tools.clone(),
-                tool_definitions: cfg.tool_definitions.clone().unwrap_or_default(),
+                // A child has no admitted topic store here; do not offer the
+                // parent's session-bound tool definition to that worker.
+                tools: tools
+                    .iter()
+                    .filter(|tool| tool.name() != "topics")
+                    .cloned()
+                    .collect(),
+                tool_definitions: cfg
+                    .tool_definitions
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|definition| definition.name != "topics")
+                    .collect(),
                 capabilities: turn_capabilities.descriptors.clone(),
                 hooks: cfg.hooks.clone(),
                 revocation_check: cfg.revocation_check.clone(),

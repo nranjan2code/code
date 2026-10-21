@@ -58,14 +58,15 @@ struct Upsert<'a> {
     title: Option<String>,
     status: Option<String>,
     created_at: Option<String>,
+    updated_at: Option<String>,
     locator: Option<String>,
 }
 
 fn upsert(tx: &Transaction<'_>, node: Upsert<'_>) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO nodes (id, kind, space, agent, session, turn, run, actor, cause, audience,
-                            title, status, created_at, locator, agent_name)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                            title, status, created_at, updated_at, locator, agent_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT(id) DO UPDATE SET
             space = IFNULL(excluded.space, space),
             agent = IFNULL(excluded.agent, agent),
@@ -79,6 +80,7 @@ fn upsert(tx: &Transaction<'_>, node: Upsert<'_>) -> rusqlite::Result<()> {
             title = IFNULL(excluded.title, title),
             status = IFNULL(excluded.status, status),
             created_at = IFNULL(created_at, excluded.created_at),
+            updated_at = IFNULL(excluded.updated_at, updated_at),
             locator = IFNULL(excluded.locator, locator)",
         params![
             node.id,
@@ -94,6 +96,7 @@ fn upsert(tx: &Transaction<'_>, node: Upsert<'_>) -> rusqlite::Result<()> {
             node.title,
             node.status,
             node.created_at,
+            node.updated_at,
             node.locator,
             node.agent_name
         ],
@@ -365,11 +368,126 @@ pub(crate) fn source(
                 frames: versions.max(from.frames),
             }
         }
+        Source::Topics {
+            path,
+            session,
+            agent,
+            tenant,
+        } => {
+            let versions = vak_session::documents::version_count(path) as u64;
+            let state = vak_session::conversation_state::get(tenant, session)?;
+            let revoked = vak_session::objects::TenantObjects::for_tenant(tenant)?
+                .scope_destroyed(&vak_session::objects::conversation_scope(session));
+            if state.hidden() || revoked {
+                forget_topics(tx, session)?;
+                Position {
+                    // The segment bit records that this source was hidden.
+                    // A later restore makes `has_more` request a fresh read
+                    // even though the Document itself did not change.
+                    segment: 1,
+                    frames: versions.max(from.frames),
+                }
+            } else if versions > from.frames || from.segment == 1 {
+                let scope = vak_config::scope::AgentScope::new(
+                    path.parent()
+                        .and_then(std::path::Path::parent)
+                        .ok_or(rusqlite::Error::InvalidQuery)?,
+                );
+                let snapshot = vak_session::work_threads::TopicStore::new(&scope, session)
+                    .and_then(|store| store.snapshot())
+                    .map_err(|error| {
+                        vak_session::types::SessionError::Objects(error.to_string())
+                    })?;
+                topic_document(tx, path, session, agent, &snapshot)?;
+                Position {
+                    segment: 0,
+                    frames: versions.max(from.frames),
+                }
+            } else {
+                from
+            }
+        }
     };
     if let Some(error) = failed {
         return Err(error.into());
     }
     Ok((to, rows))
+}
+
+/// A topic is an organizational view of one conversation. Its searchable
+/// words and every placement inherit the source conversation's Agent and
+/// audience; no held or cross-conversation view is synthesized here.
+fn topic_document(
+    tx: &Transaction<'_>,
+    path: &std::path::Path,
+    session: &str,
+    agent: &str,
+    snapshot: &vak_session::work_threads::TopicSnapshot,
+) -> rusqlite::Result<()> {
+    let session_id = session_node(session);
+    let (space, audience): (Option<String>, Option<String>) = tx.query_row(
+        "SELECT space, audience FROM nodes WHERE id = ?1 AND kind = 'session'",
+        [&session_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    for topic in &snapshot.topics {
+        let id = format!("topic:{}", topic.id.as_str());
+        // Reconcile the derived memberships from the latest sealed snapshot.
+        // A human can remove an old assignment, so edges are not append-only.
+        tx.execute(
+            "DELETE FROM edges WHERE kind = 'assigned_to' AND dst = ?1",
+            [&id],
+        )?;
+        upsert(
+            tx,
+            Upsert {
+                id: &id,
+                kind: "topic",
+                space: space.clone(),
+                agent: Some(agent_id(agent)),
+                agent_name: Some(agent.to_string()),
+                session: Some(session_id.clone()),
+                run: Some(topic.trace.run.to_string()),
+                actor: topic.trace.actor.as_ref().map(ToString::to_string),
+                cause: Some(vak_session::runs::cause_kind(&topic.trace.cause).to_string()),
+                audience: audience.clone(),
+                title: Some(topic.title.clone()),
+                status: Some(if topic.archived { "archived" } else { "open" }.into()),
+                created_at: Some(topic.created_at.to_rfc3339()),
+                updated_at: Some(topic.updated_at.to_rfc3339()),
+                locator: Some(path.display().to_string()),
+                ..Default::default()
+            },
+        )?;
+        edge(tx, &id, "part_of", &session_id)?;
+        let mut searchable = vec![topic.title.clone()];
+        for placement in snapshot
+            .placements
+            .iter()
+            .filter(|placement| placement.topic_ids.contains(&topic.id))
+        {
+            searchable.push(placement.outcome.clone());
+            edge(tx, &turn_node(&placement.turn_id), "assigned_to", &id)?;
+        }
+        set_text(tx, &id, &searchable.join("\n"))?;
+    }
+    Ok(())
+}
+
+/// Removes topics when the conversation is in the trash or erased.
+fn forget_topics(tx: &Transaction<'_>, session: &str) -> rusqlite::Result<()> {
+    let session = session_node(session);
+    let mut statement = tx.prepare("SELECT id FROM nodes WHERE kind = 'topic' AND session = ?1")?;
+    let ids = statement
+        .query_map([&session], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for id in ids {
+        tx.execute("DELETE FROM texts WHERE node = ?1", [&id])?;
+        tx.execute("DELETE FROM edges WHERE src = ?1 OR dst = ?1", [&id])?;
+        tx.execute("DELETE FROM nodes WHERE id = ?1", [&id])?;
+    }
+    Ok(())
 }
 
 /// What every entry of one session inherits: the session's node and the

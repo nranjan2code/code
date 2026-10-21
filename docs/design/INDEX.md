@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 3 proposal, 20 in progress, 57 implemented, 2 reference, 9 superseded, 5 historical.
+Counts: 3 proposal, 20 in progress, 58 implemented, 2 reference, 9 superseded, 5 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -20,6 +20,7 @@ Counts: 3 proposal, 20 in progress, 57 implemented, 2 reference, 9 superseded, 5
 | [09-extensibility.md](09-extensibility.md) | 09 — Extensibility (skills · workers · hooks · MCP · custom commands) | implemented | in 2.0.0 |
 | [10-flows.md](10-flows.md) | 10 — Flows (static DAGs) | implemented | in 2.0.0 |
 | [100-workers.md](100-workers.md) | 100 — Workers: work handed over, kept running | proposal | deferred by the maintainer on 2026-10-18: no stage starts until the maintainer reopens it |
+| [101-topics.md](101-topics.md) | 101 — Topics: Agent-owned organisation for people and the Agent | implemented | as an initial conversation-scoped view |
 | [11-planner.md](11-planner.md) | 11 — Dynamic planner | implemented | in 2.0.0 |
 | [12-evals.md](12-evals.md) | 12 — Eval harness | implemented | in 2.0.0 |
 | [13-server.md](13-server.md) | 13 — Server mode | implemented | in 2.0.0 |

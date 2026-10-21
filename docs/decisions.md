@@ -1,5 +1,13 @@
 # Decisions
 
+- 2026-10-21: The maintainer requested implementing automatic work organisation
+  under Agents, with people and Agents both first-class, human corrections,
+  navigation, settings, administration and archive/reopen. All subjects and
+  labels remain dynamic: no domain taxonomy or keyword routing. The everyday
+  name is Topics; placement is organisation, never context or permission
+  authority. The maintainer also required the shared Doctor to report Topic
+  health. See [Topics](design/101-topics.md).
+
 - 2026-10-21: The maintainer approved the clean turn-relations/context/answer-sizing
   redesign, with no compatibility or migration requirement, arbitrary subjects
   and references thousands of turns back. Existing query/open tools resolve
