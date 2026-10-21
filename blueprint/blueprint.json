@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.17.0",
-  "revision": "9f302b359",
+  "version": "8.17.1",
+  "revision": "848648d69",
   "first_date": "2026-08-21",
   "last_date": "2026-10-21",
   "prose_reviewed": "8.16.0 · 2026-10-20"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 79,
    "lock_crates": 764,
-   "total_commits": 2430,
+   "total_commits": 2431,
    "days": 62,
    "peak_day": 174,
    "design_docs": 96,
@@ -327,12 +327,12 @@
    }
   ],
   "open_total": 87,
-  "measures_revision": "9f302b359"
+  "measures_revision": "848648d69"
  },
  "activity": {
   "since": "2026-10-07",
   "until": "2026-10-21",
-  "commits": 512,
+  "commits": 513,
   "areas": [
    [
     "docs",
@@ -340,7 +340,7 @@
    ],
    [
     "(root)",
-    284
+    285
    ],
    [
     "vak-core",
@@ -697,6 +697,14 @@
   ],
   "recent": [
    {
+    "hash": "848648d69",
+    "date": "2026-10-21",
+    "subject": "Release 8.17.1",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "9f302b359",
     "date": "2026-10-21",
     "subject": "Scope canvas answers to selected result",
@@ -846,20 +854,9 @@
      "docs",
      "vak-admin-ui"
     ]
-   },
-   {
-    "hash": "3f95ed3a4",
-    "date": "2026-10-20",
-    "subject": "Retry a rate limit whatever its message says",
-    "areas": [
-     "(root)",
-     "vak-llm"
-    ]
    }
   ],
-  "unreleased": [
-   "Opening a composed result in Canvas now scopes it to that result group, so other results from the same turn do not appear alongside it."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30266,6 +30263,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "848648d69",
+   "date": "2026-10-21",
+   "subject": "Release 8.17.1",
+   "subsystems": []
+  },
   {
    "hash": "9f302b359",
    "date": "2026-10-21",
