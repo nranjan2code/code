@@ -1,6 +1,8 @@
 # 75 — Visual refresh: readable type, plain words and the Ink and Saffron brand
 
-Status: **in progress**: the implementation record, updated 2026-09-27. V1, V2 and V3 are
+Status: **in progress**: the implementation record, updated 2026-10-22. Request-focused
+Details is implemented in the shared client and browser-qualified; native
+WebKit qualification remains open. V1, V2 and V3 are
 complete; V4.4 records the approved Vakyartha Songbird rollout. Desktop
 runtime proof and character glyph work remain in the
 [tracker](../plans/visual-refresh-plan.md). The interactive
@@ -30,6 +32,55 @@ It changes presentation only. No permission, authority, ledger, approval or
 model-visible behaviour changes, and nothing here may be read as licence to
 hide a safety state (a pending approval, a failure, a denied action) from an
 everyday user.
+
+## Request-focused Details — 2026-10-22
+
+The maintainer approved replacing the stacked activity and command histories
+with one everyday Details view. The shared client implements it in
+`DetailsPanel.tsx`, with the read projection in `turnDetails.ts` and the
+selected request's steps in `ActivitySteps.tsx`. The command inspector remains
+`WorkbenchPanel.tsx`; it opens deliberately from a linked command or Review,
+not as a second history below the everyday activity list.
+
+- Default to following current work. Choosing a recorded request or its
+  conversation action pins that request; fresh output never changes the
+  selection. Follow live returns to the current history window. Conversation
+  history lists loaded requests and can page earlier ones. A pinned request
+  outside the window stays explicitly unavailable until its addressed page is
+  loaded, instead of silently selecting another request.
+- Join directives, calls, projected files and commands by their recorded ids.
+  Live per-model-step frames fold into the current directive; a shared call id
+  can establish admission before the transcript supplies its directive id.
+  Do not attach commands by time, similar request text, file name or nearest
+  row. Commands with no link to a loaded request are separately inspectable.
+- Activity, Files and Evidence share the selected request. Activity describes
+  actual operations, folds only consecutive identical successful operations,
+  retains every underlying call, and keeps failure/decision states visible.
+  Worker completion follows its labelled event, never its disclosure state.
+  Closing an unfinished tool when a run ends preserves that its result was
+  not observed; it does not establish success.
+- The request selector, live-follow control and connection state stay outside
+  the one everyday scrolling body. Follow the tail only while the reader is
+  already there. Earlier-step inspection keeps its position and open details;
+  Jump to latest is explicit. Stop current work uses the existing cancellation
+  path and keeps its stopping state until settlement.
+- Files reuse existing file/Review/Canvas/Library actions. Current state comes
+  from the Library, with saved drafts resolved to their exact artifact version.
+  Missing state is explicit. An ambiguous multi-file call without an exact
+  saved-version binding must not show another file's state.
+- Evidence separates recorded outcomes, version-bound file checks and links
+  actually present in an answer. A successful tool call or a link is not
+  presented as outcome verification. Check-read failure is an error with a
+  retry, never an empty successful list. Raw identifiers, arguments and output
+  remain deliberate disclosures. Review still uses the existing version-bound
+  decisions, comments, checks and Undo, outside the panel's layout container.
+- Followed sources names feed intake, Open promises names this workspace's
+  obligations, and Parallel work names the current conversation's workers.
+  These broader views do not impersonate evidence for a selected answer.
+
+[Browser acceptance](../audits/turn-details-2026-10-22.md) covers desktop/phone,
+light/dark, live updates, pinning, missing records, scrolling and Review.
+Installed native WebKit qualification is tracked separately.
 
 ## 1. Summary
 

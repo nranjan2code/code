@@ -1,5 +1,12 @@
 # Decisions
 
+- 2026-10-22: The maintainer approved implementing request-focused Details:
+  follow live work, pin inspected history, scope Activity/Files/Evidence to
+  the same recorded request, preserve full command and file-review controls,
+  and clarify the scope of the other right-panel views. See
+  [the Details contract](design/75-visual-refresh.md#request-focused-details--2026-10-22)
+  and [browser acceptance](audits/turn-details-2026-10-22.md).
+
 - 2026-10-21: The maintainer broadened Review fixes to all file types and
   requested expert UX focus plus modern, smaller controls throughout the app.
   Review now prioritises document, scope and decision; shared client and Admin

@@ -1,3 +1,17 @@
+## Unreleased
+
+- Details follows current work or pins an earlier request, with Activity, Files
+  and Evidence scoped to that request. Conversation history is explicit;
+  unrelated commands remain unlinked instead of being assigned by proximity.
+- Activity names recorded operations, folds repeated successful calls, keeps
+  failures and decisions visible, and preserves open details and reading
+  position during streaming. Command output, checks, Review and Undo remain
+  available through command details. Stopped calls without results are no
+  longer presented as successful; interleaved worker updates follow labels.
+- File details read current Library state, evidence distinguishes links from
+  verification, and unavailable checks are shown as unavailable. Followed
+  sources, workspace promises and conversation workers state their scope.
+
 ## 8.19.0 — 2026-10-21
 
 - Controls across the app and Admin use consistent, compact desktop sizing,

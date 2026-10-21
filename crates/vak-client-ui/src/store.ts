@@ -40,6 +40,8 @@ export type Item =
       name: string;
       argsJson: string;
       done: boolean;
+      /** Closed without an observed ToolCallEnd/tool_result. */
+      interrupted?: boolean;
       isError: boolean;
       preview: string | null;
     }
@@ -59,7 +61,7 @@ export type Item =
       options: string[];
       resolved: null | "answered" | "gone";
     }
-  | { kind: "worker"; label: string; lines: string[]; open: boolean; isError: boolean }
+  | { kind: "worker"; label: string; lines: string[]; open: boolean; isError: boolean; done?: boolean }
   | { kind: "system"; text: string; needs?: "ai-service" };
 
 export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false, recent_workspaces: [] });
@@ -225,6 +227,19 @@ export function setActiveExecutionId(value: string | null) {
 }
 
 export const [workbenchTab, setWorkbenchTab] = createSignal<"execution" | "artifacts">("execution");
+export type DetailsView = "activity" | "files" | "evidence";
+const [detailsFocus, setDetailsFocus] = createStore<Record<string, { turnId: string | null; view: DetailsView }>>({});
+export const detailsFocusOf = (session: string) => detailsFocus[session] ?? { turnId: null, view: "activity" as const };
+export function setDetailsFocusFor(session: string, turnId: string | null, view: DetailsView = "activity") {
+  setDetailsFocus(session, { turnId, view });
+}
+export function openTurnDetails(session: string, turnId: string) {
+  setDetailsFocusFor(session, turnId.startsWith("live") ? null : turnId);
+  setDockTab("workbench");
+}
+// A deliberate inspector request, separate from the remembered execution id.
+// Reopening Details must not silently return to a stale command selection.
+export const [workbenchInspection, setWorkbenchInspection] = createSignal<{ sessionId: string; executionId?: string } | null>(null);
 export interface CandidateReviewRequest {
   executionId: string;
   sessionId?: string;
@@ -240,6 +255,8 @@ export function openCandidateReview(execId: string, sessionId?: string, candidat
 }
 
 export function openWorkbenchExecution(execId?: string) {
+  const sessionId = activeId();
+  if (sessionId) setWorkbenchInspection({ sessionId, executionId: execId });
   setWorkbenchTab("execution");
   if (execId) {
     setActiveExecutionId(execId);
@@ -1242,7 +1259,7 @@ export function transcriptToItems(
   for (let i = 0; i < next.length; i++) {
     const it = next[i];
     if (!running && it.kind === "tool" && !it.done) {
-      next[i] = { ...it, done: true, preview: it.preview ?? null };
+      next[i] = { ...it, done: true, interrupted: true, preview: it.preview ?? null };
     }
     if (!running && it.kind === "approval" && it.resolved === null) {
       next[i] = { ...it, resolved: "gone" };
@@ -1403,6 +1420,7 @@ export function applyEvent(
         ? {
             ...it,
             done: true,
+            interrupted: false,
             isError: ev.ToolCallEnd.is_error,
             preview: ev.ToolCallEnd.result_preview,
           }
@@ -1445,12 +1463,13 @@ export function applyEvent(
       lines: [],
       open: false,
       isError: false,
+      done: false,
     });
   } else if ("WorkerToolCall" in ev) {
     patchLast(
       b,
       id,
-      (it) => it.kind === "worker",
+      (it) => it.kind === "worker" && it.label === ev.WorkerToolCall.label && !it.done,
       (it) => {
         if (it.kind !== "worker") return it;
         const lines = [...it.lines, `${ev.WorkerToolCall.name}${ev.WorkerToolCall.is_error ? " ✗" : ""}`];
@@ -1461,12 +1480,13 @@ export function applyEvent(
     patchLast(
       b,
       id,
-      (it) => it.kind === "worker",
+      (it) => it.kind === "worker" && it.label === ev.WorkerFinished.label && !it.done,
       (it) =>
         it.kind === "worker"
           ? {
               ...it,
               isError: ev.WorkerFinished.is_error,
+              done: true,
               lines: [...it.lines, `done in ${(ev.WorkerFinished.elapsed_ms / 1000).toFixed(1)}s`],
             }
           : it,
@@ -1497,6 +1517,7 @@ export function applyEvent(
           return {
             ...it,
             done: true,
+            interrupted: true,
             preview: it.preview ?? null,
           };
         }

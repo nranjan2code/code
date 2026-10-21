@@ -81,7 +81,7 @@ Counts: 3 proposal, 20 in progress, 58 implemented, 2 reference, 9 superseded, 5
 | [72-openxml-documents.md](72-openxml-documents.md) | 72 — Office documents (Open XML): design and implementation ledger | in progress | the core loop is shipped |
 | [73-data-architecture-and-lifecycle.md](73-data-architecture-and-lifecycle.md) | 73 — Data architecture: information model, lifecycle, tracing, index and cloud | implemented | as cut for one owner (revision 3, decisions locked in §13 |
 | [74-lifecycle-and-data-administration.md](74-lifecycle-and-data-administration.md) | 74 — Lifecycle management and data administration | implemented | as cut for one owner (revision 2 |
-| [75-visual-refresh.md](75-visual-refresh.md) | 75 — Visual refresh: readable type, plain words and the Ink and Saffron brand | in progress | the implementation record, updated 2026-09-27 |
+| [75-visual-refresh.md](75-visual-refresh.md) | 75 — Visual refresh: readable type, plain words and the Ink and Saffron brand | in progress | the implementation record, updated 2026-10-22 |
 | [76-intake-and-knowledge.md](76-intake-and-knowledge.md) | 76 — Intake and knowledge: one path for data in, one place to use it | implemented | (data-architecture M6.5a to M6.5c, 2026-10-06 |
 | [77-pdf-documents.md](77-pdf-documents.md) | 77 — PDF documents: reader, writer, review and shared drafts | implemented | (shipped 2026-09-29) |
 | [78-headless-identity.md](78-headless-identity.md) | 78 — Headless identity | in progress | This document is the implementation contract for human sign-in on a network-exposed Vakyartha server |

@@ -1,3 +1,13 @@
+## Request-focused Details (2026-10-22)
+
+- [x] Replace the stacked right-panel histories with request-scoped Activity,
+  Files and Evidence; live following, pinned history, honest completion states,
+  full command/Review access and explicit broader-panel scope. See
+  [browser acceptance](../audits/turn-details-2026-10-22.md).
+- [ ] Qualify request selection, stream following, command details and Review
+  in the installed native WebKit desktop host. The shared component's browser
+  acceptance and desktop bundle build do not certify the installed shell.
+
 ## Focused Review and shared controls (2026-10-21)
 
 - [x] Focus Review across supported file types, simplify visible actions,

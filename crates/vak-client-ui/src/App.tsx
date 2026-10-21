@@ -127,7 +127,7 @@ import ReceiptsModal from "./components/ReceiptsModal";
 import WorkModal from "./components/WorkModal";
 const LivePreviewPanel = lazy(() => import("./components/LivePreviewPanel"));
 const ArtifactCanvas = lazy(() => import("./components/ArtifactCanvas"));
-const WorkbenchPanel = lazy(() => import("./components/WorkbenchPanel"));
+const WorkbenchPanel = lazy(() => import("./components/DetailsPanel"));
 const WorkersPanel = lazy(() => import("./components/WorkersPanel"));
 const CommitmentsPanel = lazy(() => import("./components/CommitmentsPanel"));
 import WorkspaceGate from "./components/WorkspaceGate";
@@ -635,7 +635,7 @@ export async function activate(id: string): Promise<boolean | undefined> {
   return true;
 }
 
-async function focusTopicTurn(sessionId: string, turnId: string): Promise<void> {
+export async function focusTopicTurn(sessionId: string, turnId: string): Promise<void> {
   try {
     const snapshot = await readableSnapshot(sessionId, { around: turnId });
     if (!snapshot.page) throw new Error("The requested part of this conversation is unavailable.");
@@ -1688,14 +1688,14 @@ export default function App() {
                     <div class="dock-view-menu" data-titlebar="false">
                       <div class="menu-group-label">Results</div>
                       <For each={[
-                        ["workbench", "Files and activity", "file"],
+                        ["workbench", "Request details", "file"],
                         ["preview", "Live preview", "preview"],
                       ] as const}>
                         {([id, label, icon]) => <button type="button" class="dock-view-option" aria-current={tab() === id ? "page" : undefined} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
                       </For>
                       <div class="menu-group-label">Work</div>
                       <For each={[
-                        ["agents", "Parallel work", "grid"], ["sources", "Sources", "bell"],
+                        ["agents", "Parallel work", "grid"], ["sources", "Followed sources", "bell"],
                         ["commitments", "Open promises", "shield"],
                       ] as const}>
                         {([id, label, icon]) => <button type="button" class="dock-view-option" aria-current={tab() === id ? "page" : undefined} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
@@ -1810,14 +1810,14 @@ export default function App() {
 
 function dockLabel(tab: import("./store").DockTab): string {
   return {
-    workbench: "Results",
+    workbench: "Details",
     diff: "Changes",
     terminal: "Terminal",
     preview: "Live preview",
     editor: "Editor",
     pr: "Pull request",
     agents: "Parallel work",
-    sources: "Sources",
+    sources: "Followed sources",
     commitments: "Open promises",
   }[tab];
 }

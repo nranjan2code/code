@@ -4,7 +4,6 @@ import {
   workbenchLoadError,
   activeExecutionId,
   setActiveExecutionId,
-  setWorkbenchExecutions,
   type WorkbenchExecution,
   activeId,
   requestedArtifact,
@@ -21,7 +20,6 @@ import {
 import * as api from "../api";
 import { watchCoworking } from "../streamHub";
 import Icon from "./Icon";
-import ActivitySteps, { hasActivitySteps } from "./ActivitySteps";
 import Sheet from "./Sheet";
 import OfficeChangeList from "./OfficeChangeList";
 import OfficeView from "./OfficeView";
@@ -135,12 +133,12 @@ function renderAnsiToHtml(rawText: string): string {
   return html;
 }
 
-export default function WorkbenchPanel() {
+export default function WorkbenchPanel(props: { executionIds?: string[] } = {}) {
   const tab = workbenchTab;
   const setTab = setWorkbenchTab;
   const [selectedArtifact, setSelectedArtifact] = createSignal<string | null>(null);
   const [browsingFiles, setBrowsingFiles] = createSignal(false);
-  const [showRunDetails, setShowRunDetails] = createSignal(false);
+  const [showRunDetails, setShowRunDetails] = createSignal(true);
   const [reviewFocus, setReviewFocus] = createSignal(false);
   const [feedbackOpen, setFeedbackOpen] = createSignal(false);
   const [artifactPreview, setArtifactPreview] = createSignal("");
@@ -296,7 +294,7 @@ export default function WorkbenchPanel() {
     setPreviewPreparations([]);
   });
 
-  const executions = () => workbenchExecutions();
+  const executions = () => workbenchExecutions().filter(exec => !props.executionIds || props.executionIds.includes(exec.id));
   const currentExec = () => {
     const active = activeExecutionId();
     if (active) {
@@ -363,12 +361,6 @@ export default function WorkbenchPanel() {
 
   const isAnyRunning = () => executions().some((e) => e.status === "running");
   const runningExec = () => executions().find((e) => e.status === "running");
-
-  const clearExecutions = () => {
-    setWorkbenchExecutions([]);
-    setActiveExecutionId(null);
-    setSelectedArtifact(null);
-  };
 
   const copyCommand = async (cmd: string) => {
     try {
@@ -1047,7 +1039,7 @@ export default function WorkbenchPanel() {
               classList={{ active: tab() === "execution" }}
               onClick={() => setTab("execution")}
             >
-              Activity<Show when={executions().length > 0}> ({executions().length})</Show>
+              Commands<Show when={executions().length > 0}> ({executions().length})</Show>
             </button>
             <button
               class="workbench-nav-btn"
@@ -1063,15 +1055,6 @@ export default function WorkbenchPanel() {
             </button>
           </div>
           <Show when={tab() === "execution" && executions().length > 0 && !technicalDetails()}><button type="button" class="workbench-detail-toggle" aria-pressed={showRunDetails()} onClick={() => setShowRunDetails((show) => !show)}>{showRunDetails() ? "Hide details" : "Technical details"}</button></Show>
-          <Show when={tab() === "execution" && executions().length > 0}>
-            <button
-              class="workbench-clear-btn"
-              onClick={clearExecutions}
-              title="Clear activity history"
-            >
-              <Icon name="trash" size={14} />
-            </button>
-          </Show>
         </div>
       </div>
       <Show when={isAnyRunning()}>
@@ -1086,12 +1069,8 @@ export default function WorkbenchPanel() {
         </div>
       </Show>
 
-      <Show when={tab() === "execution"}>
-        <ActivitySteps sessionId={activeId()} />
-      </Show>
-
       {/* Main Content */}
-      <Show when={executions().length === 0 && !selectedArtifact() && !(tab() === "execution" && hasActivitySteps(activeId()))}>
+      <Show when={executions().length === 0 && !selectedArtifact()}>
         <div class="workbench-empty-state">
           <Icon name={tab() === "artifacts" ? "file" : "history"} size={32} />
           <Show when={workbenchLoadError()}>
@@ -1137,7 +1116,7 @@ export default function WorkbenchPanel() {
                         >
                           {item().status === "running" ? "●" : item().exitCode === 0 ? "✓" : "✗"}
                         </span>
-                        <span class="run-time">{technicalDetails() ? item().timestamp : item().status === "running" ? "Working" : item().status === "failed" ? "Step failed" : "Completed step"}</span>
+                        <span class="run-time">{item().status === "running" ? "Running" : item().status === "failed" ? "Command failed" : "Command finished"}</span>
                         <Show when={technicalDetails() && item().durationMs !== undefined}>
                           <span class="run-duration">
                             {item().durationMs! < 1000
@@ -1146,7 +1125,7 @@ export default function WorkbenchPanel() {
                           </span>
                         </Show>
                       </div>
-                      <Show when={technicalDetails()}><div class="run-cmd-snippet" title={item().command}>{item().command}</div></Show>
+                      <div class="run-cmd-snippet" title={item().command}>{item().command}</div>
                     </button>
                   );
                 }}

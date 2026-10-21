@@ -24,6 +24,7 @@ import {
   openArtifactFile,
   openArtifactCanvas,
   openCandidateReview,
+  openTurnDetails,
   openOfficeCitation,
   openMailCalendarCitation,
   setReplyTarget,
@@ -39,7 +40,7 @@ import {
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
-import { approve, sendPrompt } from "../App";
+import { activate, approve, sendPrompt } from "../App";
 import Icon from "./Icon";
 import { Pill, stateOf } from "./fileState";
 import { safeUrl, isLocalArtifactPath, sandboxedSrcdoc } from "../safeUrl";
@@ -839,7 +840,7 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
  * for review; a card whose status the server could not establish says
  * nothing about it rather than guess. Size and path are technical details.
  */
-export function ResultCard(props: { item: OutputItem; sessionId: string; resultId?: string; showReview?: boolean; askForChanges?: boolean }) {
+export function ResultCard(props: { item: OutputItem; sessionId: string; resultId?: string; showReview?: boolean; askForChanges?: boolean; currentStateOnly?: boolean }) {
   const pageResources = useContext(PresentationPageResourceContext);
   if (props.item.content.type !== "artifact") return null;
   const artifact = props.item.content.artifact;
@@ -852,8 +853,29 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
     () => (props.sessionId && call() ? [props.sessionId, call()!] as const : null),
     ([session, made]) => api.madeByCall(session, made).catch(() => null),
   );
-  const liveState = () => stateOf(live()?.now, "call");
-  const behind = () => live()?.now?.is === "waiting" && (live()!.now as { behind: boolean }).behind;
+  const [exact] = createResource(
+    () => props.currentStateOnly && artifact.status && artifact.status.state !== "in_folder" && artifact.status.saved_as
+      ? [props.sessionId, artifact.status.saved_as.version_id, artifact.status.saved_as.path] as const : null,
+    async ([session, candidate, path]) => {
+      try {
+        const binding = await api.versionOf(session, candidate, path);
+        const detail = await api.libraryArtifact(binding.artifact);
+        const version = detail.history.find(version => version.id === binding.version);
+        return version ? { artifact: binding.artifact, version: binding.version, now: version.now, newer: 0 } : null;
+      } catch { return null; }
+    },
+  );
+  const current = () => {
+    if (!props.currentStateOnly) return live();
+    if (exact()) return exact();
+    // The legacy call lookup returns one file. For a multi-file call it
+    // cannot establish which version this card represents; do not show
+    // another file's current state merely because their names match.
+    const files = presentationOf(props.sessionId)?.items.filter(item => item.content.type === "artifact" && item.provenance?.tool_call_id === call());
+    return files?.length === 1 && live()?.name === artifact.name ? live() : null;
+  };
+  const liveState = () => stateOf(current()?.now, "call");
+  const behind = () => current()?.now?.is === "waiting" && (current()!.now as { behind: boolean }).behind;
   const review = () => (props.showReview === false ? undefined : props.item.actions.find((action) => action.verb === "review_draft"));
   const primary = () => {
     if (!review() || artifact.status?.state !== "draft") return false;
@@ -885,13 +907,13 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
       <div class="result-card-text">
         <Show
           when={liveState()}
-          fallback={<Show when={words()}>{(value) => <p class="result-card-status" classList={{ waiting: value().waiting }}><Show when={value().waiting}><span class="result-card-dot" aria-hidden="true" /></Show>{value().headline}</p>}</Show>}
+          fallback={<Show when={props.currentStateOnly} fallback={<Show when={words()}>{(value) => <p class="result-card-status" classList={{ waiting: value().waiting }}><Show when={value().waiting}><span class="result-card-dot" aria-hidden="true" /></Show>{value().headline}</p>}</Show>}><p class="result-card-status">{live.loading || exact.loading ? "Checking current file status…" : "Current file status unavailable"}</p></Show>}
         >
           {(state) => (
             <p class="result-card-states">
               <Pill mark={state().mark}>{state().word}</Pill>
               <Show when={behind()}><Pill mark="changed">Made before your edit</Pill></Show>
-              <Show when={(live()?.newer ?? 0) > 0}><span class="result-card-since">since then: {live()!.newer} more version{live()!.newer === 1 ? "" : "s"}</span></Show>
+              <Show when={(current()?.newer ?? 0) > 0}><span class="result-card-since">since then: {current()!.newer} more version{current()!.newer === 1 ? "" : "s"}</span></Show>
             </p>
           )}
         </Show>
@@ -911,7 +933,7 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
         <Show when={!words()?.waiting && file.path()}>{(value) => <button type="button" class="file-action-icon" aria-label="Download" title="Download" onClick={() => void file.download(value())}><Icon name="download" size={17} /></button>}</Show>
         <Show when={file.canOpenWith() && file.path()}>{(value) => <button type="button" class="file-action-icon" aria-label="Open with another app" title="Open with another app" onClick={() => void file.openWith(value())}><Icon name="monitor" size={17} /></button>}</Show>
         <Show
-          when={live()}
+          when={props.currentStateOnly ? current() : live()}
           fallback={<Show when={file.inLibrary}>{(open) => <button type="button" class="file-action-icon" aria-label="Open in Library" title="Open in Library" onClick={open()}><Icon name="history" size={17} /></button>}</Show>}
         >
           {(made) => <button type="button" class="file-action-icon" aria-label="Open history" title="Open history" onClick={() => openInLibrary(made().artifact)}><Icon name="history" size={17} /></button>}
@@ -1481,6 +1503,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       >
         <For each={blocks()}>{(node) => node}</For>
       </Show>
+      <Show when={props.sessionId && !useContext(InCanvasContext)}><button type="button" class="turn-details-action" onClick={async () => { if (activeId() !== props.sessionId && !await activate(props.sessionId)) return; openTurnDetails(props.sessionId, props.id); }}>View request details</button></Show>
     </section>
   );
 }

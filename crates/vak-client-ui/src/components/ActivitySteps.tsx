@@ -1,141 +1,37 @@
-import { For, Show, createMemo } from "solid-js";
-import { draftingOf, isRunning, itemsOf, presentationOf, technicalDetails, type Item } from "../store";
-import { stripControlScaffolding } from "../structured";
+import { Index, Show, createMemo } from "solid-js";
+import type { ActivityStep, DetailTurn } from "../turnDetails";
 import Icon from "./Icon";
 
-type Step = { key: string; label: string; state: "running" | "done" | "failed" | "waiting"; detail?: string };
-type TurnSteps = { key: string; request: string; steps: Step[] };
-
-const readable = (name: string) => name.replace(/_/g, " ");
-
-/** The form a card call drew, from the card recorded for it or, while it
- *  is written, the form its tool declared. */
-function cardForm(sessionId: string, callId: string): string | undefined {
-  // A call can have several items (its progress, its card); the card is the
-  // structured one.
-  for (const item of presentationOf(sessionId)?.items ?? []) {
-    if (item.provenance?.tool_call_id === callId && item.content.type === "structured") {
-      return item.content.output.block ?? undefined;
+/** One selected turn, with repeated successful operations folded together.
+ * Failed and waiting calls never disappear into a successful group. */
+export default function ActivitySteps(props: { turn: DetailTurn; onInspect: (id: string) => void }) {
+  const groups = createMemo(() => {
+    const out: ActivityStep[][] = [];
+    for (const step of props.turn.steps) {
+      const previous = out[out.length - 1];
+      if (step.state === "done" && step.tool && previous?.[0].state === "done" && previous[0].tool === step.tool && previous[0].label === step.label) previous.push(step);
+      else out.push([step]);
     }
-  }
-  return draftingOf(sessionId).find((card) => card.id === callId)?.block;
-}
-
-function plannedParts(argsJson: string): string[] {
-  try {
-    const parsed = JSON.parse(argsJson) as { deliverables?: { name?: string }[] };
-    return (parsed.deliverables ?? []).map((part) => part.name ?? "").filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-function stepOf(sessionId: string, item: Item, index: number): Step | null {
-  switch (item.kind) {
-    case "thinking":
-      return { key: item.key, label: item.done ? "Thought it through" : "Thinking", state: item.done ? "done" : "running", detail: item.text };
-    case "tool": {
-      const state = !item.done ? "running" : item.isError ? "failed" : "done";
-      const detail = item.isError ? item.preview ?? undefined : undefined;
-      if (item.name === "plan") {
-        const parts = plannedParts(item.argsJson);
-        return { key: item.id, label: parts.length ? `Planned: ${parts.join(", ")}` : "Planned the answer", state, detail };
-      }
-      if (item.name === "recall") return { key: item.id, label: "Looked back in the conversation", state, detail };
-      const form = cardForm(sessionId, item.id);
-      if (form) {
-        const shown = readable(form);
-        return { key: item.id, label: state === "failed" ? `A ${shown} card was refused` : state === "running" ? `Drawing a ${shown} card` : `Showed a ${shown} card`, state, detail };
-      }
-      return { key: item.id, label: `Used ${readable(item.name)}`, state, detail };
-    }
-    case "approval":
-      return {
-        key: item.id,
-        label: `Asked to allow ${readable(item.tool)}`,
-        state: item.resolved === null ? "waiting" : item.resolved === "allowed" ? "done" : "failed",
-        detail: item.resolved === "denied" ? "Declined" : undefined,
-      };
-    case "question":
-      return { key: item.id, label: `Asked: ${item.question}`, state: item.resolved === null ? "waiting" : "done" };
-    case "worker":
-      return { key: `worker-${index}`, label: `Worker: ${item.label}`, state: item.isError ? "failed" : item.open ? "running" : "done" };
-    default:
-      return null;
-  }
-}
-
-/** What each turn of a conversation did, newest first: its model steps,
- *  every call and its state, approvals, questions and workers. The chat
- *  shows outcomes only; this is where the work is seen. */
-export default function ActivitySteps(props: { sessionId: string | null }) {
-  const turns = createMemo<TurnSteps[]>(() => {
-    const sid = props.sessionId;
-    if (!sid) return [];
-    const out: TurnSteps[] = [];
-    itemsOf(sid).forEach((item, index) => {
-      if (item.kind === "user") {
-        out.push({ key: item.entryId ?? `turn-${index}`, request: stripControlScaffolding(item.text).trim(), steps: [] });
-        return;
-      }
-      const step = stepOf(sid, item, index);
-      if (!step) return;
-      if (out.length === 0) out.push({ key: "turn-0", request: "", steps: [] });
-      const steps = out[out.length - 1].steps;
-      // A thought the model has moved on from is finished.
-      const previous = steps[steps.length - 1];
-      if (previous?.state === "running" && previous.label === "Thinking") {
-        steps[steps.length - 1] = { ...previous, label: "Thought it through", state: "done" };
-      }
-      steps.push(step);
-    });
-    // The running turn shows from the moment it starts, before its first
-    // step arrives.
-    const last = out[out.length - 1];
-    if (isRunning(sid) && last && last.steps.length === 0) {
-      last.steps.push({ key: `${last.key}-waiting`, label: "Waiting for the model", state: "running" });
-    }
-    return out.filter((turn) => turn.steps.length > 0).reverse();
+    return out;
   });
-  return (
-    <Show when={turns().length > 0}>
-      <section class="activity-steps" aria-label="What Vakyartha did">
-        <For each={turns()}>
-          {(turn) => (
-            <div class="activity-turn">
-              <Show when={turn.request}>
-                <p class="activity-request" title={turn.request}>{turn.request}</p>
-              </Show>
-              <ol class="activity-list">
-                <For each={turn.steps}>
-                  {(step) => (
-                    <li class="activity-step" data-state={step.state}>
-                      <span class="activity-mark" aria-hidden="true">
-                        <Show when={step.state === "failed"} fallback={<Show when={step.state === "done"} fallback={<span class="activity-dot" />}><Icon name="check" size={13} /></Show>}>
-                          <Icon name="warning" size={13} />
-                        </Show>
-                      </span>
-                      <span class="activity-label">{step.label}</span>
-                      <Show when={step.detail && (step.state === "failed" || technicalDetails())}>
-                        <details class="activity-detail">
-                          <summary>{step.state === "failed" ? "Why" : "Details"}</summary>
-                          <p>{step.detail}</p>
-                        </details>
-                      </Show>
-                    </li>
-                  )}
-                </For>
-              </ol>
-            </div>
-          )}
-        </For>
-      </section>
+  return <section class="activity-steps" aria-label="Activity for this request">
+    <Show when={groups().length} fallback={<p class="details-empty">{props.turn.live ? "Waiting for the first activity…" : "No activity was recorded for this request."}</p>}>
+      <ol class="activity-list"><Index each={groups()}>{group => {
+        const first = () => group()[0];
+        return <li class="activity-step" data-state={first().state}>
+          <span class="activity-mark" aria-hidden="true"><Show when={first().state === "running" || first().state === "waiting"} fallback={<Icon name={first().state === "failed" ? "warning" : first().state === "done" ? "check" : "history"} size={14} />}><span class="activity-dot" /></Show></span>
+          <div class="activity-copy"><span class="activity-label">{first().label}</span><span class="activity-state">{first().state === "done" ? "Finished" : first().state === "failed" ? "Failed" : first().state === "waiting" ? "Needs your decision" : first().state === "ended" ? "Ended · completion not confirmed" : "In progress"}<Show when={group().length > 1}> · {group().length} calls</Show></span></div>
+          <Show when={first().state === "failed" && first().result}><p class="activity-problem">{first().result}</p></Show>
+          <Show when={group().some(s => s.args || s.result || s.executionId)}>
+            <details class="activity-detail"><summary>{group().length > 1 ? `Inspect ${group().length} calls` : "Inspect step"}</summary><Index each={group()}>{step => <div class="activity-call">
+              <Show when={step().tool}><p class="activity-tool">Tool: {step().tool}</p></Show>
+              <Show when={step().args}><details><summary>Arguments</summary><pre>{step().args}</pre></details></Show>
+              <Show when={step().result && step().state !== "failed"}><details><summary>Recorded output</summary><pre>{step().result}</pre></details></Show>
+              <Show when={step().executionId}><button type="button" class="btn" onClick={() => props.onInspect(step().executionId!)}>Command output and checks</button></Show>
+            </div>}</Index></details>
+          </Show>
+        </li>;
+      }}</Index></ol>
     </Show>
-  );
-}
-
-/** Whether a conversation has any step to show. */
-export function hasActivitySteps(sessionId: string | null): boolean {
-  if (!sessionId) return false;
-  return isRunning(sessionId) || itemsOf(sessionId).some((item) => item.kind !== "user" && item.kind !== "assistant" && item.kind !== "system");
+  </section>;
 }
