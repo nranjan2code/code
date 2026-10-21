@@ -335,7 +335,7 @@
    }
   ],
   "open_total": 89,
-  "measures_revision": "848648d69"
+  "measures_revision": "850900957"
  },
  "activity": {
   "since": "2026-10-07",
@@ -37090,7 +37090,7 @@
   ],
   "complexity": [
    {
-    "score": 193,
+    "score": 192,
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
     "line": 1881
@@ -37099,31 +37099,31 @@
     "score": 137,
     "name": "merge_into",
     "file": "crates/vak-config/src/lib.rs",
-    "line": 4169
+    "line": 4181
    },
    {
     "score": 106,
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6646
+    "line": 6662
    },
    {
     "score": 96,
     "name": "unknown_key_warnings",
     "file": "crates/vak-config/src/lib.rs",
-    "line": 3817
+    "line": 3829
    },
    {
-    "score": 83,
+    "score": 85,
     "name": "snapshot_inner",
     "file": "crates/vak-server/src/projection.rs",
-    "line": 892
+    "line": 910
    },
    {
     "score": 75,
     "name": "load_with_trust",
     "file": "crates/vak-config/src/lib.rs",
-    "line": 3009
+    "line": 3021
    },
    {
     "score": 68,
@@ -37135,19 +37135,19 @@
     "score": 61,
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5685
+    "line": 5676
    },
    {
     "score": 46,
     "name": "execute_one",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 8804
+    "line": 8801
    },
    {
     "score": 43,
     "name": "execute_batch_calls",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 7669
+    "line": 7666
    },
    {
     "score": 42,
@@ -37159,7 +37159,7 @@
     "score": 39,
     "name": "gateway_inbound",
     "file": "crates/vak-server/src/gateway.rs",
-    "line": 2679
+    "line": 2680
    }
   ]
  },
@@ -37173,7 +37173,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 193 (rank 1 of 4,468 library functions) and `Core::run_turn_recorded` at 106 (rank 3); the median is 3 and the 99th percentile 24. 155 commits changed the first (6% of all) and 214 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.5 per thousand lines, against a median of 4.4 over 404 files; file size alone does not predict the rate (ρ = -0.13).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 192 (rank 1 of 4,473 library functions) and `Core::run_turn_recorded` at 106 (rank 3); the median is 3 and the 99th percentile 24. 155 commits changed the first (6% of all) and 214 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.5 per thousand lines, against a median of 4.4 over 404 files; file size alone does not predict the rate (ρ = -0.13).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
