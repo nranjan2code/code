@@ -852,7 +852,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .turn-rail-tick.active { width: 13px; opacity: .88; }
 .turn-rail-track:hover .turn-rail-tick { opacity: .7; }
 .turn-rail-track .turn-rail-tick.hovered { width: 19px; background: var(--text-soft); opacity: 1; }
-.turn-rail-track:focus-visible { border-radius: 5px; outline: 2px solid var(--accent); outline-offset: 3px; }
+.turn-rail-track:focus-visible .turn-rail-tick.active { width: 19px; background: var(--accent); opacity: 1; }
 .turn-rail-preview { position: absolute; left: 28px; width: min(280px, calc(100vw - 100px)); display: grid; gap: var(--space-1); padding: 9px 11px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--surface-raised) 94%, transparent); color: var(--text); box-shadow: var(--shadow-md); font-size: var(--fs-meta); line-height: 1.4; opacity: 0; transform: translate(3px, -50%); transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); pointer-events: none; backdrop-filter: blur(10px); }
 .turn-rail-preview.visible { opacity: 1; transform: translate(0, -50%); }
 .turn-rail-preview small { color: var(--muted); font-size: var(--fs-caption); }

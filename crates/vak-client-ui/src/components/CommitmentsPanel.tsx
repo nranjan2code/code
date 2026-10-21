@@ -200,9 +200,10 @@ export default function CommitmentsPanel() {
   const closed = createMemo(() => scoped().filter((c) => c.phase === "closed"));
 
   return (
-    <div class="commit-panel" role="tabpanel" aria-label="Commitments">
+    <div class="commit-panel" role="tabpanel" aria-label="Open promises">
+      <p class="dock-scope-note">Open promises for this workspace, across requests.</p>
       <div class="dock-head">
-        <span>Commitments{open().length ? ` · ${open().length} open` : ""}</span>
+        <span>Open promises{open().length ? ` · ${open().length} open` : ""}</span>
         <span class="dock-head-actions">
           <button class="chip sm" classList={{ on: all() }} onClick={() => setAll((v) => !v)}>
             {all() ? "hide closed" : "show closed"}

@@ -33,6 +33,25 @@ model-visible behaviour changes, and nothing here may be read as licence to
 hide a safety state (a pending approval, a failure, a denied action) from an
 everyday user.
 
+## Turn navigator (2026-10-22)
+
+The existing quiet tick rail acts as a dial: wheel/trackpad rolls, drag scrubs,
+arrow keys move one turn, Page Up/Down move ten, and Home/End reach the loaded
+window's edges. Rolling beyond an edge requests one history page through the
+existing bounded history cache and preserves the directive's address. Nothing
+loads the complete conversation eagerly. Counts explicitly say “loaded” while
+more pages exist. Accepted plan section names label previews, joined through
+ledger entry provenance; requests without a plan retain their authored text.
+Agent subtitles use the latest accepted plan names, with the newest request
+as the pre-plan fallback; hover exposes the full name and working state.
+A separate bounded recent snapshot supplies unloaded previews without changing
+the reader’s lazy history window. Keyboard focus emphasises the active tick,
+without a surrounding border.
+Topic filtering retains the same initial group so its first request stays
+navigable. Browser acceptance is recorded in
+[the dated check](../audits/turn-navigator-2026-10-22.md); native qualification
+remains open.
+
 ## Request-focused Details — 2026-10-22
 
 The maintainer approved replacing the stacked activity and command histories

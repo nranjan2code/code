@@ -1,4 +1,22 @@
-import type { OutputItem } from "./types";
+import type { OutputItem, OutputTimeline } from "./types";
+
+/** Use accepted plan names, joined by the directive's address, not page position. */
+export function turnPlanLabel(entryId: string | undefined, timeline: OutputTimeline | null | undefined): string {
+  if (!timeline) return "";
+  const turn = serverTurnFor(entryId, timeline.items);
+  if (!turn) return "";
+  return timeline.answers?.find(answer => answer.turn_id === turn)?.sections
+    .map(section => section.name.trim()).filter(Boolean).join(" · ") ?? "";
+}
+
+/** A sidebar names the newest request, never an older plan or first-message title. */
+export function latestWorkLabel(timeline: OutputTimeline | null | undefined): string {
+  const request = timeline?.items.findLast(item => item.role === "user");
+  if (!request || !timeline) return "";
+  const plan = timeline.answers?.find(answer => answer.turn_id === request.turn_id);
+  return plan?.sections.map(section => section.name.trim()).filter(Boolean).join(" · ")
+    || request.fallback_text?.trim() || "";
+}
 
 /**
  * The server turn a chat turn corresponds to, found by the ledger entry of the

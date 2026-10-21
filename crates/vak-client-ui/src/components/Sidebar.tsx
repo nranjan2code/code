@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
+import { createEffect, createResource, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { activeAgentId, agentOpening, agentsEpoch, openingAgentId, backend, isRunning, sessions, settingsOpen, setAgentCreateOpen, narrowViewport, inboxOpen, inboxUnread, libraryOpen, setInboxOpen, setLibraryOpen, setAutomationsOpen, automationsOpen, setNotice, setSearchOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen, topicsChanged } from "../store";
 import { openAgentChat, openTopic } from "../App";
 import * as api from "../api";
@@ -7,6 +7,9 @@ import AgentMark from "./AgentMark";
 import { sortByRecent } from "../agentRecents";
 import Icon from "./Icon";
 import Skeleton from "./Skeleton";
+import { historyPages, itemsOf, presentationOf } from "../store";
+import { latestWorkLabel, turnPlanLabel } from "../turnPairing";
+import { stripControlScaffolding } from "../structured";
 
 function AgentTopicList(props: { agent: Pick<api.Agent, "id" | "name" | "revision" | "character" | "animation" | "voice"> }) {
   const [topics, setTopics] = createSignal<api.AgentTopic[]>([]);
@@ -43,7 +46,7 @@ function AgentTopicList(props: { agent: Pick<api.Agent, "id" | "name" | "revisio
     } catch (e) { if (cwd === backend().cwd && agentId === props.agent.id && request === requestVersion) setError(e instanceof Error ? e.message : String(e)); }
     finally { if (request === requestVersion) setLoading(false); }
   };
-  createEffect(() => { topicsChanged(); if (expanded() && loadedOnce() && !loading()) void load(); });
+  createEffect(on(topicsChanged, () => { if (expanded() && loadedOnce() && !loading()) void load(); }, { defer: true }));
   return <details class="sb-topics" onToggle={(event) => { const open = (event.currentTarget as HTMLDetailsElement).open; setExpanded(open); if (open && !loadedOnce() && !loading()) void load(); }}>
     <summary>Topics</summary>
     <Show when={error()}><p class="sb-topics-error" role="alert">Could not load topics. <button type="button" onClick={() => void load()}>Try again</button></p></Show>
@@ -96,12 +99,36 @@ export default function Sidebar() {
   );
 
   const agentIsRunning = (id: string) => sessions().some((s) => s.agent?.id === id && isRunning(s.session_id));
-  // One quiet line under each agent: what it is doing, else its latest conversation.
-  const agentStatus = (id: string) => agentIsRunning(id)
-    ? "Working…"
-    : sessions().find((s) => s.agent?.id === id && s.title)?.title ?? "";
-
-  const AgentRow = (props: { id: string; name: string; character?: api.Agent["character"]; motion?: api.Agent["animation"]; profile?: api.Agent }) => (
+  const AgentRow = (props: { id: string; name: string; character?: api.Agent["character"]; motion?: api.Agent["animation"]; profile?: api.Agent }) => {
+    const recent = () => sessions().find(s => s.agent?.id === props.id && isRunning(s.session_id))
+      ?? sessions().find(s => s.agent?.id === props.id);
+    // One bounded recent page, refreshed only when the session changes. Keep
+    // this preview separate from the reader's lazily loaded history window.
+    const [preview] = createResource(() => {
+      const session = recent();
+      if (session && !historyPages[session.session_id]?.newer
+        && itemsOf(session.session_id).some(item => item.kind === "user")) return false;
+      return session ? `${session.session_id}:${session.updated_at ?? ""}` : false;
+    }, async () => {
+      const session = recent();
+      if (!session) return "";
+      try { return latestWorkLabel((await api.conversationSnapshot(session.session_id)).presentation); }
+      catch { return ""; }
+    });
+    const label = () => {
+      const session = recent();
+      if (!session) return "";
+      if (!historyPages[session.session_id]?.newer) {
+        const timeline = presentationOf(session.session_id);
+        const request = itemsOf(session.session_id).findLast(item => item.kind === "user");
+        if (request?.kind === "user") return turnPlanLabel(request.entryId, timeline) || stripControlScaffolding(request.text);
+        const title = latestWorkLabel(timeline);
+        if (title) return title;
+      }
+      return preview.loading ? "" : preview() ?? "";
+    };
+    const status = () => label().replace(/\s+/g, " ").trim() || (agentIsRunning(props.id) ? "Working…" : "");
+    return (
     <div class="sb-agent-group">
     <button type="button" class="sb-agent-item" classList={{ active: activeAgentId() === props.id, opening: openingAgentId() === props.id }}
       aria-busy={openingAgentId() === props.id} aria-current={activeAgentId() === props.id ? "page" : undefined}
@@ -109,12 +136,13 @@ export default function Sidebar() {
       <AgentMark character={props.character} motion={props.motion} size={28} state={agentIsRunning(props.id) ? "working" : "idle"} />
       <span class="sb-agent-text">
         <span class="sb-agent-name">{props.name}</span>
-        <Show when={agentStatus(props.id)}><span class="sb-agent-sub">{agentStatus(props.id)}</span></Show>
+        <Show when={status()}><span class="sb-agent-sub" title={`${agentIsRunning(props.id) ? "Working on" : "Last worked on"}: ${status()}`}>{status()}</span></Show>
       </span>
     </button>
     <AgentTopicList agent={props.profile ?? { id: props.id, name: props.name, revision: 1, character: props.character ?? ("vak" as api.Agent["character"]), animation: props.motion ?? "subtle", voice: "default" }} />
     </div>
-  );
+    );
+  };
 
   return (
     <aside class="sidebar">

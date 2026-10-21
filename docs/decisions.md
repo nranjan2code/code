@@ -1,5 +1,9 @@
 # Decisions
 
+- 2026-10-22: The maintainer requested dial-style turn navigation with mouse
+  and keyboard, retained delayed loading and no added border decoration; use
+  existing plan names for previews. See [the contract](design/75-visual-refresh.md#turn-navigator-2026-10-22).
+
 - 2026-10-22: The maintainer approved implementing request-focused Details:
   follow live work, pin inspected history, scope Activity/Files/Evidence to
   the same recorded request, preserve full command and file-review controls,

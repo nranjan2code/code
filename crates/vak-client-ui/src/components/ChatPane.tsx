@@ -13,7 +13,7 @@ import TopicTurnControl from "./TopicTurnControl";
 import PresentationTimelineView, { Artifact, LiveAnswer, ResultCard, ScheduledHead, StructuredView } from "./PresentationRenderer";
 import { attachFiles } from "../attachFiles";
 import type { OutputItem } from "../types";
-import { hasSettledProjection, serverTurnFor } from "../turnPairing";
+import { hasSettledProjection, serverTurnFor, turnPlanLabel } from "../turnPairing";
 import * as api from "../api";
 import "../focusTrap";
 import { assistantParts, cleanAssistantText, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
@@ -837,6 +837,19 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const [turnWindow, setTurnWindow] = createSignal({ start: 0, end: 40 });
   const [activeTurn, setActiveTurn] = createSignal(1);
   const [hoveredTurn, setHoveredTurn] = createSignal<number | null>(null);
+  let wheelTravel = 0;
+  let wheelAt = 0;
+  const rollTurns = (event: WheelEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.timeStamp - wheelAt > 200) wheelTravel = 0;
+    wheelAt = event.timeStamp;
+    wheelTravel += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 120 : 1);
+    const steps = Math.trunc(wheelTravel / 32);
+    if (!steps) return;
+    wheelTravel -= steps * 32;
+    void moveTurns(steps);
+  };
   let loadingWindow = false;
   let observedTurnCount = 0;
   const turns = createMemo(() => {
@@ -851,11 +864,11 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     const selected = activeTopic();
     if (!selected || selected.sessionId !== sid()) return grouped;
     const placed = new Set(topicPlacements().map((placement) => placement.turn_id));
-    return grouped.filter((turn) => {
+    return [[], ...grouped.filter((turn) => {
       const user = turn.find((item) => item.kind === "user");
       const serverTurn = user?.kind === "user" ? serverTurnFor(user.entryId, presentationOf(sid())?.items ?? []) : null;
       return !!serverTurn && placed.has(serverTurn);
-    });
+    })];
   });
   const displayedTurns = createMemo(() => {
     const all = turns();
@@ -865,7 +878,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const navigableTurnCount = () => Math.max(0, turns().length - 1);
   const turnPreview = (index: number) => {
     const user = turns()[index]?.find((item) => item.kind === "user");
-    const text = user?.kind === "user" ? stripControlScaffolding(user.text).replace(/\s+/g, " ").trim() : "";
+    const text = user?.kind === "user" ? (turnPlanLabel(user.entryId, presentationOf(sid())) || stripControlScaffolding(user.text)).replace(/\s+/g, " ").trim() : "";
     return text.length > 130 ? `${text.slice(0, 127)}…` : text || `Turn ${index}`;
   };
   const tickIndices = createMemo(() => {
@@ -958,6 +971,28 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         loadingWindow = false;
       });
     } else loadingWindow = false;
+  };
+  const moveTurns = async (steps: number) => {
+    if (loadingWindow) return;
+    const id = sid();
+    const target = activeTurn() + steps;
+    const direction = target < 1 ? "older" : target > navigableTurnCount() ? "newer" : null;
+    const anchor = turns()[activeTurn()]?.find(item => item.kind === "user");
+    if (id && direction && historyPages[id]?.[direction] && anchor?.kind === "user" && anchor.entryId) {
+      // Fetch one page only at an edge; retain an addressed anchor across
+      // prepends and bounded history eviction instead of eager hydration.
+      await loadPage(direction);
+      if (sid() !== id) return;
+      const index = turns().findIndex(turn => turn.some(item => item.kind === "user" && item.entryId === anchor.entryId));
+      if (index < 1) return;
+      const next = Math.max(1, Math.min(navigableTurnCount(), index + steps));
+      scrollToTurn(next);
+      setHoveredTurn(next);
+      return;
+    }
+    const next = Math.max(1, Math.min(navigableTurnCount(), target));
+    scrollToTurn(next);
+    setHoveredTurn(next);
   };
   const onScroll = () => {
     if (restoring) return;
@@ -1164,32 +1199,54 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         <nav class="turn-rail" aria-label="Conversation turns">
           <div
             class="turn-rail-track"
+            ref={(element) => {
+              element.addEventListener("wheel", rollTurns, { passive: false });
+              onCleanup(() => element.removeEventListener("wheel", rollTurns));
+            }}
             style={{ height: `min(100%, ${tickIndices().length * 10}px)` }}
             role="slider"
             tabIndex={0}
             aria-label="Navigate conversation turns"
+            aria-orientation="vertical"
+            title="Scroll to roll through requests. Drag to scrub. Use arrow keys or Page Up and Page Down."
             aria-valuemin={1}
             aria-valuemax={navigableTurnCount()}
             aria-valuenow={activeTurn()}
             aria-valuetext={`Turn ${activeTurn()}: ${turnPreview(activeTurn())}`}
             onPointerEnter={(event) => setHoveredTurn(turnAtPointer(event))}
-            onPointerMove={(event) => setHoveredTurn(turnAtPointer(event))}
+            onPointerMove={(event) => {
+              const target = turnAtPointer(event);
+              setHoveredTurn(target);
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) scrollToTurn(target);
+            }}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              event.currentTarget.focus();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              scrollToTurn(turnAtPointer(event));
+            }}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+            }}
+            onFocus={() => setHoveredTurn(activeTurn())}
             onPointerLeave={() => setHoveredTurn(null)}
             onBlur={() => setHoveredTurn(null)}
             onClick={(event) => scrollToTurn(turnAtPointer(event))}
             onKeyDown={(event) => {
-              const next = event.key === "ArrowUp" ? activeTurn() - 1 : event.key === "ArrowDown" ? activeTurn() + 1 : event.key === "Home" ? 1 : event.key === "End" ? navigableTurnCount() : null;
+              const step = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : event.key === "PageUp" ? -10 : event.key === "PageDown" ? 10 : null;
+              if (step !== null) { event.preventDefault(); void moveTurns(step); return; }
+              const next = event.key === "Home" ? 1 : event.key === "End" ? navigableTurnCount() : null;
               if (next === null) return;
               event.preventDefault();
               scrollToTurn(next);
-              setHoveredTurn(next);
+              setHoveredTurn(Math.max(1, Math.min(navigableTurnCount(), next)));
             }}
           >
             <For each={tickIndices()}>{(index) => <span class={`turn-rail-tick${index === activeTick() ? " active" : ""}${index === hoveredTick() ? " hovered" : ""}`} aria-hidden="true" />}</For>
             <div class={`turn-rail-preview${hoveredTurn() !== null ? " visible" : ""}`}
               aria-hidden="true"
               style={{ top: `clamp(25px, ${(Math.max(1, hoveredTurn() ?? activeTurn()) - 1) / Math.max(1, navigableTurnCount() - 1) * 100}%, calc(100% - 25px))` }}>
-              <small>Turn {hoveredTurn() ?? activeTurn()} of {navigableTurnCount()}</small>
+              <small>Turn {hoveredTurn() ?? activeTurn()} of {navigableTurnCount()}{historyPages[sid() ?? ""]?.older || historyPages[sid() ?? ""]?.newer ? " loaded" : ""}</small>
               <span>{turnPreview(hoveredTurn() ?? activeTurn())}</span>
             </div>
           </div>

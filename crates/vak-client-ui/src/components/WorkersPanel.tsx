@@ -70,6 +70,7 @@ export default function WorkersPanel(props: { sessionId: string | null }): JSX.E
 
   return (
     <div class="workers-panel" role="tabpanel" aria-label="Running workers">
+      <p class="dock-scope-note">Parallel work running in this conversation. Each Stop control affects only the worker beside it.</p>
       <Show when={error()}>
         <div class="worker-error">{error()}</div>
       </Show>

@@ -14,8 +14,17 @@ A person writes what they need. The main model organises ongoing work into
 **Topics**, using its understanding of the request and addressed existing work.
 There is no fixed subject taxonomy, keyword classifier or classification model
 dispatch. Topic titles and outcome labels come from the person or model. Simple
-independent answers need no organisation call. Automatic organisation starts on;
-a person can disable it for a conversation.
+independent answers need no organisation call. The main-model prompt explicitly requires placement before finishing ongoing,
+follow-up or multi-outcome work, reusing accepted plan names as outcome labels
+where useful. This is model-directed guidance, not a runtime guarantee or a
+background backfill. Automatic organisation starts on;
+a person can disable it for a conversation. The system prompt asks the main
+model to list and reuse or create a fitting active Topic before finishing
+ongoing, follow-up or multi-outcome work, using plan deliverable names where
+appropriate; a refused organisation call never blocks the requested answer.
+The sidebar refreshes on actual Topic changes instead of retriggering on its
+own loading state. Turn navigation uses addressed plan names and marks a paged
+count as loaded, preserving the leading turn slot in focused Topic views.
 
 An Agent owns its Topics, which are views over existing conversation turns.
 The conversation remains the canonical ledger and security/lifecycle boundary

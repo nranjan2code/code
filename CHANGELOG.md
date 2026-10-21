@@ -1,5 +1,16 @@
 ## Unreleased
 
+- The turn navigator rolls with the mouse wheel, trackpad, drag and keyboard;
+  it loads history at page edges and previews accepted plan names. Partial
+  history counts say loaded. Agent subtitles name the latest work instead of
+  the first greeting. Automatic Topics guidance now explicitly places
+  ongoing and multi-outcome work, and Topic refresh no longer loops.
+
+- Topic navigation keeps its turn positions aligned, uses recorded plan names
+  for previews, and labels paged turn counts as loaded. Opening Topics no
+  longer repeatedly refetches its list. Agent guidance explicitly organises
+  ongoing, follow-up and multi-outcome work while respecting automatic-off.
+
 - Details follows current work or pins an earlier request, with Activity, Files
   and Evidence scoped to that request. Conversation history is explicit;
   unrelated commands remain unlinked instead of being assigned by proximity.

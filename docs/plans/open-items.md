@@ -1,3 +1,27 @@
+## Canvas workspace architecture review (2026-10-22)
+
+- [ ] Preserve unknown subject entries through restore, mutation, recovery and
+  save; an unavailable viewer must not erase a tab or its unsent work.
+- [ ] Replace inline/answer-subset short-hash identity with canonical scoped
+  identity and explicit revision. The inline collision is reproduced.
+- [ ] Define viewer-independent dirty state, checkpoint/suspend/restore and
+  close/eviction handling for domain edits, beyond the frame's comment note.
+- [ ] Qualify focused Canvas keyboard entry, containment and focus return;
+  preserve conversation access in split mode.
+- [ ] Review the proposed full-workspace host contract before implementation:
+  namespaced plugin contributions, scoped resources, commands, Agent context,
+  state versions, revocation and an explicitly designed isolated execution
+  boundary. This proposal does not authorize a new executable UI runtime.
+  See the [architecture review](../audits/canvas-workspace-architecture-2026-10-22.md).
+
+## Turn navigator and automatic Topics (2026-10-22)
+
+- [x] Add wheel/trackpad, drag and keyboard rolling, accepted-plan previews,
+  honest loaded counts and lazy page-edge navigation; fix Topic refresh loop.
+- [ ] Qualify in the installed native desktop host. Automatic placement remains
+  model-directed; the prompt change does not backfill earlier unassigned turns.
+  See [acceptance](../audits/turn-navigator-2026-10-22.md).
+
 ## Request-focused Details (2026-10-22)
 
 - [x] Replace the stacked right-panel histories with request-scoped Activity,

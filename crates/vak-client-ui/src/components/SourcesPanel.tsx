@@ -38,12 +38,13 @@ export default function SourcesPanel() {
   };
 
   return (
-    <div class="sources-panel" role="tabpanel" aria-label="Sources">
+    <div class="sources-panel" role="tabpanel" aria-label="Followed sources">
+      <p class="dock-scope-note">Updates from configured feeds. For links supporting an answer, open that request’s Details → Evidence.</p>
       <Show when={error() || items.error}>
         <div class="worker-error">{error() ?? String(items.error)}</div>
       </Show>
       <div class="dock-head">
-        <span>Sources</span>
+        <span>Followed sources</span>
         <button class="btn sm" onClick={() => void checkNow()} disabled={checking() || !(sources() ?? []).length}>
           {checking() ? "Checking…" : "Check now"}
         </button>
