@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.18.0",
-  "revision": "431a828ac",
+  "revision": "12fb91326",
   "first_date": "2026-08-21",
   "last_date": "2026-10-21",
   "prose_reviewed": "8.16.0 · 2026-10-20"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 80,
    "lock_crates": 764,
-   "total_commits": 2437,
+   "total_commits": 2438,
    "days": 62,
    "peak_day": 174,
    "design_docs": 97,
@@ -101,8 +101,11 @@
   "health": [
    {
     "check": "records",
-    "ok": true,
-    "problems": []
+    "ok": false,
+    "problems": [
+     "FAIL: 1 record problem(s):",
+     "CHANGELOG.md: 8.18.0 is released; start a `## Unreleased` section"
+    ]
    },
    {
     "check": "doc paths",
@@ -351,11 +354,11 @@
  "activity": {
   "since": "2026-10-07",
   "until": "2026-10-21",
-  "commits": 519,
+  "commits": 520,
   "areas": [
    [
     "docs",
-    427
+    428
    ],
    [
     "(root)",
@@ -716,6 +719,14 @@
   ],
   "recent": [
    {
+    "hash": "12fb91326",
+    "date": "2026-10-21",
+    "subject": "Record 8.18.0 release and verified local installation",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
     "hash": "431a828ac",
     "date": "2026-10-21",
     "subject": "Release 8.18.0",
@@ -890,15 +901,6 @@
      "vak-llm",
      "vak-server",
      "vak-voice"
-    ]
-   },
-   {
-    "hash": "64ecdcfe1",
-    "date": "2026-10-20",
-    "subject": "Record 8.16.0 release and local install",
-    "areas": [
-     "(root)",
-     "docs"
     ]
    }
   ],
@@ -30535,6 +30537,12 @@
  ],
  "replay": [
   {
+   "hash": "12fb91326",
+   "date": "2026-10-21",
+   "subject": "Record 8.18.0 release and verified local installation",
+   "subsystems": []
+  },
+  {
    "hash": "431a828ac",
    "date": "2026-10-21",
    "subject": "Release 8.18.0",
@@ -37453,7 +37461,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1393,
+  "docs_commits": 1394,
   "hot": 651
  },
  "findings": [
