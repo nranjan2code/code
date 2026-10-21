@@ -77,15 +77,18 @@ export function cleanArtifactPath(target: string): string {
  * - `static` — markup from the conversation, and a page shown as one
  *   document: scripts are blocked in an opaque origin and forms can render, and
  *   nothing else.
+ * - `interactive` — a human explicitly runs document code in an opaque
+ *   frame; script downloads and fetch stay denied, but WebRTC may connect.
  * - `origin` — a page served from an origin of its own (a preview origin, or
  *   a dev server on its own port), framed under a different loopback name
  *   than the app's. It is not the app's origin, so it keeps its own storage,
  *   loads its own files, and may open windows.
  */
-export type PreviewSandbox = "static" | "origin";
+export type PreviewSandbox = "static" | "interactive" | "origin";
 
 const PREVIEW_SANDBOX: Record<PreviewSandbox, string> = {
   static: "allow-forms",
+  interactive: "allow-scripts allow-forms",
   origin: "allow-scripts allow-same-origin allow-forms allow-popups",
 };
 
@@ -109,18 +112,25 @@ const PREVIEW_CSP_META = `<meta http-equiv="Content-Security-Policy" content="${
 
 /**
  * Constrain generated document previews. `sandbox` isolates the document
- * origin, while this CSP denies all network access, so what the chrome says
- * ("Safe preview, offline") is what the frame enforces.
+ * origin. The default blocks all page code and network fetches. The explicit
+ * interactive mode permits embedded code and must disclose possible WebRTC
+ * network access; it must never be described as offline.
  *
  * The policy is placed before the document's first byte of markup (after only
  * its doctype), so no script, wherever it sits relative to `<head>`, or
  * inside a string or comment that merely contains the text `<head>`, can run
  * before it applies. The HTML parser moves that leading `<meta>` into the head.
  */
-export function sandboxedSrcdoc(html: string): string {
+export function sandboxedSrcdoc(html: string, mode: "static" | "interactive" = "static"): string {
   const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
   const rest = doctype ? html.slice(doctype[0].length) : html;
-  return `${doctype ? doctype[0].trim() : "<!doctype html>"}${PREVIEW_CSP_META}${previewThemeStyle()}${rest}`;
+  // Interactive mode is a human choice for this document only. Script URLs,
+  // eval, fetch, frames and forms remain denied. WebRTC is outside fetch CSP:
+  // callers must disclose possible network access, never describe it as offline.
+  const policy = mode === "interactive"
+    ? PREVIEW_CSP_META.replace("script-src 'none'", "script-src 'unsafe-inline'")
+    : PREVIEW_CSP_META;
+  return `${doctype ? doctype[0].trim() : "<!doctype html>"}${policy}${previewThemeStyle()}${rest}`;
 }
 
 /** The app's tokens a preview is given, by the name the page uses

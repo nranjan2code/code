@@ -488,3 +488,16 @@ Summary; the checklist, file locations and exit checks are in the tracker.
 - **V4, brand assets and desktop chrome.** The transparent-background master
   export and icons, flat character glyphs and WebP copies, the overlay title
   bar, and the `docs/brand/README.md` update.
+
+
+## Shared control density — 2026-10-21
+
+The maintainer requested smaller, calmer controls throughout the product.
+Shared client and Admin use normal 32px, compact 28px and prominent 36px
+minimum heights with explicit 14px control typography, independent of reading
+text. Coarse pointers use 40–44px targets. Secondary actions are quiet at rest;
+primary, danger, selected, disabled and keyboard-focus states remain distinct.
+Narrow desktop panels use pointer density rather than a blanket 44px rule.
+Settings, navigation, file actions, Topics, Library, Canvas, Office tabs and
+form controls use these tokens. Content-rich permission choices retain room
+for their explanation. See [the acceptance record](../audits/control-density-review-2026-10-21.md).

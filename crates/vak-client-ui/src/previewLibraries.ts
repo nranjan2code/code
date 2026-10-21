@@ -4,8 +4,8 @@ import { tokenThemeVariables } from "./components/presentation/MermaidViewer";
  * The libraries a markup preview may name (docs/design/96 P3); the host's
  * `vak_delivery::skills::MARKUP_LIBRARIES` holds the same names. Each is the
  * client's own pinned build, read only when a preview names it and run
- * inside that preview's opaque frame, which has no network and no origin to
- * load anything from.
+ * inside that preview's opaque frame only after a human enables page code.
+ * Downloads stay blocked; interactive mode discloses possible WebRTC traffic.
  */
 const PREVIEW_LIBRARIES: Record<string, () => Promise<string>> = {
   diagram: async () => {

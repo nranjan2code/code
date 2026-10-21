@@ -41,6 +41,10 @@
   --blue-soft: color-mix(in srgb, var(--blue) 14%, transparent);
   --mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, Cantarell, sans-serif;
+  --control-height: 32px;
+  --control-compact: 28px;
+  --control-prominent: 36px;
+  --control-radius: 7px;
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 16px;
@@ -192,6 +196,7 @@ html, body {
 }
 .login-card button {
   width: 100%;
+  min-height: var(--control-prominent);
   margin-top: 16px;
   padding: 9px;
   background: var(--accent);
@@ -334,7 +339,7 @@ html[data-visual-pack="dimensional"] .login-logo img { content: url("/app/assets
 .admin-context-bar .scope-control { margin-left: auto; }
 .admin-context-bar .context-action { margin-left: auto; }
 .admin-context-bar .scope-control span { display: none; }
-.admin-context-bar .scope-control button { min-height: 26px; padding: 3px 8px; font-size: 12px; }
+.admin-context-bar .scope-control button { min-height: var(--control-compact); padding: 3px 8px; font-size: 12px; }
 @media (max-width: 780px) {
   .admin-context-bar { align-items: flex-start; flex-wrap: wrap; }
   .admin-context-bar .scope-control { width: 100%; margin-left: 0; }
@@ -453,22 +458,26 @@ input, select, textarea {
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 6px 10px;
+  min-height: var(--control-height);
+  padding: 5px 10px;
   outline: none;
   font-size: 14px;
+  line-height: 20px;
   color: var(--text);
   transition: border-color 0.12s;
 }
 input:focus-visible, select:focus-visible, textarea:focus-visible { border-color: var(--accent); }
 input::placeholder, textarea::placeholder { color: var(--faint); opacity: 1; }
-input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); flex: none; }
+input[type="checkbox"], input[type="radio"] { min-height: 16px; width: 16px; height: 16px; padding: 0; accent-color: var(--accent); flex: none; }
 
 button, a.button {
   background: var(--accent);
   color: var(--on-accent);
   border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
-  padding: 6px 12px;
+  border-radius: var(--control-radius);
+  min-height: var(--control-height);
+  line-height: 20px;
+  padding: 5px 10px;
   font-weight: 500;
   font-size: 14px;
   cursor: pointer;
@@ -482,14 +491,14 @@ button, a.button {
 button:disabled { opacity: 0.45; cursor: default; }
 
 button.ghost, a.button.ghost {
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--text-soft);
   font-weight: 500;
 }
 button.ghost:hover:not(:disabled), a.button.ghost:hover {
   color: var(--text);
-  border-color: var(--border-strong);
+  border-color: transparent;
   background: var(--surface-hover);
 }
 button.task-kind-choice[aria-pressed="true"] {
@@ -499,7 +508,7 @@ button.task-kind-choice[aria-pressed="true"] {
 }
 .task-result-row td { padding-top: 0; color: var(--text-soft); }
 .task-result-row p { margin: 4px 0 10px; max-width: 72ch; white-space: pre-wrap; overflow-wrap: anywhere; }
-button.small, a.button.small { padding: 4px 8px; font-size: 12px; border-radius: var(--radius-sm); }
+button.small, a.button.small { min-height: var(--control-compact); padding: 4px 8px; font-size: 13px; line-height: 18px; border-radius: var(--control-radius); }
 button.danger {
   background: color-mix(in srgb, var(--red) 9%, transparent);
   border: 1px solid color-mix(in srgb, var(--red) 35%, transparent);
@@ -1824,7 +1833,7 @@ a.tab-btn {
 
 /* ---- layered configuration and channel inheritance ------------------- */
 .scope-control { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.scope-control button { min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text-soft); border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
+.scope-control button { min-height: var(--control-height); padding: 5px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text-soft); border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
 .scope-control button.active { border-color: var(--accent); background: var(--accent-wash); color: var(--text); }
 .scope-control span { color: var(--muted); font-size: 12px; margin-left: 6px; }
 .scope-control select { min-height: 30px; min-width: 112px; padding: 5px 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
@@ -7362,3 +7371,5 @@ button.inbox-meta-tag:hover {
 .topic-admin-provenance summary { color: var(--muted); cursor: pointer; }
 .topic-admin-provenance code { display: block; margin-top: 4px; overflow-wrap: anywhere; color: var(--text-soft); }
 @media (max-width: 620px) { .topic-admin-row, .topic-admin-placement { align-items: flex-start; flex-direction: column; } .topic-admin-create { align-items: stretch; } }
+
+@media (pointer: coarse) { :root { --control-height: 44px; --control-compact: 40px; --control-prominent: 44px; } }

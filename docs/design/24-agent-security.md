@@ -265,8 +265,11 @@ Document previews no longer execute arbitrary page code. WebRTC can bypass
 fetch CSP, as the synthetic loopback STUN probe demonstrated. Static previews
 block scripts, and origin-served document previews permit only the fixed
 hash-authorized theme bridge. Result thumbnails, Workbench and document
-popouts retain these restrictions. Script-powered HTML interaction is limited
-until an enforceable network boundary is available; layout, native form
-controls and local media remain. Explicitly started live dev servers are a
+popouts retain these restrictions. Automatic script-powered HTML interaction remains restricted; layout, native
+form controls and local media remain. Since 2026-10-21 a human may explicitly
+run one document’s embedded/bundled code in an opaque frame. That temporary
+permission discloses possible WebRTC network access; it is never inferred from
+Agent authorship or a local file path. External script downloads and ordinary
+fetch stay blocked. See [the page-code contract](66-immersive-artifact-canvas.md#explicit-page-code-permission--2026-10-21). Explicitly started live dev servers are a
 separate capability. The [security acceptance](../audits/security-hardening-2026-10-20.md)
 records the probe and regression.

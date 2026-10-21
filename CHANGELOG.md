@@ -1,3 +1,24 @@
+## 8.19.0 — 2026-10-21
+
+- Controls across the app and Admin use consistent, compact desktop sizing,
+  quieter secondary actions and explicit readable labels. Touch targets remain
+  larger; narrow mouse panels no longer force oversized buttons. Settings,
+  Topics, Library, Canvas and document controls share the sizing rules.
+- Review centres the document, keeps file navigation separate, and groups
+  secondary actions, checks and comments into clear disclosures. Text changes
+  appear once, Focus view keeps the document visible, and failed checks remain
+  visible. Decisions stay pinned and explain what prevents applying changes.
+
+- HTML previews distinguish embedded scripts, local script files and external
+  references. Canvas and Library offer a temporary “Run page code” permission
+  for isolated embedded/bundled code, disclose possible browser network access,
+  and keep external script downloads blocked. Stopping, reloading or changing
+  the document revokes the permission; previews start paused.
+- Review dialogs escape the Details panel’s layout container, keeping the full
+  review, close control and decision buttons inside desktop and phone windows.
+  Long filenames and technical document locations wrap correctly. Files without
+  a text preview explain how to inspect or download the saved version.
+
 ## 8.18.0 — 2026-10-21
 
 - A synchronous channel reply waits for the turn's settlement and session

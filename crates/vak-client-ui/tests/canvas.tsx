@@ -89,7 +89,7 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
 
   await open(() => store.openArtifactCanvas({ kind: "inline", title: "Probe", html: "<h1>inline</h1><script>1</script>" }));
   passed.push(check(shown() === "inline" && requests.length === 0, "Inline markup renders without reading any file"));
-  passed.push(check(frame()?.getAttribute("sandbox") === "allow-scripts allow-forms", "A static preview runs without same-origin access"));
+  passed.push(check(frame()?.getAttribute("sandbox") === "allow-forms", "A static preview pauses code without same-origin access"));
   passed.push(check(/^<!doctype html><meta http-equiv="Content-Security-Policy"/.test(frame()?.srcdoc ?? "") && /connect-src 'none'/.test(frame()!.srcdoc), "The no-network policy comes first in the frame"));
 
   await open(() => store.openArtifactFile("site/index.html", { sessionId: sid }));
@@ -231,10 +231,14 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   const panel = () => document.querySelector(".artifact-canvas")!;
   passed.push(check(panel().classList.contains("canvas-focused"), "A document opens on the whole viewport"));
   const layout = document.querySelector<HTMLElement>('.artifact-canvas-btn[aria-label="Show beside conversation"]');
-  passed.push(check(!!layout, "A document offers to sit beside the conversation"));
-  layout!.click();
-  await settle();
-  passed.push(check(panel().classList.contains("canvas-split"), "A document can be shown beside the conversation"));
+  if (window.matchMedia("(max-width: 1100px)").matches) {
+    passed.push(check(!layout, "A narrow viewport keeps the document focused"));
+  } else {
+    passed.push(check(!!layout, "A document offers to sit beside the conversation"));
+    layout!.click();
+    await settle();
+    passed.push(check(panel().classList.contains("canvas-split"), "A document can be shown beside the conversation"));
+  }
 
   // A viewer that fails is contained: the frame stays, and offers another go.
   const original = VIEWERS.code;

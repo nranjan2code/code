@@ -1,5 +1,19 @@
 # Decisions
 
+- 2026-10-21: The maintainer broadened Review fixes to all file types and
+  requested expert UX focus plus modern, smaller controls throughout the app.
+  Review now prioritises document, scope and decision; shared client and Admin
+  use compact mouse controls with larger touch targets and readable typography.
+  See [the control acceptance](audits/control-density-review-2026-10-21.md).
+
+- 2026-10-21: The maintainer reported generated HTML losing its charts because
+  all preview scripts were blocked, requested distinguishing internal/local
+  code from external sources, and requested fixing the clipped Review panel.
+  The implementation separates script locations without inferring trust from
+  authorship, and provides explicit per-document execution with possible
+  network access disclosed. Local `vak-home` was authorised for dev checks.
+  See [the preview contract](design/66-immersive-artifact-canvas.md#explicit-page-code-permission--2026-10-21).
+
 - 2026-10-21: The maintainer requested implementing automatic work organisation
   under Agents, with people and Agents both first-class, human corrections,
   navigation, settings, administration and archive/reopen. All subjects and

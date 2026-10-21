@@ -2,8 +2,11 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import OfficeChangeList from "../src/components/OfficeChangeList";
 import type { OfficeReview } from "../src/api";
+import { setTechnicalDetailsSignal } from "../src/store";
 import { keep, leaveOut } from "../src/officeChoices";
 import "../src/styles.css";
+
+setTechnicalDetailsSignal(true);
 
 // Reviews shaped exactly like the server's office-review response for the
 // fixtures in crates/vak-ooxml/tests/diff.rs. Deterministic; no server.
@@ -80,7 +83,7 @@ render(() => (
   const inserted = word.querySelectorAll("ins.office-redline-inserted");
   const deleted = word.querySelectorAll("del.office-redline-deleted");
   if (inserted.length !== 2 || deleted.length !== 1) throw new Error(`redline: ${inserted.length} ins, ${deleted.length} del`);
-  if (deleted[0].textContent !== "Steady.") throw new Error("deleted text");
+  if (deleted[0].textContent !== "Steady") throw new Error("deleted text");
   if (word.querySelectorAll("h4")[1]?.textContent !== "Outlook") throw new Error("grouped by heading");
   if (!document.querySelector("#sheet")!.textContent!.includes("Budget!B2")) throw new Error("cell anchor");
   if (!document.querySelector("#fresh")!.textContent!.includes("A new file")) throw new Error("new file wording");

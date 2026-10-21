@@ -32,6 +32,12 @@ export function subjectReader(subject: CanvasSubject): ArtifactPreviewReader | n
 /** Resolve assets against the file, never the client app's origin. Reads still
  * cross the authenticated, workspace-confined filesystem endpoint. */
 export async function artifactPreviewHtml(path: string, html: string, reader: ArtifactPreviewReader): Promise<string> {
+  return sandboxedSrcdoc(await artifactPreviewMarkup(path, html, reader));
+}
+
+/** Bundle only files reached through the subject's confined reader. No policy
+ * is removed or relaxed here; the caller wraps these bytes for its chosen mode. */
+export async function artifactPreviewMarkup(path: string, html: string, reader: ArtifactPreviewReader): Promise<string> {
   const document = new DOMParser().parseFromString(html, "text/html");
   document.querySelectorAll("base").forEach((element) => element.remove());
   const resolve = (value: string, parent = path) => {
@@ -84,5 +90,5 @@ export async function artifactPreviewHtml(path: string, html: string, reader: Ar
       element.removeAttribute("srcset");
     }
   }
-  return sandboxedSrcdoc(`<!doctype html>${document.documentElement.outerHTML}`);
+  return `<!doctype html>${document.documentElement.outerHTML}`;
 }

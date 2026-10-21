@@ -221,7 +221,6 @@ export default function WorkspaceHeader() {
             <button
               type="button"
               class="target-dir-pill"
-              style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; background: var(--surface-raised); border: 1px solid var(--border-soft); font-size: var(--fs-meta); color: var(--muted); cursor: pointer; text-decoration: none;"
               onClick={() => {
                 setAgentPickerTab("target");
                 setAgentPickerOpen(true);

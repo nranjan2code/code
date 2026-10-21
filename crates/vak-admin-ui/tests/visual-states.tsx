@@ -49,3 +49,22 @@ if (params.get("view") === "login") {
 render(() => <div class="view" style={{ padding: "16px" }}><header class="page-header"><div><h1>Synthetic admin states</h1><p>No installed data or actions are used.</p></div></header><Show when={params.get("view") === "controls"} fallback={<Inbox />}><Controls /></Show></div>, document.getElementById("root")!);
 
 }
+
+if (params.get("view") === "controls") Object.assign(window, { runChecks: () => {
+  const passed: string[] = [];
+  const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label); passed.push(label); };
+  const toolbar = [...document.querySelectorAll<HTMLElement>(".panel")].find(x => x.querySelector("h2")?.textContent === "Button and input states")!;
+  const primary = toolbar.querySelector<HTMLButtonElement>("button")!;
+  const secondary = toolbar.querySelector<HTMLButtonElement>("button.ghost")!;
+  const coarse = matchMedia("(pointer: coarse)").matches;
+  check(primary.getBoundingClientRect().height === (coarse ? 44 : 32), "Admin actions use shared pointer-aware geometry");
+  check(getComputedStyle(secondary).borderTopColor === "rgba(0, 0, 0, 0)", "Admin secondary actions are quiet at rest");
+  check(getComputedStyle(primary).backgroundColor !== getComputedStyle(secondary).backgroundColor, "Admin primary emphasis remains explicit");
+  check(getComputedStyle(toolbar.querySelector("button.danger")!).color !== getComputedStyle(primary).color, "Destructive actions retain their distinct state");
+  for (const field of toolbar.querySelectorAll<HTMLElement>('input:not([type="checkbox"])')) check(field.getBoundingClientRect().height >= (coarse ? 40 : 32), "Admin fields follow the same density");
+  for (const control of document.querySelectorAll<HTMLElement>("button,input,select,textarea")) check(parseFloat(getComputedStyle(control).fontSize) >= 12, "Operator controls retain the readable type floor");
+  secondary.focus(); check(document.activeElement === secondary, "Admin quiet actions retain keyboard focus");
+  const box = toolbar.querySelector<HTMLInputElement>('input[type="checkbox"]')!; box.click(); check(box.checked, "Native checkbox behavior is preserved");
+  check(document.documentElement.scrollWidth <= innerWidth + 1, "Admin controls fit the viewport");
+  return passed;
+} });

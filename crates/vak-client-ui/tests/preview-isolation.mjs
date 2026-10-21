@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { previewSandbox, sandboxedSrcdoc } from "../src/safeUrl.ts";
 
-// The sandbox is a client-owned choice: only the two named kinds exist, and
+// The sandbox is a client-owned choice: only the named kinds exist, and
 // the opaque-origin one never carries allow-same-origin.
 assert.equal(previewSandbox("static"), "allow-forms");
 assert.ok(!previewSandbox("static").includes("allow-same-origin"));
@@ -70,3 +70,13 @@ console.log("preview theme ok");
 
 const { previewOriginWindowDocument } = await import('../src/safeUrl.ts');
 assert.match(previewOriginWindowDocument('http://127.0.0.1:1234/token/index.html'), /<iframe sandbox="allow-forms" src="http:/);
+
+// A human may run embedded code without granting origin, downloads or fetch.
+assert.equal(previewSandbox("interactive"), "allow-scripts allow-forms");
+const interactive = sandboxedSrcdoc('<script src="https://example.invalid/x.js"></script><script>run()</script>', "interactive");
+assert.match(interactive, /script-src 'unsafe-inline';/);
+assert.match(interactive, /connect-src 'none'/);
+assert.ok(!interactive.includes("'unsafe-eval'"));
+assert.ok(policyAt(interactive) < interactive.indexOf('<script'));
+assert.match(sandboxedSrcdoc('<script>run()</script>'), /script-src 'none'/);
+console.log("interactive preview policy ok");

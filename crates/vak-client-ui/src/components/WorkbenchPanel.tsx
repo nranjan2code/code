@@ -142,6 +142,7 @@ export default function WorkbenchPanel() {
   const [browsingFiles, setBrowsingFiles] = createSignal(false);
   const [showRunDetails, setShowRunDetails] = createSignal(false);
   const [reviewFocus, setReviewFocus] = createSignal(false);
+  const [feedbackOpen, setFeedbackOpen] = createSignal(false);
   const [artifactPreview, setArtifactPreview] = createSignal("");
   const [artifactContent, setArtifactContent] = createSignal<string | null>(null);
   const [artifactDataUrl, setArtifactDataUrl] = createSignal<string | null>(null);
@@ -173,6 +174,7 @@ export default function WorkbenchPanel() {
   const [inspectedFiles, setInspectedFiles] = createSignal<string[]>([]);
   const [beforeContent, setBeforeContent] = createSignal<string | null>(null);
   const [afterContent, setAfterContent] = createSignal<string | null>(null);
+  const [reviewFileRead, setReviewFileRead] = createSignal(false);
   // Review shows an HTML draft as the page it is, offline and in a sandbox,
   // before the source and the comparison. A signal, not a resource: reading
   // a pending resource here would suspend the dock and remount the sheet.
@@ -289,6 +291,7 @@ export default function WorkbenchPanel() {
     setInspectedFiles([]);
     setReviewComment("");
     setReviewCommentMessage(null);
+    setFeedbackOpen(false);
     setCandidateComments([]);
     setPreviewPreparations([]);
   });
@@ -512,7 +515,9 @@ export default function WorkbenchPanel() {
     setReviewFileError(null);
     setBeforeContent(null);
     setAfterContent(null);
+    setReviewFileRead(false);
     setReviewCommentMessage(null);
+    setFeedbackOpen(false);
     setCandidateComments([]);
     setReviewedVersion(null);
     void loadThread(prepared.session_id, prepared.candidate.candidate_id, prepared.candidate.files[0]?.path)
@@ -630,6 +635,9 @@ export default function WorkbenchPanel() {
     const root = candidate()?.candidate.destination_root.replace(/\/$/, "") ?? "";
     return root.split("/").filter(Boolean).pop() || root || "workspace";
   };
+  const reviewedFile = () => candidate()?.candidate.files.find((file) => file.path === reviewedPath());
+  const reviewUnread = () => reviewedFiles().filter((path) => !inspectedFiles().includes(path)).length;
+  const comparesText = () => !!reviewedFile()?.base_hash && afterContent() !== null && !isDocumentPath(reviewedPath() ?? "") && !isHtmlArtifact(reviewedPath() ?? "");
   const candidateVersion = () => {
     const prepared = candidate();
     if (!prepared) return 0;
@@ -645,6 +653,7 @@ export default function WorkbenchPanel() {
     let disposed = false;
     setBeforeContent(null);
     setAfterContent(null);
+    setReviewFileRead(false);
     setReviewFileError(null);
     setOfficeReview(null);
     setCommentAnchor(null);
@@ -675,6 +684,7 @@ export default function WorkbenchPanel() {
       if (disposed) return;
       setBeforeContent(before.status === "fulfilled" ? before.value.content ?? null : null);
       setAfterContent(after.status === "fulfilled" ? after.value.content ?? null : null);
+      setReviewFileRead(after.status === "fulfilled");
       if (after.status === "rejected") setReviewFileError("Could not load this draft file. Review is unavailable until it can be read.");
       else setInspectedFiles((paths) => paths.includes(path) ? paths : [...paths, path]);
     });
@@ -827,56 +837,21 @@ export default function WorkbenchPanel() {
       <Show when={reviewOpen() && candidate()}>
         {(prepared) => <Sheet
           size="wide"
-          class={reviewFocus() ? `candidate-review candidate-review-focused${isDocumentPath(reviewedPath() ?? "") ? " candidate-review-document-focused" : ""}` : "candidate-review"}
+          class={`candidate-review${prepared().candidate.files.length === 1 && pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length <= 1 ? " candidate-review-single" : ""}${reviewFocus() ? ` candidate-review-focused${isDocumentPath(reviewedPath() ?? "") ? " candidate-review-document-focused" : ""}` : ""}`}
           title="Review changes"
           subtitle={`Nothing changes in ${destinationLabel()} until you accept.`}
           onClose={() => setReviewOpen(false)}
           busy={candidateBusy()}
           footer={<>
               <Show when={changedSince()}>{(files) => <span class="candidate-review-changed-since" role="alert">{files().length === 1 ? `${files()[0].split("/").pop()} was changed in ${destinationLabel()} after this draft was made, and the draft does not include that change.` : `${files().length} files were changed in ${destinationLabel()} after this draft was made, and the draft does not include those changes.`} Accepting replaces what is there now. You can undo it, and the replaced copy stays in the file's history.</span>}</Show>
-              <span>{officeExcluded().size > 0 ? "Make a version with the changes you kept, or keep every change, before accepting." : `Applying ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "change" : "changes"} to ${destinationLabel()} · ${reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed`}</span>
+              <span>{officeExcluded().size > 0 ? "Make a version with the changes you kept, or keep every change, before accepting." : reviewedFiles().length === 0 ? "Choose at least one file to accept." : reviewUnread() > 0 ? `Review ${reviewUnread()} more selected ${reviewUnread() === 1 ? "file" : "files"} before accepting.` : `${reviewedFiles().length} ${reviewedFiles().length === 1 ? "file" : "files"} ready · ${destinationLabel()}`}</span>
               <button type="button" class="btn" onClick={() => setReviewOpen(false)}>Keep as draft</button>
               <button type="button" class="btn primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError() || officeExcluded().size > 0} onClick={() => void promoteCandidate(!!changedSince())}>{candidateBusy() ? "Accepting…" : changedSince() ? "Replace and accept" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
           </>}
         >
-            <div>
-              <section class="candidate-review-section" aria-label="Preview">
-                <div class="candidate-review-section-head">
-                  <h3>{reviewedPath()?.split("/").pop() ?? "Choose a file"}</h3>
-                  <button type="button" class="btn sm" aria-pressed={reviewFocus()} onClick={() => setReviewFocus((focused) => !focused)}>{reviewFocus() ? "Show full review" : "Focus on this file"}</button>
-                  <Show when={reviewedVersion()}>{(at) => <>
-                    <button type="button" class="btn sm" onClick={() => openInLibrary(at().artifact)}>Open in Library</button>
-                    <button type="button" class="btn sm" aria-pressed={reviewedStar() ?? false} disabled={reviewedStar() === undefined} title="A starred draft is kept" onClick={() => void toggleReviewedStar()}>{reviewedStar() ? "Starred" : "Star"}</button>
-                  </>}</Show>
-                  <Show when={reviewedPath()}>{(path) =>
-                    <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="btn" disabled={!!reviewFileError()} onClick={() => {
-                      const version = prepared();
-                      setReviewOpen(false);
-                      openArtifactCanvas(fileSubject(path(), {
-                        sessionId: version.session_id,
-                        resultId: version.result_id,
-                        executionId: version.execution_id,
-                        candidateId: version.candidate.candidate_id,
-                      }, path().split("/").pop() || path()));
-                    }}>Open saved version in Canvas</button></Show>
-                  }</Show>
-                </div>
-                <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
-                <Show when={draftPage() && !reviewFileError()}>
-                  <iframe class="candidate-review-page" title={`Preview of ${reviewedPath()?.split("/").pop() ?? "the draft"}`} sandbox="" srcdoc={themedPreview(draftPage() ?? "")} />
-                </Show>
-                <Show when={!draftPage() && reviewedPath() && !reviewFileError() && !isDocumentPath(reviewedPath() ?? "")}>
-                  <pre class="candidate-review-draft">{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre>
-                </Show>
-                <Show when={reviewedPath() && !reviewFileError() && isDocumentPath(reviewedPath() ?? "")}>
-                  <p class="office-change-empty">Open the saved version to see the whole document. The changes are listed below.</p>
-                </Show>
-              </section>
-              <section class="candidate-review-section" aria-label="Changes">
-                <h3>Changes</h3>
-                <Show when={reviewFocus() && (reviewFileError() || (prepared().draft_checks ?? []).some((check) => check.status !== "passed"))}>
-                  <p role="alert" class="inline-error">This draft needs attention before you can accept it. Show full review for details.</p>
-                </Show>
+            <div class="candidate-review-layout" classList={{ "single-file": prepared().candidate.files.length === 1 && pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length <= 1 }}>
+              <Show when={prepared().candidate.files.length > 1 || pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length > 1}>
+                <aside class="candidate-review-navigation" aria-label="Files to review"><div class="candidate-review-navigation-head"><h3>Files</h3><span>{reviewedFiles().length} selected</span></div>
                 <Show when={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length > 1}>
                   <label for="candidate-review-version">Draft version</label>
                   <select id="candidate-review-version" onChange={(event) => {
@@ -895,18 +870,73 @@ export default function WorkbenchPanel() {
                   <Show when={candidateSummary().unchangedFiles > 0}><span>{candidateSummary().unchangedFiles} unchanged</span></Show>
                 </div>
                 <div class="candidate-review-files" aria-label="Draft files">
-                  <For each={prepared().candidate.files}>{(file) => <div class="candidate-review-file">
-                    <input type="checkbox" aria-label={`Apply ${file.path}`} checked={reviewedFiles().includes(file.path)} onChange={() => toggleReviewedFile(file.path)} />
+                  <For each={prepared().candidate.files}>{(file) => <div class="candidate-review-file" classList={{ selected: reviewedPath() === file.path }}>
+                    <label class="candidate-review-select" title={`Include ${file.path}`}> <input type="checkbox" aria-label={`Apply ${file.path}`} checked={reviewedFiles().includes(file.path)} onChange={() => toggleReviewedFile(file.path)} /> </label>
                     <button type="button" classList={{ active: reviewedPath() === file.path }} onClick={() => setReviewedPath(file.path)}>{file.path}</button>
                     <span>{fileState(file)}{inspectedFiles().includes(file.path) ? " · Viewed" : ""}</span>
                   </div>}</For>
                 </div>
+                </aside>
+              </Show>
+              <div class="candidate-review-main">
+                <header class="candidate-review-file-header">
+                  <div class="candidate-review-file-title">
+                    <h3>{reviewedPath()?.split("/").pop() ?? "Choose a file"}</h3>
+                    <div class="candidate-review-file-meta">
+                      <Show when={prepared().candidate.files.length === 1 && pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length <= 1 && reviewedPath()}>{(path) => <label class="candidate-review-include"><input type="checkbox" aria-label={`Apply ${path()}`} checked={reviewedFiles().includes(path())} onChange={() => toggleReviewedFile(path())} />Include this file</label>}</Show>
+                      <Show when={reviewedFile()}>{(file) => <span>{fileState(file())}{inspectedFiles().includes(file().path) ? " · Viewed" : ""}</span>}</Show>
+                    </div>
+                  </div>
+                  <div class="candidate-review-file-actions">
+                  <Show when={reviewedPath()}>{(path) =>
+                    <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="btn" disabled={!!reviewFileError()} onClick={() => {
+                      const version = prepared();
+                      setReviewOpen(false);
+                      openArtifactCanvas(fileSubject(path(), {
+                        sessionId: version.session_id,
+                        resultId: version.result_id,
+                        executionId: version.execution_id,
+                        candidateId: version.candidate.candidate_id,
+                      }, path().split("/").pop() || path()));
+                    }}><Icon name="monitor" size={16} />Open preview</button></Show>
+                  }</Show>
+                    <details class="workspace-more candidate-review-more" data-menu>
+                      <summary class="btn" aria-label="More file actions"><Icon name="more" size={16} />More</summary>
+                      <div class="workspace-more-menu" role="menu">
+                        <button type="button" role="menuitem" aria-pressed={reviewFocus()} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setReviewFocus((focused) => !focused); }}>{reviewFocus() ? "Show full review" : "Focus on this file"}</button>
+                        <Show when={reviewedVersion()}>{(at) => <>
+                          <button type="button" role="menuitem" onClick={() => { setReviewOpen(false); openInLibrary(at().artifact); }}>Open in Library</button>
+                          <button type="button" role="menuitem" aria-pressed={reviewedStar() ?? false} disabled={reviewedStar() === undefined} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void toggleReviewedStar(); }}>{reviewedStar() ? "Remove star" : "Star this draft"}</button>
+                        </>}</Show>
+                      </div>
+                    </details>
+                  </div>
+                </header>
+                <Show when={!prepared().verified}><p role="alert" class="inline-error">The saved copy could not be verified. Inspect it before accepting.</p></Show>
+                <For each={(prepared().draft_checks ?? []).filter((check) => check.status !== "passed")}>{(check) => <p role="alert" class="inline-error">A check failed on {check.path.split("/").pop()}.</p>}</For>
+              <section class="candidate-review-section candidate-review-preview" aria-label="Preview">
+                <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
+                <Show when={draftPage() && !reviewFileError()}>
+                  <iframe class="candidate-review-page" title={`Preview of ${reviewedPath()?.split("/").pop() ?? "the draft"}`} sandbox="" srcdoc={themedPreview(draftPage() ?? "")} />
+                </Show>
+                <Show when={!draftPage() && reviewedPath() && !reviewFileError() && !isDocumentPath(reviewedPath() ?? "") && (!comparesText() || reviewFocus())}>
+                  <pre class="candidate-review-draft">{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? (reviewFileRead() ? "This file has no text preview. Open preview to inspect it, or use Library from More to download it." : "Loading the saved version…")}</pre>
+                </Show>
+                <Show when={reviewedPath() && !reviewFileError() && isDocumentPath(reviewedPath() ?? "")}>
+                  <p class="office-change-empty">Review the changes below, or open a preview of the whole document.</p>
+                </Show>
+              </section>
+              <Show when={isDocumentPath(reviewedPath() ?? "") || (!!reviewedFile()?.base_hash && (afterContent() !== null || reviewedFile()?.operation === "Delete"))}><section class="candidate-review-section candidate-review-changes" aria-label="Changes">
+                <h3>Changes</h3>
+                <Show when={reviewFocus() && (reviewFileError() || (prepared().draft_checks ?? []).some((check) => check.status !== "passed"))}>
+                  <p role="alert" class="inline-error">This draft needs attention before you can accept it. Show full review for details.</p>
+                </Show>
                 <Show when={reviewedPath() && !reviewFileError() && !isDocumentPath(reviewedPath() ?? "")}>
-                  <details class="candidate-review-compare">
+                  <details class="candidate-review-compare" open={comparesText()}>
                     <summary>Compare with the current file</summary>
                     <div class="candidate-review-columns">
                       <div><strong>Now</strong><pre>{beforeContent() ?? "New file or preview unavailable"}</pre></div>
-                      <div><strong>After</strong><pre>{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre></div>
+                      <div><strong>After</strong><pre>{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? (reviewFileRead() ? "This file has no text preview. Open preview to inspect it, or use Library from More to download it." : "Loading the saved version…")}</pre></div>
                     </div>
                   </details>
                 </Show>
@@ -920,20 +950,25 @@ export default function WorkbenchPanel() {
                     error={officeNarrowError()}
                     onOpenVersion={openCandidateVersion}
                     onComment={(anchor) => {
+                      setReviewFocus(false);
                       setCommentAnchor(anchor);
-                      document.getElementById("candidate-review-comment")?.focus();
+                      setFeedbackOpen(true);
+                      queueMicrotask(() => { const input = document.getElementById("candidate-review-comment"); input?.scrollIntoView({ block: "nearest" }); input?.focus({ preventScroll: true }); });
                     }}
                   />}</Show>
                 </Show>
-              </section>
-              <section class="candidate-review-section" aria-label="Decision">
-                <h3>Before you accept</h3>
+              </section></Show>
+              <section class="candidate-review-section candidate-review-support" aria-label="Decision">
+                <details class="candidate-review-check-summary">
+                  <summary>Checks and destination <span>{prepared().draft_checks?.length ? `${prepared().draft_checks?.filter((check) => check.status === "passed").length} of ${prepared().draft_checks?.length} checks passed` : "Format checks unavailable"}</span></summary>
                 <div class="candidate-review-decision-grid">
                   <div><span>Goes to</span><strong>{destinationLabel()}</strong></div>
                   <div><span>Saved version</span><strong>Version {Math.max(candidateVersion(), 1)}</strong><small>{prepared().verified ? "Saved copy is intact" : "Saved copy could not be checked"}</small></div>
                   <div><span>Format checks</span><strong>{prepared().draft_checks?.length ? `${prepared().draft_checks?.filter((check) => check.status === "passed").length} passed · ${prepared().draft_checks?.filter((check) => check.status !== "passed").length} failed on draft` : prepared().candidate.target_checks?.length ? `${prepared().candidate.target_checks?.length} planned` : "Unavailable"}</strong><small>{prepared().candidate.target_checks?.length ? "Draft checks inspect saved bytes. The same checks rerun after acceptance in the workspace." : "Vakyartha can't check this type of file automatically yet."}</small></div>
                 </div>
-                <For each={(prepared().draft_checks ?? []).filter((check) => check.status !== "passed")}>{(check) => <p role="alert" class="inline-error">A check failed on {check.path.split("/").pop()}.</p>}</For>
+                </details>
+                <details class="candidate-review-discussion" open={feedbackOpen() || !!commentAnchor() || !!reviewComment()} onToggle={(event) => setFeedbackOpen(event.currentTarget.open)}>
+                  <summary>Comment or request changes<Show when={candidateComments().length > 0}><span>{candidateComments().length}</span></Show></summary>
                 <Show when={candidateComments().length > 0}>
                   <div class="candidate-review-comments" aria-label="Comments on this draft">
                     <h4>Comments</h4>
@@ -953,6 +988,7 @@ export default function WorkbenchPanel() {
                   <button type="button" class="btn" disabled={reviewCommentBusy() || !reviewComment().trim()} onClick={() => void sendReviewComment()}>{reviewCommentBusy() ? "Saving…" : "Save comment"}</button>
                   <Show when={reviewCommentMessage()}>{(message) => <p role="status">{message()}</p>}</Show>
                 </div>
+                </details>
                 <Show when={technicalDetails()}>
                   <details class="candidate-review-provenance">
                     <summary>Technical details</summary>
@@ -990,6 +1026,7 @@ export default function WorkbenchPanel() {
                   </details>
                 </Show>
               </section>
+              </div>
             </div>
         </Sheet>}
       </Show>

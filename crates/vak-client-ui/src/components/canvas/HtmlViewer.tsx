@@ -1,15 +1,15 @@
 import { withPreviewLibraries } from "../../previewLibraries";
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import * as api from "../../api";
-import { previewSandbox, previewWindowDocument, previewOriginWindowDocument, sandboxedSrcdoc } from "../../safeUrl";
-import { artifactPreviewHtml, subjectReader } from "../../artifactPreview";
+import { previewWindowDocument, previewOriginWindowDocument, sandboxedSrcdoc } from "../../safeUrl";
+import { artifactPreviewHtml, artifactPreviewMarkup, subjectReader } from "../../artifactPreview";
 import { previewSource, subjectKey, subjectPath } from "../../canvasSubject";
 import { createLoader, readText } from "./createLoader";
 import DeviceViewport from "./DeviceViewport";
 import LoadState from "./LoadState";
 import SourcePane from "./SourcePane";
 import type { ViewerProps } from "./types";
-import { sendPreviewTheme, themedPreview } from "../../previewTheme";
+import HtmlPreview from "../HtmlPreview";
 
 type Shown =
   /** Served from an origin of its own, with the files it loads. */
@@ -20,14 +20,16 @@ type Shown =
 /**
  * A page. One with files behind it is served from a preview origin, so its
  * own stylesheets and images load. Only the fixed theme bridge may run;
- * document scripts and event handlers are blocked. markup from the conversation, and a page the server cannot
- * serve from an origin of its own, is shown as one document.
+ * document scripts and event handlers start paused. A human may run a bundled
+ * copy in an opaque frame, with possible network access disclosed. Markup from
+ * the conversation and fallback pages are shown as one document.
  *
  * The page is read once for what it is (`subjectKey`) and again only when the
  * reader asks to reload: reopening it, or moving to the code and back, keeps
  * the page as the reader left it, with whatever they typed or clicked in it.
  */
 export default function HtmlViewer(props: ViewerProps) {
+  const [running, setRunning] = createSignal(false);
   const loader = createLoader(
     () => subjectKey(props.subject),
     async () => {
@@ -35,7 +37,7 @@ export default function HtmlViewer(props: ViewerProps) {
       const reader = subjectReader(subject);
       const file = subjectPath(subject);
       const raw = subject.kind === "inline" ? subject.html : await readText(reader, file);
-      let warning: string | null = "Scripts are blocked in this preview. Inputs and layout remain available; export the file to run its code outside Vakyartha.";
+      let warning: string | null = null;
       const parsed = new DOMParser().parseFromString(raw, "text/html");
       if (!parsed.body?.textContent?.trim() && !parsed.body?.children.length && !parsed.querySelector("script")) {
         warning = "This page has nothing visible to show. Open Code to see what it contains.";
@@ -66,6 +68,7 @@ export default function HtmlViewer(props: ViewerProps) {
   createEffect(() => {
     const shown = loader.data()?.shown;
     props.register(shown ? {
+      safetyLabel: running() ? "Page code running · network access possible" : "Safe preview, offline",
       popout: () => {
         const document = shown.mode === "origin"
           ? previewOriginWindowDocument(shown.url)
@@ -80,26 +83,31 @@ export default function HtmlViewer(props: ViewerProps) {
 
   return (
     <LoadState loader={loader} label="Opening the page…">{(loaded) => {
-      // Shown only once it has drawn, so the stage does not flash between the
-      // Canvas's colour and the page's.
-      const [drawn, setDrawn] = createSignal(false);
-      const showAnyway = setTimeout(() => setDrawn(true), 1500);
-      onCleanup(() => clearTimeout(showAnyway));
       return (
         <>
           {/* The page stays alive behind the code, so coming back to it finds it as it was. */}
           <div class="artifact-canvas-page" classList={{ resting: props.view === "source" }}>
             <Show when={loaded.shown.mode === "document" ? loaded.shown.warning : loaded.warning}>{(warning) => <div class="artifact-canvas-preview-warning" role="status">{warning()}</div>}</Show>
-            <DeviceViewport>
-              {loaded.shown.mode === "origin"
-                ? (() => {
-                    let frame: HTMLIFrameElement | undefined;
-                    const url = loaded.shown.url;
-                    createEffect(() => { if (drawn()) sendPreviewTheme(frame, url); });
-                    return <iframe ref={frame} class="artifact-canvas-frame" classList={{ drawing: !drawn() }} onLoad={() => { setDrawn(true); sendPreviewTheme(frame, url); }} src={url} title={props.subject.title} sandbox={previewSandbox("origin")} />;
-                  })()
-                : <iframe class="artifact-canvas-frame" classList={{ drawing: !drawn() }} onLoad={() => setDrawn(true)} srcdoc={themedPreview(loaded.shown.page)} title={props.subject.title} sandbox={previewSandbox("static")} />}
-            </DeviceViewport>
+            <HtmlPreview
+              html={loaded.raw}
+              title={props.subject.title}
+              sourceLabel={props.subject.kind === "inline" ? "From this conversation" : "From the selected file"}
+              page={loaded.shown.mode === "document" ? loaded.shown.page : ""}
+              origin={loaded.shown.mode === "origin" ? loaded.shown.url : undefined}
+              localFiles={!!subjectPath(props.subject) && !!subjectReader(props.subject)}
+              libraries={props.subject.kind === "inline" ? props.subject.libraries : undefined}
+              prepare={async () => {
+                const subject = props.subject;
+                const reader = subjectReader(subject);
+                const path = subjectPath(subject);
+                return path && reader ? artifactPreviewMarkup(path, loaded.raw, reader)
+                  : withPreviewLibraries(loaded.raw, subject.kind === "inline" ? subject.libraries ?? [] : []);
+              }}
+              frameClass="artifact-canvas-frame"
+              viewport={frame => <DeviceViewport>{frame}</DeviceViewport>}
+              permissionKey={props.reloadKey}
+              onState={setRunning}
+            />
           </div>
           <Show when={props.view === "source"}>
             <SourcePane text={loaded.raw} label={props.subject.kind === "inline" ? "From the conversation" : props.subject.title} path={subjectPath(props.subject)} selection={props.selection} onSelect={props.onSelect} />

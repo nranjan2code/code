@@ -4,6 +4,7 @@ import type { Selection } from "../../canvasSelection";
 /** What a viewer can do for the frame beyond drawing itself. */
 export interface ViewerHandle {
   popout?: () => void;
+  safetyLabel?: string;
 }
 
 /** Everything the frame gives a viewer. A viewer reads its own content. */

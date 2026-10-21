@@ -1,8 +1,8 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show, Switch, Match } from "solid-js";
 import * as api from "../api";
 import { parseDelimitedPreview } from "../delimitedPreview";
-import { previewSandbox, sandboxedSrcdoc } from "../safeUrl";
-import { themedPreview } from "../previewTheme";
+import { sandboxedSrcdoc } from "../safeUrl";
+import HtmlPreview from "./HtmlPreview";
 import MarkdownView from "./MarkdownView";
 import OfficeView from "./OfficeView";
 
@@ -74,7 +74,6 @@ export default function LibraryPreview(props: { artifact: api.ArtifactDetail; ve
         <div class="library-preview-tools" role="group" aria-label="File view">
           <button class="btn sm" aria-pressed={!source()} onClick={() => setSource(false)}>Preview</button>
           <button class="btn sm" aria-pressed={source()} onClick={() => setSource(true)}>Source</button>
-          <Show when={format() === "html"}><span class="library-note">Interactive preview · network access blocked</span></Show>
         </div>
       </Show>
       <Show when={!content.error} fallback={<div class="library-preview-error" role="alert"><p>{content.error instanceof Error ? content.error.message : "This preview could not be opened. Try again or download this version."}</p><button class="btn sm" onClick={() => setReload(n => n + 1)}>Try again</button></div>}>
@@ -87,7 +86,7 @@ export default function LibraryPreview(props: { artifact: api.ArtifactDetail; ve
             {(loaded) => <Switch>
               <Match when={format() === "html"}>
                 <Show when={loaded().warning && !source()}><p class="library-note" role="status">{loaded().warning}</p></Show>
-                <iframe class="library-html-frame" hidden={source()} title={props.artifact.name} sandbox={previewSandbox("static")} srcdoc={themedPreview(sandboxedSrcdoc(loaded().text))} />
+                <HtmlPreview html={loaded().text} page={sandboxedSrcdoc(loaded().text)} title={props.artifact.name} sourceLabel="From this saved version" hidden={source()} frameClass="library-html-frame" />
                 <Show when={source()}><pre class="library-preview library-source">{loaded().text}</pre></Show>
               </Match>
               <Match when={source() && hasSource() || format() === "text"}><pre class="library-preview library-source">{loaded().text}</pre></Match>

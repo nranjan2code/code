@@ -191,7 +191,7 @@ A preview runs someone else's markup, so its isolation is decided by the client 
 
 - **Sandbox.** `previewSandbox()` (`safeUrl.ts`) is the only source of an `iframe` `sandbox` value: `static` (`allow-forms`, opaque origin; scripts blocked) for markup from the conversation and for a page shown as one document, `origin` for a page served from an origin of its own (§3.2), which is not the app's origin and so may keep its own storage and open windows. `allow-same-origin` on a `srcdoc` frame would give the previewed script the app's origin and its authenticated API, so it is never reachable from a card.
 - **Navigation.** A frame's own policy cannot stop it navigating itself away (a script, a link or a refresh), so the page that frames it does: the web app answers with `frame-src 'self' blob: data: http://127.0.0.1:* http://localhost:*` (`embedded_ui.rs`, `the_app_page_confines_frames_to_the_app_and_loopback`) and the desktop shell sets the same in `tauri.conf.json`. A preview cannot be sent to an internet address, whatever it runs. A preview on an origin of its own is still allowed to open a window (`allow-popups`).
-- **Network.** `sandboxedSrcdoc()` always writes `connect-src 'none'` and `script-src 'none'`. CSP fetch directives do not block WebRTC, so document scripts cannot run. There is no card field, prop or argument that widens it, so the chrome's "Safe preview, offline" is what the frame enforces. A preview that needs network access is a separate, user-granted setting, not built.
+- **Network by default.** `sandboxedSrcdoc()` writes `connect-src 'none'` and `script-src 'none'`. CSP fetch directives do not block WebRTC, so document scripts cannot run. No card field widens it, so the chrome's "Safe preview, offline" is what the frame enforces. The explicit page-code permission below is a separate human choice and discloses possible browser network access.
 - **Theme.** After the policy and before the markup, `sandboxedSrcdoc()` writes one `<style data-vak-theme>` block and nothing else: the active theme's tokens as CSS variables on `:root` (`--vak-bg`, `--vak-fg`, `--vak-muted`, `--vak-accent`, `--vak-rule`, `--vak-font`, `--vak-font-mono`, `--vak-radius`), read from the app's computed root style when the document is built, with `color-scheme` and `body { font-family: var(--vak-font) }`. A value cannot close the block. A theme switch rewrites that leading block in the open preview's document (`withCurrentTheme`, `previewTheme.ts`) and reads no file again; the sandbox value and the policy do not change. `emit_markup_preview_card`'s description names the variables (docs/design/96-answer-projection-gaps.md, Q1).
 - **CSP placement.** The policy is the first markup after the document's doctype, so no script (before `<head>`, or in a string or comment that mentions `<head>`) runs ahead of it.
 - **Server side.** `emit_file_preview_card` (a file, `ui.preview`, `artifact_path` required) and `emit_markup_preview_card` (inline markup, `ui.markup`, `html` required) have closed schemas, and `normalize_payload` drops `sandbox` and `connect_src` if a model sends them anyway. The client ignores them regardless, because the fence path does not go through the tool.
@@ -237,3 +237,49 @@ wrapper rather than opening origin documents directly. Configured live dev
 servers remain a separate explicitly started capability; they are not described
 as offline document previews. See the
 [acceptance record](../audits/security-hardening-2026-10-20.md).
+
+## Explicit page-code permission — 2026-10-21
+
+Canvas and Library share `HtmlPreview.tsx`. Documents start with code paused;
+the permission report counts embedded scripts, inline actions, local script
+files and external references separately. These are byte locations, not
+inferred authorship or a security audit. Inert JSON script elements are excluded
+from the executable-script count. External addresses are shown as text, never
+loaded by the report.
+
+A human can choose **Run page code** after reading that browser features such
+as WebRTC can make network connections. The document then runs in an opaque
+`allow-scripts allow-forms` frame, without same-origin access, popups, downloads
+or native privileges. Its leading CSP permits inline scripts and handlers;
+script URLs, eval, ordinary network fetches, nested frames and form submission
+remain denied. The footer says network access is possible, never offline.
+
+Canvas bundles relative script/style/media assets through the selected
+subject's confined reader. It refuses unresolved or escaping local assets rather
+than retrying with a different source. Library uses only the selected version's
+bytes; local linked files are reported unavailable and external script downloads
+stay blocked. A stop destroys the running frame. Reload, a different document
+and closing the viewer revoke permission, including a pending bundle read;
+Source/Preview navigation preserves the same document. Separate windows and
+conversation thumbnails remain paused. No model/card field grants permission,
+and nothing is saved as a standing trust decision.
+
+Review sheets mount through a portal outside Details and its CSS size
+container. The full-window review keeps its heading and decision footer pinned,
+with a vertically scrolling body. Long filenames, technical document locations
+and footer text wrap at phone width. Review uses the same shell for HTML,
+text/code/data, Office/PDF, media/binary fallbacks, deletions and mixed drafts.
+A completed binary read offers the saved-version inspection/download path
+instead of displaying a permanent loading placeholder. See [acceptance](../audits/preview-permissions-review-2026-10-21.md).
+
+
+### Focused Review — 2026-10-21
+
+A single file has a centred reading column; multiple files add a separate
+navigation column that stacks on phones. Open preview is the visible secondary
+action; Focus view, Library and Star live in More. Existing text/code compares
+once and Focus shows the current document. Checks/destination and comments
+have disclosures, while failed checks and verification warnings stay visible.
+Addressed comments exit Focus and reveal their composer. The pinned footer
+explains unread, empty or omitted-edit decisions. The shared control system
+applies to every file type. See [acceptance](../audits/control-density-review-2026-10-21.md).

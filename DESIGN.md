@@ -82,7 +82,7 @@ typography:
     fontWeight: 400
     lineHeight: "22px"
 rounded:
-  control: "8px"
+  control: "7px"
   card: "12px"
   sheet: "16px"
   pill: "999px"
@@ -99,15 +99,15 @@ components:
     backgroundColor: "{colors.primary}"
     textColor: "#FFFFFF"
     rounded: "{rounded.control}"
-    height: "36px"
-    padding: "0 14px"
+    height: "32px"
+    padding: "5px 10px"
   button-secondary:
-    backgroundColor: "{colors.surface}"
+    backgroundColor: "transparent"
     textColor: "{colors.ink}"
-    border: "1px solid {colors.line}"
+    border: "1px solid transparent"
     rounded: "{rounded.control}"
-    height: "36px"
-    padding: "0 14px"
+    height: "32px"
+    padding: "5px 10px"
   chip:
     backgroundColor: "transparent"
     textColor: "{colors.ink-2}"
@@ -127,7 +127,7 @@ components:
   input:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-    border: "1px solid {colors.line}"
+    border: "1px solid transparent"
     rounded: "{rounded.control}"
     padding: "8px 12px"
 ---
@@ -318,7 +318,7 @@ answer an approval and steer a run, so an approval gets full-width controls
 with nothing truncated.
 
 Spacing follows a 4px grid (4, 8, 12, 16, 24, 32, 48). Sidebar rows are 40px,
-buttons 36px, and the message box at least 56px. Conversation content is
+desktop buttons 32px (28px compact, 36px prominent), and the message box at least 56px. Conversation content is
 centred at about 720px.
 
 ## Elevation and depth
@@ -333,7 +333,7 @@ where spacing cannot do it. Shadow means floating:
 
 ## Shapes
 
-Radius 8 for controls and inputs, 12 for cards, 16 for the message box and
+Radius 7 for controls and inputs, 12 for cards, 16 for the message box and
 sheets, and full for avatars, pills and status dots.
 
 ## Motion
@@ -360,13 +360,20 @@ sheets, and full for avatars, pills and status dots.
 ## Components
 
 ### Buttons
-Primary: primary fill, white text. Secondary: surface fill, ink text, 1px
-line. Text buttons use the link colour. Danger: a danger-tinted wash with
+Primary: primary fill, contrasting text. Secondary: transparent at rest with
+ink text, a quiet surface on hover and a visible keyboard focus ring. Text
+buttons use the link colour. Danger: a danger-tinted wash with
 danger text, never a solid red fill. Each says what happens ("Review
 changes", "Keep draft", "Apply 1 change").
 
+Controls use explicit 14px typography rather than inheriting 16px reading
+text. Shared client and Admin geometry tokens stay aligned. Coarse pointers
+get 40–44px targets; a narrow desktop pane alone never implies touch sizing.
+Enlarged text can increase the height. Explanatory permission choices and
+reading content keep the space they need.
+
 ### Chips
-Pill-shaped, ink-2 text, 1px line; selected chips take the primary wash.
+Compact, softly rounded, ink-2 text, quiet at rest; selected chips take the primary wash.
 
 ### Cards and results
 Surface fill, 12px radius, 1px line, 16px padding, no shadow. In a

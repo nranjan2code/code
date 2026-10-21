@@ -161,3 +161,22 @@ Source and History, and overflow at desktop/phone sizes in light/dark. Audio
 and video fixtures certify controls only; Office fixtures certify integration
 with the existing renderer, not parsing or full document fidelity. No provider
 calls, installed binary changes, or live sharing effects are involved.
+
+## Preview permission and Review containment
+
+Open `tests/preview-permissions.html` and run `window.runChecks()`. It mounts
+real `HtmlViewer`, `HtmlPreview`, `Sheet` and `OfficeChangeList` components,
+including a Details-like transformed size container that used to clip Review.
+Check 1440×900 and 390×844, light and dark (`?theme=dark`). The assertions cover
+paused defaults, source classification, explicit isolated execution, stop/reload
+revocation, local script bundling, footer status, unclipped Review controls,
+vertical scrolling, focus trapping and Escape/focus restoration. The fixture
+never accepts or writes a real file. Typecheck with the Library fixture config.
+
+`tests/review-formats.html` mounts the real WorkbenchPanel against saved-version
+responses in a confined Details-like container. Run `window.runChecks()` across
+the same matrix for HTML, text/code/data, Office/PDF, media/binary fallbacks,
+deletions, unavailable versions, long filenames and mixed drafts. It verifies
+file/Office selection gates, comments, comparisons and technical-label wrapping,
+and refuses every mutation. `window.openReviewFormat(path)` opens an individual
+fixture; `window.setReviewTechnicalDetails(true)` exposes technical labels.

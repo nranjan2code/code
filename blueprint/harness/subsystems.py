@@ -258,6 +258,7 @@ SUBSYSTEMS = [
      "The artifact canvas, its viewers, live previews and the preview origin",
      ["crates/vak-server/src/canvas.rs", "crates/vak-server/src/preview.rs",
       "crates/vak-client-ui/src/components/canvas/**", "crates/vak-client-ui/src/components/ArtifactCanvas.tsx",
+      "crates/vak-client-ui/src/components/HtmlPreview.tsx",
       "crates/vak-client-ui/src/components/LivePreviewPanel.tsx", "crates/vak-client-ui/src/canvas*.ts",
       "crates/vak-client-ui/src/preview*.ts", "crates/vak-client-ui/src/artifactPreview.ts"],
      ["/previews", "/sessions/{id}/canvas", "/sessions/{id}/launch"], [], ["66-immersive-artifact-canvas.md"]),

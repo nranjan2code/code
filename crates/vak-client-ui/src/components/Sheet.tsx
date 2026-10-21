@@ -1,6 +1,7 @@
 import { createUniqueId, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { trapFocus } from "../focusTrap";
 import Icon from "./Icon";
+import { Portal } from "solid-js/web";
 
 void trapFocus;
 
@@ -37,6 +38,12 @@ export default function Sheet(props: {
       if (event.key !== "Escape" || openSheets.at(-1) !== self) return;
       event.stopPropagation();
       event.preventDefault();
+      const menu = root.querySelector<HTMLDetailsElement>("details[data-menu][open]");
+      if (menu) {
+        menu.open = false;
+        menu.querySelector<HTMLElement>("summary")?.focus();
+        return;
+      }
       close();
     };
     // Capture on window runs before every other Escape handler in the app.
@@ -53,7 +60,7 @@ export default function Sheet(props: {
     });
   });
   return (
-    <div class="modal-back" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
+    <Portal><div class="modal-back" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
       <section
         class={`modal sheet sheet-${props.size ?? "normal"}${props.class ? ` ${props.class}` : ""}`}
         role="dialog"
@@ -72,6 +79,6 @@ export default function Sheet(props: {
         <div class="sheet-body">{props.children}</div>
         <Show when={props.footer}><footer class="sheet-footer">{props.footer}</footer></Show>
       </section>
-    </div>
+    </div></Portal>
   );
 }

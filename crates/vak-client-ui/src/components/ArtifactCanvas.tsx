@@ -337,7 +337,7 @@ export default function ArtifactCanvas() {
         <Show when={spec()?.safetyFooter}><footer class="artifact-canvas-footer">
           <span class="artifact-canvas-security">
             <Icon name="shield" size={12} />
-            {subject()?.kind === "live_server" ? "Live preview, running on this computer" : "Safe preview, offline"}
+            {handle()?.safetyLabel ?? (subject()?.kind === "live_server" ? "Live preview, running on this computer" : "Safe preview, offline")}
           </span>
         </footer></Show>
       </div>

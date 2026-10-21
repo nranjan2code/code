@@ -910,7 +910,13 @@ commit (invariant 30).
     write. Frontend client preview frames are sandboxed and sit
     inside error boundaries. Markup from the conversation, and a page the
     server cannot serve from an origin of its own, runs in an opaque origin
-    (`sandbox="allow-scripts allow-forms"`, no network). A page with files
+    (`sandbox="allow-forms"`, scripts paused, no network). A human may run
+    the current document's embedded/bundled code in an opaque
+    `allow-scripts allow-forms` frame; external script downloads and fetch
+    remain blocked, but WebRTC can connect, so this mode must explicitly
+    disclose possible network access and never say offline. Permission is
+    temporary and revocable, never inferred from a local path or Agent
+    authorship. A page with files
     behind it, and a dev server, runs on an origin of its own, on a loopback
     port and framed under the other loopback name than the app's, so it shares
     no origin, cookie or storage with the app; the preview origin answers only

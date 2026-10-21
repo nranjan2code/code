@@ -1,3 +1,31 @@
+## Focused Review and shared controls (2026-10-21)
+
+- [x] Focus Review across supported file types, simplify visible actions,
+  preserve warnings/selection gates and addressed comments.
+- [x] Apply compact desktop geometry and quiet secondary actions across shared
+  client and Admin, with larger touch targets and readable control text.
+  See [acceptance](../audits/control-density-review-2026-10-21.md).
+- [ ] Qualify the rebuilt controls and focused Review in the native WebKit
+  desktop host; browser coverage does not close the native acceptance gate.
+
+## HTML permissions and Review layout (2026-10-21)
+
+- [x] Distinguish embedded, local linked and external script references; offer
+  explicit temporary page-code execution with an honest network disclosure,
+  and revoke it on stop/reload/document changes. Canvas and Library share the
+  policy controls; external downloads stay blocked.
+- [x] Move Review sheets out of the Details layout container; verify visible
+  decision controls, vertical scrolling and focus at desktop/phone light/dark.
+- [ ] Qualify the changed code in the installed native WebKit desktop host;
+  browser fixture acceptance does not establish native-host acceptance.
+- [ ] Fully offline arbitrary JavaScript still requires an enforceable browser
+  network boundary. Explicit interactive mode allows possible WebRTC traffic.
+- [x] Check the real Workbench Review flow across HTML, code/text, data,
+  Office/PDF, binary/media fallbacks, deletion, failed reads, long names and
+  mixed drafts. Fix long technical anchors/file-list overflow and distinguish
+  completed binary reads from loading. The standalone Office fixture now
+  explicitly enables technical anchors and expects its actual redline text.
+
 ## Topics (2026-10-21)
 
 The [Topic contract](../design/101-topics.md) records the approved dynamic,
@@ -91,7 +119,9 @@ records implementation, acceptance and remaining assurance limits.
 - [x] Additional preview egress: block arbitrary document scripts after a real
   Chrome probe bypassed fetch CSP using loopback WebRTC/STUN. Static and origin
   policy reruns show zero packets. Origin documents retain the fixed theme
-  bridge; interactive page scripts are restricted pending proper confinement.
+  bridge; automatic page scripts remain restricted pending proper confinement.
+  The explicit per-document permission added 2026-10-21 discloses possible
+  network access instead of claiming offline execution.
 - [x] SI-02: admitted workers protect secret/control files without owner
   telemetry, including grep and computed shell paths. Seatbelt enforces the
   exclusions; unqualified backends refuse restricted execution.
