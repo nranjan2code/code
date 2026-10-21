@@ -15,6 +15,13 @@ function isResultPart(item: OutputItem): boolean {
 
 export type AnswerGroup<T> = { kind: "result"; entries: T[]; resultId?: string } | { kind: "item"; entry: T };
 
+/** The Canvas opened from a result card follows that exact group, even when
+ *  several partial/final result groups share one turn id. */
+export function answerGroupItems<T extends { id: string; turn_id: string }>(items: readonly T[], turnId: string, itemIds?: readonly string[]): T[] {
+  const selected = itemIds ? new Set(itemIds) : null;
+  return items.filter((item) => item.turn_id === turnId && (!selected || selected.has(item.id)));
+}
+
 /** A delivered file already has a thumbnail and an Open action. Fold only
  * its exact file-preview duplicate into that card, within one result group.
  * Inline markup and ambiguous file identities remain independent content. */

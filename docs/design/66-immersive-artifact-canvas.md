@@ -141,7 +141,9 @@ The read-only daily mail/calendar view is `{ kind: "daily_mail_calendar" }` (`Da
 ### Restoring subjects
 
 Persisted Canvas subjects validate all supported kinds, including composed
-answers (session and turn identity) and saved pages (artifact identity).
+answers (session, turn and selected result item identities) and saved pages
+(artifact identity). Older answer subjects without item identities continue
+to show the whole turn.
 All nine current kinds round-trip through stack opening, serialization
 and restoration in source tests. Missing identity fields or a mismatched
 stored identity are refused. This covers subject restoration; draft

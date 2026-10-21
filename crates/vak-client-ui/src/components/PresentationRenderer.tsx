@@ -1039,7 +1039,7 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
       <button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for changes"}</button>
       <Show when={files() === 0}>
         <Show when={!useContext(InCanvasContext)}>
-          <button type="button" onClick={() => openArtifactCanvas({ kind: "answer", title: "Answer", sessionId: props.sessionId, turnId: props.turnId })}>Open in Canvas</button>
+          <button type="button" onClick={() => openArtifactCanvas({ kind: "answer", title: "Answer", sessionId: props.sessionId, turnId: props.turnId, itemIds: [...new Set([props.answer.id, ...props.material.map((item) => item.id)])] })}>Open in Canvas</button>
         </Show>
         <SaveAnswerToLibrary sessionId={props.sessionId} turnId={props.turnId} />
       </Show>
@@ -1521,20 +1521,20 @@ export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRende
 /** True when an answer is drawn in the Canvas, where it is already open. */
 export const InCanvasContext = createContext(false);
 
-export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean; valueScope?: string }) {
+export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean; valueScope?: string; includeTurnExtras?: boolean }) {
   // The automations a turn made or changed (docs/design/94 §5), read again
   // whenever the conversation grows, so a card follows its record.
   // A page has no conversation, so no automations of its own and nothing
   // to ask the owner's server for (docs/design/98 §12).
   const [fetchedAutomations, { refetch: refetchAutomations }] = createResource(
-    () => (props.sessionId ? `${props.sessionId}:${props.timeline.items.length}` : null),
+    () => (props.includeTurnExtras !== false && props.sessionId ? `${props.sessionId}:${props.timeline.items.length}` : null),
     () => api.listTriggers().then((list) => list.triggers.filter((trigger) => trigger.made_by?.kind === "turn" && trigger.made_by.session === props.sessionId)).catch(() => []),
   );
   // Kept by id, so a refresh updates a card in place.
   const [automationList, setAutomationList] = createStore<import("../types").Trigger[]>([]);
   createEffect(() => { const next = fetchedAutomations(); if (next) setAutomationList(reconcile(next, { key: "id" })); });
   const automations = () => automationList;
-  const [ownerZone] = createResource(() => props.sessionId || null, () => api.getConfig().then((config) => config.owner?.timezone).catch(() => undefined));
+  const [ownerZone] = createResource(() => props.includeTurnExtras === false ? null : props.sessionId || null, () => api.getConfig().then((config) => config.owner?.timezone).catch(() => undefined));
   const automationsOf = (turn: string) => {
     const directive = props.timeline.items.find((item) => item.turn_id === turn && item.role === "user")?.provenance?.entry_id;
     return directive ? (automations() ?? []).filter((trigger) => trigger.made_by?.kind === "turn" && trigger.made_by.turn === directive) : [];
@@ -1570,7 +1570,7 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
         <AnswerValuesScope scopeKey={props.valueScope ?? conversationValuesKey(props.sessionId, id)} items={items()}>
           <Turn id={id} items={items()} outline={outline()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />
         </AnswerValuesScope>
-        <For each={automationsOf(id)}>{(trigger) => <AutomationCard trigger={trigger} zone={ownerZone()} onChanged={() => void refetchAutomations()} />}</For>
+        <For each={props.includeTurnExtras === false ? [] : automationsOf(id)}>{(trigger) => <AutomationCard trigger={trigger} zone={ownerZone()} onChanged={() => void refetchAutomations()} />}</For>
       </>;
     }}</For>
   </div>;

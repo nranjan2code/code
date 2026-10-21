@@ -35,7 +35,7 @@ export type CanvasSubject =
   /** A live, owner-only daily view of connected mail and calendar accounts. */
   | (SubjectBase & { kind: "daily_mail_calendar"; agentId: string })
   /** Every card of one answer, by its conversation and turn (docs/design/98 §3). */
-  | (SubjectBase & { kind: "answer"; sessionId: string; turnId: string })
+  | (SubjectBase & { kind: "answer"; sessionId: string; turnId: string; itemIds?: string[] })
   | (SubjectBase & { kind: "page"; artifactId: string })
   /** A dev server the session's launch configuration names. */
   | (SubjectBase & { kind: "live_server"; serverName: string; sessionId: string; candidateId?: string; path?: string });
@@ -139,7 +139,7 @@ export function subjectKey(subject: CanvasSubject): string {
     case "live_server": return `server:${subject.sessionId}:${subject.candidateId ?? ""}:${subject.serverName}`;
     case "automation": return `task:${subject.taskId}`;
     case "daily_mail_calendar": return `daily_mail_calendar:${subject.agentId}`;
-    case "answer": return `answer:${subject.sessionId}:${subject.turnId}`;
+    case "answer": return `answer:${subject.sessionId}:${subject.turnId}:${subject.itemIds ? digest([...subject.itemIds].sort().join("\0")) : "turn"}`;
     case "page": return `page:${subject.artifactId}`;
     case "inline": return `inline:${subject.basePath ?? ""}:${subject.title}:${digest(subject.html)}`;
   }
@@ -187,7 +187,8 @@ export function isCanvasSubject(value: unknown): value is CanvasSubject {
       && (subject.libraries === undefined || (Array.isArray(subject.libraries) && subject.libraries.every(text)));
     case "automation": return text(subject.taskId);
     case "daily_mail_calendar": return text(subject.agentId);
-    case "answer": return text(subject.sessionId) && text(subject.turnId);
+    case "answer": return text(subject.sessionId) && text(subject.turnId) &&
+      (subject.itemIds === undefined || (Array.isArray(subject.itemIds) && subject.itemIds.length > 0 && subject.itemIds.length <= 4096 && subject.itemIds.every(text) && new Set(subject.itemIds).size === subject.itemIds.length));
     case "page": return text(subject.artifactId);
     case "live_server": return text(subject.serverName) && text(subject.sessionId) && optionalText(subject.candidateId) && optionalText(subject.path);
     default: return false;

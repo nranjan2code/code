@@ -1,5 +1,6 @@
 import { Show } from "solid-js";
 import { presentationOf } from "../../store";
+import { answerGroupItems } from "../../answerComposition";
 import PresentationTimelineView, { InCanvasContext } from "../PresentationRenderer";
 import type { ViewerProps } from "./types";
 
@@ -14,15 +15,15 @@ export default function AnswerViewer(props: ViewerProps) {
     const answer = subject();
     const timeline = answer ? presentationOf(answer.sessionId) : null;
     if (!answer || !timeline) return null;
-    const items = timeline.items.filter((item) => item.turn_id === answer.turnId);
-    return items.length > 0 ? { ...timeline, items } : null;
+    const items = answerGroupItems(timeline.items, answer.turnId, answer.itemIds);
+    return items.length > 0 ? { ...timeline, items, goal: null, answers: timeline.answers?.filter((outline) => outline.turn_id === answer.turnId) } : null;
   };
   return (
     <Show when={turn()} fallback={<p class="canvas-card-gone" role="status">This answer is no longer in the conversation.</p>}>
       {(timeline) => (
         <div class="answer-in-canvas">
           <InCanvasContext.Provider value={true}>
-            <PresentationTimelineView timeline={timeline()} sessionId={subject()?.sessionId ?? ""} allowContinuation={false} hideUser />
+            <PresentationTimelineView timeline={timeline()} sessionId={subject()?.sessionId ?? ""} allowContinuation={false} hideUser includeTurnExtras={false} />
           </InCanvasContext.Provider>
         </div>
       )}

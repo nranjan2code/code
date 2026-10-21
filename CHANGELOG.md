@@ -1,3 +1,8 @@
+## Unreleased
+
+- Opening a composed result in Canvas now scopes it to that result group, so
+  other results from the same turn do not appear alongside it.
+
 ## 8.17.0 — 2026-10-21
 
 - Updated TLS certificate validation and trust roots to reject distrusted
