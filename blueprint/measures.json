@@ -1,11 +1,11 @@
 {
- "revision": "cd39bd9b9",
+ "revision": "64f07775a",
  "complexity": [
   {
-   "score": 203,
+   "score": 177,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1885
+   "line": 1856
   },
   {
    "score": 137,
@@ -17,7 +17,7 @@
    "score": 115,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6674
+   "line": 6671
   },
   {
    "score": 96,
@@ -26,7 +26,7 @@
    "line": 3829
   },
   {
-   "score": 85,
+   "score": 87,
    "name": "snapshot_inner",
    "file": "crates/vak-server/src/projection.rs",
    "line": 910
@@ -47,19 +47,19 @@
    "score": 61,
    "name": "complete_with_reliability",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5767
+   "line": 5451
   },
   {
    "score": 46,
    "name": "execute_one",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9169
+   "line": 8462
   },
   {
    "score": 43,
    "name": "execute_batch_calls",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8004
+   "line": 7298
   },
   {
    "score": 42,
@@ -89,13 +89,13 @@
    "score": 37,
    "name": "patch_config_scope",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18060
+   "line": 18061
   },
   {
    "score": 37,
    "name": "worker_main",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 798
+   "line": 794
   },
   {
    "score": 36,
@@ -137,7 +137,7 @@
    "score": 30,
    "name": "run_prompt",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5641
+   "line": 5642
   },
   {
    "score": 30,
@@ -149,7 +149,7 @@
    "score": 29,
    "name": "run_capacity_probe",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5605
+   "line": 5602
   },
   {
    "score": 29,
@@ -161,13 +161,7 @@
    "score": 29,
    "name": "from_entries_resolving",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 475
-  },
-  {
-   "score": 28,
-   "name": "execute_batch",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 6340
+   "line": 522
   },
   {
    "score": 28,
@@ -225,15 +219,9 @@
   },
   {
    "score": 26,
-   "name": "show_card",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 7523
-  },
-  {
-   "score": 26,
    "name": "run_turn_inner",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6538
+   "line": 6535
   },
   {
    "score": 26,
@@ -287,7 +275,7 @@
    "score": 24,
    "name": "verify_managed_criteria",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4538
+   "line": 4322
   },
   {
    "score": 24,
@@ -306,6 +294,18 @@
    "name": "secured_router_with_port",
    "file": "crates/vak-server/src/lib.rs",
    "line": 3328
+  },
+  {
+   "score": 23,
+   "name": "run_message",
+   "file": "crates/vak-agent/src/lib.rs",
+   "line": 1778
+  },
+  {
+   "score": 23,
+   "name": "execute_batch",
+   "file": "crates/vak-agent/src/lib.rs",
+   "line": 6024
   },
   {
    "score": 23,
@@ -335,7 +335,7 @@
    "score": 23,
    "name": "record_promoted_files",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15334
+   "line": 15335
   },
   {
    "score": 23,
@@ -366,12 +366,6 @@
    "name": "check",
    "file": "crates/vak-tools/src/contract.rs",
    "line": 25
-  },
-  {
-   "score": 21,
-   "name": "run_message",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 1806
   },
   {
    "score": 21,
@@ -425,7 +419,7 @@
    "score": 21,
    "name": "answer_outlines",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 1895
+   "line": 1936
   },
   {
    "score": 21,
@@ -437,7 +431,7 @@
    "score": 20,
    "name": "goal_gate",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4826
+   "line": 4610
   },
   {
    "score": 20,
@@ -509,7 +503,7 @@
    "score": 19,
    "name": "authorize",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10137
+   "line": 9375
   },
   {
    "score": 19,
@@ -623,7 +617,7 @@
    "score": 18,
    "name": "dispatch",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 628
+   "line": 624
   },
   {
    "score": 18,
@@ -635,7 +629,7 @@
    "score": 17,
    "name": "record_delegated_cards",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3903
+   "line": 3603
   },
   {
    "score": 17,
@@ -683,25 +677,25 @@
    "score": 17,
    "name": "request_trace_for",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20353
+   "line": 20354
   },
   {
    "score": 17,
    "name": "sweep_abandoned_runs",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21067
+   "line": 21068
   },
   {
    "score": 17,
    "name": "detect_launch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21399
+   "line": 21400
   },
   {
    "score": 17,
    "name": "start_launch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 22005
+   "line": 22006
   },
   {
    "score": 17,
@@ -719,7 +713,13 @@
    "score": 16,
    "name": "resolve_one",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 6799
+   "line": 6428
+  },
+  {
+   "score": 16,
+   "name": "show_card",
+   "file": "crates/vak-agent/src/lib.rs",
+   "line": 7028
   },
   {
    "score": 16,
@@ -737,13 +737,13 @@
    "score": 16,
    "name": "compact_session_now",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 8431
+   "line": 8393
   },
   {
    "score": 16,
    "name": "verify_tabular_data",
    "file": "crates/vak-judge/src/outcome.rs",
-   "line": 144
+   "line": 141
   },
   {
    "score": 16,
@@ -767,7 +767,13 @@
    "score": 16,
    "name": "update_bot",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17204
+   "line": 17205
+  },
+  {
+   "score": 16,
+   "name": "derive_selected_at",
+   "file": "crates/vak-session/src/log.rs",
+   "line": 3184
   },
   {
    "score": 16,
@@ -833,19 +839,25 @@
    "score": 15,
    "name": "dispatch_candidate_revision",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14768
+   "line": 14769
   },
   {
    "score": 15,
    "name": "prepare_launch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21791
+   "line": 21792
   },
   {
    "score": 15,
    "name": "log_turns_with_no_visible_answer",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2085
+   "line": 2126
+  },
+  {
+   "score": 15,
+   "name": "derive_with_plan_indexed",
+   "file": "crates/vak-session/src/log.rs",
+   "line": 3034
   },
   {
    "score": 15,
@@ -887,7 +899,7 @@
    "score": 14,
    "name": "capability_diagnostics",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4294
+   "line": 4291
   },
   {
    "score": 14,
@@ -977,7 +989,7 @@
    "score": 14,
    "name": "intent_explain",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10041
+   "line": 10042
   },
   {
    "score": 14,
@@ -995,25 +1007,13 @@
    "score": 14,
    "name": "activity_item",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2231
+   "line": 2272
   },
   {
    "score": 14,
    "name": "process",
    "file": "crates/vak-server/src/surfaces/discord.rs",
    "line": 285
-  },
-  {
-   "score": 14,
-   "name": "derive_with_plan_indexed",
-   "file": "crates/vak-session/src/log.rs",
-   "line": 2961
-  },
-  {
-   "score": 14,
-   "name": "derive_selected_at",
-   "file": "crates/vak-session/src/log.rs",
-   "line": 3106
   },
   {
    "score": 13,
@@ -1055,7 +1055,7 @@
    "score": 13,
    "name": "capacity_profile_for",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5336
+   "line": 5333
   },
   {
    "score": 13,
@@ -1097,7 +1097,7 @@
    "score": 13,
    "name": "evaluate_requirements",
    "file": "crates/vak-judge/src/outcome.rs",
-   "line": 390
+   "line": 387
   },
   {
    "score": 13,
@@ -1163,7 +1163,7 @@
    "score": 13,
    "name": "check_budget_alert",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21206
+   "line": 21207
   },
   {
    "score": 13,
@@ -1193,13 +1193,13 @@
    "score": 12,
    "name": "managed_work_gate",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4412
+   "line": 4196
   },
   {
    "score": 12,
    "name": "record_worker_work",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8593
+   "line": 7886
   },
   {
    "score": 12,
@@ -1229,7 +1229,7 @@
    "score": 12,
    "name": "plain_decimal",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 533
+   "line": 535
   },
   {
    "score": 12,
@@ -1289,7 +1289,7 @@
    "score": 12,
    "name": "scan_candidates",
    "file": "crates/vak-server/src/agent_chats.rs",
-   "line": 255
+   "line": 261
   },
   {
    "score": 12,
@@ -1319,7 +1319,7 @@
    "score": 12,
    "name": "session_work_command",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7422
+   "line": 7423
   },
   {
    "score": 12,
@@ -1337,7 +1337,7 @@
    "score": 12,
    "name": "link_recalls",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 386
+   "line": 433
   },
   {
    "score": 12,
@@ -1409,7 +1409,7 @@
    "score": 11,
    "name": "identity_digest",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 2785
+   "line": 2776
   },
   {
    "score": 11,
@@ -1547,7 +1547,7 @@
    "score": 11,
    "name": "open",
    "file": "crates/vak-server/src/agent_chats.rs",
-   "line": 331
+   "line": 337
   },
   {
    "score": 11,
@@ -1583,13 +1583,13 @@
    "score": 11,
    "name": "read_sandbox_candidate_office_review",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14429
+   "line": 14430
   },
   {
    "score": 11,
    "name": "run_sandbox_workspace_check",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15474
+   "line": 15475
   },
   {
    "score": 11,
@@ -1647,21 +1647,27 @@
   },
   {
    "score": 10,
+   "name": "write_derived_presentations",
+   "file": "crates/vak-agent/src/lib.rs",
+   "line": 3838
+  },
+  {
+   "score": 10,
    "name": "record_aborted_partial",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5487
+   "line": 5238
   },
   {
    "score": 10,
    "name": "resolve_recall",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 6743
+   "line": 6372
   },
   {
    "score": 10,
    "name": "reconcile_repair",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9643
+   "line": 8936
   },
   {
    "score": 10,
@@ -1763,13 +1769,13 @@
    "score": 10,
    "name": "scoped_allow_rule",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 9928
+   "line": 9890
   },
   {
    "score": 10,
    "name": "build_controls",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1391
+   "line": 1393
   },
   {
    "score": 10,
@@ -1811,7 +1817,7 @@
    "score": 10,
    "name": "verify_decision_matrix",
    "file": "crates/vak-judge/src/outcome.rs",
-   "line": 228
+   "line": 225
   },
   {
    "score": 10,
@@ -1931,31 +1937,31 @@
    "score": 10,
    "name": "send_steering",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6089
+   "line": 6090
   },
   {
    "score": 10,
    "name": "list_session_sandbox_records",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13795
+   "line": 13796
   },
   {
    "score": 10,
    "name": "narrow_sandbox_candidate_office",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14569
+   "line": 14570
   },
   {
    "score": 10,
    "name": "revoke_agent",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16335
+   "line": 16336
   },
   {
    "score": 10,
    "name": "catch_up_catalog",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21010
+   "line": 21011
   },
   {
    "score": 10,
@@ -1985,7 +1991,7 @@
    "score": 10,
    "name": "apply_stream_event",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2924
+   "line": 2965
   },
   {
    "score": 10,
@@ -2033,25 +2039,25 @@
    "score": 9,
    "name": "resolve_managed_input",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4211
+   "line": 3995
   },
   {
    "score": 9,
    "name": "execute_batch_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7027
+   "line": 6656
   },
   {
    "score": 9,
    "name": "regenerate_unreadable",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7117
+   "line": 6746
   },
   {
    "score": 9,
    "name": "withdraw_tools",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9698
+   "line": 8991
   },
   {
    "score": 9,
@@ -2195,7 +2201,7 @@
    "score": 9,
    "name": "verify_claim_citations",
    "file": "crates/vak-judge/src/outcome.rs",
-   "line": 284
+   "line": 281
   },
   {
    "score": 9,
@@ -2363,43 +2369,43 @@
    "score": 9,
    "name": "run_turn_chain",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5337
+   "line": 5338
   },
   {
    "score": 9,
    "name": "give_up_writer",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5577
+   "line": 5578
   },
   {
    "score": 9,
    "name": "remove_retired_plugins",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11883
+   "line": 11884
   },
   {
    "score": 9,
    "name": "youtube_search_preview",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12602
+   "line": 12603
   },
   {
    "score": 9,
    "name": "plugin_catalog",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12795
+   "line": 12796
   },
   {
    "score": 9,
    "name": "background_work_allowed",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21041
+   "line": 21042
   },
   {
    "score": 9,
    "name": "get_launch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21570
+   "line": 21571
   },
   {
    "score": 9,
@@ -2411,7 +2417,7 @@
    "score": 9,
    "name": "live_event",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2500
+   "line": 2541
   },
   {
    "score": 9,
@@ -2471,7 +2477,7 @@
    "score": 9,
    "name": "office_project_in_worker",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1588
+   "line": 1584
   },
   {
    "score": 9,
@@ -2501,19 +2507,19 @@
    "score": 8,
    "name": "start_managed_contract",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4284
+   "line": 4068
   },
   {
    "score": 8,
    "name": "topic_error_for_model",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8681
+   "line": 7974
   },
   {
    "score": 8,
    "name": "normalize_mcp_call",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8858
+   "line": 8151
   },
   {
    "score": 8,
@@ -2535,9 +2541,9 @@
   },
   {
    "score": 8,
-   "name": "render",
-   "file": "crates/vak-control/src/correct.rs",
-   "line": 416
+   "name": "fill_window",
+   "file": "crates/vak-context/src/planner.rs",
+   "line": 46
   },
   {
    "score": 8,
@@ -2957,73 +2963,73 @@
    "score": 8,
    "name": "provider_unavailable",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 4851
+   "line": 4852
   },
   {
    "score": 8,
    "name": "plan_change",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6566
+   "line": 6567
   },
   {
    "score": 8,
    "name": "record_routing_data",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6774
+   "line": 6775
   },
   {
    "score": 8,
    "name": "rejected_draft_entry_ids",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8537
+   "line": 8538
   },
   {
    "score": 8,
    "name": "create_coworking_message",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8939
+   "line": 8940
   },
   {
    "score": 8,
    "name": "read_file",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13327
+   "line": 13328
   },
   {
    "score": 8,
    "name": "planned_workspace_checks",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13918
+   "line": 13919
   },
   {
    "score": 8,
    "name": "promote_sandbox_candidate",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15183
+   "line": 15184
   },
   {
    "score": 8,
    "name": "put_gateway_approvals",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15719
+   "line": 15720
   },
   {
    "score": 8,
    "name": "start_bestofn",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20194
+   "line": 20195
   },
   {
    "score": 8,
    "name": "background_work_allowed",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21049
+   "line": 21050
   },
   {
    "score": 8,
    "name": "reap_launches_at",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21333
+   "line": 21334
   },
   {
    "score": 8,
@@ -3105,9 +3111,15 @@
   },
   {
    "score": 8,
+   "name": "packet_transcript",
+   "file": "crates/vak-session/src/log.rs",
+   "line": 2952
+  },
+  {
+   "score": 8,
    "name": "derive_selected_checked_at",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3235
+   "line": 3330
   },
   {
    "score": 8,
@@ -3185,7 +3197,7 @@
    "score": 7,
    "name": "begin_managed_tool_item",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8448
+   "line": 7741
   },
   {
    "score": 7,
@@ -3219,15 +3231,9 @@
   },
   {
    "score": 7,
-   "name": "plan_selected",
-   "file": "crates/vak-context/src/planner.rs",
-   "line": 66
-  },
-  {
-   "score": 7,
    "name": "refusing",
    "file": "crates/vak-control/src/lib.rs",
-   "line": 292
+   "line": 291
   },
   {
    "score": 7,
@@ -3293,7 +3299,7 @@
    "score": 7,
    "name": "stream_with_first_token_latency",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5942
+   "line": 5939
   },
   {
    "score": 7,
@@ -3311,19 +3317,19 @@
    "score": 7,
    "name": "build_steps",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 218
+   "line": 220
   },
   {
    "score": 7,
    "name": "build_comparison",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 802
+   "line": 804
   },
   {
    "score": 7,
    "name": "from_library",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 2319
+   "line": 2344
   },
   {
    "score": 7,
@@ -3623,43 +3629,43 @@
    "score": 7,
    "name": "session_result",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8028
+   "line": 8029
   },
   {
    "score": 7,
    "name": "presentation_feedback",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8255
+   "line": 8256
   },
   {
    "score": 7,
    "name": "list_providers",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16492
+   "line": 16493
   },
   {
    "score": 7,
    "name": "discover_models",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16599
+   "line": 16600
   },
   {
    "score": 7,
    "name": "put_bus_config",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16957
+   "line": 16958
   },
   {
    "score": 7,
    "name": "route_backups_from_patch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17850
+   "line": 17851
   },
   {
    "score": 7,
    "name": "session_pr",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20732
+   "line": 20733
   },
   {
    "score": 7,
@@ -3695,7 +3701,7 @@
    "score": 7,
    "name": "project_frame",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2840
+   "line": 2881
   },
   {
    "score": 7,
@@ -3761,7 +3767,7 @@
    "score": 7,
    "name": "tail_work_contract",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3612
+   "line": 3723
   },
   {
    "score": 7,
@@ -3779,7 +3785,7 @@
    "score": 7,
    "name": "strip_duplicate_fences",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1087
+   "line": 1210
   },
   {
    "score": 7,
@@ -3867,12 +3873,6 @@
   },
   {
    "score": 6,
-   "name": "plan_forms",
-   "file": "crates/vak-agent/src/cards.rs",
-   "line": 49
-  },
-  {
-   "score": 6,
    "name": "vak_fence_bodies",
    "file": "crates/vak-agent/src/fences.rs",
    "line": 14
@@ -3881,55 +3881,49 @@
    "score": 6,
    "name": "record_call_effects",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3870
-  },
-  {
-   "score": 6,
-   "name": "write_fence_presentations",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 4049
+   "line": 3570
   },
   {
    "score": 6,
    "name": "tool_succeeded_for_item",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4771
+   "line": 4555
   },
   {
    "score": 6,
    "name": "turn_reads",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4961
+   "line": 4745
   },
   {
    "score": 6,
    "name": "write_handoff",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5114
+   "line": 4898
   },
   {
    "score": 6,
    "name": "hold",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5317
+   "line": 5074
   },
   {
    "score": 6,
    "name": "resolve_topics",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 6517
+   "line": 6146
   },
   {
    "score": 6,
    "name": "begin_managed_tool_item",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8464
+   "line": 7757
   },
   {
    "score": 6,
    "name": "extract_tool_calls",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10553
+   "line": 9788
   },
   {
    "score": 6,
@@ -3948,6 +3942,12 @@
    "name": "converge",
    "file": "crates/vak-context/src/capacity.rs",
    "line": 636
+  },
+  {
+   "score": 6,
+   "name": "render",
+   "file": "crates/vak-control/src/correct.rs",
+   "line": 310
   },
   {
    "score": 6,
@@ -4061,7 +4061,7 @@
    "score": 6,
    "name": "model_context_cached",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5153
+   "line": 5150
   },
   {
    "score": 6,
@@ -4097,13 +4097,13 @@
    "score": 6,
    "name": "fill_steps",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 308
+   "line": 310
   },
   {
    "score": 6,
    "name": "unique_table_labels",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 689
+   "line": 691
   },
   {
    "score": 6,
@@ -4241,7 +4241,7 @@
    "score": 6,
    "name": "evaluate_response_with_failures",
    "file": "crates/vak-judge/src/outcome.rs",
-   "line": 119
+   "line": 116
   },
   {
    "score": 6,
@@ -4583,85 +4583,85 @@
    "score": 6,
    "name": "run",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5004
+   "line": 5005
   },
   {
    "score": 6,
    "name": "run_turn_chain",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5291
+   "line": 5292
   },
   {
    "score": 6,
    "name": "create_coworking_invitation",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9405
+   "line": 9406
   },
   {
    "score": 6,
    "name": "onboarding_state",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9645
+   "line": 9646
   },
   {
    "score": 6,
    "name": "restore_checkpoint",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10502
+   "line": 10503
   },
   {
    "score": 6,
    "name": "erase_install",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11529
+   "line": 11530
   },
   {
    "score": 6,
    "name": "list_social_connectors",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12411
+   "line": 12412
   },
   {
    "score": 6,
    "name": "confined_path",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13158
+   "line": 13159
   },
   {
    "score": 6,
    "name": "export_sandbox_candidate",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13998
+   "line": 13999
   },
   {
    "score": 6,
    "name": "sandbox_candidate_file_bytes",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14129
+   "line": 14130
   },
   {
    "score": 6,
    "name": "put_permission_rules",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15901
+   "line": 15902
   },
   {
    "score": 6,
    "name": "create_preview",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18832
+   "line": 18833
   },
   {
    "score": 6,
    "name": "fs_tree",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19960
+   "line": 19961
   },
   {
    "score": 6,
    "name": "spawn_isolated_run",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20417
+   "line": 20418
   },
   {
    "score": 6,
@@ -4779,45 +4779,39 @@
   },
   {
    "score": 6,
-   "name": "packet_transcript",
-   "file": "crates/vak-session/src/log.rs",
-   "line": 2894
-  },
-  {
-   "score": 6,
    "name": "retrieve_relevant_entries",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3756
+   "line": 3867
   },
   {
    "score": 6,
    "name": "from_activity_data",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 246
+   "line": 289
   },
   {
    "score": 6,
    "name": "full_record",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 911
+   "line": 1033
   },
   {
    "score": 6,
    "name": "evidence_shape",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1206
+   "line": 1329
   },
   {
    "score": 6,
    "name": "first_sentence",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1365
+   "line": 1488
   },
   {
    "score": 6,
    "name": "line",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1564
+   "line": 1693
   },
   {
    "score": 6,
@@ -4847,7 +4841,7 @@
    "score": 6,
    "name": "write_response",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1138
+   "line": 1134
   },
   {
    "score": 6,
@@ -4913,85 +4907,91 @@
    "score": 5,
    "name": "close_turn",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4147
+   "line": 3932
   },
   {
    "score": 5,
    "name": "run_judge",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5060
+   "line": 4844
   },
   {
    "score": 5,
    "name": "workers_gate",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5229
+   "line": 4986
   },
   {
    "score": 5,
    "name": "regenerate_arguments",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7190
+   "line": 6819
   },
   {
    "score": 5,
    "name": "note_files_before",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7242
+   "line": 6871
   },
   {
    "score": 5,
    "name": "with_changes_made",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7318
+   "line": 6920
+  },
+  {
+   "score": 5,
+   "name": "with_changes_made",
+   "file": "crates/vak-agent/src/lib.rs",
+   "line": 6948
   },
   {
    "score": 5,
    "name": "finish_managed_tool_item",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8535
+   "line": 7828
   },
   {
    "score": 5,
    "name": "resolve_verification_stale",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8711
+   "line": 8004
   },
   {
    "score": 5,
    "name": "validate_work_paths",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9096
+   "line": 8389
   },
   {
    "score": 5,
    "name": "tool_call_span",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9158
+   "line": 8451
   },
   {
    "score": 5,
    "name": "cited",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9814
+   "line": 9107
   },
   {
    "score": 5,
    "name": "ask_unless_cancelled",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10058
+   "line": 9296
   },
   {
    "score": 5,
    "name": "note_leg_failure",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10402
+   "line": 9640
   },
   {
    "score": 5,
    "name": "extract_tool_call_blocks",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10626
+   "line": 9861
   },
   {
    "score": 5,
@@ -5195,19 +5195,19 @@
    "score": 5,
    "name": "list_models",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5085
+   "line": 5082
   },
   {
    "score": 5,
    "name": "route_context_limits",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5270
+   "line": 5267
   },
   {
    "score": 5,
    "name": "maybe_start_capacity_probe",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5479
+   "line": 5476
   },
   {
    "score": 5,
@@ -5231,13 +5231,13 @@
    "score": 5,
    "name": "build_chart",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1005
+   "line": 1007
   },
   {
    "score": 5,
    "name": "fill_table_from",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1793
+   "line": 1796
   },
   {
    "score": 5,
@@ -5939,127 +5939,127 @@
    "score": 5,
    "name": "presentation_snapshot",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7955
+   "line": 7956
   },
   {
    "score": 5,
    "name": "list_checkpoints",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10462
+   "line": 10463
   },
   {
    "score": 5,
    "name": "erase_person",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11442
+   "line": 11443
   },
   {
    "score": 5,
    "name": "list_retired_plugins",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11862
+   "line": 11863
   },
   {
    "score": 5,
    "name": "activate_all_presentations",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12266
+   "line": 12267
   },
   {
    "score": 5,
    "name": "deactivate_all_presentations",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12296
+   "line": 12297
   },
   {
    "score": 5,
    "name": "read_office_projection",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13294
+   "line": 13295
   },
   {
    "score": 5,
    "name": "write_file",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13513
+   "line": 13514
   },
   {
    "score": 5,
    "name": "execution_artifact_path",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13613
+   "line": 13614
   },
   {
    "score": 5,
    "name": "session_sandbox_executions",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13735
+   "line": 13736
   },
   {
    "score": 5,
    "name": "javascript_package_manager",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13898
+   "line": 13899
   },
   {
    "score": 5,
    "name": "successful_office_calls",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14204
+   "line": 14205
   },
   {
    "score": 5,
    "name": "office_lineage",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14282
+   "line": 14283
   },
   {
    "score": 5,
    "name": "read_sandbox_candidate_office_projection",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14520
+   "line": 14521
   },
   {
    "score": 5,
    "name": "narrow_sandbox_candidate_office",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14624
+   "line": 14625
   },
   {
    "score": 5,
    "name": "apply_permission_mode",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16021
+   "line": 16022
   },
   {
    "score": 5,
    "name": "route_same_model_suggestions",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16663
+   "line": 16664
   },
   {
    "score": 5,
    "name": "keep_best_run",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20628
+   "line": 20629
   },
   {
    "score": 5,
    "name": "pr_merge",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20819
+   "line": 20820
   },
   {
    "score": 5,
    "name": "scheduler_tick",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20993
+   "line": 20994
   },
   {
    "score": 5,
    "name": "wait_for_port",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21699
+   "line": 21700
   },
   {
    "score": 5,
@@ -6287,7 +6287,7 @@
    "score": 5,
    "name": "current_turn_index_at",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2650
+   "line": 2712
   },
   {
    "score": 5,
@@ -6347,19 +6347,19 @@
    "score": 5,
    "name": "verify_targets",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1174
+   "line": 1170
   },
   {
    "score": 5,
    "name": "preview_mail_attachment_in_worker",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1367
+   "line": 1363
   },
   {
    "score": 5,
    "name": "run_task",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1804
+   "line": 1800
   },
   {
    "score": 5,
@@ -6401,7 +6401,7 @@
    "score": 5,
    "name": "conflicts",
    "file": "crates/vak-tools/src/lib.rs",
-   "line": 655
+   "line": 648
   },
   {
    "score": 5,
@@ -6449,73 +6449,61 @@
    "score": 4,
    "name": "record_ending",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1687
+   "line": 1662
   },
   {
    "score": 4,
    "name": "promote",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3849
+   "line": 3549
   },
   {
    "score": 4,
    "name": "emit_work_state",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4405
+   "line": 4189
   },
   {
    "score": 4,
    "name": "record_managed_criterion",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4723
+   "line": 4507
   },
   {
    "score": 4,
    "name": "run_audit_command",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4995
-  },
-  {
-   "score": 4,
-   "name": "detect_model_drift",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 5711
+   "line": 4779
   },
   {
    "score": 4,
    "name": "resolve_topics",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 6556
-  },
-  {
-   "score": 4,
-   "name": "with_changes_made",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 7291
+   "line": 6185
   },
   {
    "score": 4,
    "name": "inject_repair_directive",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9759
+   "line": 9052
   },
   {
    "score": 4,
    "name": "provenance_gate",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10090
+   "line": 9328
   },
   {
    "score": 4,
    "name": "assign_unique_tool_use_ids",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10443
+   "line": 9681
   },
   {
    "score": 4,
    "name": "json_to_tool_call",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10659
+   "line": 9894
   },
   {
    "score": 4,
@@ -6705,12 +6693,6 @@
   },
   {
    "score": 4,
-   "name": "plan",
-   "file": "crates/vak-context/src/planner.rs",
-   "line": 31
-  },
-  {
-   "score": 4,
    "name": "brief",
    "file": "crates/vak-core/src/ability_review.rs",
    "line": 185
@@ -6875,43 +6857,43 @@
    "score": 4,
    "name": "provider_auth_for",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4446
+   "line": 4443
   },
   {
    "score": 4,
    "name": "invalidate_models_cache",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6016
+   "line": 6013
   },
   {
    "score": 4,
    "name": "build_sandbox",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 8629
+   "line": 8591
   },
   {
    "score": 4,
    "name": "build_execution_sandbox",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 8702
+   "line": 8664
   },
   {
    "score": 4,
    "name": "rule_specs_from",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 9895
+   "line": 9857
   },
   {
    "score": 4,
    "name": "interpolate_env_var_with",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10249
+   "line": 10211
   },
   {
    "score": 4,
    "name": "mcp_config_section",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10323
+   "line": 10285
   },
   {
    "score": 4,
@@ -7019,49 +7001,49 @@
    "score": 4,
    "name": "close_records",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 91
+   "line": 93
   },
   {
    "score": 4,
    "name": "copy",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 116
+   "line": 118
   },
   {
    "score": 4,
    "name": "fill_list",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 371
+   "line": 373
   },
   {
    "score": 4,
    "name": "markdown_cells",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 716
+   "line": 718
   },
   {
    "score": 4,
    "name": "fill_table",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 752
+   "line": 754
   },
   {
    "score": 4,
    "name": "fill_comparison",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 878
+   "line": 880
   },
   {
    "score": 4,
    "name": "chart_summary",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1108
+   "line": 1110
   },
   {
    "score": 4,
    "name": "fill_map",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1301
+   "line": 1303
   },
   {
    "score": 4,
@@ -7494,12 +7476,6 @@
    "name": "median",
    "file": "crates/vak-judge/src/measure.rs",
    "line": 217
-  },
-  {
-   "score": 4,
-   "name": "gap",
-   "file": "crates/vak-judge/src/plan.rs",
-   "line": 83
   },
   {
    "score": 4,
@@ -8519,295 +8495,295 @@
    "score": 4,
    "name": "http_settle",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5381
+   "line": 5382
   },
   {
    "score": 4,
    "name": "record_outcome_review",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6964
+   "line": 6965
   },
   {
    "score": 4,
    "name": "select_presentation_for_session",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8159
+   "line": 8160
   },
   {
    "score": 4,
    "name": "transcript",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8358
+   "line": 8359
   },
   {
    "score": 4,
    "name": "context_links",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8682
+   "line": 8683
   },
   {
    "score": 4,
    "name": "transcript_markdown",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8799
+   "line": 8800
   },
   {
    "score": 4,
    "name": "backup_export",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9904
+   "line": 9905
   },
   {
    "score": 4,
    "name": "backup_import",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9944
+   "line": 9945
   },
   {
    "score": 4,
    "name": "erasure_preview",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10728
+   "line": 10729
   },
   {
    "score": 4,
    "name": "erase_conversation",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10758
+   "line": 10759
   },
   {
    "score": 4,
    "name": "conversation_gone",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10800
+   "line": 10801
   },
   {
    "score": 4,
    "name": "retire_data_keys",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11131
+   "line": 11132
   },
   {
    "score": 4,
    "name": "guest_erasure_preview",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11288
+   "line": 11289
   },
   {
    "score": 4,
    "name": "erase_guest",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11311
+   "line": 11312
   },
   {
    "score": 4,
    "name": "erase_account",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11360
+   "line": 11361
   },
   {
    "score": 4,
    "name": "erase_project",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11627
+   "line": 11628
   },
   {
    "score": 4,
    "name": "conversation_lifecycle",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11689
+   "line": 11690
   },
   {
    "score": 4,
    "name": "propose_session_presentation_revision",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12126
+   "line": 12127
   },
   {
    "score": 4,
    "name": "list_plugins",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12373
+   "line": 12374
   },
   {
    "score": 4,
    "name": "plugin_audit",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12764
+   "line": 12765
   },
   {
    "score": 4,
    "name": "plugin_sources",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12780
+   "line": 12781
   },
   {
    "score": 4,
    "name": "plugin_disable",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13045
+   "line": 13046
   },
   {
    "score": 4,
    "name": "plugin_rollback",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13064
+   "line": 13065
   },
   {
    "score": 4,
    "name": "plugin_remove",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13084
+   "line": 13085
   },
   {
    "score": 4,
    "name": "upload_to_inbox",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13251
+   "line": 13252
   },
   {
    "score": 4,
    "name": "read_file_raw",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13412
+   "line": 13413
   },
   {
    "score": 4,
    "name": "read_execution_artifact",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13658
+   "line": 13659
   },
   {
    "score": 4,
    "name": "read_execution_artifact_office",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13704
+   "line": 13705
   },
   {
    "score": 4,
    "name": "sandbox_result_binding",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13837
+   "line": 13838
   },
   {
    "score": 4,
    "name": "revision_office_drafts",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14240
+   "line": 14241
   },
   {
    "score": 4,
    "name": "append_candidate_revision_activity",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14722
+   "line": 14723
   },
   {
    "score": 4,
    "name": "undo_sandbox_promotion",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15391
+   "line": 15392
   },
   {
    "score": 4,
    "name": "set_permission_mode",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15631
+   "line": 15632
   },
   {
    "score": 4,
    "name": "pause_agent",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16095
+   "line": 16096
   },
   {
    "score": 4,
    "name": "erase_agent",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16286
+   "line": 16287
   },
   {
    "score": 4,
    "name": "delete_provider_key",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16553
+   "line": 16554
   },
   {
    "score": 4,
    "name": "provider_status",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16731
+   "line": 16732
   },
   {
    "score": 4,
    "name": "put_provider_key",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16764
+   "line": 16765
   },
   {
    "score": 4,
    "name": "put_server_web_config",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16848
+   "line": 16849
   },
   {
    "score": 4,
    "name": "delete_bus_config",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17042
+   "line": 17043
   },
   {
    "score": 4,
    "name": "create_bot",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17115
+   "line": 17116
   },
   {
    "score": 4,
    "name": "get_config",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17382
+   "line": 17383
   },
   {
    "score": 4,
    "name": "agent_network_capability",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17604
+   "line": 17605
   },
   {
    "score": 4,
    "name": "put_owner_settings",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17972
+   "line": 17973
   },
   {
    "score": 4,
    "name": "shadowed_by_project",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18033
+   "line": 18034
   },
   {
    "score": 4,
    "name": "put_scoped_integration",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19735
+   "line": 19736
   },
   {
    "score": 4,
    "name": "get_launch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21544
+   "line": 21545
   },
   {
    "score": 4,
    "name": "read_capped_output",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21748
+   "line": 21749
   },
   {
    "score": 4,
    "name": "lease_launch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 22266
+   "line": 22267
   },
   {
    "score": 4,
@@ -8915,7 +8891,7 @@
    "score": 4,
    "name": "written_files",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2161
+   "line": 2202
   },
   {
    "score": 4,
@@ -9141,27 +9117,21 @@
   },
   {
    "score": 4,
-   "name": "recent_turn_card",
-   "file": "crates/vak-session/src/log.rs",
-   "line": 2620
-  },
-  {
-   "score": 4,
    "name": "latest_turn_view",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2760
+   "line": 2822
   },
   {
    "score": 4,
    "name": "tail_workspace_delta",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3558
+   "line": 3669
   },
   {
    "score": 4,
    "name": "tail_conversation_thread",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3654
+   "line": 3765
   },
   {
    "score": 4,
@@ -9183,45 +9153,57 @@
   },
   {
    "score": 4,
+   "name": "to_activity_data",
+   "file": "crates/vak-session/src/turns.rs",
+   "line": 235
+  },
+  {
+   "score": 4,
+   "name": "dialogue_record",
+   "file": "crates/vak-session/src/turns.rs",
+   "line": 988
+  },
+  {
+   "score": 4,
    "name": "full_record",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 954
+   "line": 1077
   },
   {
    "score": 4,
    "name": "evidence_digest",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1158
+   "line": 1281
   },
   {
    "score": 4,
    "name": "array_digest",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1248
+   "line": 1371
   },
   {
    "score": 4,
    "name": "object_digest",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1268
+   "line": 1391
   },
   {
    "score": 4,
    "name": "line",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1663
+   "line": 1792
   },
   {
    "score": 4,
    "name": "summarize_trace",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1684
+   "line": 1813
   },
   {
    "score": 4,
    "name": "summarize_trace",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1701
+   "line": 1830
   },
   {
    "score": 4,
@@ -9383,7 +9365,7 @@
    "score": 4,
    "name": "resolve_worker_command",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1981
+   "line": 1977
   },
   {
    "score": 4,
@@ -9509,217 +9491,199 @@
    "score": 3,
    "name": "base_tool_definitions",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1648
+   "line": 1623
   },
   {
    "score": 3,
    "name": "record_decisions",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1713
+   "line": 1688
   },
   {
    "score": 3,
    "name": "step_purpose",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1727
-  },
-  {
-   "score": 3,
-   "name": "record_framing",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 1743
+   "line": 1702
   },
   {
    "score": 3,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3420
+   "line": 3182
   },
   {
    "score": 3,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3487
+   "line": 3245
   },
   {
    "score": 3,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3501
+   "line": 3259
   },
   {
    "score": 3,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3673
+   "line": 3418
   },
   {
    "score": 3,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3732
+   "line": 3477
   },
   {
    "score": 3,
    "name": "grounded_now",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3820
+   "line": 3520
+  },
+  {
+   "score": 3,
+   "name": "write_fence_presentations",
+   "file": "crates/vak-agent/src/lib.rs",
+   "line": 3749
   },
   {
    "score": 3,
    "name": "managed_work_gate",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4476
+   "line": 4260
   },
   {
    "score": 3,
    "name": "verify_managed_criteria",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4635
+   "line": 4419
   },
   {
    "score": 3,
    "name": "verify_managed_criteria",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4654
+   "line": 4438
   },
   {
    "score": 3,
    "name": "tool_succeeded_for_item",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4808
-  },
-  {
-   "score": 3,
-   "name": "topics_placement_missing",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 5173
+   "line": 4592
   },
   {
    "score": 3,
    "name": "correct",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5298
+   "line": 5055
   },
   {
    "score": 3,
    "name": "guard_continue",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5351
+   "line": 5108
   },
   {
    "score": 3,
    "name": "changes_protected_path",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5431
+   "line": 5182
   },
   {
    "score": 3,
    "name": "append_incremental_compaction",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5503
+   "line": 5254
   },
   {
    "score": 3,
    "name": "capacity_activity_data",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5564
+   "line": 5315
   },
   {
    "score": 3,
    "name": "record_capacity_usage_feedback",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5591
+   "line": 5342
   },
   {
    "score": 3,
    "name": "execute_batch",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 6454
+   "line": 6083
   },
   {
    "score": 3,
    "name": "resolve_one",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 6909
+   "line": 6538
   },
   {
    "score": 3,
    "name": "with_changes_made",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7324
-  },
-  {
-   "score": 3,
-   "name": "with_command_output",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 7408
-  },
-  {
-   "score": 3,
-   "name": "with_command_output",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 7418
+   "line": 6954
   },
   {
    "score": 3,
    "name": "execute_batch_calls",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8180
+   "line": 7473
   },
   {
    "score": 3,
    "name": "lease_refusal",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8371
+   "line": 7664
   },
   {
    "score": 3,
    "name": "workspace_criterion_path",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9142
+   "line": 8435
   },
   {
    "score": 3,
    "name": "execute_one",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9481
+   "line": 8774
   },
   {
    "score": 3,
    "name": "execute_one",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9511
+   "line": 8804
   },
   {
    "score": 3,
    "name": "within",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9614
+   "line": 8907
   },
   {
    "score": 3,
    "name": "uncited_urls",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9813
+   "line": 9106
   },
   {
    "score": 3,
    "name": "remap_delegated_bindings",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10342
+   "line": 9580
   },
   {
    "score": 3,
    "name": "drain_pending_stream_events",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10719
+   "line": 9954
   },
   {
    "score": 3,
    "name": "queue_stream_event",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10743
+   "line": 9978
   },
   {
    "score": 3,
@@ -9987,39 +9951,33 @@
   },
   {
    "score": 3,
-   "name": "plan_for_session",
+   "name": "take",
    "file": "crates/vak-context/src/planner.rs",
-   "line": 118
+   "line": 125
   },
   {
    "score": 3,
    "name": "step",
    "file": "crates/vak-control/src/correct.rs",
-   "line": 117
+   "line": 99
   },
   {
    "score": 3,
    "name": "unknown_tool",
    "file": "crates/vak-control/src/correct.rs",
-   "line": 153
+   "line": 135
   },
   {
    "score": 3,
    "name": "card_data_not_found",
    "file": "crates/vak-control/src/correct.rs",
-   "line": 250
-  },
-  {
-   "score": 3,
-   "name": "card_unplanned",
-   "file": "crates/vak-control/src/correct.rs",
-   "line": 314
+   "line": 232
   },
   {
    "score": 3,
    "name": "honour",
    "file": "crates/vak-control/src/lib.rs",
-   "line": 266
+   "line": 265
   },
   {
    "score": 3,
@@ -10487,103 +10445,103 @@
    "score": 3,
    "name": "tool_declarations",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4193
+   "line": 4190
   },
   {
    "score": 3,
    "name": "provider_auth_pool_for",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4662
+   "line": 4659
   },
   {
    "score": 3,
    "name": "set_provider_key_scoped",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4821
+   "line": 4818
   },
   {
    "score": 3,
    "name": "remove_provider_key_scoped",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4860
+   "line": 4857
   },
   {
    "score": 3,
    "name": "known_limits",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5245
+   "line": 5242
   },
   {
    "score": 3,
    "name": "run_capacity_probe",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5810
+   "line": 5807
   },
   {
    "score": 3,
    "name": "turn_authority_for",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6454
+   "line": 6451
   },
   {
    "score": 3,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6934
+   "line": 6931
   },
   {
    "score": 3,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 7714
+   "line": 7711
   },
   {
    "score": 3,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 8024
+   "line": 8021
   },
   {
    "score": 3,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 8058
+   "line": 8053
   },
   {
    "score": 3,
    "name": "session_sandbox",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 8727
+   "line": 8689
   },
   {
    "score": 3,
    "name": "last_answer_id",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10066
+   "line": 10028
   },
   {
    "score": 3,
    "name": "normalize_capability_message",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10087
+   "line": 10049
   },
   {
    "score": 3,
    "name": "normalize_capability_message",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10105
+   "line": 10067
   },
   {
    "score": 3,
    "name": "hook_def",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10152
+   "line": 10114
   },
   {
    "score": 3,
    "name": "mcp_fingerprint",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10286
+   "line": 10248
   },
   {
    "score": 3,
@@ -10655,37 +10613,37 @@
    "score": 3,
    "name": "build_stats",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 922
+   "line": 924
   },
   {
    "score": 3,
    "name": "position",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1261
+   "line": 1263
   },
   {
    "score": 3,
    "name": "build_link",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1497
+   "line": 1499
   },
   {
    "score": 3,
    "name": "build_diff",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1631
+   "line": 1633
   },
   {
    "score": 3,
    "name": "fill_table_from",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1851
+   "line": 1854
   },
   {
    "score": 3,
    "name": "retain_packs",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 2363
+   "line": 2388
   },
   {
    "score": 3,
@@ -11274,12 +11232,6 @@
    "name": "evidence_state_from_age",
    "file": "crates/vak-judge/src/outcome.rs",
    "line": 20
-  },
-  {
-   "score": 3,
-   "name": "gap",
-   "file": "crates/vak-judge/src/plan.rs",
-   "line": 125
   },
   {
    "score": 3,
@@ -12551,7 +12503,7 @@
    "score": 3,
    "name": "ensure_registered",
    "file": "crates/vak-server/src/agent_chats.rs",
-   "line": 301
+   "line": 307
   },
   {
    "score": 3,
@@ -12917,697 +12869,697 @@
    "score": 3,
    "name": "list_sessions",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 4694
+   "line": 4695
   },
   {
    "score": 3,
    "name": "wait_for_external_subscriber",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5258
+   "line": 5259
   },
   {
    "score": 3,
    "name": "flush_buffered",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5387
+   "line": 5388
   },
   {
    "score": 3,
    "name": "compact_session",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6039
+   "line": 6040
   },
   {
    "score": 3,
    "name": "cancel_run",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6408
+   "line": 6409
   },
   {
    "score": 3,
    "name": "apply_plan_change",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6524
+   "line": 6525
   },
   {
    "score": 3,
    "name": "record_activity_or_buffer",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6763
+   "line": 6764
   },
   {
    "score": 3,
    "name": "steer_worker",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6864
+   "line": 6865
   },
   {
    "score": 3,
    "name": "stop_worker",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6926
+   "line": 6927
   },
   {
    "score": 3,
    "name": "record_outcome_review",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7000
+   "line": 7001
   },
   {
    "score": 3,
    "name": "answer_approval",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7044
+   "line": 7045
   },
   {
    "score": 3,
    "name": "flow_run_counts",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7682
+   "line": 7683
   },
   {
    "score": 3,
    "name": "admits",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7729
+   "line": 7730
   },
   {
    "score": 3,
    "name": "data_read",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7739
+   "line": 7740
   },
   {
    "score": 3,
    "name": "events_sse",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7915
+   "line": 7916
   },
   {
    "score": 3,
    "name": "presentation_events_sse",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8319
+   "line": 8320
   },
   {
    "score": 3,
    "name": "rejected_draft_entry_ids",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8570
+   "line": 8571
   },
   {
    "score": 3,
    "name": "context_links_json",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8706
+   "line": 8707
   },
   {
    "score": 3,
    "name": "coworking_me",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8894
+   "line": 8895
   },
   {
    "score": 3,
    "name": "create_coworking_message",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8971
+   "line": 8972
   },
   {
    "score": 3,
    "name": "coworking_presence",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9269
+   "line": 9270
   },
   {
    "score": 3,
    "name": "coworking_updates",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9357
+   "line": 9358
   },
   {
    "score": 3,
    "name": "list_coworking_invitations",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9383
+   "line": 9384
   },
   {
    "score": 3,
    "name": "session_node",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9526
+   "line": 9527
   },
   {
    "score": 3,
    "name": "onboarding_seed",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9707
+   "line": 9708
   },
   {
    "score": 3,
    "name": "onboarding_first_task",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9804
+   "line": 9805
   },
   {
    "score": 3,
    "name": "backup_restore_preview",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9877
+   "line": 9878
   },
   {
    "score": 3,
    "name": "list_commitments",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10187
+   "line": 10188
   },
   {
    "score": 3,
    "name": "get_commitment",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10215
+   "line": 10216
   },
   {
    "score": 3,
    "name": "close_commitment",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10250
+   "line": 10251
   },
   {
    "score": 3,
    "name": "inbox_list",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10348
+   "line": 10349
   },
   {
    "score": 3,
    "name": "inbox_ack",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10373
+   "line": 10374
   },
   {
    "score": 3,
    "name": "git_output",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10402
+   "line": 10403
   },
   {
    "score": 3,
    "name": "session_diff",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10417
+   "line": 10418
   },
   {
    "score": 3,
    "name": "delete_session",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10618
+   "line": 10619
   },
   {
    "score": 3,
    "name": "erasure_refused",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10697
+   "line": 10698
   },
   {
    "score": 3,
    "name": "hold_conversation",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10852
+   "line": 10853
   },
   {
    "score": 3,
    "name": "sync_refused",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10872
+   "line": 10873
   },
   {
    "score": 3,
    "name": "sync_call",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10900
+   "line": 10901
   },
   {
    "score": 3,
    "name": "sync_status",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10914
+   "line": 10915
   },
   {
    "score": 3,
    "name": "sync_now",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10949
+   "line": 10950
   },
   {
    "score": 3,
    "name": "sync_handover",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10958
+   "line": 10959
   },
   {
    "score": 3,
    "name": "sync_takeover",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10975
+   "line": 10976
   },
   {
    "score": 3,
    "name": "sync_key_export",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11022
+   "line": 11023
   },
   {
    "score": 3,
    "name": "sync_key_import",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11036
+   "line": 11037
   },
   {
    "score": 3,
    "name": "data_keys",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11056
+   "line": 11057
   },
   {
    "score": 3,
    "name": "eval_ledgers",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11067
+   "line": 11068
   },
   {
    "score": 3,
    "name": "review_proposal",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11083
+   "line": 11084
   },
   {
    "score": 3,
    "name": "rotate_data_keys",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11106
+   "line": 11107
   },
   {
    "score": 3,
    "name": "preview_data_rules",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11195
+   "line": 11196
   },
   {
    "score": 3,
    "name": "set_data_rules",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11209
+   "line": 11210
   },
   {
    "score": 3,
    "name": "conversation_guests",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11260
+   "line": 11261
   },
   {
    "score": 3,
    "name": "person_erasure_preview",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11412
+   "line": 11413
   },
   {
    "score": 3,
    "name": "install_erasure_preview",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11512
+   "line": 11513
   },
   {
    "score": 3,
    "name": "project_erasure_preview",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11609
+   "line": 11610
   },
   {
    "score": 3,
    "name": "delete_all_archived",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11715
+   "line": 11716
   },
   {
    "score": 3,
    "name": "list_skills",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11773
+   "line": 11774
   },
   {
    "score": 3,
    "name": "import_presentations",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11996
+   "line": 11997
   },
   {
    "score": 3,
    "name": "get_presentation_spec",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12034
+   "line": 12035
   },
   {
    "score": 3,
    "name": "propose_session_presentation_revision",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12104
+   "line": 12105
   },
   {
    "score": 3,
    "name": "deactivate_presentation",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12235
+   "line": 12236
   },
   {
    "score": 3,
    "name": "reset_presentation",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12331
+   "line": 12332
   },
   {
    "score": 3,
    "name": "save_youtube_key",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12526
+   "line": 12527
   },
   {
    "score": 3,
    "name": "remove_youtube_key",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12554
+   "line": 12555
   },
   {
    "score": 3,
    "name": "youtube_search_preview",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12708
+   "line": 12709
   },
   {
    "score": 3,
    "name": "install_social_connector",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12726
+   "line": 12727
   },
   {
    "score": 3,
    "name": "plugin_catalog_install",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12978
+   "line": 12979
   },
   {
    "score": 3,
    "name": "read_refusal",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13132
+   "line": 13133
   },
   {
    "score": 3,
    "name": "view",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13229
+   "line": 13230
   },
   {
    "score": 3,
    "name": "read_file_raw",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13442
+   "line": 13443
   },
   {
    "score": 3,
    "name": "read_execution_artifact_raw",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13677
+   "line": 13678
   },
   {
    "score": 3,
    "name": "sandbox_execution_scratch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13880
+   "line": 13881
   },
   {
    "score": 3,
    "name": "planned_workspace_checks",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13921
+   "line": 13922
   },
   {
    "score": 3,
    "name": "sandbox_candidate_file_bytes",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14139
+   "line": 14140
   },
   {
    "score": 3,
    "name": "saved_candidate",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14183
+   "line": 14184
   },
   {
    "score": 3,
    "name": "narrow_sandbox_candidate_office",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14609
+   "line": 14610
   },
   {
    "score": 3,
    "name": "dispatch_candidate_revision",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14802
+   "line": 14803
   },
   {
    "score": 3,
    "name": "dispatch_candidate_revision",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14820
+   "line": 14821
   },
   {
    "score": 3,
    "name": "promote_sandbox_candidate",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15216
+   "line": 15217
   },
   {
    "score": 3,
    "name": "promote_sandbox_candidate",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15219
+   "line": 15220
   },
   {
    "score": 3,
    "name": "record_promoted_files",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15358
+   "line": 15359
   },
   {
    "score": 3,
    "name": "record_promoted_files",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15361
+   "line": 15362
   },
   {
    "score": 3,
    "name": "undo_sandbox_promotion",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15407
+   "line": 15408
   },
   {
    "score": 3,
    "name": "undo_sandbox_promotion",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15417
+   "line": 15418
   },
   {
    "score": 3,
    "name": "run_sandbox_workspace_check",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15487
+   "line": 15488
   },
   {
    "score": 3,
    "name": "run_sandbox_workspace_check",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15490
+   "line": 15491
   },
   {
    "score": 3,
    "name": "run_sandbox_workspace_check",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15500
+   "line": 15501
   },
   {
    "score": 3,
    "name": "resume_agent",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16151
+   "line": 16152
   },
   {
    "score": 3,
    "name": "agent_erasure_preview",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16268
+   "line": 16269
   },
   {
    "score": 3,
    "name": "stop_agent_runs",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16429
+   "line": 16430
   },
   {
    "score": 3,
    "name": "get_global_config_layer",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17563
+   "line": 17564
   },
   {
    "score": 3,
    "name": "get_workspace_config_layer",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17579
+   "line": 17580
   },
   {
    "score": 3,
    "name": "patch_evidence_policy",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17930
+   "line": 17931
   },
   {
    "score": 3,
    "name": "get_mcp_servers",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18565
+   "line": 18566
   },
   {
    "score": 3,
    "name": "put_prompt_block",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18651
+   "line": 18652
   },
   {
    "score": 3,
    "name": "get_agents",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18712
+   "line": 18713
   },
   {
    "score": 3,
    "name": "instantiate_agent_template",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18760
+   "line": 18761
   },
   {
    "score": 3,
    "name": "preview_prompt",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19044
+   "line": 19045
   },
   {
    "score": 3,
    "name": "get_hooks",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19088
+   "line": 19089
   },
   {
    "score": 3,
    "name": "get_control_layer",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19145
+   "line": 19146
   },
   {
    "score": 3,
    "name": "put_control_layer",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19204
+   "line": 19205
   },
   {
    "score": 3,
    "name": "validated_hook_configs",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19298
+   "line": 19299
   },
   {
    "score": 3,
    "name": "get_integration_catalog",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19667
+   "line": 19668
   },
   {
    "score": 3,
    "name": "delete_scoped_integration",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19793
+   "line": 19794
   },
   {
    "score": 3,
    "name": "validate_mcp_servers",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19889
+   "line": 19890
   },
   {
    "score": 3,
    "name": "last_assistant_text",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20863
+   "line": 20864
   },
   {
    "score": 3,
    "name": "split_model_pin",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20893
+   "line": 20894
   },
   {
    "score": 3,
    "name": "stdout_section",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20919
+   "line": 20920
   },
   {
    "score": 3,
    "name": "push_to_remote",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21033
+   "line": 21034
   },
   {
    "score": 3,
    "name": "start_scheduler",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21083
+   "line": 21084
   },
   {
    "score": 3,
    "name": "launch_viewer",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21307
+   "line": 21308
   },
   {
    "score": 3,
    "name": "stop_process",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21323
+   "line": 21324
   },
   {
    "score": 3,
    "name": "saved_launch_candidate",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21663
+   "line": 21664
   },
   {
    "score": 3,
    "name": "dependency_install_command",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21728
+   "line": 21729
   },
   {
    "score": 3,
    "name": "release_launch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 22299
+   "line": 22300
   },
   {
    "score": 3,
    "name": "stop_launch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 22322
+   "line": 22323
   },
   {
    "score": 3,
@@ -13823,13 +13775,13 @@
    "score": 3,
    "name": "snapshot_inner",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 1155
+   "line": 1156
   },
   {
    "score": 3,
    "name": "media_type_for_path",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2193
+   "line": 2234
   },
   {
    "score": 3,
@@ -14127,45 +14079,63 @@
   },
   {
    "score": 3,
+   "name": "visible_turn_cards_rev",
+   "file": "crates/vak-session/src/log.rs",
+   "line": 2641
+  },
+  {
+   "score": 3,
+   "name": "visible_turn_cards_rev",
+   "file": "crates/vak-session/src/log.rs",
+   "line": 2645
+  },
+  {
+   "score": 3,
+   "name": "packets_from",
+   "file": "crates/vak-session/src/log.rs",
+   "line": 2690
+  },
+  {
+   "score": 3,
    "name": "chain_to_root",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2703
+   "line": 2765
   },
   {
    "score": 3,
    "name": "reset_boundary",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2853
+   "line": 2915
   },
   {
    "score": 3,
    "name": "derive_with_plan_indexed",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3010
+   "line": 3083
   },
   {
    "score": 3,
    "name": "tail_card_marks",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3533
+   "line": 3644
   },
   {
    "score": 3,
    "name": "tail_workspace_delta",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3575
+   "line": 3686
   },
   {
    "score": 3,
    "name": "current_intent_record",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3685
+   "line": 3796
   },
   {
    "score": 3,
    "name": "total_usage",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3731
+   "line": 3842
   },
   {
    "score": 3,
@@ -14199,75 +14169,69 @@
   },
   {
    "score": 3,
-   "name": "to_activity_data",
-   "file": "crates/vak-session/src/turns.rs",
-   "line": 198
-  },
-  {
-   "score": 3,
    "name": "from_intent",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 318
+   "line": 365
   },
   {
    "score": 3,
    "name": "add_links",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 444
+   "line": 491
   },
   {
    "score": 3,
    "name": "ensure_cards",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 754
+   "line": 801
   },
   {
    "score": 3,
    "name": "search",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 796
+   "line": 843
   },
   {
    "score": 3,
    "name": "tool_use",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 830
+   "line": 877
   },
   {
    "score": 3,
    "name": "transcript_result",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1186
+   "line": 1309
   },
   {
    "score": 3,
    "name": "text_digest",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1283
+   "line": 1406
   },
   {
    "score": 3,
    "name": "bash_digest",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1318
+   "line": 1441
   },
   {
    "score": 3,
    "name": "args_digest",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1341
+   "line": 1464
   },
   {
    "score": 3,
    "name": "index_text",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1527
+   "line": 1650
   },
   {
    "score": 3,
    "name": "canonicalize_json",
    "file": "crates/vak-session/src/types.rs",
-   "line": 977
+   "line": 979
   },
   {
    "score": 3,
@@ -14489,31 +14453,31 @@
    "score": 3,
    "name": "execute",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 509
+   "line": 505
   },
   {
    "score": 3,
    "name": "run_capability",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 580
+   "line": 576
   },
   {
    "score": 3,
    "name": "office_review_in_worker",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1729
+   "line": 1725
   },
   {
    "score": 3,
    "name": "verification_sandbox",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1921
+   "line": 1917
   },
   {
    "score": 3,
    "name": "shell_quote",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1956
+   "line": 1952
   },
   {
    "score": 3,
@@ -14609,7 +14573,7 @@
    "score": 3,
    "name": "normalize_scope",
    "file": "crates/vak-tools/src/lib.rs",
-   "line": 683
+   "line": 676
   },
   {
    "score": 3,
@@ -14667,15 +14631,9 @@
   },
   {
    "score": 2,
-   "name": "accept",
-   "file": "crates/vak-agent/src/cards.rs",
-   "line": 27
-  },
-  {
-   "score": 2,
    "name": "owner",
    "file": "crates/vak-agent/src/cards.rs",
-   "line": 94
+   "line": 14
   },
   {
    "score": 2,
@@ -14783,421 +14741,397 @@
    "score": 2,
    "name": "new",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1530
+   "line": 1512
   },
   {
    "score": 2,
    "name": "build_working_set_plan",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1571
+   "line": 1546
   },
   {
    "score": 2,
    "name": "effective_capacity_profile",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1587
+   "line": 1562
   },
   {
    "score": 2,
    "name": "normalize_input",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1614
+   "line": 1589
   },
   {
    "score": 2,
    "name": "record_decision",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1705
+   "line": 1680
+  },
+  {
+   "score": 2,
+   "name": "record_framing",
+   "file": "crates/vak-agent/src/lib.rs",
+   "line": 1718
   },
   {
    "score": 2,
    "name": "run",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 1784
+   "line": 1756
   },
   {
    "score": 2,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3012
+   "line": 2917
   },
   {
    "score": 2,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3092
+   "line": 3162
   },
   {
    "score": 2,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3400
+   "line": 3219
   },
   {
    "score": 2,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3461
+   "line": 3287
   },
   {
    "score": 2,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3529
+   "line": 3292
   },
   {
    "score": 2,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3534
+   "line": 3296
   },
   {
    "score": 2,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3538
+   "line": 3379
   },
   {
    "score": 2,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3634
+   "line": 3425
   },
   {
    "score": 2,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3680
+   "line": 3439
   },
   {
    "score": 2,
    "name": "run_message_inner",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3694
-  },
-  {
-   "score": 2,
-   "name": "run_message_inner",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 3701
+   "line": 3446
   },
   {
    "score": 2,
    "name": "record_delegated_cards",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 3926
+   "line": 3626
   },
   {
    "score": 2,
    "name": "note_held",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4121
+   "line": 3812
   },
   {
    "score": 2,
    "name": "close_turn",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4157
+   "line": 3942
   },
   {
    "score": 2,
    "name": "start_managed_contract",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4297
+   "line": 4081
   },
   {
    "score": 2,
    "name": "managed_work_gate",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4493
+   "line": 4277
   },
   {
    "score": 2,
    "name": "verify_managed_criteria",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4674
+   "line": 4458
   },
   {
    "score": 2,
    "name": "verify_managed_criteria",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4692
+   "line": 4476
   },
   {
    "score": 2,
    "name": "tool_succeeded_for_item",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 4783
+   "line": 4567
   },
   {
    "score": 2,
    "name": "stop_gate",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5202
+   "line": 4959
   },
   {
    "score": 2,
    "name": "record_turn_context",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5272
+   "line": 5029
   },
   {
    "score": 2,
    "name": "into_session",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5366
+   "line": 5123
   },
   {
    "score": 2,
    "name": "changes_protected_path",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5439
+   "line": 5190
   },
   {
    "score": 2,
    "name": "append_assistant",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5465
+   "line": 5216
   },
   {
    "score": 2,
    "name": "record_activity",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5537
+   "line": 5288
   },
   {
    "score": 2,
    "name": "lower_horizon_for_rejection",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5640
+   "line": 5391
   },
   {
    "score": 2,
    "name": "record_capacity_instruction_failure",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 5674
-  },
-  {
-   "score": 2,
-   "name": "detect_model_drift",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 5729
-  },
-  {
-   "score": 2,
-   "name": "execute_batch",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 6382
+   "line": 5425
   },
   {
    "score": 2,
    "name": "record_card_verdict",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 6725
+   "line": 6354
   },
   {
    "score": 2,
    "name": "resolve_one",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 6815
+   "line": 6444
   },
   {
    "score": 2,
    "name": "resolve_one",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 6855
+   "line": 6484
   },
   {
    "score": 2,
    "name": "note_files_before",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7245
+   "line": 6874
   },
   {
    "score": 2,
    "name": "note_files_before",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7259
+   "line": 6888
   },
   {
    "score": 2,
    "name": "workspace_cwd",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7277
+   "line": 6906
   },
   {
    "score": 2,
    "name": "show_card",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7870
+   "line": 7193
   },
   {
    "score": 2,
    "name": "repeat_outcome",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 7969
+   "line": 7263
   },
   {
    "score": 2,
    "name": "execute_work_call",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8385
+   "line": 7678
   },
   {
    "score": 2,
    "name": "begin_managed_tool_item",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8465
+   "line": 7758
   },
   {
    "score": 2,
    "name": "batch_has_file_dependency",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8803
+   "line": 8096
   },
   {
    "score": 2,
    "name": "normalize_schema_wrapper",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8946
+   "line": 8239
   },
   {
    "score": 2,
    "name": "merged_wrapper",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 8970
+   "line": 8263
   },
   {
    "score": 2,
    "name": "unwrapped_schema_input",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9007
+   "line": 8300
   },
   {
    "score": 2,
    "name": "extract_worker_id",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9033
+   "line": 8326
   },
   {
    "score": 2,
    "name": "parse_authored_contract",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9069
+   "line": 8362
   },
   {
    "score": 2,
    "name": "parse_model_item_status",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9133
+   "line": 8426
   },
   {
    "score": 2,
    "name": "unknown_tool_message",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9588
+   "line": 8881
   },
   {
    "score": 2,
    "name": "bounded_error_summary",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9862
-  },
-  {
-   "score": 2,
-   "name": "cause_of",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 9876
+   "line": 9155
   },
   {
    "score": 2,
    "name": "kind_of",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9900
-  },
-  {
-   "score": 2,
-   "name": "append_correction",
-   "file": "crates/vak-agent/src/lib.rs",
-   "line": 9937
+   "line": 9169
   },
   {
    "score": 2,
    "name": "note_result",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 9978
+   "line": 9216
   },
   {
    "score": 2,
    "name": "leaves_machine",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10072
+   "line": 9310
   },
   {
    "score": 2,
    "name": "provenance_gate",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10103
+   "line": 9341
   },
   {
    "score": 2,
    "name": "estimate_messages",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10388
+   "line": 9626
   },
   {
    "score": 2,
    "name": "recorded_tool_use_ids",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10424
+   "line": 9662
   },
   {
    "score": 2,
    "name": "recorded_tool_use_ids",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10429
+   "line": 9667
   },
   {
    "score": 2,
    "name": "normalize_response_tool_uses",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10464
+   "line": 9702
   },
   {
    "score": 2,
    "name": "fill_time_limit",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10501
+   "line": 9736
   },
   {
    "score": 2,
    "name": "extract_tool_calls",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10560
+   "line": 9795
   },
   {
    "score": 2,
    "name": "extract_tool_calls",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10587
+   "line": 9822
   },
   {
    "score": 2,
    "name": "parse_tool_call_envelopes",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10613
+   "line": 9848
   },
   {
    "score": 2,
    "name": "backoff_delay",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10683
+   "line": 9918
   },
   {
    "score": 2,
    "name": "into_stream_event",
    "file": "crates/vak-agent/src/lib.rs",
-   "line": 10708
+   "line": 9943
   },
   {
    "score": 2,
@@ -16143,87 +16077,87 @@
   },
   {
    "score": 2,
+   "name": "fill_window",
+   "file": "crates/vak-context/src/planner.rs",
+   "line": 84
+  },
+  {
+   "score": 2,
    "name": "cause",
    "file": "crates/vak-control/src/correct.rs",
-   "line": 82
+   "line": 66
   },
   {
    "score": 2,
    "name": "card_ability_not_answered",
    "file": "crates/vak-control/src/correct.rs",
-   "line": 232
+   "line": 214
   },
   {
    "score": 2,
    "name": "card_files_unchanged",
    "file": "crates/vak-control/src/correct.rs",
-   "line": 271
+   "line": 253
   },
   {
    "score": 2,
    "name": "card_command_not_run",
    "file": "crates/vak-control/src/correct.rs",
-   "line": 292
-  },
-  {
-   "score": 2,
-   "name": "card_replaces_unknown",
-   "file": "crates/vak-control/src/correct.rs",
-   "line": 362
+   "line": 274
   },
   {
    "score": 2,
    "name": "limit_reached",
    "file": "crates/vak-control/src/correct.rs",
-   "line": 383
+   "line": 292
   },
   {
    "score": 2,
    "name": "point",
    "file": "crates/vak-control/src/lib.rs",
-   "line": 106
+   "line": 105
   },
   {
    "score": 2,
    "name": "meet",
    "file": "crates/vak-control/src/lib.rs",
-   "line": 212
+   "line": 211
   },
   {
    "score": 2,
    "name": "honour",
    "file": "crates/vak-control/src/lib.rs",
-   "line": 272
+   "line": 271
   },
   {
    "score": 2,
    "name": "meet",
    "file": "crates/vak-control/src/lib.rs",
-   "line": 315
+   "line": 314
   },
   {
    "score": 2,
    "name": "from",
    "file": "crates/vak-control/src/lib.rs",
-   "line": 386
+   "line": 385
   },
   {
    "score": 2,
    "name": "from",
    "file": "crates/vak-control/src/lib.rs",
-   "line": 400
+   "line": 399
   },
   {
    "score": 2,
    "name": "shipped",
    "file": "crates/vak-control/src/lib.rs",
-   "line": 583
+   "line": 582
   },
   {
    "score": 2,
    "name": "with",
    "file": "crates/vak-control/src/lib.rs",
-   "line": 608
+   "line": 607
   },
   {
    "score": 2,
@@ -17363,247 +17297,247 @@
    "score": 2,
    "name": "capability_descriptors",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4271
+   "line": 4268
   },
   {
    "score": 2,
    "name": "provider_pool_env_var",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4644
+   "line": 4641
   },
   {
    "score": 2,
    "name": "provider_env_var",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4745
+   "line": 4742
   },
   {
    "score": 2,
    "name": "provider_label",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4762
+   "line": 4759
   },
   {
    "score": 2,
    "name": "provider_configured",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4783
+   "line": 4780
   },
   {
    "score": 2,
    "name": "set_mcp_secret_scoped",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4906
+   "line": 4903
   },
   {
    "score": 2,
    "name": "remove_mcp_secret_scoped",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4940
+   "line": 4937
   },
   {
    "score": 2,
    "name": "mcp_secret_at_scope",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4957
+   "line": 4954
   },
   {
    "score": 2,
    "name": "scoped_secret",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 4981
+   "line": 4978
   },
   {
    "score": 2,
    "name": "discover_models",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5074
+   "line": 5071
   },
   {
    "score": 2,
    "name": "probe_models",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5081
+   "line": 5078
   },
   {
    "score": 2,
    "name": "discover_speech_models",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5122
+   "line": 5119
   },
   {
    "score": 2,
    "name": "provider_status",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5131
+   "line": 5128
   },
   {
    "score": 2,
    "name": "effective_limits",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5222
+   "line": 5219
   },
   {
    "score": 2,
    "name": "is_local_provider",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 5302
+   "line": 5299
   },
   {
    "score": 2,
    "name": "plan_route_ladder",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6061
+   "line": 6058
   },
   {
    "score": 2,
    "name": "start_session",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6161
+   "line": 6158
   },
   {
    "score": 2,
    "name": "start_session_with_route",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6170
+   "line": 6167
   },
   {
    "score": 2,
    "name": "start_session_for_prompt",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6184
+   "line": 6181
   },
   {
    "score": 2,
    "name": "start_session_with_route_for",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6206
+   "line": 6203
   },
   {
    "score": 2,
    "name": "run_turn",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6286
+   "line": 6283
   },
   {
    "score": 2,
    "name": "run_turn_with_message",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6300
+   "line": 6297
   },
   {
    "score": 2,
    "name": "run_turn_with",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6318
+   "line": 6315
   },
   {
    "score": 2,
    "name": "run_managed_turn_with",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6347
+   "line": 6344
   },
   {
    "score": 2,
    "name": "run_auto_turn_with",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6376
+   "line": 6373
   },
   {
    "score": 2,
    "name": "run_goal_turn_with",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6407
+   "line": 6404
   },
   {
    "score": 2,
    "name": "resolve_turn_free_tiers",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 6512
+   "line": 6509
   },
   {
    "score": 2,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 7068
+   "line": 7065
   },
   {
    "score": 2,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 7256
+   "line": 7253
   },
   {
    "score": 2,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 7280
+   "line": 7277
   },
   {
    "score": 2,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 8076
+   "line": 8071
   },
   {
    "score": 2,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 8320
+   "line": 8282
   },
   {
    "score": 2,
    "name": "run_turn_recorded",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 8325
+   "line": 8287
   },
   {
    "score": 2,
    "name": "effective_sandbox_name",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 8760
+   "line": 8722
   },
   {
    "score": 2,
    "name": "plugin_store",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 9986
+   "line": 9948
   },
   {
    "score": 2,
    "name": "built_in_declarations",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 9996
+   "line": 9958
   },
   {
    "score": 2,
    "name": "to_kebab_lowercase",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10046
+   "line": 10008
   },
   {
    "score": 2,
    "name": "to_kebab_lowercase",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10053
+   "line": 10015
   },
   {
    "score": 2,
    "name": "normalize_capability_message",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10095
+   "line": 10057
   },
   {
    "score": 2,
    "name": "load_permissions_local",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 10184
+   "line": 10146
   },
   {
    "score": 2,
    "name": "record",
    "file": "crates/vak-core/src/lib.rs",
-   "line": 12568
+   "line": 12530
   },
   {
    "score": 2,
@@ -17825,109 +17759,109 @@
    "score": 2,
    "name": "scalar",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 151
+   "line": 153
   },
   {
    "score": 2,
    "name": "minutes",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 309
+   "line": 311
   },
   {
    "score": 2,
    "name": "build_list",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 356
+   "line": 358
   },
   {
    "score": 2,
    "name": "table_lines",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 584
+   "line": 586
   },
   {
    "score": 2,
    "name": "table_lines",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 612
+   "line": 614
   },
   {
    "score": 2,
    "name": "table_rows",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 643
+   "line": 645
   },
   {
    "score": 2,
    "name": "table_rows",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 656
+   "line": 658
   },
   {
    "score": 2,
    "name": "fill_stats",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 959
+   "line": 961
   },
   {
    "score": 2,
    "name": "fill_stats",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 965
+   "line": 967
   },
   {
    "score": 2,
    "name": "chart_summary",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1100
+   "line": 1102
   },
   {
    "score": 2,
    "name": "fill_map",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1309
+   "line": 1311
   },
   {
    "score": 2,
    "name": "build_media",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1537
+   "line": 1539
   },
   {
    "score": 2,
    "name": "build_test_report",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1665
+   "line": 1667
   },
   {
    "score": 2,
    "name": "cell_of",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1753
+   "line": 1756
   },
   {
    "score": 2,
    "name": "build_ability_chart",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 1959
+   "line": 1962
   },
   {
    "score": 2,
    "name": "fixture_for",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 2235
+   "line": 2260
   },
   {
    "score": 2,
    "name": "schema",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 2445
+   "line": 2471
   },
   {
    "score": 2,
    "name": "presentation_info_with",
    "file": "crates/vak-core/src/presentation_tools.rs",
-   "line": 2724
+   "line": 2715
   },
   {
    "score": 2,
@@ -18875,7 +18809,7 @@
    "score": 2,
    "name": "run_context_engine_scorecard",
    "file": "crates/vak-eval/src/context_engine_gate.rs",
-   "line": 587
+   "line": 593
   },
   {
    "score": 2,
@@ -19764,30 +19698,6 @@
    "name": "human_review_state",
    "file": "crates/vak-judge/src/outcome.rs",
    "line": 12
-  },
-  {
-   "score": 2,
-   "name": "verdict",
-   "file": "crates/vak-judge/src/plan.rs",
-   "line": 72
-  },
-  {
-   "score": 2,
-   "name": "gap",
-   "file": "crates/vak-judge/src/plan.rs",
-   "line": 92
-  },
-  {
-   "score": 2,
-   "name": "makes_claims",
-   "file": "crates/vak-judge/src/plan.rs",
-   "line": 151
-  },
-  {
-   "score": 2,
-   "name": "evidence_requirements",
-   "file": "crates/vak-judge/src/plan.rs",
-   "line": 162
   },
   {
    "score": 2,
@@ -23417,841 +23327,841 @@
    "score": 2,
    "name": "provider_error_body",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 4866
+   "line": 4867
   },
   {
    "score": 2,
    "name": "preview_message",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 4995
+   "line": 4996
   },
   {
    "score": 2,
    "name": "admit_or_queue",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5089
+   "line": 5090
   },
   {
    "score": 2,
    "name": "continue_or_release",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5119
+   "line": 5120
   },
   {
    "score": 2,
    "name": "continue_after_leg",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5141
+   "line": 5142
   },
   {
    "score": 2,
    "name": "writable",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5508
+   "line": 5509
   },
   {
    "score": 2,
    "name": "writer_refused",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5533
+   "line": 5534
   },
   {
    "score": 2,
    "name": "start_http_turn",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 5586
+   "line": 5587
   },
   {
    "score": 2,
    "name": "control_source_for",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6000
+   "line": 6001
   },
   {
    "score": 2,
    "name": "intervention_of",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6022
+   "line": 6023
   },
   {
    "score": 2,
    "name": "send_steering",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6129
+   "line": 6130
   },
   {
    "score": 2,
    "name": "control_state",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6488
+   "line": 6489
   },
   {
    "score": 2,
    "name": "control_state",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6498
+   "line": 6499
   },
   {
    "score": 2,
    "name": "plan_change",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6590
+   "line": 6591
   },
   {
    "score": 2,
    "name": "plan_change",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6636
+   "line": 6637
   },
   {
    "score": 2,
    "name": "deny_pending_approvals",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6831
+   "line": 6832
   },
   {
    "score": 2,
    "name": "answer_worker_question",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 6901
+   "line": 6902
   },
   {
    "score": 2,
    "name": "session_interface",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7157
+   "line": 7158
   },
   {
    "score": 2,
    "name": "session_interface",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7170
+   "line": 7171
   },
   {
    "score": 2,
    "name": "session_decisions",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7228
+   "line": 7229
   },
   {
    "score": 2,
    "name": "session_work",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7258
+   "line": 7259
   },
   {
    "score": 2,
    "name": "session_work_confirm",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7339
+   "line": 7340
   },
   {
    "score": 2,
    "name": "session_work_revise",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7356
+   "line": 7357
   },
   {
    "score": 2,
    "name": "session_work_retry",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7364
+   "line": 7365
   },
   {
    "score": 2,
    "name": "session_work_cancel_item",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7382
+   "line": 7383
   },
   {
    "score": 2,
    "name": "session_work_reassign",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7401
+   "line": 7402
   },
   {
    "score": 2,
    "name": "data_status",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7752
+   "line": 7753
   },
   {
    "score": 2,
    "name": "data_usage",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7757
+   "line": 7758
   },
   {
    "score": 2,
    "name": "data_lifecycle_plan",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7762
+   "line": 7763
   },
   {
    "score": 2,
    "name": "data_lifecycle_tick",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7768
+   "line": 7769
   },
   {
    "score": 2,
    "name": "data_lifecycle_transitions",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7776
+   "line": 7777
   },
   {
    "score": 2,
    "name": "runs_list",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7784
+   "line": 7785
   },
   {
    "score": 2,
    "name": "run_detail",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7805
+   "line": 7806
   },
   {
    "score": 2,
    "name": "run_decisions",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7830
+   "line": 7831
   },
   {
    "score": 2,
    "name": "resume_from",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7890
+   "line": 7891
   },
   {
    "score": 2,
    "name": "events_sse",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 7931
+   "line": 7932
   },
   {
    "score": 2,
    "name": "presentation_entry_exists",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8137
+   "line": 8138
   },
   {
    "score": 2,
    "name": "presentation_events_sse",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8334
+   "line": 8335
   },
   {
    "score": 2,
    "name": "conversation_snapshot",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8350
+   "line": 8351
   },
   {
    "score": 2,
    "name": "rejected_draft_entry_ids",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8549
+   "line": 8550
   },
   {
    "score": 2,
    "name": "rejected_draft_entry_ids",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8577
+   "line": 8578
   },
   {
    "score": 2,
    "name": "operator_only",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8875
+   "line": 8876
   },
   {
    "score": 2,
    "name": "conversation_audience",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8888
+   "line": 8889
   },
   {
    "score": 2,
    "name": "create_coworking_message",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 8966
+   "line": 8967
   },
   {
    "score": 2,
    "name": "revoke_coworking_invitation",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9476
+   "line": 9477
   },
   {
    "score": 2,
    "name": "session_ledger_dir",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9553
+   "line": 9554
   },
   {
    "score": 2,
    "name": "find_session_on_disk",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9563
+   "line": 9564
   },
   {
    "score": 2,
    "name": "open_historical_session",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9571
+   "line": 9572
   },
   {
    "score": 2,
    "name": "read_historical_header",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9581
+   "line": 9582
   },
   {
    "score": 2,
    "name": "health_report_json",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9610
+   "line": 9611
   },
   {
    "score": 2,
    "name": "health_report_json",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9621
+   "line": 9622
   },
   {
    "score": 2,
    "name": "onboarding_state",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9674
+   "line": 9675
   },
   {
    "score": 2,
    "name": "onboarding_workspace_review",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9740
+   "line": 9741
   },
   {
    "score": 2,
    "name": "onboarding_trust",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 9765
+   "line": 9766
   },
   {
    "score": 2,
    "name": "inbox_list",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10328
+   "line": 10329
   },
   {
    "score": 2,
    "name": "set_archived",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10598
+   "line": 10599
   },
   {
    "score": 2,
    "name": "restore_session",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10671
+   "line": 10672
   },
   {
    "score": 2,
    "name": "conversation_gone",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10817
+   "line": 10818
   },
   {
    "score": 2,
    "name": "data_holds",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10868
+   "line": 10869
   },
   {
    "score": 2,
    "name": "sync_setup",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10936
+   "line": 10937
   },
   {
    "score": 2,
    "name": "sync_forget",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 10997
+   "line": 10998
   },
   {
    "score": 2,
    "name": "data_rules",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11159
+   "line": 11160
   },
   {
    "score": 2,
    "name": "rules_refused",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11180
+   "line": 11181
   },
   {
    "score": 2,
    "name": "data_integrity",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11237
+   "line": 11238
   },
   {
    "score": 2,
    "name": "erasure_receipts",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11242
+   "line": 11243
   },
   {
    "score": 2,
    "name": "allow_person",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11500
+   "line": 11501
   },
   {
    "score": 2,
    "name": "list_skills",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11756
+   "line": 11757
   },
   {
    "score": 2,
    "name": "list_commands",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11794
+   "line": 11795
   },
   {
    "score": 2,
    "name": "list_presentations",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11961
+   "line": 11962
   },
   {
    "score": 2,
    "name": "export_presentations",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 11980
+   "line": 11981
   },
   {
    "score": 2,
    "name": "import_presentations",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12008
+   "line": 12009
   },
   {
    "score": 2,
    "name": "register_presentations",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12051
+   "line": 12052
   },
   {
    "score": 2,
    "name": "propose_presentation_revision",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12080
+   "line": 12081
   },
   {
    "score": 2,
    "name": "activate_presentation",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12210
+   "line": 12211
   },
   {
    "score": 2,
    "name": "activate_all_presentations",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12261
+   "line": 12262
   },
   {
    "score": 2,
    "name": "revoke_presentations_plugin",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12359
+   "line": 12360
   },
   {
    "score": 2,
    "name": "youtube_key_status",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12505
+   "line": 12506
   },
   {
    "score": 2,
    "name": "install_social_connector",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12745
+   "line": 12746
   },
   {
    "score": 2,
    "name": "plugin_register_source",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12863
+   "line": 12864
   },
   {
    "score": 2,
    "name": "plugin_source_enable",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12897
+   "line": 12898
   },
   {
    "score": 2,
    "name": "plugin_source_disable",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12909
+   "line": 12910
   },
   {
    "score": 2,
    "name": "plugin_key_revoke",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12921
+   "line": 12922
   },
   {
    "score": 2,
    "name": "plugin_key_restore",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12934
+   "line": 12935
   },
   {
    "score": 2,
    "name": "plugin_result",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 12947
+   "line": 12948
   },
   {
    "score": 2,
    "name": "plugin_catalog_install",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13002
+   "line": 13003
   },
   {
    "score": 2,
    "name": "plugin_enable",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13036
+   "line": 13037
   },
   {
    "score": 2,
    "name": "resolve_read_path",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13116
+   "line": 13117
   },
   {
    "score": 2,
    "name": "execution_path",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13149
+   "line": 13150
   },
   {
    "score": 2,
    "name": "is_document_anchor",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13199
+   "line": 13200
   },
   {
    "score": 2,
    "name": "raw_mime_for",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13462
+   "line": 13463
   },
   {
    "score": 2,
    "name": "sandbox_session_workspace",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13602
+   "line": 13603
   },
   {
    "score": 2,
    "name": "list_sandbox_records",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13783
+   "line": 13784
   },
   {
    "score": 2,
    "name": "list_session_sandbox_records",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13806
+   "line": 13807
   },
   {
    "score": 2,
    "name": "sandbox_execution_scratch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 13871
+   "line": 13872
   },
   {
    "score": 2,
    "name": "office_lineage",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 14318
+   "line": 14319
   },
   {
    "score": 2,
    "name": "parse_mode",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15613
+   "line": 15614
   },
   {
    "score": 2,
    "name": "parse_approval_mode",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15622
+   "line": 15623
   },
   {
    "score": 2,
    "name": "get_permission_rules",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 15840
+   "line": 15841
   },
   {
    "score": 2,
    "name": "saved_agent",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16228
+   "line": 16229
   },
   {
    "score": 2,
    "name": "refresh_control_plane",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16477
+   "line": 16478
   },
   {
    "score": 2,
    "name": "get_server_web_config",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 16814
+   "line": 16815
   },
   {
    "score": 2,
    "name": "list_bots",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17090
+   "line": 17091
   },
   {
    "score": 2,
    "name": "create_bot",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17152
+   "line": 17153
   },
   {
    "score": 2,
    "name": "delete_bot",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17284
+   "line": 17285
   },
   {
    "score": 2,
    "name": "put_bot_id_token",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17300
+   "line": 17301
   },
   {
    "score": 2,
    "name": "delete_bot_id_token",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17342
+   "line": 17343
   },
   {
    "score": 2,
    "name": "agent_network_send",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17680
+   "line": 17681
   },
   {
    "score": 2,
    "name": "agent_network_receive",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17717
+   "line": 17718
   },
   {
    "score": 2,
    "name": "patch_config",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17909
+   "line": 17910
   },
   {
    "score": 2,
    "name": "patch_global_config",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 17916
+   "line": 17917
   },
   {
    "score": 2,
    "name": "patch_config_scope",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18093
+   "line": 18094
   },
   {
    "score": 2,
    "name": "patch_config_scope",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18105
+   "line": 18106
   },
   {
    "score": 2,
    "name": "patch_config_scope",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18109
+   "line": 18110
   },
   {
    "score": 2,
    "name": "get_prompt_layer",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18624
+   "line": 18625
   },
   {
    "score": 2,
    "name": "get_prompt_effective",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18703
+   "line": 18704
   },
   {
    "score": 2,
    "name": "put_agents",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 18945
+   "line": 18946
   },
   {
    "score": 2,
    "name": "list_prompt_roles",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19079
+   "line": 19080
   },
   {
    "score": 2,
    "name": "control_layer_path",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19132
+   "line": 19133
   },
   {
    "score": 2,
    "name": "get_global_hooks",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19239
+   "line": 19240
   },
   {
    "score": 2,
    "name": "put_global_hooks",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19259
+   "line": 19260
   },
   {
    "score": 2,
    "name": "put_hooks",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19336
+   "line": 19337
   },
   {
    "score": 2,
    "name": "valid_server_name",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19419
+   "line": 19420
   },
   {
    "score": 2,
    "name": "is_workspace",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19482
+   "line": 19483
   },
   {
    "score": 2,
    "name": "label",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19486
+   "line": 19487
   },
   {
    "score": 2,
    "name": "prompt_root",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19494
+   "line": 19495
   },
   {
    "score": 2,
    "name": "config_path",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19501
+   "line": 19502
   },
   {
    "score": 2,
    "name": "integration_status",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19626
+   "line": 19627
   },
   {
    "score": 2,
    "name": "get_scoped_integration",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19692
+   "line": 19693
   },
   {
    "score": 2,
    "name": "get_global_mcp_servers",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19833
+   "line": 19834
   },
   {
    "score": 2,
    "name": "put_global_mcp_servers",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19851
+   "line": 19852
   },
   {
    "score": 2,
    "name": "put_mcp_servers",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 19905
+   "line": 19906
   },
   {
    "score": 2,
    "name": "side_chat",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20039
+   "line": 20040
   },
   {
    "score": 2,
    "name": "settle_request_runs",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20314
+   "line": 20315
   },
   {
    "score": 2,
    "name": "mail_calendar_routine_allowed_tools",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20393
+   "line": 20394
   },
   {
    "score": 2,
    "name": "gh_output",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20716
+   "line": 20717
   },
   {
    "score": 2,
    "name": "execute_script",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 20938
+   "line": 20939
   },
   {
    "score": 2,
    "name": "held_by",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21295
+   "line": 21296
   },
   {
    "score": 2,
    "name": "verify_launch_tree",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21675
+   "line": 21676
   },
   {
    "score": 2,
    "name": "prepare_launch",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 21819
+   "line": 21820
   },
   {
    "score": 2,
    "name": "launch_logs",
    "file": "crates/vak-server/src/lib.rs",
-   "line": 22341
+   "line": 22342
   },
   {
    "score": 2,
@@ -24761,73 +24671,73 @@
    "score": 2,
    "name": "snapshot_inner",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 1045
+   "line": 1046
   },
   {
    "score": 2,
    "name": "snapshot_inner",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 1190
+   "line": 1191
   },
   {
    "score": 2,
    "name": "snapshot_inner",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 1571
+   "line": 1572
   },
   {
    "score": 2,
    "name": "answer_outlines",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 1955
+   "line": 1996
   },
   {
    "score": 2,
    "name": "answer_outlines",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2049
+   "line": 2090
   },
   {
    "score": 2,
    "name": "log_turns_with_no_visible_answer",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2092
+   "line": 2133
   },
   {
    "score": 2,
    "name": "log_turns_with_no_visible_answer",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2105
+   "line": 2146
   },
   {
    "score": 2,
    "name": "log_turns_with_no_visible_answer",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2118
+   "line": 2159
   },
   {
    "score": 2,
    "name": "is_user_facing_activity",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2219
+   "line": 2260
   },
   {
    "score": 2,
    "name": "activity_item",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2433
+   "line": 2474
   },
   {
    "score": 2,
    "name": "live_event",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2512
+   "line": 2553
   },
   {
    "score": 2,
    "name": "settled_frame",
    "file": "crates/vak-server/src/projection.rs",
-   "line": 2901
+   "line": 2942
   },
   {
    "score": 2,
@@ -25665,105 +25575,123 @@
   },
   {
    "score": 2,
-   "name": "current_turn_index_at",
+   "name": "turn_dialogue",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2672
+   "line": 2626
+  },
+  {
+   "score": 2,
+   "name": "stored_packet_at",
+   "file": "crates/vak-session/src/log.rs",
+   "line": 2673
+  },
+  {
+   "score": 2,
+   "name": "packets_from",
+   "file": "crates/vak-session/src/log.rs",
+   "line": 2693
   },
   {
    "score": 2,
    "name": "current_turn_index_at",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2677
+   "line": 2734
+  },
+  {
+   "score": 2,
+   "name": "current_turn_index_at",
+   "file": "crates/vak-session/src/log.rs",
+   "line": 2739
   },
   {
    "score": 2,
    "name": "called_tools",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2691
+   "line": 2753
   },
   {
    "score": 2,
    "name": "called_tools",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2696
+   "line": 2758
   },
   {
    "score": 2,
    "name": "latest_turn_view",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2778
+   "line": 2840
   },
   {
    "score": 2,
    "name": "message_chain",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2793
+   "line": 2855
   },
   {
    "score": 2,
    "name": "reset_boundary",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2841
+   "line": 2903
   },
   {
    "score": 2,
    "name": "packet_transcript",
    "file": "crates/vak-session/src/log.rs",
-   "line": 2908
+   "line": 2966
   },
   {
    "score": 2,
    "name": "derive_with_plan_indexed",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3056
+   "line": 3129
   },
   {
    "score": 2,
    "name": "derive_with_plan_and_directive",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3361
+   "line": 3471
   },
   {
    "score": 2,
    "name": "derive_transcript",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3401
+   "line": 3512
   },
   {
    "score": 2,
    "name": "latest_reading",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3495
+   "line": 3606
   },
   {
    "score": 2,
    "name": "tail_card_marks",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3521
+   "line": 3632
   },
   {
    "score": 2,
    "name": "tail_workspace_delta",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3562
+   "line": 3673
   },
   {
    "score": 2,
    "name": "tail_intent",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3597
+   "line": 3708
   },
   {
    "score": 2,
    "name": "tail_intent",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3602
+   "line": 3713
   },
   {
    "score": 2,
    "name": "current_intent_record",
    "file": "crates/vak-session/src/log.rs",
-   "line": 3683
+   "line": 3794
   },
   {
    "score": 2,
@@ -25893,129 +25821,153 @@
   },
   {
    "score": 2,
+   "name": "one_or_many",
+   "file": "crates/vak-session/src/turns.rs",
+   "line": 197
+  },
+  {
+   "score": 2,
    "name": "from_effect",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 355
+   "line": 402
   },
   {
    "score": 2,
    "name": "from_entries_resolving",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 505
+   "line": 552
   },
   {
    "score": 2,
    "name": "from_entries_resolving",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 509
+   "line": 556
   },
   {
    "score": 2,
    "name": "from_entries_resolving",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 557
+   "line": 604
   },
   {
    "score": 2,
    "name": "from_entries_resolving",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 660
+   "line": 707
   },
   {
    "score": 2,
    "name": "from_entries_resolving",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 704
+   "line": 751
   },
   {
    "score": 2,
    "name": "search",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 771
+   "line": 818
   },
   {
    "score": 2,
    "name": "search",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 780
+   "line": 827
   },
   {
    "score": 2,
    "name": "evidence_for",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 856
+   "line": 903
   },
   {
    "score": 2,
    "name": "presentation_tool_use_ids",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 870
+   "line": 917
   },
   {
    "score": 2,
    "name": "trace_lines",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 887
-  },
-  {
-   "score": 2,
-   "name": "full_record",
-   "file": "crates/vak-session/src/turns.rs",
-   "line": 917
-  },
-  {
-   "score": 2,
-   "name": "full_record",
-   "file": "crates/vak-session/src/turns.rs",
    "line": 935
+  },
+  {
+   "score": 2,
+   "name": "dialogue_record",
+   "file": "crates/vak-session/src/turns.rs",
+   "line": 951
+  },
+  {
+   "score": 2,
+   "name": "dialogue_record",
+   "file": "crates/vak-session/src/turns.rs",
+   "line": 966
+  },
+  {
+   "score": 2,
+   "name": "dialogue_record",
+   "file": "crates/vak-session/src/turns.rs",
+   "line": 974
+  },
+  {
+   "score": 2,
+   "name": "full_record",
+   "file": "crates/vak-session/src/turns.rs",
+   "line": 1039
+  },
+  {
+   "score": 2,
+   "name": "full_record",
+   "file": "crates/vak-session/src/turns.rs",
+   "line": 1058
   },
   {
    "score": 2,
    "name": "build_card",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1041
+   "line": 1164
   },
   {
    "score": 2,
    "name": "transcript_result",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1177
+   "line": 1300
   },
   {
    "score": 2,
    "name": "json_digest",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1240
+   "line": 1363
   },
   {
    "score": 2,
    "name": "shorten_strings",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1348
+   "line": 1471
   },
   {
    "score": 2,
    "name": "first_sentence_by_words",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1379
+   "line": 1502
   },
   {
    "score": 2,
    "name": "truncate_words",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1387
+   "line": 1510
   },
   {
    "score": 2,
    "name": "wants_workspace_delta",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1424
+   "line": 1547
   },
   {
    "score": 2,
    "name": "made_in",
    "file": "crates/vak-session/src/turns.rs",
-   "line": 1630
+   "line": 1759
   },
   {
    "score": 2,
@@ -26045,19 +25997,19 @@
    "score": 2,
    "name": "is_directive",
    "file": "crates/vak-session/src/types.rs",
-   "line": 1307
+   "line": 1309
   },
   {
    "score": 2,
    "name": "is_directive",
    "file": "crates/vak-session/src/types.rs",
-   "line": 1316
+   "line": 1318
   },
   {
    "score": 2,
    "name": "is_directive",
    "file": "crates/vak-session/src/types.rs",
-   "line": 1321
+   "line": 1323
   },
   {
    "score": 2,
@@ -26819,55 +26771,55 @@
    "score": 2,
    "name": "parse_icalendar",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1211
+   "line": 1207
   },
   {
    "score": 2,
    "name": "parse_intake",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1235
+   "line": 1231
   },
   {
    "score": 2,
    "name": "read_html",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1263
+   "line": 1259
   },
   {
    "score": 2,
    "name": "parse_icalendar_freebusy",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1288
+   "line": 1284
   },
   {
    "score": 2,
    "name": "parse_mail_mime",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1310
+   "line": 1306
   },
   {
    "score": 2,
    "name": "preview_mail_attachment",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1333
+   "line": 1329
   },
   {
    "score": 2,
    "name": "preview_mail_attachment",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1344
+   "line": 1340
   },
   {
    "score": 2,
    "name": "parse_caldav_discovery",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1418
+   "line": 1414
   },
   {
    "score": 2,
    "name": "office_apply_in_worker",
    "file": "crates/vak-tools/src/broker.rs",
-   "line": 1525
+   "line": 1521
   },
   {
    "score": 2,
@@ -27083,7 +27035,7 @@
    "score": 2,
    "name": "command_call",
    "file": "crates/vak-tools/src/lib.rs",
-   "line": 726
+   "line": 719
   },
   {
    "score": 2,
@@ -27132,12 +27084,6 @@
    "name": "apply_checked",
    "file": "crates/vak-tools/src/office_pdf.rs",
    "line": 75
-  },
-  {
-   "score": 2,
-   "name": "schema",
-   "file": "crates/vak-tools/src/plan.rs",
-   "line": 137
   },
   {
    "score": 2,

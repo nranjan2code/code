@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.27.0",
-  "revision": "7b12f3ad3",
+  "version": "8.28.0",
+  "revision": "64f07775a",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2479,
+   "total_commits": 2480,
    "days": 63,
    "peak_day": 174,
    "design_docs": 99,
@@ -420,12 +420,12 @@
    }
   ],
   "open_total": 119,
-  "measures_revision": "cd39bd9b9"
+  "measures_revision": "64f07775a"
  },
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 536,
+  "commits": 537,
   "areas": [
    [
     "docs",
@@ -433,7 +433,7 @@
    ],
    [
     "(root)",
-    314
+    315
    ],
    [
     "vak-core",
@@ -790,6 +790,14 @@
   ],
   "recent": [
    {
+    "hash": "64f07775a",
+    "date": "2026-10-22",
+    "subject": "Release 8.28.0: Markdown answers and runtime cards",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "7b12f3ad3",
     "date": "2026-10-22",
     "subject": "Record all thirty live card-redesign acceptance outputs",
@@ -937,21 +945,9 @@
     "areas": [
      "(root)"
     ]
-   },
-   {
-    "hash": "1378854c9",
-    "date": "2026-10-22",
-    "subject": "Record 8.25.0 release and local install",
-    "areas": [
-     "docs"
-    ]
    }
   ],
-  "unreleased": [
-   "The runtime adds source receipts and actual file diffs after the answer, directly from this turn's calls and file bytes.",
-   "Answers use Markdown's existing interactive tables, lists, quotes, Mermaid and diff code.",
-   "The model no longer has to lay out its answer:"
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30813,6 +30809,12 @@
  ],
  "replay": [
   {
+   "hash": "64f07775a",
+   "date": "2026-10-22",
+   "subject": "Release 8.28.0: Markdown answers and runtime cards",
+   "subsystems": []
+  },
+  {
    "hash": "7b12f3ad3",
    "date": "2026-10-22",
    "subject": "Record all thirty live card-redesign acceptance outputs",
@@ -37753,10 +37755,10 @@
   ],
   "complexity": [
    {
-    "score": 203,
+    "score": 177,
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 1885
+    "line": 1856
    },
    {
     "score": 137,
@@ -37768,7 +37770,7 @@
     "score": 115,
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6674
+    "line": 6671
    },
    {
     "score": 96,
@@ -37777,7 +37779,7 @@
     "line": 3829
    },
    {
-    "score": 85,
+    "score": 87,
     "name": "snapshot_inner",
     "file": "crates/vak-server/src/projection.rs",
     "line": 910
@@ -37798,19 +37800,19 @@
     "score": 61,
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5767
+    "line": 5451
    },
    {
     "score": 46,
     "name": "execute_one",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 9169
+    "line": 8462
    },
    {
     "score": 43,
     "name": "execute_batch_calls",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 8004
+    "line": 7298
    },
    {
     "score": 42,
@@ -37836,7 +37838,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 203 (rank 1 of 4,554 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 25. 160 commits changed the first (6% of all) and 217 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.4 and `vak-agent/src/lib.rs` at 9.0 per thousand lines, against a median of 4.1 over 420 files; file size alone does not predict the rate (ρ = -0.11).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 177 (rank 1 of 4,545 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 24. 160 commits changed the first (6% of all) and 217 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.4 and `vak-agent/src/lib.rs` at 9.0 per thousand lines, against a median of 4.1 over 420 files; file size alone does not predict the rate (ρ = -0.11).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own. The 2026-10-22 answer investigation found another lossy decision input: plan receipts retained a deliverable name but discarded the actual form. The correction keeps active typed receipts and applies the same pure plan check in the loop and settlement, preserving exact replacement addresses. Broader state consolidation remains open.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`; [answer design investigation](../docs/audits/answer-design-contract-2026-10-22.md)."
