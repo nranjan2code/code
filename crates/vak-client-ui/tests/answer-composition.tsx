@@ -34,6 +34,8 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 80));
   check(fragments.every(text => body.split(text).length === 2), "Every prose fragment appears once");
   check(document.querySelectorAll(".primary-result").length === 1 && document.querySelectorAll(".assistant-turn-head").length === 1, "One result shares one author header");
   check(document.querySelectorAll("table.card-table").length === 2, "Distinct tables survive grouping");
+  check(Array.from(document.querySelectorAll<HTMLElement>(".primary-result .card")).every(card => getComputedStyle(card).borderTopWidth === "0px" && getComputedStyle(card).paddingLeft === "0px"), "Composed forms share the answer surface without independent enclosing boxes");
+  check(result.querySelectorAll('.primary-result-actions [aria-label="Copy text"]').length === 1 && result.querySelectorAll('.primary-result-actions button').length > 1, "One result toolbar contains copy and the other result actions");
   check(document.documentElement.scrollWidth <= innerWidth, "The composed result fits the viewport");
   const row = Array.from(document.querySelectorAll<HTMLElement>(".answer-row")).find(row => row.querySelectorAll(".answer-block").length === 2)!;
   check(Boolean(row), "The exact addressed table/note pair shares one layout group");
@@ -65,10 +67,37 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 80));
     await tick();
     if (!Array.from(host.querySelectorAll('.answer-row')).some(row=>row.querySelectorAll('.answer-block').length===2)) throw new Error('Live accepted anchors did not pair without an outline');
     const replacement=liveItem({...table('live-replacement','Replacement'),placement:{part:null,beside:null,replaces:'live-a'}});
-    store.applyPresentationEvent(liveId,{sequence:1,delta:{type:'item_started',item:replacement}});
+    store.applyPresentationEvent(liveId,{sequence:1,snapshot:null,delta:{type:'item_started',item:replacement}});
     await tick();
     if (host.textContent?.includes('Live anchor') || !host.textContent?.includes('Replacement')) throw new Error('Live replacement did not remove its exact anchor');
     if (Array.from(host.querySelectorAll('.answer-row')).some(row=>row.querySelectorAll('.answer-block').length===2)) throw new Error('Live replacement rebound a missing anchor');
     return ['Live accepted anchors pair before outlines arrive','Live store removes exact replacement target','Missing live anchor never rebinds'];
   } finally { dispose(); host.remove(); }
+};
+
+(window as any).runResultStateChecks = async () => {
+  const passed: string[] = [];
+  try {
+    for (const [status, label] of [["partial", "Partial result"], ["denied", "Action not allowed"]] as const) {
+      const value = text("status-answer", "The available result is preserved.");
+      value.status = status;
+      value.outcome = { ...value.outcome!, status };
+      store.hydrateFromPresentation(sid, { ...timeline, items: [timeline.items[0], value] });
+      await tick();
+      if (document.querySelectorAll('.primary-result-caution').length !== 1 || !document.querySelector('.primary-result-caution')?.textContent?.includes(label) || !document.body.textContent?.includes('The available result is preserved.')) throw new Error(`${status} lost its visible status or partial content`);
+      passed.push(`${status} retains one visible status and its answer`);
+    }
+    const first = text("separate-a", "First independent result.");
+    const second = text("separate-b", "Second independent result.");
+    second.outcome = { ...second.outcome!, result_id: "result-2" };
+    store.hydrateFromPresentation(sid, { ...timeline, items: [timeline.items[0], first, second] });
+    await tick();
+    const results = Array.from(document.querySelectorAll('.primary-result'));
+    if (results.length !== 2 || results.some(result => result.querySelectorAll('.primary-result-actions').length !== 1 || result.querySelectorAll('[aria-label="Copy text"]').length !== 1)) throw new Error('Independent results lost their separate action scopes');
+    passed.push("Independent results keep separate content and action scopes");
+    return passed;
+  } finally {
+    store.hydrateFromPresentation(sid, timeline);
+    await tick();
+  }
 };

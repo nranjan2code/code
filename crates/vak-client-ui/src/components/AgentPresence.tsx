@@ -105,6 +105,7 @@ export default function AgentPresence(props: { sessionId: string | null; working
     <div class="agent-presence" onPointerEnter={reveal} onPointerLeave={close} onFocusIn={reveal} onFocusOut={close}>
       <button type="button" class="agent-presence-switcher" aria-label={`Switch agent. Current agent: ${agent().name}`} title={`Switch agent · ${agent().name}`} onClick={() => { setAgentPickerTab("fleet"); setAgentPickerOpen(true); }}>
         <AgentMark character={agent().character} motion={agent().animation} size={40} state={props.working ? "working" : "idle"} class="agent-presence-mark" />
+        <span class="agent-presence-name">{agent().name}</span>
         <Show when={props.working}><span class="agent-presence-activity">Working</span></Show>
         <span class="agent-presence-chevron" aria-hidden="true">⌄</span>
       </button>

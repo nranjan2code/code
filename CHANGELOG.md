@@ -1,3 +1,13 @@
+## Unreleased
+
+- Shared web and desktop UI: composed answers use open sections with fewer
+  enclosing boxes, related files share a compact collection, and copy and
+  request details join the result actions. Partial, stopped and denied outcomes
+  retain one visible status. Long facts stack in narrow panes; the file queue
+  expands on demand. Library opens as a compact list with a grid option and
+  secondary descriptions on request. Preview code stays paused by default,
+  with a clearer explanation; test reports show concise recorded outcomes.
+
 ## 8.24.0 — 2026-10-22
 
 - Proposed a general lifecycle for saved interactive work, with edits creating

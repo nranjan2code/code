@@ -86,9 +86,12 @@ Rules:
 - **Nothing decides by words or counts.** No signal extraction from text,
   no recipe planner, no title word lists, no row thresholds. A variant a
   card needs is a typed field of its schema.
-- **One container.** Every card is drawn in the same shell: border,
-  padding, optional heading, no hover unless it acts. Card body text is the
-  conversation's reading size; prose is held to ~70ch.
+- **One content shell.** Standalone forms have a shared border, padding and
+  optional heading, with no hover unless they act. Inside a composed result,
+  the same form content inherits an open section treatment from its enclosing
+  answer; it does not add another peer box. This affects enclosure, never
+  primary/support role, visibility, semantic order or interaction. Card body
+  text is the conversation's reading size; prose is held to ~70ch.
 
 Not built: a board, a graph and a form to fill in. Places go in a `map`
 (added 2026-10-16, docs/design/96-answer-projection-gaps.md P5), and a

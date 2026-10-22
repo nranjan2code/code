@@ -212,11 +212,8 @@ function renderTerminal(node: AdaptiveRenderNode, surface: RenderSurface) {
   );
 }
 
-/**
- * `test_matrix` primitive (maps to `vak_presentation::Primitive::TestMatrix`).
- * Mirrors the legacy TestMatrix: all/failed filter chips, a success-rate ring,
- * pass/fail counters and per-test cards with an optional traceback drawer.
- */
+/** Report the recorded checks and their outcomes without implying that
+ * passing checks establish completion of the person's whole request. */
 function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
   const compact = surface === "compact";
   const [filter, setFilter] = createSignal<"all" | "failed">("all");
@@ -234,11 +231,6 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
       return status === "passed" || status === "failed" || status === "skipped";
     })),
   );
-  const successPercent = createMemo(() => {
-    const tot = totalCount();
-    if (!hasReportedOutcome()) return 0;
-    return Math.round((passedCount() / tot) * 100);
-  });
   const filteredTests = createMemo(() =>
     filter() === "failed" ? tests().filter((t) => str(t, "status") === "failed") : tests(),
   );
@@ -254,10 +246,10 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
           </span>
         </div>
         <div class="test-tab-filter">
-          <button class="filter-chip" classList={{ active: filter() === "all" }} onClick={() => setFilter("all")}>
+          <button type="button" class="filter-chip" aria-pressed={filter() === "all"} classList={{ active: filter() === "all" }} onClick={() => setFilter("all")}>
             All ({totalCount()})
           </button>
-          <button class="filter-chip" classList={{ active: filter() === "failed" }} onClick={() => setFilter("failed")}>
+          <button type="button" class="filter-chip" aria-pressed={filter() === "failed"} classList={{ active: filter() === "failed" }} onClick={() => setFilter("failed")}>
             Failed ({failedCount()})
           </button>
         </div>
@@ -265,38 +257,10 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
 
       <div class="test-dashboard">
         <div class="test-stats-row">
-          <div class="test-progress-group">
-            <div class="test-ring-wrapper">
-              <svg viewBox="0 0 36 36">
-                <path
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  fill="none"
-                  stroke="var(--rose-wash)"
-                  stroke-width="3.5"
-                />
-                <path
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  fill="none"
-                  stroke={hasReportedOutcome() ? "var(--emerald-bright)" : "var(--muted)"}
-                  stroke-width="3.5"
-                  stroke-dasharray={`${successPercent()}, 100`}
-                  stroke-linecap="round"
-                />
-              </svg>
-            </div>
-            <div>
-              <div class="test-summary-headline">
-                {hasReportedOutcome() ? `${successPercent()}% Success Rate` : totalCount() === 0 ? "No tests reported" : "Results unavailable"}
-              </div>
-              <div class="test-summary-sub">
-                {passedCount()} of {totalCount()} tests verified
-              </div>
-            </div>
+          <div class="test-summary-headline">
+            {hasReportedOutcome() ? `${passedCount()} of ${totalCount()} checks passed` : totalCount() === 0 ? "No checks reported" : "Results unavailable"}
           </div>
           <div class="test-summary-counts">
-            <Show when={hasReportedOutcome()}>
-              <span class="test-count-pass">● {passedCount()} Passed</span>
-            </Show>
             <Show when={failedCount() > 0}>
               <span class="test-count-fail">✕ {failedCount()} Failed</span>
             </Show>

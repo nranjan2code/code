@@ -103,7 +103,7 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   for (const element of previews) {
     const toggle = element.querySelector<HTMLButtonElement>(".ui-preview-toggle")!;
     toggle.click(); await sleep(200);
-    passed.push(assert(toggle.getAttribute("aria-expanded") === "true" && element.querySelector("iframe")?.getAttribute("sandbox") === "allow-scripts allow-forms", "expanded preview preserves its sandbox"));
+    passed.push(assert(toggle.getAttribute("aria-expanded") === "true" && element.querySelector("iframe")?.getAttribute("sandbox") === "allow-forms", "expanded preview stays paused in its opaque sandbox"));
     const source = element.querySelector<HTMLButtonElement>('[aria-label="Show source"]')!;
     source.click(); await sleep(50);
     passed.push(assert(Boolean(element.querySelector("code")?.textContent?.includes("<!doctype html>")), "the source icon exposes the page code"));
@@ -119,7 +119,7 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   passed.push(assert(primaries.length === 1 && card("isolated-review.html").contains(primaries[0]), "only the newest waiting draft's Review changes is primary"));
   passed.push(assert(card("welcome.html").querySelector(".btn")?.textContent === "Review", "the older draft still offers Review changes"));
   passed.push(assert(card("isolated-review.html").querySelector("iframe")?.getAttribute("srcdoc")?.includes("Welcome to the review draft."), "the preview draws the newest saved version"));
-  passed.push(assert(card("isolated-review.html").querySelector("iframe")?.getAttribute("sandbox") === "allow-scripts", "the preview frame is sandboxed"));
+  passed.push(assert(card("isolated-review.html").querySelector("iframe")?.getAttribute("sandbox") === "", "the thumbnail frame admits neither scripts nor origin access"));
   passed.push(assert(card("chart.svg").innerText.includes("Accepted, version 3") && card("chart.svg").querySelector("img"), "an accepted image shows its picture and status"));
   passed.push(assert(card("notes.docx").innerText.includes("Saved in your folder") && !card("notes.docx").querySelector('[aria-label="Review changes"]'), "a file saved straight to the folder has no review"));
   passed.push(assert(card("budget.xlsx").querySelector(".result-card-file-icon.sheet")?.getAttribute("aria-hidden") === "true", "a spreadsheet gets a compact sheet icon"));
@@ -128,6 +128,8 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   passed.push(assert(!/\d\s*(bytes|KB|MB)\b/.test(document.body.innerText), "no size shows in everyday view"));
   passed.push(assert(card("isolated-review.html").querySelector('[aria-label="Ask for changes"]')?.getAttribute("title") === "Ask for changes", "a single file's card carries Ask for changes"));
   const multi = card("guests.csv").closest(".primary-result")!;
+  passed.push(assert(multi.querySelector('.primary-result-files.is-collection')?.getAttribute('aria-label') === 'Files' && multi.querySelectorAll('.result-card.is-collection-item').length === 2, "related files share one collection while retaining both individually actionable objects"));
+  passed.push(assert(multi.querySelectorAll('.primary-result-actions').length === 1 && multi.querySelectorAll('[aria-label="Copy text"]').length === 1 && !multi.closest('.semantic-turn')?.querySelector('.turn-details-action'), "copy and request details share the result toolbar without duplicate action rows"));
   passed.push(assert(multi.querySelectorAll('.result-card [aria-label="Ask for changes"]').length === 0 && multi.querySelector(".primary-result-actions")?.textContent?.includes("Ask for changes"), "a result with two files asks for changes once, under both"));
   passed.push(assert(card("guests.csv").querySelector('[aria-label="Review changes"]') && !card("menu.csv").querySelector('[aria-label="Review changes"]'), "files from one run offer Review once"));
   const answerFirst = card("isolated-review.html").closest(".primary-result")!;

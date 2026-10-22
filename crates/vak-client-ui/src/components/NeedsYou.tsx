@@ -28,8 +28,8 @@ export default function NeedsYou() {
   onCleanup(() => window.removeEventListener("focus", onFocus));
   return (
     <Show when={(files() ?? []).length > 0}>
-      <section class="needs-you" aria-label="Needs you">
-        <span class="needs-you-lead"><span class="dot" aria-hidden="true" /><strong>Needs you</strong><span>{files()!.length === 1 ? "1 file" : `${files()!.length} files`}</span></span>
+      <details class="needs-you">
+        <summary class="needs-you-lead"><span class="dot" aria-hidden="true" /><strong>Needs you</strong><span>{files()!.length === 1 ? "1 file" : `${files()!.length} files`}</span></summary>
         <div class="needs-you-items">
           <For each={files()}>
             {(artifact) => (
@@ -40,7 +40,7 @@ export default function NeedsYou() {
             )}
           </For>
         </div>
-      </section>
+      </details>
     </Show>
   );
 }

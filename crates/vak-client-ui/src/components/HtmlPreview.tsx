@@ -79,6 +79,7 @@ export default function HtmlPreview(props: {
   return <div class="html-preview" hidden={props.hidden}>
     <div class="html-preview-permissions">
       <span role="status">{running() ? "Page code running · network access possible" : hasCode() ? "Page code paused · offline preview" : "Offline preview · no page scripts found"}</span>
+      <Show when={hasCode() && !running()}><p class="html-preview-paused">Interactive features are paused. Read Preview permissions before choosing whether to run this page.</p></Show>
       <details>
         <summary>Preview permissions</summary>
         <p>{props.sourceLabel}. Where code is stored does not establish who wrote it.</p>

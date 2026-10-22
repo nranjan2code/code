@@ -563,7 +563,7 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
             />
             </div>
           </header>
-          <Show when={found().summary}><p class="artifact-summary">{found().summary}</p></Show>
+          <Show when={found().summary}><details class="artifact-summary"><summary>About this file</summary><p>{found().summary}</p></details></Show>
           <Show when={(found().needs?.behind ?? 0) > 0}>
             <div class="file-notice" role="status">
               <Icon name="warning" size={16} />
@@ -781,6 +781,7 @@ export default function LibraryPage() {
   setLibraryFocus(null);
   const [kind, setKind] = createSignal("all");
   const [changed, setChanged] = createSignal("any");
+  const [layout, setLayout] = createSignal<"list" | "grid">("list");
   /** Which files to show by their state (doc 90 §5). */
   const [state, setState] = createSignal<"all" | "needs" | "changed" | "starred" | "archived" | "abilities">(libraryAbilities() ? "abilities" : "all");
   setLibraryAbilities(false);
@@ -859,13 +860,17 @@ export default function LibraryPage() {
               <select value={changed()} onChange={(e) => setChanged(e.currentTarget.value)} aria-label="Changed">
                 <For each={CHANGED}>{(entry) => <option value={entry.value}>{entry.label}</option>}</For>
               </select>
+              <div class="library-layout" role="group" aria-label="Library layout">
+                <button type="button" aria-pressed={layout() === "list"} onClick={() => setLayout("list")}>List</button>
+                <button type="button" aria-pressed={layout() === "grid"} onClick={() => setLayout("grid")}>Grid</button>
+              </div>
             </div>
             <Show when={!all.error} fallback={<div class="worker-error">{String(all.error)}</div>}>
               <Show
                 when={shown().length > 0}
                 fallback={<div class="dock-empty">{all.loading ? "Loading…" : "Nothing here yet. When Vakyartha makes something for you, it appears here."}</div>}
               >
-                <div class="library-list">
+                <div class="library-list" classList={{ "is-list": layout() === "list" }}>
                   <For each={shown()}>
                     {(artifact) => (
                       <button type="button" class="library-card" onClick={() => setOpen(artifact.id)}>

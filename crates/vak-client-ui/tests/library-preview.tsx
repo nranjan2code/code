@@ -92,7 +92,12 @@ Object.assign(window, { openLibraryFixture: open, runChecks: async () => {
   const passed: string[] = [];
   const assert = (ok: unknown, label: string) => { if (!ok) throw new Error(label); passed.push(label); };
   await sleep(300);
+  assert(document.querySelector('.library-list.is-list') && document.querySelectorAll('.library-card').length === artifacts.length, "the compact list retains every artifact");
+  click("Grid"); await sleep();
+  assert(!document.querySelector('.library-list.is-list') && document.querySelectorAll('.library-card').length === artifacts.length, "grid and list show the same artifacts");
+  click("List"); await sleep();
   await open("html");
+  assert(!document.querySelector<HTMLDetailsElement>('.artifact-summary')?.open && document.querySelector('.artifact-summary')?.textContent?.includes(artifacts[0].summary), "secondary description is available without crowding the preview");
   assert(document.querySelector(".library-html-frame")?.getAttribute("sandbox") === "allow-forms", "HTML opens paused in an opaque sandbox by default");
   await sleep(150);
   assert(receipts.length === 0, "saved HTML does not run before permission");

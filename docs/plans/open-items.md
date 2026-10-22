@@ -1,3 +1,33 @@
+## Shared chat and projection UX (2026-10-22)
+
+Live review and proposed direction are in
+[the UX audit](../audits/chat-projection-ux-2026-10-22.md). Code is one
+example of fragmentation; all changes must remain independent of domain.
+The first shared-client implementation and browser acceptance are in
+[the implementation record](../audits/chat-projection-ux-implementation-2026-10-22.md).
+Both bundles are rebuilt; no local reinstall was performed.
+
+- [x] Inspect actual local-home conversation, Details, Library, saved preview
+  and Canvas, native screenshot/tree, and all twenty forms in the source gallery.
+- [x] Separate form content from enclosing chrome and consolidate result
+  actions, preserving existing order, exact placement and independent results.
+- [x] Compact related artifact references in their existing result file area,
+  preserving every object's version, state and individual actions.
+- [x] Keep this implementation structural: no new primary/support relationship
+  or automatic hiding. Existing order, groups and exact anchors suffice for the
+  open answer surface and file collections; no inference from topics or paths.
+- [x] Add the agent name, container-width fact stacking, an expandable file
+  queue, list/grid Library, secondary description disclosure and paused-preview
+  explanation without changing authority. Simplify check summaries and diff height.
+- [x] Qualify answer composition/live replacement, result files, twenty-form
+  gallery and Library fixtures at both target sizes/themes. Correct stale
+  preview-execution assertions without changing production sandbox behavior.
+- [ ] Qualify the changed UI in installed native WebKit and native window
+  controls; complete the expanded-queue phone check. Browser access was disabled
+  before that last interaction; no installed bundle was updated.
+- [ ] Investigate the failed-answer fixture's MCP-network disclosure assertion;
+  the earlier failure prose/approval assertions passed, but the full fixture did not.
+
 ## Kept work lifecycle (2026-10-22)
 
 Design revision requested by the maintainer; implementation has not started.

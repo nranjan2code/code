@@ -4,7 +4,8 @@ import ChatPane from "../src/components/ChatPane";
 import WorkbenchPanel from "../src/components/WorkbenchPanel";
 import { StructuredView, structuredRendererTypes } from "../src/components/PresentationRenderer";
 import * as store from "../src/store";
-import { artifactPreviewHtml } from "../src/artifactPreview";
+import { artifactPreviewHtml, artifactPreviewMarkup } from "../src/artifactPreview";
+import { sandboxedSrcdoc } from "../src/safeUrl";
 import { assistantParts } from "../src/structured";
 import "../src/styles.css";
 
@@ -138,6 +139,10 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   let refused = false;
   try { await artifactPreviewHtml(".vak/scratch/result/index.html", '<img src="../private.png">', fixtureReader); } catch { refused = true; }
   check(refused, "Artifact assets cannot traverse outside the preview directory");
+  check(preview.includes("script-src 'none'"), "The default preview keeps bundled scripts paused");
+  // Execution is exercised only in an explicitly interactive synthetic frame;
+  // the actual thumbnail and ordinary preview above remain static.
+  const interactive = sandboxedSrcdoc(await artifactPreviewMarkup(".vak/scratch/result/index.html", '<head><link rel="stylesheet" href="style.css"></head><body><h1>Preview</h1><script src="app.js"></script></body>', fixtureReader), "interactive");
   const previewRan = await new Promise<boolean>((resolve) => {
     const frame = document.createElement("iframe");
     frame.setAttribute("sandbox", "allow-scripts");
@@ -148,10 +153,10 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
     };
     const timer = window.setTimeout(() => { window.removeEventListener("message", listener); frame.remove(); resolve(false); }, 2000);
     window.addEventListener("message", listener);
-    frame.srcdoc = preview.replace("</body>", '<script>parent.postMessage({check:"preview-ran",color:getComputedStyle(document.body).backgroundColor,text:document.querySelector("h1").textContent},"*")</script></body>');
+    frame.srcdoc = interactive.replace("</body>", '<script>parent.postMessage({check:"preview-ran",color:getComputedStyle(document.body).backgroundColor,text:document.querySelector("h1").textContent},"*")</script></body>');
     document.body.append(frame);
   });
-  check(previewRan, "Sandboxed iframe executes the relative script and applies its stylesheet");
+  check(previewRan, "An explicitly interactive isolated fixture executes bundled script and stylesheet");
   store.markRunning(sid, false);
   store.hydrateFromTranscript(sid, messages() as any);
   store.hydrateFromPresentation(sid, snapshot() as any);

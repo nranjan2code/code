@@ -20,6 +20,18 @@ This file is the tracker. Tick an item only when its "done when" holds in the
 running app, and add a dated line to the progress log (§6) saying what was
 checked and what was not. A passing build or typecheck is not done.
 
+### 2026-10-22 continuous answer follow-through
+
+The maintainer approved the general shared chat/projection UX direction and
+selected Continuous answer. Forms inherit an open composed-answer enclosure;
+related files use compact individually actionable rows; result actions are
+consolidated. Library list/grid, narrow fact layout, agent context, queue
+disclosure and preview explanation are implemented in shared source. Both
+bundles and four-way browser component acceptance pass. Actual installed
+native qualification and one expanded-queue phone interaction remain open;
+local browser use was disabled at that last step. See
+[the evidence](../audits/chat-projection-ux-implementation-2026-10-22.md).
+
 ### 2026-09-27 typography correction
 
 The maintainer reviewed the shipped desktop client and superseded D1's paper

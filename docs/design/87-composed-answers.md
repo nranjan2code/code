@@ -60,6 +60,23 @@ Prompt and plan guidance request the smallest complete answer, with optional
 summary and no repetition of the same finding across forms. Tools and schemas
 remain available; there is no domain-specific layout recipe or card-count cap.
 
+## Continuous answer surface (2026-10-22)
+
+The shared web/desktop renderer gives composed form content the answer's open
+surface, while standalone forms retain their shell. Compact collections in the
+existing result file area preserve each artifact's own status, Open, Download,
+history and review action. A single file retains its preview. Copy and request
+details share the result toolbar; independent result identities retain separate
+toolbars. Non-success outcomes have one visible typed status rather than a
+second repeated footer. Long fact values stack at narrow container widths.
+
+Nothing selects a layout by domain or hides checks, logs or sources by form.
+No new primary/support metadata, stored collection, route or execution authority
+was introduced. Artifact focus continues through the existing exact-subject
+Canvas; its answer view uses the same renderer. Browser acceptance and native
+qualification limits are in
+[the implementation record](../audits/chat-projection-ux-implementation-2026-10-22.md).
+
 ## Conversation state handoff (2026-10-19)
 
 The shared client hydrates from `/sessions/{id}/snapshot`: transcript

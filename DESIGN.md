@@ -377,7 +377,11 @@ Compact, softly rounded, ink-2 text, quiet at rest; selected chips take the prim
 
 ### Cards and results
 Surface fill, 12px radius, 1px line, 16px padding, no shadow. In a
-conversation only the result is a card; the answer's prose sits on the page.
+conversation, related forms share the answer's open surface; prose, tables,
+figures and labelled sections need no enclosing box of their own. Files and
+isolated previews retain a deliberate object boundary. Multiple files from
+one result use one collection of individually actionable rows. This changes
+enclosure, never semantic order, primary/support role or visibility.
 
 ### Inputs
 Surface fill, 1px line, 8px radius; focus shows a 2px primary ring.

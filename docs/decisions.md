@@ -1,5 +1,13 @@
 # Decisions
 
+- 2026-10-22: The maintainer approved implementing the shared chat/projection
+  UX review and selected Continuous answer. Fragmentation in code work is one
+  example across arbitrary subjects: use open composed sections, compact exact
+  artifact collections and shared actions without domain routing, role guessing
+  or hiding forms. Deliberately opened objects retain the existing focused
+  workspace. See [the review](audits/chat-projection-ux-2026-10-22.md) and
+  [implementation acceptance](audits/chat-projection-ux-implementation-2026-10-22.md).
+
 - 2026-10-22: The maintainer asked whether script restrictions were covered
   and should be evaluated rather than applied automatically. The design now
   specifies capability-based script admission: existing authority plus

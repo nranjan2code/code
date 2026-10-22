@@ -841,7 +841,7 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
  * for review; a card whose status the server could not establish says
  * nothing about it rather than guess. Size and path are technical details.
  */
-export function ResultCard(props: { item: OutputItem; sessionId: string; resultId?: string; showReview?: boolean; askForChanges?: boolean; currentStateOnly?: boolean }) {
+export function ResultCard(props: { item: OutputItem; sessionId: string; resultId?: string; showReview?: boolean; askForChanges?: boolean; currentStateOnly?: boolean; collectionItem?: boolean }) {
   const pageResources = useContext(PresentationPageResourceContext);
   if (props.item.content.type !== "artifact") return null;
   const artifact = props.item.content.artifact;
@@ -898,14 +898,15 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
     window.dispatchEvent(new CustomEvent("vak:focus-composer"));
   };
   return (
-    <article class="result-card" classList={{ "has-preview": hasPreview() }} aria-label={artifact.name}>
-      <Show when={hasPreview()} fallback={<span class={`result-card-file-icon ${fileIcon()}`} aria-hidden="true"><Icon name={fileIcon()} size={19} /></span>}>
+    <article class="result-card" classList={{ "has-preview": hasPreview() && !props.collectionItem, "is-collection-item": props.collectionItem }} aria-label={artifact.name}>
+      <Show when={hasPreview() && !props.collectionItem} fallback={<span class={`result-card-file-icon ${fileIcon()}`} aria-hidden="true"><Icon name={fileIcon()} size={19} /></span>}>
         <div class="result-card-preview-wrap">
           <ResultPreview item={props.item} sessionId={props.sessionId} />
           <span class={`result-card-file-icon ${fileIcon()}`} aria-hidden="true"><Icon name={fileIcon()} size={18} /></span>
         </div>
       </Show>
       <div class="result-card-text">
+        <h3 class="result-card-name">{artifact.name}</h3>
         <Show
           when={liveState()}
           fallback={<Show when={props.currentStateOnly} fallback={<Show when={words()}>{(value) => <p class="result-card-status" classList={{ waiting: value().waiting }}><Show when={value().waiting}><span class="result-card-dot" aria-hidden="true" /></Show>{value().headline}</p>}</Show>}><p class="result-card-status">{live.loading || exact.loading ? "Checking current file status…" : "Current file status unavailable"}</p></Show>}
@@ -918,7 +919,6 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
             </p>
           )}
         </Show>
-        <h3 class="result-card-name">{artifact.name}</h3>
         <p class="result-card-details"><span>{facts()}</span><Show when={made()}>{(value) => <span class="result-card-made"> · {value()}</span>}</Show><Show when={!words()?.waiting && words()?.folder}><span> · {words()?.folder}</span></Show></p>
         <Show when={file.flags()}>{(label) => <p class="result-card-flags" title={file.facts()!.flags.join("\n")}><Icon name="warning" size={12} />{label()}</p>}</Show>
         <Show when={technicalDetails() && (artifact.size_bytes != null || artifact.path)}>
@@ -1033,42 +1033,33 @@ function ResultOutcomeSummary(props: { item: OutputItem }) {
   </div>}</Show>;
 }
 
-function ResultEvidence(props: { item: OutputItem }) {
-  const outcome = () => props.item.outcome;
-  return <Show when={outcome()}>{(value) => <Show when={value().status !== "succeeded"}>
-    <footer class={`primary-result-evidence ${value().status}`} aria-label="Result evidence">
-      <span><Icon name="warning" size={12} />{value().status === "partial" ? "Partial result" : "Needs attention"}</span>
-    </footer>
-  </Show>}</Show>;
-}
-
 /** Ask for changes on a result that is not a single file; a single file's
  * card carries it (`ResultCard`). A page has no conversation to ask in, so
  * it has none (docs/design/98 §12). */
-function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string; turnId: string; resultId?: string }) {
+function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string; turnId: string; resultId?: string; copyText: string }) {
   const files = () => props.material.filter((item) => item.content.type === "artifact").length;
-  const isPlan = createMemo(() => [props.answer, ...props.material].some((item) => {
-    if (item.content.type === "adaptive") return item.content.tree.root.primitive === "timeline";
-    if (item.content.type !== "structured") return false;
-    return /(?:^|[._-])(plan|timeline|checklist|options)(?:$|[._-])/.test(item.content.output.semantic_type.toLowerCase());
-  }));
+  const inCanvas = useContext(InCanvasContext);
   const revise = () => {
     const resultId = props.resultId;
     if (!resultId) return;
     setReplyTarget({ sessionId: props.sessionId, resultId, label: "this result" });
     window.dispatchEvent(new CustomEvent("vak:focus-composer"));
   };
-  return <Show when={files() !== 1 && props.resultId && props.sessionId}>
-    <nav class="primary-result-actions" aria-label="Result actions">
-      <button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for changes"}</button>
-      <Show when={files() === 0}>
-        <Show when={!useContext(InCanvasContext)}>
+  return <nav class="primary-result-actions" aria-label="Result actions">
+      <Show when={props.copyText}><MessageActions text={props.copyText} role="assistant" /></Show>
+      <Show when={files() !== 1 && props.resultId && props.sessionId}>
+        <button type="button" onClick={revise}><Icon name="pencil" size={14} />Ask for changes</button>
+      </Show>
+      <Show when={files() === 0 && props.resultId && props.sessionId}>
+        <Show when={!inCanvas}>
           <button type="button" onClick={() => openArtifactCanvas({ kind: "answer", title: "Answer", sessionId: props.sessionId, turnId: props.turnId, itemIds: [...new Set([props.answer.id, ...props.material.map((item) => item.id)])] })}>Open in Canvas</button>
         </Show>
         <SaveAnswerToLibrary sessionId={props.sessionId} turnId={props.turnId} />
       </Show>
-    </nav>
-  </Show>;
+      <Show when={props.sessionId && !inCanvas}>
+        <button type="button" onClick={async () => { if (activeId() !== props.sessionId && !await activate(props.sessionId)) return; openTurnDetails(props.sessionId, props.turnId); }}>View request details</button>
+      </Show>
+    </nav>;
 }
 
 /** A result's files as result cards, after its answer. Files from one run
@@ -1076,14 +1067,15 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
 function ResultFiles(props: { files: OutputItem[]; answer?: OutputItem; sessionId: string; resultId?: string }) {
   const reviewed = new Set<string>();
   return <Show when={props.files.length > 0}>
-    <div class="primary-result-files">
+    <section class="primary-result-files" classList={{ "is-collection": props.files.length > 1 }} aria-label="Files">
+      <Show when={props.files.length > 1}><h3 class="result-files-heading">Files <span>{props.files.length}</span></h3></Show>
       {props.files.map((item) => {
         const execution = item.actions.find((action) => action.verb === "review_draft")?.data.execution_id;
         const showReview = !execution || !reviewed.has(execution);
         if (execution) reviewed.add(execution);
-        return <ResultCard item={item} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? props.resultId ?? props.answer?.outcome?.result_id ?? undefined} showReview={showReview} askForChanges={props.files.length === 1} />;
+        return <ResultCard item={item} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? props.resultId ?? props.answer?.outcome?.result_id ?? undefined} showReview={showReview} askForChanges={props.files.length === 1} collectionItem={props.files.length > 1} />;
       })}
-    </div>
+    </section>
   </Show>;
 }
 
@@ -1468,9 +1460,11 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       const resultId = group.resultId ?? uniqueResultId();
       const copyText = material.filter((entry) => entry.item.kind !== "artifact").map(({ item }) =>
         answerDocument(item)?.source_markdown ?? item.fallback_text).filter(Boolean).join("\n\n");
-      return <AssistantMessage sessionId={props.sessionId} text={copyText}>
+      const status = anchor.status !== "succeeded" ? anchor.status : anchor.outcome?.status;
+      const attention = status === "failed" ? "Work needs attention" : status === "denied" ? "Action not allowed" : status === "cancelled" ? "Work stopped" : status === "partial" ? "Partial result" : "Outcome not verified";
+      return <AssistantMessage sessionId={props.sessionId}>
         <article class="primary-result" data-result-id={resultId ?? anchor.id} aria-label="Agent result">
-          <Show when={anchor.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
+          <Show when={status && status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={16} /><span><strong>{attention}</strong>Check the evidence before relying on completion claims.</span></div></Show>
           {answerSegments(material).map((segment) => {
             const entry = segment[0];
             const document = answerDocument(entry.item);
@@ -1479,8 +1473,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
               : <div class="primary-result-material" aria-label="Result material">{composeAnswer(segment, props.outline)}</div>;
           })}
           <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={anchor} sessionId={props.sessionId} resultId={resultId} />
-          <ResultEvidence item={anchor} />
-          <ResultActions turnId={props.id} answer={anchor} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={resultId} />
+          <ResultActions turnId={props.id} answer={anchor} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={resultId} copyText={copyText} />
         </article>
       </AssistantMessage>;
     });
@@ -1504,7 +1497,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       >
         <For each={blocks()}>{(node) => node}</For>
       </Show>
-      <Show when={props.sessionId && !useContext(InCanvasContext)}><button type="button" class="turn-details-action" onClick={async () => { if (activeId() !== props.sessionId && !await activate(props.sessionId)) return; openTurnDetails(props.sessionId, props.id); }}>View request details</button></Show>
+      <Show when={props.sessionId && !useContext(InCanvasContext) && (showOperatorChrome() || !groupAnswerEntries(visible()).some(group => group.kind === "result"))}><button type="button" class="turn-details-action" onClick={async () => { if (activeId() !== props.sessionId && !await activate(props.sessionId)) return; openTurnDetails(props.sessionId, props.id); }}>View request details</button></Show>
     </section>
   );
 }

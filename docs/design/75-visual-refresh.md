@@ -1,7 +1,8 @@
 # 75 — Visual refresh: readable type, plain words and the Ink and Saffron brand
 
 Status: **in progress**: the implementation record, updated 2026-10-22. Request-focused
-Details is implemented in the shared client and browser-qualified; native
+Details and the continuous-answer/compact-file-collection refresh are
+implemented in the shared client and browser-qualified; native
 WebKit qualification remains open. V1, V2 and V3 are
 complete; V4.4 records the approved Vakyartha Songbird rollout. Desktop
 runtime proof and character glyph work remain in the
