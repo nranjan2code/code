@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.21.0",
-  "revision": "2fdf4a0b7",
+  "version": "8.22.0",
+  "revision": "d1662688e",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.21.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2450,
+   "total_commits": 2452,
    "days": 63,
    "peak_day": 174,
    "design_docs": 97,
@@ -389,7 +389,7 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 507,
+  "commits": 509,
   "areas": [
    [
     "docs",
@@ -397,7 +397,7 @@
    ],
    [
     "(root)",
-    289
+    291
    ],
    [
     "vak-core",
@@ -754,6 +754,22 @@
   ],
   "recent": [
    {
+    "hash": "d1662688e",
+    "date": "2026-10-22",
+    "subject": "Prepare 8.22.0 release notes",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "a23c1109e",
+    "date": "2026-10-22",
+    "subject": "Bump workspace version to 8.22.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "2fdf4a0b7",
     "date": "2026-10-22",
     "subject": "Enforce automatic Topic decisions at turn completion",
@@ -886,30 +902,9 @@
     "areas": [
      "docs"
     ]
-   },
-   {
-    "hash": "431a828ac",
-    "date": "2026-10-21",
-    "subject": "Release 8.18.0",
-    "areas": [
-     "(root)",
-     "docs"
-    ]
-   },
-   {
-    "hash": "ad204236a",
-    "date": "2026-10-21",
-    "subject": "Settle the session handoff before replying to gateway requests",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-server"
-    ]
    }
   ],
-  "unreleased": [
-   "Automatic Topics now checks for a recorded organization decision before an answer finishes, including answers delivered entirely as cards."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30834,6 +30829,18 @@
   }
  ],
  "replay": [
+  {
+   "hash": "d1662688e",
+   "date": "2026-10-22",
+   "subject": "Prepare 8.22.0 release notes",
+   "subsystems": []
+  },
+  {
+   "hash": "a23c1109e",
+   "date": "2026-10-22",
+   "subject": "Bump workspace version to 8.22.0",
+   "subsystems": []
+  },
   {
    "hash": "2fdf4a0b7",
    "date": "2026-10-22",
