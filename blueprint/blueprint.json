@@ -13,7 +13,7 @@
    "ts_crates": 2,
    "rust_src": 349571,
    "rust_tests": 88405,
-   "ts_src": 64915,
+   "ts_src": 64879,
    "routes": 404,
    "forms": 20,
    "worker_tasks": 14,
@@ -127,10 +127,18 @@
    "ignored": "see .cargo/audit.toml"
   },
   "stale_names": {
-   "names": 249,
+   "names": 252,
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "Shared chat and projection UX (2026-10-22)",
+    "open": 2,
+    "items": [
+     "Qualify the changed UI in installed native WebKit and native window controls;",
+     "Investigate the failed-answer fixture's MCP-network disclosure assertion;"
+    ]
+   },
    {
     "section": "Kept work lifecycle (2026-10-22)",
     "open": 10,
@@ -411,7 +419,7 @@
     ]
    }
   ],
-  "open_total": 111,
+  "open_total": 113,
   "measures_revision": "db6430ab3"
  },
  "activity": {
@@ -918,7 +926,9 @@
     ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "Shared web and desktop UI:"
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1409,7 +1419,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 86848,
+   "lines": 86812,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -14836,7 +14846,7 @@
    ],
    "modules": 26,
    "parts": [],
-   "lines": 19424,
+   "lines": 19381,
    "largest": [
     6677,
     "crates/vak-server/src/projection.rs"
@@ -15575,7 +15585,7 @@
    ],
    "modules": 53,
    "parts": [],
-   "lines": 6951,
+   "lines": 6952,
    "largest": [
     794,
     "crates/vak-server/src/preview.rs"
@@ -15934,7 +15944,7 @@
    ],
    "modules": 13,
    "parts": [],
-   "lines": 8019,
+   "lines": 8024,
    "largest": [
     3118,
     "crates/vak-server/src/library.rs"
@@ -18616,7 +18626,7 @@
    ],
    "modules": 18,
    "parts": [],
-   "lines": 5840,
+   "lines": 5841,
    "largest": [
     1182,
     "crates/vak-session/src/work_threads.rs"
@@ -36102,7 +36112,7 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 39952,
+   "src": 39916,
    "tests": 324,
    "files": 207,
    "commits": 655,

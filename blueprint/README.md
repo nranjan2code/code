@@ -18,7 +18,7 @@ The lower layers (storage, permission, the pure deciders, the document engines) 
 |---|---|
 | Crates | 35 Rust, 2 TypeScript |
 | Rust source / tests | 349,571 / 88,405 lines |
-| TypeScript source | 64,915 lines |
+| TypeScript source | 64,879 lines |
 | HTTP routes | 404 |
 | Subsystems / connections / flows | 64 / 836 / 11 |
 | Built-in tools / card tools / card forms | 26 / 22 / 20 |
@@ -49,11 +49,18 @@ Only findings with a cost today; the evidence for each is under [Findings](#find
 | doc paths | ok |
 | versions | ok |
 | advisories | 0 known vulnerabilities not excepted, 10 warnings (measured at `db6430ab3`) |
-| record drift | 249 cited code names missing in 48 living documents (`run.py names`) |
+| record drift | 252 cited code names missing in 48 living documents (`run.py names`) |
 
-### Open work (111 items)
+### Open work (113 items)
 
 From [docs/plans/open-items.md](../docs/plans/open-items.md), the one tracker.
+
+<details><summary><b>Shared chat and projection UX (2026-10-22)</b>: 2 open</summary>
+
+- Qualify the changed UI in installed native WebKit and native window controls;
+- Investigate the failed-answer fixture's MCP-network disclosure assertion;
+
+</details>
 
 <details><summary><b>Kept work lifecycle (2026-10-22)</b>: 10 open</summary>
 
@@ -334,7 +341,7 @@ Most recent:
 
 Not yet released ([CHANGELOG.md](../CHANGELOG.md)):
 
-- Nothing.
+- Shared web and desktop UI:
 
 Designs in progress:
 
@@ -431,7 +438,7 @@ Design docs and plans by status ([docs/design/INDEX.md](../docs/design/INDEX.md)
 
 | Layer | Lines | Crates (largest first) |
 |---|---|---|
-| L7 Surfaces | 86,848 | vak-client-ui, vak-admin-ui, vak, vak-terminal, vak-desktop |
+| L7 Surfaces | 86,812 | vak-client-ui, vak-admin-ui, vak, vak-terminal, vak-desktop |
 | L6 Service | 81,679 | vak-server, vak-ops, vak-bus |
 | L5 Orchestration facade | 67,282 | vak-core, vak-eval, vak-flow |
 | L4 Agent runtime | 56,836 | vak-agent, vak-tools, vak-llm, vak-plugin, vak-context, vak-mcp, vak-hooks |
@@ -514,10 +521,10 @@ What the system does, cut across crates: 64 subsystems. Every one of 742 units (
 
 | Subsystem | Lives in | Modules | Lines | Routes | Commits (recent) | Links out / in | `vak` | Design docs | What it does |
 |---|---|---|---|---|---|---|---|---|---|
-| **Cards and presentation** | `vak-server`, `vak-core`, `vak-client-ui`, `vak-presentation`, `vak-agent`, `vak-session` | 26 | 19,424 | 21 | 309 (94) | 21 / 18 | — | [30](../docs/design/30-render-architecture.md), [57](../docs/design/57-adaptive-presentation-runtime.md), [67](../docs/design/67-presentation-renderer-guide.md), [87](../docs/design/87-composed-answers.md), [91](../docs/design/91-presentation-capabilities.md), [92](../docs/design/92-card-forms.md), [97](../docs/design/97-cards-end-the-answer.md), [98](../docs/design/98-answers-beyond-one-card.md), [96](../docs/design/96-answer-projection-gaps.md) | Card forms and tools, packs, the closed primitives, projection to clients |
+| **Cards and presentation** | `vak-server`, `vak-core`, `vak-client-ui`, `vak-presentation`, `vak-agent`, `vak-session` | 26 | 19,381 | 21 | 309 (94) | 21 / 18 | — | [30](../docs/design/30-render-architecture.md), [57](../docs/design/57-adaptive-presentation-runtime.md), [67](../docs/design/67-presentation-renderer-guide.md), [87](../docs/design/87-composed-answers.md), [91](../docs/design/91-presentation-capabilities.md), [92](../docs/design/92-card-forms.md), [97](../docs/design/97-cards-end-the-answer.md), [98](../docs/design/98-answers-beyond-one-card.md), [96](../docs/design/96-answer-projection-gaps.md) | Card forms and tools, packs, the closed primitives, projection to clients |
 | **Delivery** | `vak-delivery`, `vak-server` | 22 | 11,873 | 0 | 133 (24) | 8 / 11 | — | [30](../docs/design/30-output-engineering.md), [10](../docs/design/102-channel-cards.md) | The semantic output contract, Markdown fallback and channel markup |
-| **Canvas and previews** | `vak-client-ui`, `vak-server`, `vak-session`, `vak-plugin`, `vak-core` | 53 | 6,951 | 14 | 71 (22) | 15 / 10 | — | [66](../docs/design/66-immersive-artifact-canvas.md) | The artifact canvas, its viewers, live previews and the preview origin |
-| **Library and file state** | `vak-core`, `vak-server`, `vak-client-ui`, `vak-tools` | 13 | 8,019 | 24 | 52 (42) | 21 / 14 | — | [82](../docs/design/82-library.md), [90](../docs/design/90-file-state.md) | Versioned artifacts, review, sharing, and what a file is now |
+| **Canvas and previews** | `vak-client-ui`, `vak-server`, `vak-session`, `vak-plugin`, `vak-core` | 53 | 6,952 | 14 | 71 (22) | 15 / 10 | — | [66](../docs/design/66-immersive-artifact-canvas.md) | The artifact canvas, its viewers, live previews and the preview origin |
+| **Library and file state** | `vak-core`, `vak-server`, `vak-client-ui`, `vak-tools` | 13 | 8,024 | 24 | 52 (42) | 21 / 14 | — | [82](../docs/design/82-library.md), [90](../docs/design/90-file-state.md) | Versioned artifacts, review, sharing, and what a file is now |
 
 ### Apps
 
@@ -531,7 +538,7 @@ What the system does, cut across crates: 64 subsystems. Every one of 742 units (
 | **Memory and learning** | `vak-core`, `vak` | 3 | 1,495 | 7 | 41 (18) | 10 / 7 | memory | [23](../docs/design/23-memory.md), [26](../docs/design/26-learning.md) | Notes, recall of the owner's profile, the learning loop and skill proposals |
 | **Automations and triggers** | `vak-core`, `vak-server`, `vak`, `vak-client-ui`, `vak-admin-ui` | 10 | 5,343 | 4 | 34 (26) | 25 / 14 | triggers | [94](../docs/design/94-scheduled-work-you-can-see.md) | The one trigger model, claims, schedules, routines and their runs |
 | **Inbox and digest** | `vak-core`, `vak-admin-ui`, `vak`, `vak-client-ui`, `vak-server` | 9 | 3,214 | 4 | 47 (12) | 11 / 11 | inbox, digest | [29](../docs/design/29-personal-os.md) | What needs the owner, and the periodic digest |
-| **Agents** | `vak-server`, `vak-client-ui`, `vak-session`, `vak-core`, `vak`, `vak-tools` | 18 | 5,840 | 15 | 81 (13) | 13 / 19 | agents, topics | [64](../docs/design/64-agent-owned-platform.md), [10](../docs/design/101-topics.md) | Agent definitions, lifecycle, the Agent network, per-Agent chats |
+| **Agents** | `vak-server`, `vak-client-ui`, `vak-session`, `vak-core`, `vak`, `vak-tools` | 18 | 5,841 | 15 | 81 (13) | 13 / 19 | agents, topics | [64](../docs/design/64-agent-owned-platform.md), [10](../docs/design/101-topics.md) | Agent definitions, lifecycle, the Agent network, per-Agent chats |
 | **Shared conversations** | `vak-client-ui`, `vak-server` | 3 | 807 | 9 | 38 (4) | 10 / 2 | — | [69](../docs/design/69-shared-conversation-coworking.md) | Guests in a conversation: invitations, presence, delegated approvals |
 
 ### Service and operations
@@ -730,7 +737,7 @@ Outside the repository (declared in `subsystems.EXTERNAL`): You ← Workspace cl
 
 | Crate | Layer | Src | Tests | Commits | Deps | Used by | Subsystems | Role |
 |---|---|---|---|---|---|---|---|---|
-| `vak-client-ui` | L7 | 39,952 | 324 | 655 | — | 0 | 26 | SolidJS workspace client: the desktop bundle and the /app web bundle |
+| `vak-client-ui` | L7 | 39,916 | 324 | 655 | — | 0 | 26 | SolidJS workspace client: the desktop bundle and the /app web bundle |
 | `vak-admin-ui` | L7 | 24,963 | 0 | 265 | — | 0 | 13 | SolidJS admin console at /admin |
 | `vak` | L7 | 15,030 | 1,528 | 215 | 24 | 0 | 17 | The CLI binary and every subcommand |
 | `vak-terminal` | L7 | 5,110 | 750 | 11 | 0 | 1 | 1 | ratatui client of a running server (vak term) |
