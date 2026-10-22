@@ -1440,7 +1440,7 @@ fn append_readable_fields(value: &Value, path: &str, lines: &mut Vec<String>) {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 

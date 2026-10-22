@@ -575,37 +575,9 @@ pub fn strip_html(html: &str) -> String {
     out
 }
 
-/// Project semantic cards into Telegram HTML. The readable projection walks
-/// nested fields too, so unfamiliar card shapes retain their actual data.
-pub fn structured_card_chunks(
-    cards: &[crate::StructuredOutput],
-    max_chars: Option<usize>,
-) -> Vec<String> {
-    if cards.is_empty() {
-        return Vec::new();
-    }
-    let markdown = cards
-        .iter()
-        .map(|card| {
-            let source = crate::structured_markdown(card);
-            source
-                .split_once("\n\n```json")
-                .map_or(source.as_str(), |(summary, _)| summary)
-                .to_owned()
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n");
-    split_html_chunks(&markdown_to_html(&markdown), max_chars)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn no_cards_means_no_chunks_and_never_a_blank_message() {
-        assert!(structured_card_chunks(&[], Some(3900)).is_empty());
-    }
 
     #[test]
     fn converts_and_escapes_supported_markdown() {

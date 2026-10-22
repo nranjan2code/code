@@ -620,126 +620,36 @@ impl TelegramBridge {
     }
 
     async fn send_message(&self, chat_id: i64, reply: &GatewayReply) -> Result<(), String> {
-        // Validate the packet against the same schema/surface boundary used
-        // by Slack and Discord. Telegram still keeps the plain reply text as
-        // its lossless fallback when the packet is absent or incompatible.
-        let rendered = reply.delivery.as_ref().and_then(|packet| {
-            let body = serde_json::json!({"delivery": packet});
-            super::prepared_packet(body, "telegram").ok().map(|packet| {
-                let cards = packet
-                    .structured_cards()
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let card_chunks =
-                    vak_delivery::telegram::structured_card_chunks(&cards, Some(3900));
-                let text_chunks = packet.channel_text_chunks();
-                let has_surface_chunks = !packet.chunks.is_empty();
-                let mut chunks = card_chunks;
-                chunks.extend(text_chunks);
-                chunks.retain(|chunk| !chunk.trim().is_empty());
-                (chunks, has_surface_chunks)
-            })
-        });
-        let (chunks, parse_html) = match rendered {
-            Some((chunks, parse_html)) if !chunks.is_empty() => (chunks, parse_html),
-            _ => (
-                vak_delivery::telegram::split_html_chunks(
-                    &vak_delivery::telegram::markdown_to_html(&reply.text),
-                    Some(3900),
-                ),
-                true,
-            ),
-        };
-        for chunk in chunks {
-            let url = format!("{}/bot{}/sendMessage", self.api_base, self.bot_token);
-            let mut body = serde_json::json!({
-                "chat_id": chat_id,
-                "text": chunk,
-                "link_preview_options": { "is_disabled": true },
-            });
-            if parse_html {
-                body["parse_mode"] = serde_json::Value::String("HTML".into());
+        let messages = match &reply.delivery {
+            Some(packet) => {
+                let packet =
+                    super::prepared_packet(serde_json::json!({"delivery":packet}), "telegram")?;
+                vak_delivery::channel::messages(&packet)?
             }
-            let resp = http().post(&url).json(&body).send().await;
-            match resp {
-                Ok(r) if r.status().is_success() => {
-                    let status = r.status();
-                    let response: Value = r
-                        .json()
-                        .await
-                        .map_err(|e| telegram_http_error("sendMessage body", &e))?;
-                    if response["ok"].as_bool() != Some(true) {
-                        let description =
-                            response["description"].as_str().unwrap_or("unknown error");
-                        if parse_html && response["error_code"].as_u64() == Some(400) {
-                            let fallback = serde_json::json!({
-                                "chat_id": chat_id,
-                                "text": crate::channels::strip_tags(&chunk),
-                            });
-                            let retry = http()
-                                .post(&url)
-                                .json(&fallback)
-                                .send()
-                                .await
-                                .map_err(|e| telegram_http_error("sendMessage retry", &e))?;
-                            let retry_status = retry.status();
-                            let retry_body: Value = retry
-                                .json()
-                                .await
-                                .map_err(|e| telegram_http_error("sendMessage retry body", &e))?;
-                            if retry_status.is_success() && retry_body["ok"].as_bool() == Some(true)
-                            {
-                                continue;
-                            }
-                            return Err(format!(
-                                "sendMessage returned {status} ({description}); plain retry returned {retry_status}"
-                            ));
-                        }
-                        return Err(format!("sendMessage rejected ({status}): {description}"));
-                    }
-                }
-                Ok(r) => {
-                    let status = r.status();
-                    // Converter edge-case guard: resend that chunk as plain
-                    // text so a formatting bug degrades to ugly, not lost.
-                    if parse_html && status.as_u16() == 400 {
-                        tracing::info!(
-                            surface = "telegram",
-                            code = status.as_u16(),
-                            "formatted text was refused; retrying as plain text"
-                        );
-                        let fallback = serde_json::json!({
-                            "chat_id": chat_id,
-                            "text": crate::channels::strip_tags(&chunk),
-                        });
-                        let r2 = http().post(&url).json(&fallback).send().await;
-                        match r2 {
-                            Ok(r2) if r2.status().is_success() => {
-                                let status = r2.status();
-                                let body: Value = r2.json().await.map_err(|e| {
-                                    telegram_http_error("sendMessage retry body", &e)
-                                })?;
-                                if body["ok"].as_bool() == Some(true) {
-                                    continue;
-                                }
-                                return Err(format!("sendMessage plain retry rejected ({status})"));
-                            }
-                            Ok(r2) => {
-                                return Err(format!(
-                                    "sendMessage returned {} (plain retry: {})",
-                                    status,
-                                    r2.status()
-                                ));
-                            }
-                            Err(e) => {
-                                return Err(telegram_http_error("sendMessage retry", &e));
-                            }
-                        }
-                    }
-                    return Err(format!("sendMessage returned {status}"));
-                }
-                Err(e) => return Err(telegram_http_error("sendMessage", &e)),
+            None => vak_delivery::channel::notice("telegram", &reply.text)?,
+        };
+        for message in messages {
+            let mut body = message.body;
+            body["chat_id"] = serde_json::json!(chat_id);
+            let response = http()
+                .post(format!(
+                    "{}/bot{}/{}",
+                    self.api_base, self.bot_token, message.method
+                ))
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| telegram_http_error(message.method, &e))?;
+            let status = response.status();
+            if !status.is_success() {
+                return Err(format!("{} returned {status}", message.method));
+            }
+            let result: Value = response
+                .json()
+                .await
+                .map_err(|e| telegram_http_error("message response", &e))?;
+            if result["ok"].as_bool() != Some(true) {
+                return Err(format!("{} was refused", message.method));
             }
         }
         Ok(())
@@ -1035,23 +945,108 @@ impl TelegramBridge {
 mod tests {
     use super::*;
 
-    #[test]
-    fn telegram_card_projection_formats_typed_fields_without_json() {
-        let card = vak_delivery::StructuredOutput {
-            semantic_type: "metric".into(),
-            block: String::new(),
-            schema_version: vak_delivery::PRESENTATION_SCHEMA_VERSION,
-            skill_id: "core".into(),
-            skill_version: "1".into(),
-            payload: serde_json::json!({"title":"Weather Card","temperature":"23°C","status":"Sunny"}),
+    #[tokio::test]
+    async fn native_cards_reach_the_provider_as_the_shared_request_plan() {
+        let (api_base, captured, task) = super::super::channel_fixture::provider(None).await;
+        let packet = super::super::channel_fixture::packet("telegram");
+        let expected = vak_delivery::channel::messages(&packet).unwrap();
+        let bridge = TelegramBridge {
+            api_base,
+            bot_token: "test".into(),
+            token_env: String::new(),
+            gateway_url: String::new(),
+            gateway_token: String::new(),
+            cursor: super::super::PollCursor::at(
+                vak_session::cursors::Cursors::at(
+                    std::env::temp_dir().join("unused-native-cursor"),
+                    std::env::temp_dir().join("unused-native-tenant"),
+                ),
+                "telegram",
+                None,
+            ),
+            bot_id: None,
         };
-        let chunks = vak_delivery::telegram::structured_card_chunks(&[card], Some(3900));
-        assert_eq!(chunks.len(), 1);
-        assert!(chunks[0].contains("<b>"));
-        assert!(chunks[0].contains("23°C"));
-        assert!(chunks[0].contains("Sunny"));
-        assert!(!chunks[0].contains("semantic_type"));
-        assert!(!chunks[0].contains("```json"));
+        let reply = GatewayReply {
+            text: String::new(),
+            delivery: Some(packet),
+            session_id: None,
+            files: Vec::new(),
+        };
+        bridge.send_message(123, &reply).await.unwrap();
+        let actual = captured.lock().unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for ((path, body), expected) in actual.iter().zip(expected) {
+            let mut body = body.clone();
+            body.as_object_mut().unwrap().remove("chat_id");
+            assert_eq!(body, expected.body);
+            assert!(path.ends_with(expected.method));
+        }
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn refused_native_message_stops_without_a_compatibility_resend() {
+        let (api_base, captured, task) = super::super::channel_fixture::provider(Some(1)).await;
+        let packet = super::super::channel_fixture::packet("telegram");
+        let bridge = TelegramBridge {
+            api_base,
+            bot_token: "test".into(),
+            token_env: String::new(),
+            gateway_url: String::new(),
+            gateway_token: String::new(),
+            cursor: super::super::PollCursor::at(
+                vak_session::cursors::Cursors::at(
+                    std::env::temp_dir().join("unused-native-cursor"),
+                    std::env::temp_dir().join("unused-native-tenant"),
+                ),
+                "telegram",
+                None,
+            ),
+            bot_id: None,
+        };
+        let reply = GatewayReply {
+            text: String::new(),
+            delivery: Some(packet),
+            session_id: None,
+            files: Vec::new(),
+        };
+        assert!(bridge.send_message(123, &reply).await.is_err());
+        assert_eq!(captured.lock().unwrap().len(), 2);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn invalid_later_card_is_reported_before_any_provider_request() {
+        let (api_base, captured, task) = super::super::channel_fixture::provider(None).await;
+        let mut packet = super::super::channel_fixture::packet("telegram");
+        let mut invalid = packet.structured_cards()[0].clone();
+        invalid.block = "no_such_form".into();
+        packet.attach_structured_cards([invalid]);
+        let bridge = TelegramBridge {
+            api_base,
+            bot_token: "test".into(),
+            token_env: String::new(),
+            gateway_url: String::new(),
+            gateway_token: String::new(),
+            cursor: super::super::PollCursor::at(
+                vak_session::cursors::Cursors::at(
+                    std::env::temp_dir().join("unused-native-cursor"),
+                    std::env::temp_dir().join("unused-native-tenant"),
+                ),
+                "telegram",
+                None,
+            ),
+            bot_id: None,
+        };
+        let reply = GatewayReply {
+            text: String::new(),
+            delivery: Some(packet),
+            session_id: None,
+            files: Vec::new(),
+        };
+        assert!(bridge.send_message(123, &reply).await.is_err());
+        assert!(captured.lock().unwrap().is_empty());
+        task.abort();
     }
 
     #[test]
@@ -1251,23 +1246,43 @@ mod tests {
             }
         }
         assert_eq!(samples.len(), 15);
-        let card = vak_delivery::StructuredOutput {
-            semantic_type: "metric".into(),
-            block: String::new(),
-            schema_version: vak_delivery::PRESENTATION_SCHEMA_VERSION,
-            skill_id: "core".into(),
-            skill_version: "1".into(),
-            payload: serde_json::json!({
-                "title": "Native Telegram card layout",
-                "availability": "99.95%",
-                "p95 latency": "184 ms",
-                "status": "Healthy"
-            }),
-        };
-        batches[0].push_str("\n\n──────────\n\n");
-        batches[0].push_str(
-            &vak_delivery::telegram::structured_card_chunks(&[card], Some(3900)).join("\n\n"),
-        );
+        let card = vak_delivery::structured_output("stats", None, serde_json::json!({
+            "title": "Native Telegram card layout",
+            "readings": [{"label":"Availability","value":"99.95%"},{"label":"Latency","value":"184 ms"}]
+        }), &vak_delivery::built_in_skill_registry()).unwrap();
+        let mut packet = vak_delivery::render(&vak_delivery::DeliveryJob {
+            job_id: "live-card".into(),
+            target: format!("telegram:{chat_id}"),
+            kind: vak_delivery::DeliveryKind::Assistant,
+            content: vak_delivery::DeliveryContent::Answer(
+                vak_delivery::AnswerDraft::from_markdown(""),
+            ),
+            profile: profile.clone(),
+            skill_registry: None,
+            trace: None,
+            actor: None,
+        })
+        .unwrap();
+        packet.attach_structured_cards([card]);
+        for message in vak_delivery::channel::messages(&packet).unwrap() {
+            let mut body = message.body;
+            body["chat_id"] = serde_json::json!(chat_id);
+            let response = http()
+                .post(format!(
+                    "{}/bot{token}/{}",
+                    api_base.trim_end_matches('/'),
+                    message.method
+                ))
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert!(response.status().is_success());
+            assert_eq!(
+                response.json::<serde_json::Value>().await.unwrap()["ok"],
+                true
+            );
+        }
         for (index, text) in batches.iter().enumerate() {
             let response = http()
                 .post(format!(

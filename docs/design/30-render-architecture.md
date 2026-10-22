@@ -6,6 +6,8 @@ collaborative goal projection, deterministic fallback, and cross-surface
 delivery path are shipped in 3.0.10. The open questions at the end are not
 claims about missing core behavior.
 
+> Native channel form rendering is specified in docs/design/102-channel-cards.md;
+> the non-native card-to-Markdown path drawn below is its historical predecessor.
 > The card vocabulary, the client registry and the signal and recipe
 > planning described here are replaced by docs/design/92-card-forms.md
 > (2026-10-14): eighteen forms, drawn by block, nothing decided by words.
@@ -38,12 +40,12 @@ Three forces pull in different directions:
    shapes (`choices[0].message.content` vs `content[0].text` vs
    `candidates[0].content`) are irreconcilable per-provider. Writing N adapters
    for N providers is an unbounded maintenance nightmare.
-2. **Surface capability divergence.** Telegram accepts 7 HTML tags, 4096 chars,
-   no headings/tables. Slack sends mrkdwn with `*bold*` / `_italic_` /
-   `<url|text>`, no headings/tables, ~4000 chars. Discord passes GFM but no
-   hyperlinks in plain messages, no tables, 2000 chars. Desktop renders a
-   schema-v2 semantic AST with SolidJS components. Each surface's
-   protocol limits are immutable walls, not styling preferences.
+2. **Surface capability divergence.** Native cards and ordinary text have
+   different protocol contracts. Telegram rich messages support headings,
+   tables and disclosure; Slack has native rich-text and table blocks;
+   Discord has embeds. Basic narration codecs retain their channel-specific
+   text constraints. The form-aware channel compiler and current limits are
+   specified in [Native channel cards](102-channel-cards.md).
 3. **Durability without duplication.** The session ledger is the sole
    source of truth. Formatting must not become a second source of truth.
    Every rendering decision must be loss-accounted (native / fallback), and

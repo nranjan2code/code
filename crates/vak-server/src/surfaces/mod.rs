@@ -392,3 +392,73 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+pub(crate) mod channel_fixture {
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
+    pub type Captured = Arc<Mutex<Vec<(String, Value)>>>;
+
+    pub fn packet(surface: &str) -> vak_delivery::DeliveryPacket {
+        let mut packet = vak_delivery::render(&vak_delivery::DeliveryJob {
+            job_id: "native-channel-fixture".into(),
+            target: format!("{surface}:123"),
+            kind: vak_delivery::DeliveryKind::Assistant,
+            content: vak_delivery::DeliveryContent::Answer(
+                vak_delivery::AnswerDraft::from_markdown("Trailing note"),
+            ),
+            profile: vak_delivery::DeliveryProfile {
+                surface: surface.into(),
+                markup: match surface {
+                    "telegram" => vak_delivery::Markup::TelegramHtml,
+                    "slack" => vak_delivery::Markup::SlackMrkdwn,
+                    _ => vak_delivery::Markup::DiscordMarkdown,
+                },
+                max_chars: Some(2000),
+                supports_tables: false,
+                supports_code_blocks: true,
+                supports_links: true,
+                supports_actions: false,
+                template: None,
+            },
+            skill_registry: None,
+            trace: None,
+            actor: None,
+        })
+        .unwrap();
+        let registry = vak_delivery::built_in_skill_registry();
+        packet.attach_structured_cards([
+            vak_delivery::structured_output("summary",None,json!({"headline":"Observed result","label":"10:02 IST","points":["Nested point survives"]}),&registry).unwrap(),
+            vak_delivery::structured_output("sources",None,json!({"sources":[{"title":"Primary record","url":"https://example.com/source","finding":"Evidence survives"}]}),&registry).unwrap()
+        ]);
+        packet
+    }
+
+    /// Captures actual HTTP methods/bodies without contacting a chat account.
+    /// `reject` is the zero-based message index that gets an application-level
+    /// refusal; it must never be followed by a downgrade/re-send.
+    pub async fn provider(
+        reject: Option<usize>,
+    ) -> (String, Captured, tokio::task::JoinHandle<()>) {
+        let captured: Captured = Arc::default();
+        let app=axum::Router::new().fallback({
+            let captured=captured.clone();
+            move |uri:axum::http::Uri,axum::Json(body):axum::Json<Value>| {
+                let captured=captured.clone();
+                async move {
+                    let index={let mut captured=captured.lock().unwrap();let index=captured.len();captured.push((uri.path().to_owned(),body));index};
+                    if reject==Some(index) {
+                        (if uri.path().ends_with("/messages") {axum::http::StatusCode::BAD_REQUEST} else {axum::http::StatusCode::OK}, axum::Json(json!({"ok":false,"error":"refused"})))
+                    } else {
+                        (axum::http::StatusCode::OK,axum::Json(json!({"ok":true,"result":{"message_id":123},"id":"123","ts":"123.0"})))
+                    }
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), captured, task)
+    }
+}

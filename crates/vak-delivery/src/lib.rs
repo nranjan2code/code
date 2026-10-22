@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod adaptive;
+pub mod channel;
 pub mod client;
 pub mod controls;
 pub mod discord;

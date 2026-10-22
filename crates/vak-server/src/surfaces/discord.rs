@@ -379,38 +379,23 @@ impl DiscordBridge {
     }
 
     async fn send_message(&self, channel_id: &str, reply: &GatewayReply) -> Result<(), String> {
-        let cards = reply
-            .delivery
-            .as_ref()
-            .map(vak_delivery::DeliveryPacket::structured_cards)
-            .unwrap_or_default();
-        for chunk in &reply.chunks {
-            let resp = http()
+        let messages = match &reply.delivery {
+            Some(packet) => vak_delivery::channel::messages(packet)?,
+            None => vak_delivery::channel::notice("discord", &reply.chunks.join("\n\n"))?,
+        };
+        for message in messages {
+            let response = http()
                 .post(format!("{}/channels/{channel_id}/messages", self.api_base))
                 .header("Authorization", format!("Bot {}", self.bot_token))
-                .json(&serde_json::json!({ "content": chunk, "allowed_mentions": {"parse": []} }))
+                .json(&message.body)
                 .send()
                 .await
                 .map_err(|e| format!("discord createMessage: {e}"))?;
-            if !resp.status().is_success() {
-                return Err(format!("discord createMessage returned {}", resp.status()));
-            }
-        }
-        if !cards.is_empty() {
-            let cards = cards.into_iter().cloned().collect::<Vec<_>>();
-            let body = serde_json::json!({
-                "embeds": vak_delivery::discord::structured_card_embeds(&cards),
-                "allowed_mentions": {"parse": []},
-            });
-            let resp = http()
-                .post(format!("{}/channels/{channel_id}/messages", self.api_base))
-                .header("Authorization", format!("Bot {}", self.bot_token))
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| format!("discord createMessage: {e}"))?;
-            if !resp.status().is_success() {
-                return Err(format!("discord createMessage returned {}", resp.status()));
+            if !response.status().is_success() {
+                return Err(format!(
+                    "discord createMessage returned {}",
+                    response.status()
+                ));
             }
         }
         Ok(())
@@ -488,27 +473,28 @@ pub fn chunk_text(text: &str, max: usize) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn sample_card() -> vak_delivery::StructuredOutput {
-        vak_delivery::StructuredOutput {
-            semantic_type: "metric".into(),
-            block: String::new(),
-            schema_version: vak_delivery::PRESENTATION_SCHEMA_VERSION,
-            skill_id: "core".into(),
-            skill_version: "1".into(),
-            payload: serde_json::json!({"title":"Weather","Temperature":"23°C","Status":"Sunny"}),
+    #[tokio::test]
+    async fn native_cards_reach_the_provider_as_the_shared_request_plan() {
+        let (api_base, captured, task) = super::super::channel_fixture::provider(None).await;
+        let packet = super::super::channel_fixture::packet("discord");
+        let expected = vak_delivery::channel::messages(&packet).unwrap();
+        let mut bridge = bridge();
+        bridge.api_base = api_base;
+        let reply = GatewayReply {
+            chunks: Vec::new(),
+            delivery: Some(packet),
+            session_id: None,
+        };
+        bridge.send_message("123", &reply).await.unwrap();
+        let actual = captured.lock().unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for ((path, body), expected) in actual.iter().zip(expected) {
+            let mut body = body.clone();
+            body.as_object_mut().unwrap().remove("channel");
+            assert_eq!(body, expected.body);
+            assert!(path.ends_with("/messages"));
         }
-    }
-
-    #[test]
-    fn card_delivery_uses_native_discord_embeds() {
-        let embeds = vak_delivery::discord::structured_card_embeds(&[sample_card()]);
-        assert_eq!(embeds[0]["title"], "Weather");
-        assert!(
-            embeds[0]["fields"]
-                .as_array()
-                .is_some_and(|fields| fields.len() == 2)
-        );
-        assert!(!embeds[0].to_string().contains("\"semantic_type\""));
+        task.abort();
     }
 
     fn bridge() -> DiscordBridge {

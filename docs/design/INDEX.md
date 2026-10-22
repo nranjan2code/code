@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 3 proposal, 21 in progress, 57 implemented, 2 reference, 9 superseded, 5 historical.
+Counts: 3 proposal, 21 in progress, 58 implemented, 2 reference, 9 superseded, 5 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -21,6 +21,7 @@ Counts: 3 proposal, 21 in progress, 57 implemented, 2 reference, 9 superseded, 5
 | [10-flows.md](10-flows.md) | 10 — Flows (static DAGs) | implemented | in 2.0.0 |
 | [100-workers.md](100-workers.md) | 100 — Workers: work handed over, kept running | proposal | deferred by the maintainer on 2026-10-18: no stage starts until the maintainer reopens it |
 | [101-topics.md](101-topics.md) | 101 — Topics: Agent-owned organisation for people and the Agent | implemented | as a conversation-scoped view with a runtime placement check |
+| [102-channel-cards.md](102-channel-cards.md) | 102 — Native channel cards | implemented | shared form projection, native provider compilers and shared direct/proactive request plans are built and tested locally |
 | [11-planner.md](11-planner.md) | 11 — Dynamic planner | implemented | in 2.0.0 |
 | [12-evals.md](12-evals.md) | 12 — Eval harness | implemented | in 2.0.0 |
 | [13-server.md](13-server.md) | 13 — Server mode | implemented | in 2.0.0 |
@@ -33,7 +34,7 @@ Counts: 3 proposal, 21 in progress, 57 implemented, 2 reference, 9 superseded, 5
 | [26-learning.md](26-learning.md) | 26 — Learning loop: memory write-path + skill proposals | implemented | in 2.0.0 |
 | [28-operations.md](28-operations.md) | 28 — Operations: service control plane | implemented | in 2.0.0 |
 | [29-personal-os.md](29-personal-os.md) | 29 — Personal OS | implemented | in 2.0.0 |
-| [30-output-engineering.md](30-output-engineering.md) | 30 — Output engineering and channel delivery | implemented | (checked against the code on 2026-10-14): schema-v2 semantic timeline with result-scoped outcome/evidence metadata and projected collaborative goal state, deterministic CommonMark compiler, universal recipe catalog (research, coding diffs/tests, telemetry charts, spreadsheet grids, terminal sessions, culinary recipes, UI previews) and tool-provenance signal engine, one generic native presentation renderer over the closed primitive vocabulary (research, diff, test_matrix, chart, table/comparison, terminal, recipe, ui_preview, timeline, metric, metric_grid, media, universal_card), snapshot/SSE projection with merged planner, isolated worker, trusted templates, plugin-extensible skill registry, structured fence projection on all markup surfaces, engagement posture integration, Telegram/Slack/Discord projections, semantic webhook envelope, adapter registry, ordered multi-message output, and durable delivery as effects (plan M4.5, AGENTS.md invariant 41) implemented |
+| [30-output-engineering.md](30-output-engineering.md) | 30 — Output engineering and channel delivery | implemented | semantic timeline, worker rendering, trusted templates, plugin skill validation, structured text projection, native channel cards, webhook packets and effect-backed proactive delivery |
 | [30-render-architecture.md](30-render-architecture.md) | 30-render-architecture — Cross-surface rendering architecture | implemented | contract, with explicitly listed future extensions (checked against the code on 2026-10-14) |
 | [31-network-resilience.md](31-network-resilience.md) | 31 — Network resilience | implemented | in 2.0.0 |
 | [32-release-engineering.md](32-release-engineering.md) | 32 — Release engineering | implemented | in 2.0.0 |

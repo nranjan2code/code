@@ -8,8 +8,8 @@ use vak_core::Core;
 use vak_delivery::client::WorkerClient;
 use vak_delivery::templates::{ChannelPreference, load_layers};
 use vak_delivery::{
-    AnswerDraft, DeliveryAction, DeliveryContent, DeliveryJob, DeliveryKind, DeliveryPacket,
-    DeliveryProfile, Markup,
+    AnswerDraft, DeliveryContent, DeliveryJob, DeliveryKind, DeliveryPacket, DeliveryProfile,
+    Markup,
 };
 use vak_session::effects::{Dispatch, EffectKind, EffectRecord, Prepare, Receipt};
 use vak_session::ids::EffectId;
@@ -912,28 +912,6 @@ impl ChannelAdapter for WebhookAdapter {
     }
 }
 
-/// Telegram's `reply_markup.inline_keyboard`: one row, one button per
-/// action. `callback_data` is `"<verb>:<request_id>"` — the bridge's
-/// `handle_callback` splits on the first `:` and maps `verb` straight onto
-/// the same "yes"/"no" verdict text a typed chat reply would produce.
-fn inline_keyboard_markup(actions: &[DeliveryAction]) -> serde_json::Value {
-    let buttons: Vec<serde_json::Value> = actions
-        .iter()
-        .map(|action| {
-            let request_id = action
-                .data
-                .get("request_id")
-                .map(String::as_str)
-                .unwrap_or_default();
-            serde_json::json!({
-                "text": action.label,
-                "callback_data": format!("{}:{request_id}", action.verb),
-            })
-        })
-        .collect();
-    serde_json::json!({ "inline_keyboard": [buttons] })
-}
-
 /// Proactive push to a Telegram chat: the async counterpart to the
 /// bridge's own `sendMessage` reply. Used for anything that isn't a direct
 /// reply to the message currently in flight — chiefly forwarded approval
@@ -975,64 +953,49 @@ impl ChannelAdapter for TelegramAdapter {
             .target
             .split_once(':')
             .ok_or_else(|| SendFailure::not_sent("telegram target has no chat id"))?;
-        let chunks: Vec<&str> = if packet.chunks.is_empty() {
-            vec![packet.fallback_markdown.as_str()]
-        } else {
-            packet.chunks.iter().map(String::as_str).collect()
-        };
+        let messages = vak_delivery::channel::messages(packet).map_err(SendFailure::not_sent)?;
         let client = reqwest::Client::new();
-        let last = chunks.len().saturating_sub(1);
-        let mut message_id = None;
-        for (i, chunk) in chunks.iter().enumerate() {
-            let mut body = serde_json::json!({
-                "chat_id": chat_id,
-                "text": chunk,
-                "parse_mode": "HTML",
-                "link_preview_options": { "is_disabled": true },
-            });
-            // Buttons ride on the last chunk so they land under the final
-            // line of text, matching where a human reader expects them.
-            if i == last && !packet.actions.is_empty() {
-                body["reply_markup"] = inline_keyboard_markup(&packet.actions);
-            }
-            let resp = client
+        let mut id = None;
+        for (index, message) in messages.into_iter().enumerate() {
+            let mut body = message.body;
+            body["chat_id"] = serde_json::json!(chat_id);
+            let response = client
                 .post(format!(
-                    "{}/bot{}/sendMessage",
-                    self.api_base, self.bot_token
+                    "{}/bot{}/{}",
+                    self.api_base, self.bot_token, message.method
                 ))
                 .json(&body)
                 .send()
                 .await
-                .map_err(|error| SendFailure::transport("telegram sendMessage", &error, i > 0))?;
-            if !resp.status().is_success() {
+                .map_err(|e| SendFailure::transport(message.method, &e, index > 0))?;
+            if !response.status().is_success() {
                 return Err(SendFailure::status(
-                    "telegram sendMessage",
-                    resp.status(),
-                    i > 0,
+                    message.method,
+                    response.status(),
+                    index > 0,
                 ));
             }
-            let answer: serde_json::Value = resp.json().await.unwrap_or_default();
-            message_id = answer["result"]["message_id"]
+            let answer: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|e| SendFailure::transport("telegram response", &e, true))?;
+            if answer["ok"].as_bool() != Some(true) {
+                return Err(SendFailure {
+                    reason: "telegram message was refused".into(),
+                    landed: if index > 0 {
+                        Landed::Partly
+                    } else {
+                        Landed::No
+                    },
+                });
+            }
+            id = answer["result"]["message_id"]
                 .as_i64()
-                .map(|id| id.to_string())
-                .or(message_id);
+                .map(|v| v.to_string())
+                .or(id);
         }
-        Ok(message_id)
+        Ok(id)
     }
-}
-
-/// Forwarded-approval actions rendered as a typed-verdict prompt, for the
-/// surfaces that do not (yet) get interactive components here. This is the
-/// same fallback Telegram used before its inline keyboard: the reply text
-/// it asks for is exactly what `parse_verdict` in `gateway.rs` already
-/// understands, so approvals resolve through the one existing path.
-fn typed_verdict_prompt(actions: &[DeliveryAction]) -> Option<String> {
-    let request_id = actions
-        .iter()
-        .find_map(|action| action.data.get("request_id"))?;
-    Some(format!(
-        "\n\nReply `yes {request_id}` to approve or `no {request_id}` to deny."
-    ))
 }
 
 /// Proactive push to a Discord channel (docs/design/34 Phase 3): the async
@@ -1068,58 +1031,34 @@ impl ChannelAdapter for DiscordAdapter {
             .target
             .split_once(':')
             .ok_or_else(|| SendFailure::not_sent("discord target has no channel id"))?;
-        let url = format!("{}/channels/{channel_id}/messages", self.api_base);
-        let mut message_id = post_chunks(
-            packet,
-            |chunk, index, last| {
-                let mut content = chunk.to_string();
-                if last && let Some(prompt) = typed_verdict_prompt(&packet.actions) {
-                    content.push_str(&prompt);
-                }
-                (
-                    url.clone(),
-                    serde_json::json!({
-                        "content": content,
-                        "allowed_mentions": {"parse": []},
-                        "nonce": discord_nonce(key, index),
-                        "enforce_nonce": true,
-                    }),
-                )
-            },
-            |request| request.header("Authorization", format!("Bot {}", self.bot_token)),
-            "discord createMessage",
-        )
-        .await?;
-        let cards = packet
-            .structured_cards()
-            .into_iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        if !cards.is_empty() {
-            let index = packet.chunks.len().max(1);
-            let response = reqwest::Client::new()
-                .post(&url)
+        let messages = vak_delivery::channel::messages(packet).map_err(SendFailure::not_sent)?;
+        let client = reqwest::Client::new();
+        let mut id = None;
+        for (index, message) in messages.into_iter().enumerate() {
+            let mut body = message.body;
+            body["nonce"] = serde_json::json!(discord_nonce(key, index));
+            body["enforce_nonce"] = serde_json::json!(true);
+            let response = client
+                .post(format!("{}/channels/{channel_id}/messages", self.api_base))
                 .header("Authorization", format!("Bot {}", self.bot_token))
-                .json(&serde_json::json!({
-                    "embeds": vak_delivery::discord::structured_card_embeds(&cards),
-                    "allowed_mentions": {"parse": []},
-                    "nonce": discord_nonce(key, index),
-                    "enforce_nonce": true,
-                }))
+                .json(&body)
                 .send()
                 .await
-                .map_err(|error| SendFailure::transport("discord createMessage", &error, true))?;
+                .map_err(|e| SendFailure::transport("discord createMessage", &e, index > 0))?;
             if !response.status().is_success() {
                 return Err(SendFailure::status(
                     "discord createMessage",
                     response.status(),
-                    true,
+                    index > 0,
                 ));
             }
-            let answer: serde_json::Value = response.json().await.unwrap_or_default();
-            message_id = answer["id"].as_str().map(str::to_string).or(message_id);
+            let answer: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|e| SendFailure::transport("discord response", &e, true))?;
+            id = answer["id"].as_str().map(str::to_owned).or(id);
         }
-        Ok(message_id)
+        Ok(id)
     }
 
     fn dedupes(&self) -> bool {
@@ -1130,7 +1069,13 @@ impl ChannelAdapter for DiscordAdapter {
 /// The nonce of one message of an effect: its key and the message's
 /// index, within Discord's 25 characters.
 fn discord_nonce(key: &str, index: usize) -> String {
-    format!("{key}{index}").chars().take(25).collect()
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(key.as_bytes());
+    digest.update((index as u64).to_be_bytes());
+    // Provider permits 25 characters. Hash the full pair before bounding it,
+    // so a long effect key cannot truncate away the message index.
+    format!("{:x}", digest.finalize())[..25].to_owned()
 }
 
 /// Proactive push to a Slack channel/DM via `chat.postMessage`.
@@ -1159,61 +1104,31 @@ impl ChannelAdapter for SlackAdapter {
             .target
             .split_once(':')
             .ok_or_else(|| SendFailure::not_sent("slack target has no channel id"))?;
-        let url = format!("{}/chat.postMessage", self.api_base);
-        let mut message_ts = post_chunks(
-            packet,
-            |chunk, _, last| {
-                let mut text = chunk.to_string();
-                if last && let Some(prompt) = typed_verdict_prompt(&packet.actions) {
-                    text.push_str(&prompt);
-                }
-                (
-                    url.clone(),
-                    serde_json::json!({ "channel": channel_id, "text": text }),
-                )
-            },
-            |request| request.bearer_auth(&self.bot_token),
-            "slack chat.postMessage",
-        )
-        .await?;
-        let cards = packet
-            .structured_cards()
-            .into_iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        if !cards.is_empty() {
-            let fallback = cards
-                .iter()
-                .map(|card| {
-                    let source = vak_delivery::structured_markdown(card);
-                    source
-                        .split_once("\n\n```json")
-                        .map_or(source.as_str(), |(text, _)| text)
-                        .to_owned()
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let operation = "slack chat.postMessage";
-            let response = reqwest::Client::new()
-                .post(&url)
+        let messages = vak_delivery::channel::messages(packet).map_err(SendFailure::not_sent)?;
+        let client = reqwest::Client::new();
+        let mut id = None;
+        for (index, message) in messages.into_iter().enumerate() {
+            let mut body = message.body;
+            body["channel"] = serde_json::json!(channel_id);
+            let response = client
+                .post(format!("{}/chat.postMessage", self.api_base))
                 .bearer_auth(&self.bot_token)
-                .json(&serde_json::json!({
-                    "channel": channel_id,
-                    "text": fallback.chars().take(2500).collect::<String>(),
-                    "blocks": vak_delivery::slack::structured_card_blocks(&cards),
-                    "parse": "none", "link_names": false,
-                }))
+                .json(&body)
                 .send()
                 .await
-                .map_err(|error| SendFailure::transport(operation, &error, true))?;
+                .map_err(|e| SendFailure::transport("slack chat.postMessage", &e, index > 0))?;
             if !response.status().is_success() {
-                return Err(SendFailure::status(operation, response.status(), true));
+                return Err(SendFailure::status(
+                    "slack chat.postMessage",
+                    response.status(),
+                    index > 0,
+                ));
             }
-            message_ts = slack_answer(operation, response, true)
+            id = slack_answer("slack chat.postMessage", response, index > 0)
                 .await?
-                .or(message_ts);
+                .or(id);
         }
-        Ok(message_ts)
+        Ok(id)
     }
 }
 
@@ -1244,91 +1159,67 @@ async fn slack_answer(
     Ok(result["ts"].as_str().map(str::to_string))
 }
 
-/// Shared chunk-and-POST loop for Discord and Slack: `body` builds the
-/// (url, json) for one chunk from its index and whether it is the last,
-/// `auth` applies the surface's auth header. Returns the provider's id of
-/// the last message.
-async fn post_chunks(
-    packet: &DeliveryPacket,
-    body: impl Fn(&str, usize, bool) -> (String, serde_json::Value),
-    auth: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
-    operation: &str,
-) -> Result<Option<String>, SendFailure> {
-    let chunks: Vec<&str> = if packet.chunks.is_empty() {
-        vec![packet.fallback_markdown.as_str()]
-    } else {
-        packet.chunks.iter().map(String::as_str).collect()
-    };
-    let client = reqwest::Client::new();
-    let last = chunks.len().saturating_sub(1);
-    let mut id = None;
-    for (i, chunk) in chunks.iter().enumerate() {
-        let (url, json) = body(chunk, i, i == last);
-        let resp = auth(client.post(url))
-            .json(&json)
-            .send()
-            .await
-            .map_err(|error| SendFailure::transport(operation, &error, i > 0))?;
-        if !resp.status().is_success() {
-            return Err(SendFailure::status(operation, resp.status(), i > 0));
-        }
-        if operation.starts_with("slack ") {
-            id = slack_answer(operation, resp, i > 0).await?.or(id);
-        } else {
-            let answer: serde_json::Value = resp.json().await.unwrap_or_default();
-            id = answer["id"].as_str().map(str::to_string).or(id);
-        }
-    }
-    Ok(id)
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
-    fn approval_actions() -> Vec<DeliveryAction> {
-        vec![
-            DeliveryAction {
-                id: "approve".into(),
-                label: "Approve".into(),
-                verb: "approve".into(),
-                data: [("request_id".into(), "abc123".into())]
-                    .into_iter()
-                    .collect(),
-            },
-            DeliveryAction {
-                id: "deny".into(),
-                label: "Deny".into(),
-                verb: "deny".into(),
-                data: [("request_id".into(), "abc123".into())]
-                    .into_iter()
-                    .collect(),
-            },
-        ]
-    }
-
-    #[test]
-    fn inline_keyboard_carries_verb_and_request_id_in_callback_data() {
-        let markup = inline_keyboard_markup(&approval_actions());
-        let row = markup["inline_keyboard"][0].as_array().unwrap();
-        assert_eq!(row.len(), 2);
-        assert_eq!(row[0]["text"], "Approve");
-        assert_eq!(row[0]["callback_data"], "approve:abc123");
-        assert_eq!(row[1]["text"], "Deny");
-        assert_eq!(row[1]["callback_data"], "deny:abc123");
-    }
-
-    #[test]
-    fn typed_verdict_prompt_asks_for_the_text_parse_verdict_accepts() {
-        let prompt = typed_verdict_prompt(&approval_actions()).unwrap();
-        assert!(prompt.contains("yes abc123"));
-        assert!(prompt.contains("no abc123"));
-    }
-
-    #[test]
-    fn typed_verdict_prompt_is_absent_without_actions() {
-        assert!(typed_verdict_prompt(&[]).is_none());
+    #[tokio::test]
+    async fn proactive_native_cards_use_the_same_plan_and_preserve_partial_refusal() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        for surface in ["telegram", "slack", "discord"] {
+            let (api_base, captured, task) = crate::surfaces::channel_fixture::provider(None).await;
+            let packet = crate::surfaces::channel_fixture::packet(surface);
+            let expected = vak_delivery::channel::messages(&packet).unwrap();
+            let adapter: Box<dyn ChannelAdapter> = match surface {
+                "telegram" => Box::new(TelegramAdapter {
+                    api_base,
+                    bot_token: "test".into(),
+                }),
+                "slack" => Box::new(SlackAdapter {
+                    api_base,
+                    bot_token: "test".into(),
+                }),
+                _ => Box::new(DiscordAdapter {
+                    api_base,
+                    bot_token: "test".into(),
+                }),
+            };
+            assert!(
+                adapter
+                    .send(&core, &packet, "effect-key")
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+            let actual = captured.lock().unwrap();
+            assert_eq!(actual.len(), expected.len());
+            for ((_, body), expected) in actual.iter().zip(expected) {
+                let mut body = body.clone();
+                for field in ["chat_id", "channel", "nonce", "enforce_nonce"] {
+                    body.as_object_mut().unwrap().remove(field);
+                }
+                assert_eq!(body, expected.body);
+            }
+            task.abort();
+        }
+        let (api_base, captured, task) = crate::surfaces::channel_fixture::provider(Some(1)).await;
+        let adapter = TelegramAdapter {
+            api_base,
+            bot_token: "test".into(),
+        };
+        let error = adapter
+            .send(
+                &core,
+                &crate::surfaces::channel_fixture::packet("telegram"),
+                "effect-key",
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.landed, Landed::Partly);
+        assert_eq!(captured.lock().unwrap().len(), 2);
+        task.abort();
     }
 
     #[test]
@@ -1433,13 +1324,6 @@ mod tests {
         assert_eq!(slack.scheme(), "slack");
         assert!(!discord.profile().supports_actions);
         assert!(!slack.profile().supports_actions);
-    }
-
-    #[test]
-    fn inline_keyboard_is_empty_row_when_no_actions() {
-        let markup = inline_keyboard_markup(&[]);
-        let row = markup["inline_keyboard"][0].as_array().unwrap();
-        assert!(row.is_empty());
     }
 
     fn telegram_adapter(token: &str) -> Arc<dyn ChannelAdapter> {
@@ -1655,7 +1539,11 @@ mod tests {
         assert_eq!(bodies[0]["nonce"], bodies[1]["nonce"]);
         assert_eq!(bodies[1]["enforce_nonce"], true);
         let nonce = bodies[0]["nonce"].as_str().unwrap();
-        assert!(nonce.starts_with(&effect.idempotency_key) && nonce.len() <= 25);
+        assert!(nonce.len() <= 25);
+        assert_ne!(
+            discord_nonce(&effect.idempotency_key, 0),
+            discord_nonce(&effect.idempotency_key, 1)
+        );
     }
 
     /// Anywhere a provider does not drop repeats, an unknown send is sent

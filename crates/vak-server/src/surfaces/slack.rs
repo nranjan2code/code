@@ -348,46 +348,14 @@ impl SlackBridge {
     }
 
     async fn send_message(&self, channel_id: &str, reply: &GatewayReply) -> Result<(), String> {
-        let cards = reply
-            .delivery
-            .as_ref()
-            .map(vak_delivery::DeliveryPacket::structured_cards)
-            .unwrap_or_default();
-        for chunk in &reply.chunks {
-            post_slack_message(
-                &self.api_base,
-                &self.bot_token,
-                serde_json::json!({
-                    "channel": channel_id, "text": chunk,
-                    "parse": "none", "link_names": false,
-                }),
-            )
-            .await?;
-        }
-        if !cards.is_empty() {
-            let cards = cards.into_iter().cloned().collect::<Vec<_>>();
-            let fallback = cards
-                .iter()
-                .map(|card| {
-                    let source = vak_delivery::structured_markdown(card);
-                    source
-                        .split_once("\n\n```json")
-                        .map_or(source.as_str(), |(text, _)| text)
-                        .to_owned()
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            post_slack_message(
-                &self.api_base,
-                &self.bot_token,
-                serde_json::json!({
-                    "channel": channel_id,
-                    "text": fallback.chars().take(2500).collect::<String>(),
-                    "blocks": vak_delivery::slack::structured_card_blocks(&cards),
-                    "parse": "none", "link_names": false,
-                }),
-            )
-            .await?;
+        let messages = match &reply.delivery {
+            Some(packet) => vak_delivery::channel::messages(packet)?,
+            None => vak_delivery::channel::notice("slack", &reply.chunks.join("\n\n"))?,
+        };
+        for message in messages {
+            let mut body = message.body;
+            body["channel"] = serde_json::json!(channel_id);
+            post_slack_message(&self.api_base, &self.bot_token, body).await?;
         }
         Ok(())
     }
@@ -531,29 +499,44 @@ async fn post_slack_message(api_base: &str, token: &str, body: Value) -> Result<
 mod tests {
     use super::*;
 
-    fn sample_card() -> vak_delivery::StructuredOutput {
-        vak_delivery::StructuredOutput {
-            semantic_type: "metric".into(),
-            block: String::new(),
-            schema_version: vak_delivery::PRESENTATION_SCHEMA_VERSION,
-            skill_id: "core".into(),
-            skill_version: "1".into(),
-            payload: serde_json::json!({"title":"Weather","Temperature":"23°C","Status":"Sunny"}),
+    #[tokio::test]
+    async fn native_cards_reach_the_provider_as_the_shared_request_plan() {
+        let (api_base, captured, task) = super::super::channel_fixture::provider(None).await;
+        let packet = super::super::channel_fixture::packet("slack");
+        let expected = vak_delivery::channel::messages(&packet).unwrap();
+        let mut bridge = bridge();
+        bridge.api_base = api_base;
+        let reply = GatewayReply {
+            chunks: Vec::new(),
+            delivery: Some(packet),
+            session_id: None,
+        };
+        bridge.send_message("123", &reply).await.unwrap();
+        let actual = captured.lock().unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for ((path, body), expected) in actual.iter().zip(expected) {
+            let mut body = body.clone();
+            body.as_object_mut().unwrap().remove("channel");
+            assert_eq!(body, expected.body);
+            assert!(path.ends_with(expected.method));
         }
+        task.abort();
     }
 
-    #[test]
-    fn card_delivery_uses_native_block_kit_fields() {
-        let blocks = vak_delivery::slack::structured_card_blocks(&[sample_card()]);
-        assert_eq!(blocks[0]["type"], "header");
-        assert_eq!(blocks[0]["text"]["text"], "Weather");
-        assert_eq!(blocks[1]["fields"][0]["type"], "plain_text");
-        assert_eq!(blocks[1]["fields"][0]["text"], "Status\nSunny");
-        assert!(
-            !blocks
-                .iter()
-                .any(|block| block.to_string().contains("\"semantic_type\""))
-        );
+    #[tokio::test]
+    async fn refused_native_message_stops_without_a_compatibility_resend() {
+        let (api_base, captured, task) = super::super::channel_fixture::provider(Some(1)).await;
+        let packet = super::super::channel_fixture::packet("slack");
+        let mut bridge = bridge();
+        bridge.api_base = api_base;
+        let reply = GatewayReply {
+            chunks: Vec::new(),
+            delivery: Some(packet),
+            session_id: None,
+        };
+        assert!(bridge.send_message("123", &reply).await.is_err());
+        assert_eq!(captured.lock().unwrap().len(), 2);
+        task.abort();
     }
 
     fn bridge() -> SlackBridge {

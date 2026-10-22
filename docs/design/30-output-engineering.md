@@ -1,19 +1,15 @@
 # 30 — Output engineering and channel delivery
 
-Status: implemented (checked against the code on 2026-10-14): schema-v2 semantic timeline with result-scoped outcome/evidence metadata
-and projected collaborative goal state, deterministic CommonMark compiler,
-universal recipe catalog (research, coding diffs/tests, telemetry charts,
-spreadsheet grids, terminal sessions, culinary recipes, UI previews) and tool-provenance signal
-engine, one generic native presentation renderer over the closed primitive
-vocabulary (research, diff, test_matrix, chart, table/comparison, terminal,
-recipe, ui_preview, timeline, metric, metric_grid, media, universal_card),
-snapshot/SSE projection with merged planner, isolated worker, trusted templates,
-plugin-extensible skill registry, structured fence projection on all markup
-surfaces, engagement posture integration, Telegram/Slack/Discord projections,
-semantic webhook envelope, adapter registry, ordered multi-message output, and
-durable delivery as effects (plan M4.5, AGENTS.md invariant 41) implemented. A terminal projector of the closed AST is not
-built: the inline TUI was withdrawn, and `vak term` (doc 55) draws the
-presentation items it receives in its own decks.
+Status: implemented: semantic timeline, worker rendering, trusted templates,
+plugin skill validation, structured text projection, native channel cards,
+webhook packets and effect-backed proactive delivery. Native channel form
+compilation was updated on 2026-10-22; real provider/client visual qualification
+is open in docs/design/102-channel-cards.md. A terminal projector of the closed
+AST is not built: `vak term` draws the presentation items in its own decks.
+
+> The card vocabulary and recipe planning described below were replaced by
+> docs/design/92-card-forms.md. Native channel cards now follow
+> docs/design/102-channel-cards.md; basic markup codecs serve narration.
 
 ## Problem
 
@@ -283,6 +279,9 @@ every chat surface: `TelegramHtml`, `SlackMrkdwn`, `DiscordMarkdown`, plus
 Passing raw GFM through to Slack or Discord is not a safe default — each
 dialect disagrees with GFM in specific, visible ways:
 
+The following basic-message codecs apply to narration, not the native card
+compiler in docs/design/102-channel-cards.md.
+
 - **Telegram** (`telegram::markdown_to_html`) projects to the HTML subset
   Telegram's Bot API accepts: `<b>/<i>/<s>/<tg-spoiler>/<code>/<pre>/<a>`.
   Headings become bold (h1/h2 upshifted for visual weight since Telegram HTML
@@ -334,23 +333,21 @@ webhooks receive `{target,text,ts,job_id,delivery}` plus `Idempotency-Key`, so a
 relay can deduplicate and consume semantics while old receivers keep using
 `text`.
 
-Telegram, Slack, and Discord are sidecar adapters: `/gateway/inbound` returns
-the semantic packet plus typed cards from the run. Telegram maps typed cards
-to a rich HTML message layout with a title and key/value rows (the Bot API
-does not define a generic card object); Slack
-renders cards as Block Kit headers and fields with `text` retained as the
-accessible notification fallback; Discord renders cards as embeds with
-`content` retained as the readable fallback. Runs without typed cards continue
-through ordered text chunks. Future Teams or Matrix sidecars can post optional
-`capabilities` (`markup`, `max_chars`, tables, code, links, actions) and
-consume the same packet without changing the agent loop. Unknown surfaces
-start conservative; declared limits are capped at 100,000.
+Telegram, Slack, and Discord receive the semantic packet plus typed cards
+from `/gateway/inbound`. Direct replies and proactive pushes now use the same
+form-aware request compiler (`vak_delivery::channel`), specified in
+[Native channel cards](102-channel-cards.md). Telegram uses `sendRichMessage`
+blocks with headings, lists, tables and expandable evidence; Slack uses native
+rich-text blocks and tables; Discord uses bounded embeds with complete nested
+content. Cards are never generic payload fields or a second fallback answer.
+Static substitutes state which visual or interactive feature requires the app.
 
-For context, Telegram text is limited to 4096 characters, Slack recommends
-4000 top-level characters and imposes per-block limits, and Discord message
-content is limited to 2000 characters. Discord Components V2 also changes
-whether traditional content and embeds may coexist. These are distinct
-protocol contracts, not styling preferences.
+Ordinary narration still uses ordered channel-specific text chunks. Native
+card limits differ from basic-message limits; their protocol-derived
+continuation rules and primary references are in doc 102. There is no
+historical card schema reader or automatic downgrade after a provider refusal.
+Future surfaces may declare capabilities and consume the semantic packet
+without changing the agent loop; unknown surfaces start conservative.
 
 Primary references:
 

@@ -96,6 +96,13 @@ calculation a person adjusts in `controls` (added 2026-10-17, P1); a decision th
 the existing approval and option flows. Each is added only when real
 turns show a shape the forms above cannot carry (`docs/plans/open-items.md`).
 
+## Channel rendering
+
+Native channel rendering uses the same `block` and validated payload, through
+one form projection and provider compilers shared by direct replies and
+proactive pushes. See [Native channel cards](102-channel-cards.md). There are
+no aliases, subject lists or guessed payload schemas in the channel path.
+
 ## 3. What is removed
 
 - The 82 alias kinds, the client's `STRUCTURED_RENDERERS`, the

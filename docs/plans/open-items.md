@@ -1,3 +1,22 @@
+## Channel card rendering (2026-10-22)
+
+- [x] Trace the installed screenshot through supported data readers: the model
+  emitted summary/sources cards; Telegram flattened them. See
+  [investigation](../audits/channel-card-rendering-2026-10-22.md).
+- [x] Replace generic projectors with one current-form projection and native
+  compilers shared by direct replies and proactive pushes: Telegram rich
+  blocks, Slack rich text/tables, Discord embeds. Preserve nested content,
+  labels, source provenance and lexical scalars; paginate instead of truncate.
+  Remove the automatic Telegram downgrade and legacy-only card fixtures.
+- [x] Record the [design](../design/102-channel-cards.md), current provider
+  limits and no-domain/no-compatibility decision; add compiler and actual HTTP
+  transport tests for current forms, overflow, refusal and partial delivery.
+  Scoped acceptance: 835 tests passed; see
+  [acceptance](../audits/native-channel-cards-2026-10-22.md).
+- [ ] Qualify real current-form answers visually in Telegram, Slack and Discord,
+  including phone/desktop clients, long/nested content and source disclosure.
+  Local provider fixtures verify wire requests, not real provider/client rendering.
+
 ## Canvas workspace foundation (2026-10-22)
 
 - [x] Atomic current-contract restoration, explicit unavailable workspace, scoped

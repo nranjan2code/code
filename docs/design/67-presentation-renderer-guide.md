@@ -62,14 +62,17 @@ of these geometry/gap cases remains open under hardening P10.
 ## 1. The model
 
 A card is a **form**: a shape of information, never a topic. One list names
-the forms, `FORMS` in `crates/vak-delivery/src/skills.rs`, and four places
-must agree with it, which `the_card_kinds_are_exactly_the_types_the_client_draws`
-(vak-server) checks:
+the forms, `FORMS` in `crates/vak-delivery/src/skills.rs`, and the following
+places must agree with it. `the_card_kinds_are_exactly_the_types_the_client_draws`
+(vak-server) checks the host/client vocabulary;
+`every_current_form_has_a_native_projection_on_every_channel` (vak-delivery)
+checks channel coverage:
 
 | Place | What it holds for each form |
 |---|---|
 | `crates/vak-core/src/presentation_tools.rs` `SHAPES` | the card tool `emit_<form>_card`: flat arguments and the builder that stores them |
-| `crates/vak-delivery/src/skills.rs` | `validate_form` (the stored shape) and `structured_markdown` (its text form for channels, exports and the model) |
+| `crates/vak-delivery/src/channel/` | shared form projection and native channel compilers; doc 102 |
+| `crates/vak-delivery/src/skills.rs` | `validate_form` (the stored shape) and `structured_markdown` (its text form for exports, explicitly textual surfaces and the model) |
 | `crates/vak-presentation/src/lib.rs` `Primitive` | the form as a primitive a pack can place, beside layout (`stack`, `row`, `group`, `section`, `text`, `metric`) |
 | `crates/vak-client-ui/src/components/cards/index.tsx` `FORMS` | the renderer that draws it |
 
@@ -90,7 +93,7 @@ browser at 1440 × 900 and 390 × 844, light and dark; the gallery is
 ## 3. Changing what a form holds
 
 Change the tool's arguments and builder, the validator and text form, the
-renderer, and the form's sample in each test (`fixture_for` in
+renderer, and the native channel projection and form's sample in each test (`fixture_for` in
 `presentation_tools.rs`, `sample` in `skills.rs`, `samples` in
 `tests/presentation.tsx`) in one change. Keep the argument rules of
 docs/design/89-constrained-tool-arguments.md: flat, every field described,
@@ -98,7 +101,7 @@ one name one shape (`one_argument_name_is_one_shape_on_every_block`).
 
 ## 4. Adding a form
 
-Add it to all four places in §1 and to the table in doc 92 §2, only when
+Add it to all places in §1 and to the table in doc 92 §2, only when
 real turns show a shape no form carries. A topic (a recipe, a trip, a
 budget) is never a form: it is a composition of forms in one answer
 (docs/design/87-composed-answers.md).

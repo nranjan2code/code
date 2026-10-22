@@ -61,7 +61,6 @@ mod canvas;
 mod canvas_workspaces;
 mod card_actions;
 mod catalog_api;
-mod channels;
 mod client_events;
 mod client_ui;
 mod conversation_history;

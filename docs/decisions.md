@@ -1,5 +1,12 @@
 # Decisions
 
+- 2026-10-22: The maintainer requested a proper channel-card design and fix,
+  with no domain rules, hardcoded subjects or backward-compatibility paths.
+  Draw the existing typed forms through shared semantic projection and native
+  provider compilers, used for direct replies and proactive pushes. Protocol
+  limits cause continuation, never selective truncation. See
+  [Native channel cards](design/102-channel-cards.md).
+
 - 2026-10-22: The maintainer requested fixing automatic Topics after an enabled
   conversation remained ungrouped. Add a runtime check for a recorded placement
   decision through the existing correction ladder; keep semantic Topic choices

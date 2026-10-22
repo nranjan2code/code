@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Channel cards now render from their typed forms through one shared delivery
+  path: native Telegram rich messages, Slack rich-text/table blocks and Discord
+  embeds. Observation labels, nested points, source findings and exact table
+  values survive; long cards continue instead of being silently truncated.
+  Interactive/visual features have explicit static representations. Removed
+  generic payload-field renderers and Telegram's automatic plain-text downgrade.
+
 ## 8.22.0 — 2026-10-22
 
 - Automatic Topics now checks for a recorded organization decision before an
