@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.22.0",
-  "revision": "d1662688e",
+  "revision": "872ddb97c",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.21.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2452,
+   "total_commits": 2454,
    "days": 63,
    "peak_day": 174,
    "design_docs": 97,
@@ -389,15 +389,15 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 509,
+  "commits": 511,
   "areas": [
    [
     "docs",
-    414
+    415
    ],
    [
     "(root)",
-    291
+    292
    ],
    [
     "vak-core",
@@ -754,6 +754,22 @@
   ],
   "recent": [
    {
+    "hash": "872ddb97c",
+    "date": "2026-10-22",
+    "subject": "Open changelog for the next release",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "2e1c0e35d",
+    "date": "2026-10-22",
+    "subject": "Record 8.22.0 release and local install",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
     "hash": "d1662688e",
     "date": "2026-10-22",
     "subject": "Prepare 8.22.0 release notes",
@@ -881,26 +897,6 @@
      "(root)",
      "docs",
      "vak-client-ui"
-    ]
-   },
-   {
-    "hash": "244c22cd6",
-    "date": "2026-10-21",
-    "subject": "Release 8.19.0 with focused reviews and controls",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "vak-admin-ui",
-     "vak-client-ui"
-    ]
-   },
-   {
-    "hash": "12fb91326",
-    "date": "2026-10-21",
-    "subject": "Record 8.18.0 release and verified local installation",
-    "areas": [
-     "docs"
     ]
    }
   ],
@@ -30830,6 +30826,18 @@
  ],
  "replay": [
   {
+   "hash": "872ddb97c",
+   "date": "2026-10-22",
+   "subject": "Open changelog for the next release",
+   "subsystems": []
+  },
+  {
+   "hash": "2e1c0e35d",
+   "date": "2026-10-22",
+   "subject": "Record 8.22.0 release and local install",
+   "subsystems": []
+  },
+  {
    "hash": "d1662688e",
    "date": "2026-10-22",
    "subject": "Prepare 8.22.0 release notes",
@@ -37630,7 +37638,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1401,
+  "docs_commits": 1402,
   "hot": 655
  },
  "findings": [
