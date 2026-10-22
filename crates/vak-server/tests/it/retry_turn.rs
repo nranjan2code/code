@@ -202,7 +202,7 @@ async fn a_retried_turn_is_answered_again_and_the_next_turn_follows_it() {
         ])),
         requests: Mutex::new(Vec::new()),
     });
-    core.set_provider_instance(provider.clone());
+    crate::support::set_provider_without_automatic_topics(&core, provider.clone());
     std::mem::forget(dir);
 
     let (router, token) = vak_server::secured_router(core);
@@ -299,7 +299,7 @@ async fn a_settled_conversation_holds_no_writer_lock() {
         ])),
         requests: Mutex::new(Vec::new()),
     });
-    core.set_provider_instance(provider.clone());
+    crate::support::set_provider_without_automatic_topics(&core, provider.clone());
     let scope = core.scope();
     let ledger_cwd = core.cwd().clone();
     std::mem::forget(dir);

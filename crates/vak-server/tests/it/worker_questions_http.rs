@@ -133,7 +133,7 @@ async fn a_worker_question_is_listed_answered_once_and_reaches_the_worker() {
         ])),
         requests: Mutex::new(Vec::new()),
     });
-    core.set_provider_instance(provider.clone());
+    crate::support::set_provider_without_automatic_topics(&core, provider.clone());
     let app = vak_server::router(core);
 
     let (_, created) = call_api(&app, "POST", "/sessions", json!({})).await;
@@ -266,7 +266,7 @@ async fn a_client_that_cannot_show_questions_ends_the_question_at_once() {
         ])),
         requests: Mutex::new(Vec::new()),
     });
-    core.set_provider_instance(provider.clone());
+    crate::support::set_provider_without_automatic_topics(&core, provider.clone());
     let app = vak_server::router(core);
     let (_, created) = call_api(&app, "POST", "/sessions", json!({})).await;
     let sid = created["session_id"].as_str().unwrap().to_owned();

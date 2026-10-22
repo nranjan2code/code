@@ -91,7 +91,7 @@ fn core_with_provider(
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);
     let provider = Arc::new(Scripted::new(responses));
-    core.set_provider_instance(provider.clone());
+    crate::support::set_provider_without_automatic_topics(&core, provider.clone());
     std::mem::forget(dir);
     (core, cwd, provider)
 }

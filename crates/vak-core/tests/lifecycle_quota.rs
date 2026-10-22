@@ -54,9 +54,12 @@ fn core(cwd: &std::path::Path, config: &str) -> Core {
     )
     .unwrap();
     let core = Core::new_with_trust(cwd.to_path_buf(), true).unwrap();
-    core.set_provider_instance(Arc::new(Answers {
-        capacity_key: crate::support::CapacityKey::default(),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Answers {
+            capacity_key: crate::support::CapacityKey::default(),
+        }),
+    );
     core
 }
 

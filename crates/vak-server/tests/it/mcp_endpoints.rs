@@ -74,10 +74,13 @@ async fn mcp_servers_get_put_roundtrip_and_persist() {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).expect("core");
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
-    core.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![text("ok")])),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![text("ok")])),
+        }),
+    );
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

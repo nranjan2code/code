@@ -156,23 +156,26 @@ async fn an_mcp_server_starts_on_demand_and_its_catalog_reaches_the_next_turn() 
         "admission and prompt assembly start nothing"
     );
 
-    core.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![
-            reply(
-                ContentBlock::ToolUse {
-                    id: "m1".into(),
-                    name: "mcp".into(),
-                    input: serde_json::json!({"action": "list", "server": "fake"}),
-                },
-                vak_llm::types::StopReason::ToolUse,
-            ),
-            reply(
-                ContentBlock::text("listed"),
-                vak_llm::types::StopReason::EndTurn,
-            ),
-        ])),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![
+                reply(
+                    ContentBlock::ToolUse {
+                        id: "m1".into(),
+                        name: "mcp".into(),
+                        input: serde_json::json!({"action": "list", "server": "fake"}),
+                    },
+                    vak_llm::types::StopReason::ToolUse,
+                ),
+                reply(
+                    ContentBlock::text("listed"),
+                    vak_llm::types::StopReason::EndTurn,
+                ),
+            ])),
+        }),
+    );
     let session = core.start_session().await.unwrap();
     let (events, _rx) = tokio::sync::mpsc::channel(256);
     let (outcome, _) = core

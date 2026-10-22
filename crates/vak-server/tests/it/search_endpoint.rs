@@ -89,9 +89,12 @@ async fn search_endpoint_returns_ranked_hits() {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
-    core.set_provider_instance(Arc::new(Empty {
-        capacity_key: crate::support::CapacityKey::default(),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Empty {
+            capacity_key: crate::support::CapacityKey::default(),
+        }),
+    );
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

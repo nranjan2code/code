@@ -73,7 +73,7 @@ async fn spawn_secured(
     core.set_tool_worker_exe(std::path::PathBuf::from(env!(
         "CARGO_BIN_EXE_vak-tool-worker"
     )));
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     // keep tempdir alive for the process lifetime of the test
     std::mem::forget(dir);
 
@@ -370,10 +370,13 @@ async fn persisted_conversation_accepts_followup_and_streams_without_explicit_at
     // browser sends a follow-up, so both streams and /run must recover it.
     let resumed = Core::new(cwd.clone()).unwrap();
     resumed.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
-    resumed.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![text("Follow-up answer")])),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &resumed,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![text("Follow-up answer")])),
+        }),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(resumed);

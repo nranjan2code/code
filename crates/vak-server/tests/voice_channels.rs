@@ -92,7 +92,7 @@ async fn spawn_gateway(allowlist_open: bool, provider: Arc<Recording>) -> String
     .unwrap();
     let core = Core::new_with_trust(cwd, true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     core.apply_persisted_voice(vak_config::VoiceSettings {
         enabled: true,
         provider: Some("local".into()),

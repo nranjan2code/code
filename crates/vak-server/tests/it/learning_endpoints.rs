@@ -48,9 +48,12 @@ async fn memory_and_proposal_endpoints() {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
-    core.set_provider_instance(Arc::new(Empty {
-        capacity_key: crate::support::CapacityKey::default(),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Empty {
+            capacity_key: crate::support::CapacityKey::default(),
+        }),
+    );
     std::mem::forget(dir);
 
     // Seed one durable note and one pending proposal through the same APIs

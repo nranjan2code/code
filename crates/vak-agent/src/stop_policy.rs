@@ -74,6 +74,9 @@ pub struct ReceiptSummary {
     /// invoked through `mcp` (`action = "call"`) or a delegated `task`,
     /// whose worker keeps its own receipts. Counted on success only.
     pub external_effects: u32,
+    /// The last broker-owned Topics call failed, including a refused call.
+    /// Organisation failure never holds the requested answer open.
+    pub topics_failed: bool,
     /// Most recent unresolved tool failure, if any.
     pub unresolved_error: Option<(String, String)>,
 }

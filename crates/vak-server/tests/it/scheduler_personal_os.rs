@@ -152,10 +152,13 @@ async fn spawn_full(
     // A REAL worker executable: a cargo test harness cannot speak the
     // broker protocol.
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
-    core.set_provider_instance(Arc::new(Counting {
-        capacity_key: crate::support::CapacityKey::default(),
-        dispatches: dispatches.clone(),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Counting {
+            capacity_key: crate::support::CapacityKey::default(),
+            dispatches: dispatches.clone(),
+        }),
+    );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -448,10 +451,13 @@ async fn missing_worker_delivers_typed_error_not_silence() {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd, true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
-    core.set_provider_instance(Arc::new(Counting {
-        capacity_key: crate::support::CapacityKey::default(),
-        dispatches: Arc::new(AtomicUsize::new(0)),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Counting {
+            capacity_key: crate::support::CapacityKey::default(),
+            dispatches: Arc::new(AtomicUsize::new(0)),
+        }),
+    );
     // Deliberately point the worker at something unusable.
     core.set_tool_worker_exe(dir.path().join("no-worker-here"));
     std::mem::forget(dir);

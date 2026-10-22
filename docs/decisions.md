@@ -1,5 +1,12 @@
 # Decisions
 
+- 2026-10-22: The maintainer requested fixing automatic Topics after an enabled
+  conversation remained ungrouped. Add a runtime check for a recorded placement
+  decision through the existing correction ladder; keep semantic Topic choices
+  with the main model and preserve human controls and the requested answer.
+  This does not introduce a background organizer or historical backfill. See
+  [Topics](design/101-topics.md).
+
 - 2026-10-22: The maintainer explicitly requested completing installable Canvas
   plugins, isolation, domain commands, undo and Agent context. Implement v1
   through existing package/capability and sealed state/admission services. Use

@@ -763,6 +763,8 @@ pub enum Cause {
     UnresolvedFailure,
     /// Workers the turn started are still running.
     WorkersRunning,
+    /// Automatic Topics has no recorded placement decision for this turn.
+    TopicsPlacement,
 }
 
 /// The rung of the correction ladder (doc 88 §5).

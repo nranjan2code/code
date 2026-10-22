@@ -40,3 +40,71 @@ pub fn prompt_trigger(name: &str, text: &str, every_secs: u64) -> serde_json::Va
         "action": { "kind": "prompt", "text": text },
     })
 }
+
+/// Unrelated finite model scripts opt out of automatic organisation explicitly.
+/// Topic acceptance tests use the original provider and leave the default on.
+#[allow(dead_code)]
+pub fn set_provider_without_automatic_topics(
+    core: &vak_core::Core,
+    provider: std::sync::Arc<dyn vak_llm::Provider>,
+) {
+    core.set_provider_instance(std::sync::Arc::new(WithoutAutomaticTopics {
+        scope: core.scope(),
+        provider,
+    }));
+}
+
+struct WithoutAutomaticTopics {
+    scope: vak_config::scope::AgentScope,
+    provider: std::sync::Arc<dyn vak_llm::Provider>,
+}
+
+#[async_trait::async_trait]
+impl vak_llm::Provider for WithoutAutomaticTopics {
+    fn name(&self) -> &str {
+        self.provider.name()
+    }
+    fn reach(&self) -> vak_control::ModelCapabilities {
+        self.provider.reach()
+    }
+    fn circuit_key(&self) -> String {
+        self.provider.circuit_key()
+    }
+    fn rate_limit_key(&self) -> String {
+        self.provider.rate_limit_key()
+    }
+    fn rate_limit_key_for_model(&self, model: &str) -> String {
+        self.provider.rate_limit_key_for_model(model)
+    }
+    async fn refresh_capacity(
+        &self,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<(), vak_llm::LlmError> {
+        self.provider.refresh_capacity(cancel).await
+    }
+    async fn stream(
+        &self,
+        request: vak_llm::types::ChatRequest,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<vak_llm::EventStream, vak_llm::LlmError> {
+        if let Some(cache) = &request.cache
+            && uuid::Uuid::parse_str(&cache.session_key).is_ok()
+        {
+            use vak_session::trace::{self, TraceKey};
+            let trace = TraceKey::root(
+                trace::local::tenant(),
+                trace::local::space(&std::env::temp_dir()),
+                trace::local::agent("fixture"),
+                trace::Cause::User {
+                    request_id: uuid::Uuid::now_v7().to_string(),
+                },
+            )
+            .in_turn(&cache.session_key, &uuid::Uuid::now_v7().to_string())
+            .acting(trace::local::local_owner(), None);
+            vak_session::work_threads::TopicStore::new(&self.scope, &cache.session_key)
+                .and_then(|store| store.set_automatic(false, &trace))
+                .map_err(|error| vak_llm::LlmError::InvalidRequest(error.to_string()))?;
+        }
+        self.provider.stream(request, cancel).await
+    }
+}

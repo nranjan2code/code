@@ -142,7 +142,7 @@ async fn round_trip(
     core.set_tool_worker_exe(std::path::PathBuf::from(env!(
         "CARGO_BIN_EXE_vak-tool-worker"
     )));
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -356,7 +356,7 @@ async fn the_telegram_bridge_sends_the_edited_workbook_back() {
     core.set_tool_worker_exe(std::path::PathBuf::from(env!(
         "CARGO_BIN_EXE_vak-tool-worker"
     )));
-    core.set_provider_instance(provider.clone());
+    crate::support::set_provider_without_automatic_topics(&core, provider.clone());
     std::mem::forget(dir);
     let gateway = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let gateway_addr = gateway.local_addr().unwrap();

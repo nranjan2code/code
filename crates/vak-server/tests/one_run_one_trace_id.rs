@@ -109,7 +109,7 @@ async fn one_run_one_trace_id() {
     core.set_tool_worker_exe(std::path::PathBuf::from(env!(
         "CARGO_BIN_EXE_vak-tool-worker"
     )));
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     let effects = core.effects();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

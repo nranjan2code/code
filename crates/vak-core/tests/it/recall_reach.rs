@@ -149,17 +149,20 @@ async fn recall_reaches_another_conversation_and_is_logged() {
     let core = Core::new(cwd.clone()).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
-    core.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![
-            tool_call(
-                "t1",
-                "recall",
-                serde_json::json!({"query": "deploy script"}),
-            ),
-            text("Found it: the deploy script pauses before rollbacks."),
-        ])),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![
+                tool_call(
+                    "t1",
+                    "recall",
+                    serde_json::json!({"query": "deploy script"}),
+                ),
+                text("Found it: the deploy script pauses before rollbacks."),
+            ])),
+        }),
+    );
     std::mem::forget(dir);
 
     let live = core.start_session().await.unwrap();

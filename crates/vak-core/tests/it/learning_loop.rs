@@ -100,31 +100,34 @@ async fn remember_propose_recall_promote_loop() {
     let core = Core::new(cwd.clone()).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);
-    core.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![
-            // Turn 1 of run A: the model journals a decision and drafts a skill.
-            tool_call(
-                "r1",
-                "remember",
-                serde_json::json!({
-                    "note": "the deploy script must pause before rollback windows",
-                    "kind": "decision",
-                    "tag": "deploy-rollbacks"
-                }),
-            ),
-            tool_call(
-                "p1",
-                "propose_skill",
-                serde_json::json!({
-                    "name": "deploy-safely",
-                    "description": "Run deploys with rollback pauses",
-                    "instructions": "1. read scripts/deploy.sh\n2. pause before rollback windows"
-                }),
-            ),
-            text("Noted both."),
-        ])),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![
+                // Turn 1 of run A: the model journals a decision and drafts a skill.
+                tool_call(
+                    "r1",
+                    "remember",
+                    serde_json::json!({
+                        "note": "the deploy script must pause before rollback windows",
+                        "kind": "decision",
+                        "tag": "deploy-rollbacks"
+                    }),
+                ),
+                tool_call(
+                    "p1",
+                    "propose_skill",
+                    serde_json::json!({
+                        "name": "deploy-safely",
+                        "description": "Run deploys with rollback pauses",
+                        "instructions": "1. read scripts/deploy.sh\n2. pause before rollback windows"
+                    }),
+                ),
+                text("Noted both."),
+            ])),
+        }),
+    );
 
     let approvals = Arc::new(ApproveLearning::default());
 
@@ -200,17 +203,20 @@ async fn remember_propose_recall_promote_loop() {
     assert!(!home.join("skills/deploy-safely/SKILL.md").exists());
 
     // ---- Run B: recall ranks memory first --------------------------------
-    core.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![
-            tool_call(
-                "s1",
-                "recall",
-                serde_json::json!({"query": "deploy rollback"}),
-            ),
-            text("Recalled from memory."),
-        ])),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![
+                tool_call(
+                    "s1",
+                    "recall",
+                    serde_json::json!({"query": "deploy rollback"}),
+                ),
+                text("Recalled from memory."),
+            ])),
+        }),
+    );
     let s_b = core.start_session().await.unwrap();
     let (_tx_b, _rx_b) = tokio::sync::mpsc::channel::<vak_agent::AgentEvent>(256);
     let (tx_b2, _rx_b2) = tokio::sync::mpsc::channel(256);

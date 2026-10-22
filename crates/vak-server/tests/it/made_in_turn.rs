@@ -129,38 +129,41 @@ async fn a_file_and_a_note_are_read_with_the_record_of_the_turn_that_made_them()
     )));
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
-    core.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![
-            // The turn that goes wrong: a lookup fails, then a file and a
-            // note are written anyway.
-            calls(&[("c1", "read", serde_json::json!({"path": "missing.txt"}))]),
-            calls(&[
-                (
-                    "c2",
-                    "write",
-                    serde_json::json!({"path": "points.txt", "content": "41.1, 29.0\n",
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![
+                // The turn that goes wrong: a lookup fails, then a file and a
+                // note are written anyway.
+                calls(&[("c1", "read", serde_json::json!({"path": "missing.txt"}))]),
+                calls(&[
+                    (
+                        "c2",
+                        "write",
+                        serde_json::json!({"path": "points.txt", "content": "41.1, 29.0\n",
                         "title": "Points"}),
-                ),
-                (
-                    "c3",
-                    "remember",
-                    serde_json::json!({"note": "the quarry points are 41.1, 29.0"}),
-                ),
-            ]),
-            text("Saved the points."),
-            // A later turn reads the file back.
-            calls(&[("c4", "read", serde_json::json!({"path": "points.txt"}))]),
-            text("Read them."),
-            // Another conversation finds the note.
-            calls(&[(
-                "c5",
-                "recall",
-                serde_json::json!({"query": "quarry points"}),
-            )]),
-            text("Found the note."),
-        ])),
-    }));
+                    ),
+                    (
+                        "c3",
+                        "remember",
+                        serde_json::json!({"note": "the quarry points are 41.1, 29.0"}),
+                    ),
+                ]),
+                text("Saved the points."),
+                // A later turn reads the file back.
+                calls(&[("c4", "read", serde_json::json!({"path": "points.txt"}))]),
+                text("Read them."),
+                // Another conversation finds the note.
+                calls(&[(
+                    "c5",
+                    "recall",
+                    serde_json::json!({"query": "quarry points"}),
+                )]),
+                text("Found the note."),
+            ])),
+        }),
+    );
     std::mem::forget(dir);
 
     let log = core.start_session().await.unwrap();

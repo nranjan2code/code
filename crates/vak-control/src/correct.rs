@@ -46,6 +46,8 @@ pub enum Finding {
     /// A planned card is still not shown, and the next step is framed to
     /// call the card tool of the kind the plan named for it.
     CardRequired { name: String, tool: String },
+    /// Automatic organisation is on, but this turn has no placement decision.
+    TopicsPlacement,
     /// A stop hook the operator configured asked for more work.
     StopHook { reason: String },
     /// A completion gate with its own reason (goal mode, managed work).
@@ -83,6 +85,7 @@ impl Finding {
             Self::EmptyStep { .. } => Cause::EmptyStep,
             Self::Fence { .. } => Cause::Fence,
             Self::Plan { .. } | Self::CardRequired { .. } => Cause::Plan,
+            Self::TopicsPlacement => Cause::TopicsPlacement,
             Self::StopHook { .. } => Cause::StopHook,
             Self::StopGuard { .. } => Cause::StopGuard,
             Self::Truncated { .. } => Cause::Truncated,
@@ -104,6 +107,7 @@ impl Finding {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Ladder {
     told: BTreeSet<Cause>,
+    reframed: BTreeSet<Cause>,
 }
 
 impl Ladder {
@@ -114,6 +118,7 @@ impl Ladder {
         if self.told.insert(cause) {
             Rung::Tell
         } else if can_reframe {
+            self.reframed.insert(cause);
             Rung::Reframe
         } else {
             Rung::End
@@ -123,6 +128,12 @@ impl Ladder {
     /// The check passed: a later failure of it is a new one, told again.
     pub fn passed(&mut self, cause: Cause) {
         self.told.remove(&cause);
+        self.reframed.remove(&cause);
+    }
+
+    /// Whether this check already changed the frame this turn.
+    pub fn reframed(&self, cause: Cause) -> bool {
+        self.reframed.contains(&cause)
     }
 
     /// Whether this check was already told this turn.
@@ -487,6 +498,16 @@ pub fn render(finding: &Finding, marker: &str) -> String {
              can only call `{tool}`: show it now with `deliverable` set to \"{name}\". This is not \
              a message from the person."
         ),
+        Finding::TopicsPlacement => format!(
+            "{marker}: Automatic Topics is on, but this turn has no recorded organisation \
+             decision. Use `topics` to list and reuse a fitting active Topic, or create one \
+             with this turn's outcomes. Use accepted plan names as outcome labels where \
+             they fit. For a simple independent answer, explicitly leave it ungrouped with \
+             `assign`, an outcome label and an empty `topic_ids` list. Respect human \
+             placement and automatic-off. Keep the answer already produced; do not repeat \
+             its cards or files. If organisation is unavailable, the answer still stands. \
+             This is a runtime check, not a message from the person."
+        ),
         Finding::StopHook { reason } => format!(
             "{marker}: a stop hook asked for more work: {}. Do it now, or say plainly why you cannot.",
             reason.trim().trim_end_matches('.')
@@ -609,6 +630,9 @@ mod tests {
         assert_eq!(ladder.step(Cause::Fence, false), Rung::End);
         assert_eq!(ladder.step(Cause::Repair, true), Rung::Tell);
         assert_eq!(ladder.step(Cause::Repair, true), Rung::Reframe);
+        assert!(ladder.reframed(Cause::Repair));
+        ladder.passed(Cause::Repair);
+        assert!(!ladder.reframed(Cause::Repair));
         assert_eq!(ladder.step(Cause::Plan, false), Rung::Tell);
         assert!(ladder.told(Cause::Plan) && !ladder.told(Cause::EmptyStep));
         ladder.passed(Cause::Fence);
@@ -687,6 +711,7 @@ mod tests {
             },
             Finding::StopGuard { reason: "x".into() },
             Finding::Truncated { what: "x".into() },
+            Finding::TopicsPlacement,
             Finding::VerificationStale,
             Finding::KeepWorking,
             Finding::UnresolvedFailure {

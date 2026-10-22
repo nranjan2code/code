@@ -86,6 +86,10 @@ mod rate_limit;
 mod restart;
 mod sandbox_output;
 mod sandbox_records;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../tests/support/mod.rs"]
+mod scripted_providers;
 mod service_control;
 mod site;
 mod social;
@@ -93,6 +97,7 @@ mod stream;
 pub mod surfaces;
 mod telemetry;
 mod topics;
+
 #[cfg(test)]
 mod traced_rows_tests;
 mod turn_marks;
@@ -23382,9 +23387,12 @@ mod sandbox_promotion_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(
             dir.path().to_path_buf(),
         ));
-        core.set_provider_instance(Arc::new(CardChoiceAnswers {
-            capacity_key: format!("card-choice:{}", uuid::Uuid::now_v7()),
-        }));
+        crate::scripted_providers::set_provider_without_automatic_topics(
+            &core,
+            Arc::new(CardChoiceAnswers {
+                capacity_key: format!("card-choice:{}", uuid::Uuid::now_v7()),
+            }),
+        );
         let mut log = seed_session_at(&core, "session-cards", core.cwd());
         log.append_message(vak_session::types::MessageRecord {
             message: vak_llm::Message::user_text("Plan my trip"),
@@ -26173,23 +26181,26 @@ mod sandbox_promotion_tests {
             return;
         }
         core.set_tool_worker_exe(worker);
-        core.set_provider_instance(Arc::new(RevisionProvider {
-            capacity_key: capacity_key(),
-            replies: Mutex::new(VecDeque::from(vec![
-                revision_message(
-                    vec![ContentBlock::ToolUse {
-                        id: "edit-version-two".into(),
-                        name: "write".into(),
-                        input: serde_json::json!({"path": "result.txt", "content": "version two"}),
-                    }],
-                    StopReason::ToolUse,
-                ),
-                revision_message(
-                    vec![ContentBlock::text("Prepared the revised draft for review.")],
-                    StopReason::EndTurn,
-                ),
-            ])),
-        }));
+        crate::scripted_providers::set_provider_without_automatic_topics(
+            &core,
+            Arc::new(RevisionProvider {
+                capacity_key: capacity_key(),
+                replies: Mutex::new(VecDeque::from(vec![
+                    revision_message(
+                        vec![ContentBlock::ToolUse {
+                            id: "edit-version-two".into(),
+                            name: "write".into(),
+                            input: serde_json::json!({"path": "result.txt", "content": "version two"}),
+                        }],
+                        StopReason::ToolUse,
+                    ),
+                    revision_message(
+                        vec![ContentBlock::text("Prepared the revised draft for review.")],
+                        StopReason::EndTurn,
+                    ),
+                ])),
+            }),
+        );
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core.clone());
         let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
@@ -26345,27 +26356,30 @@ mod sandbox_promotion_tests {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        core.set_provider_instance(Arc::new(RevisionProvider {
-            capacity_key: capacity_key(),
-            replies: Mutex::new(VecDeque::from(vec![
-                revision_message(
-                    vec![ContentBlock::ToolUse {
-                        id: "office-version-two".into(),
-                        name: "office_apply".into(),
-                        input: serde_json::json!({
-                            "path": "letter.docx",
-                            "base_digest": digest,
-                            "ops": [{"op": "replace_paragraph_text", "anchor": "p@1", "text": "Annual Report"}],
-                        }),
-                    }],
-                    StopReason::ToolUse,
-                ),
-                revision_message(
-                    vec![ContentBlock::text("Retitled the letter.")],
-                    StopReason::EndTurn,
-                ),
-            ])),
-        }));
+        crate::scripted_providers::set_provider_without_automatic_topics(
+            &core,
+            Arc::new(RevisionProvider {
+                capacity_key: capacity_key(),
+                replies: Mutex::new(VecDeque::from(vec![
+                    revision_message(
+                        vec![ContentBlock::ToolUse {
+                            id: "office-version-two".into(),
+                            name: "office_apply".into(),
+                            input: serde_json::json!({
+                                "path": "letter.docx",
+                                "base_digest": digest,
+                                "ops": [{"op": "replace_paragraph_text", "anchor": "p@1", "text": "Annual Report"}],
+                            }),
+                        }],
+                        StopReason::ToolUse,
+                    ),
+                    revision_message(
+                        vec![ContentBlock::text("Retitled the letter.")],
+                        StopReason::EndTurn,
+                    ),
+                ])),
+            }),
+        );
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core.clone());
         tokio::fs::write(dir.path().join("letter.docx"), &version_one)
@@ -28020,9 +28034,12 @@ mod sandbox_promotion_tests {
         )
         .unwrap();
         let core = Core::new_with_trust(dir.path().into(), true).unwrap();
-        core.set_provider_instance(Arc::new(CardChoiceAnswers {
-            capacity_key: format!("workspace:{}", uuid::Uuid::now_v7()),
-        }));
+        crate::scripted_providers::set_provider_without_automatic_topics(
+            &core,
+            Arc::new(CardChoiceAnswers {
+                capacity_key: format!("workspace:{}", uuid::Uuid::now_v7()),
+            }),
+        );
         let mut log = seed_session_at(&core, "session-workspaces", core.cwd());
         log.append_message(vak_session::types::MessageRecord {
             message: vak_llm::Message::user_text("Work with this component"),
@@ -28449,9 +28466,12 @@ mod scheduler_state_tests {
             .unwrap()
             .with_agent_identity(agent);
         core.set_shared_scope(vak_config::scope::SharedScope::new(home.to_path_buf()));
-        core.set_provider_instance(Arc::new(Answers {
-            capacity_key: capacity_key(),
-        }));
+        crate::scripted_providers::set_provider_without_automatic_topics(
+            &core,
+            Arc::new(Answers {
+                capacity_key: capacity_key(),
+            }),
+        );
         for trigger in triggers {
             vak_core::triggers::create(&core.shared_scope(), &trigger).unwrap();
         }

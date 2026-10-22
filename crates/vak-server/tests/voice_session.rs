@@ -125,10 +125,13 @@ async fn spawn(with_transcriber: bool, provider: Option<&str>) -> (String, PathB
     let core = Core::new(dir.path().to_path_buf()).unwrap();
     let home = dir.path().join("home");
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
-    core.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![answer("Four.")])),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![answer("Four.")])),
+        }),
+    );
     core.apply_persisted_voice(vak_config::VoiceSettings {
         enabled: true,
         provider: provider.map(str::to_string),

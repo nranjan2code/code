@@ -1,6 +1,6 @@
 # 101 — Topics: Agent-owned organisation for people and the Agent
 
-Status: implemented as an initial conversation-scoped view. Sealed Topic records,
+Status: implemented as a conversation-scoped view with a runtime placement check. Sealed Topic records,
 main-model tools, human controls, Agent navigation, CLI, Admin and catalog
 integration and shared Doctor diagnostics are built. Focused checks, responsive component acceptance and a
 local OpenAI Luna run are recorded in
@@ -14,10 +14,19 @@ A person writes what they need. The main model organises ongoing work into
 **Topics**, using its understanding of the request and addressed existing work.
 There is no fixed subject taxonomy, keyword classifier or classification model
 dispatch. Topic titles and outcome labels come from the person or model. Simple
-independent answers need no organisation call. The main-model prompt explicitly requires placement before finishing ongoing,
-follow-up or multi-outcome work, reusing accepted plan names as outcome labels
-where useful. This is model-directed guidance, not a runtime guarantee or a
-background backfill. Automatic organisation starts on;
+independent answers may remain ungrouped through an explicit model placement
+with an empty Topic list. Before accepting an ordinary or card-only answer while
+automatic organisation is on, the runtime checks the current sealed Topic
+projection for a placement decision for this turn. Listing Topics, creating an
+empty Topic or placing an older turn does not satisfy the check. Missing
+placement follows the shared correction ladder: tell once, require a Topics
+call on the next failure, then let the model's answer stand with the gap recorded.
+A failed or refused Topics call, unavailable capability, automatic-off, or human
+placement never holds the answer open. The operator's last step is preserved.
+The main model still chooses whether work needs grouping and authors every
+Topic title and outcome label; there is no request-word classifier or separate
+model dispatch. This checks a recorded decision, not its semantic correctness,
+and does not backfill earlier answers. Automatic organisation starts on;
 a person can disable it for a conversation. The system prompt asks the main
 model to list and reuse or create a fitting active Topic before finishing
 ongoing, follow-up or multi-outcome work, using plan deliverable names where
@@ -44,6 +53,8 @@ distinct; neither is a universal semantic-resolution guarantee.
 
 The broker-owned `topics` tool lets the model page/search names, open membership
 addresses, create a named Topic and associate the current turn's outcomes.
+An `assign` call with an outcome label and an empty `topic_ids` list records
+an explicit ungrouped decision without creating an empty Topic.
 Creation can include the requested outcomes in one atomic operation, avoiding
 a dependent create/assign model step. List and open return compact metadata and
 paged addresses, with recent membership first; no age cutoff hides older work.
@@ -142,6 +153,16 @@ explicit operator actions. Ordinary output contains counts and status rather
 than Topic titles, outcomes or conversation text.
 
 ## Acceptance and limits
+
+`crates/vak-agent/tests/it/topics_completion.rs` covers missed placement,
+list-only and older-turn receipts, card-only answers without duplicate cards,
+explicit ungrouped decisions, human precedence, automatic-off, failed calls,
+bounded noncompliance and preservation at step/outcome/model-call limits.
+The default-on Core integration is exercised by
+`automatic_organisation_is_checked_before_core_accepts_an_answer`; unrelated
+finite provider fixtures explicitly disable automatic Topics through its real
+preference control. These deterministic checks establish the runtime boundary; they do not certify
+main-model semantic Topic choices or installed native-host behaviour.
 
 Verify multi-outcome/multi-topic placement, human precedence, automatic-off,
 archive/reopen, stale writes, corrupt-state refusal, replay, admitted-run identity,

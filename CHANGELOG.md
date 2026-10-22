@@ -1,3 +1,11 @@
+## Unreleased
+
+- Automatic Topics now checks for a recorded organization decision before an
+  answer finishes, including answers delivered entirely as cards. If the Agent
+  skips it, the runtime asks it to organize the work and can require a Topics
+  call. Simple answers can explicitly remain ungrouped. Human placement and
+  automatic-off take precedence; organization failures preserve the answer.
+
 ## 8.21.0 — 2026-10-22
 
 - Closing Canvas returns focus to its external opener even after switching

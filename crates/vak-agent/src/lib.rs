@@ -3291,6 +3291,56 @@ impl Agent {
                         Err(error) => return nudge_write_failed(error),
                     }
                 }
+                // Organisation is a recorded main-model choice, not an inferred
+                // classification of the request. Check it even for card-only answers.
+                if self.topics_placement_missing(&receipts).await {
+                    let cause = Cause::TopicsPlacement;
+                    let no_next_step = turn + 1 >= self.config.max_turns
+                        || self
+                            .config
+                            .outcome
+                            .as_ref()
+                            .and_then(|outcome| outcome.max_turns)
+                            .is_some_and(|max| outcome_turns >= max)
+                        || self
+                            .config
+                            .model_call_budget
+                            .as_ref()
+                            .is_some_and(|budget| budget.exhausted());
+                    let rung = if no_next_step {
+                        Rung::End
+                    } else {
+                        self.ladder.step(cause, !self.ladder.reframed(cause))
+                    };
+                    if rung == Rung::Reframe {
+                        if let Some(base) = &turn_tool_base {
+                            self.promote(base, &["topics".to_string()]);
+                        }
+                        self.must_call = Some("topics".into());
+                    }
+                    if let Err(error) = self
+                        .record_decision(vak_control::Decision::by_runtime(
+                            vak_control::Choice::AcceptAnswer(vak_control::AnswerVerdict::Held(
+                                cause,
+                            )),
+                        ))
+                        .await
+                    {
+                        return nudge_write_failed(error);
+                    }
+                    match self
+                        .hold(Finding::TopicsPlacement, rung, &events, turn)
+                        .await
+                    {
+                        Ok(Held::Redo) => {
+                            turn += 1;
+                            continue;
+                        }
+                        Ok(Held::Stands) => {}
+                        Ok(Held::OutOfSteps) => return TurnOutcome::MaxTurnsReached,
+                        Err(error) => return nudge_write_failed(error),
+                    }
+                }
                 // Fence-path presentations (docs/design/68-context-engine.md
                 // §10): only for the answer actually being accepted — every
                 // gate above has already passed, so this text will not be
@@ -3422,6 +3472,9 @@ impl Agent {
                         ToolRunOutput::Err(_, content) => (true, content),
                     };
                     note_result(&self.seen_calls, name, input, failed, content);
+                    if name == "topics" {
+                        receipts.topics_failed = failed;
+                    }
                 }
             }
             // A step whose calls were all answered by a no-op ack (a draft
@@ -5108,6 +5161,36 @@ impl Agent {
             .await
             .append_receipt(ledger.take_receipt());
         Ok(reply.text_content())
+    }
+
+    /// Read the current sealed projection, so human corrections and a live
+    /// automatic-off change take precedence. Empty memberships are explicit
+    /// ungrouped decisions; listing Topics alone is not a placement receipt.
+    async fn topics_placement_missing(&self, receipts: &stop_policy::ReceiptSummary) -> bool {
+        if self.config.trace.is_none()
+            || self.tool_named("topics").is_none()
+            || receipts.topics_failed
+        {
+            return false;
+        }
+        let Some(store) = &self.config.topic_store else {
+            return false;
+        };
+        let Some(turn) = self.session.lock().await.current_turn().map(str::to_owned) else {
+            return false;
+        };
+        match store.snapshot() {
+            Ok(snapshot) => {
+                snapshot.automatic
+                    && !snapshot
+                        .placements
+                        .iter()
+                        .any(|placement| placement.turn_id == turn)
+            }
+            // Let the ordinary tool path report the unavailable/corrupt state;
+            // never manufacture a successful organisation receipt from it.
+            Err(_) => true,
+        }
     }
 
     /// Internal premature-completion gate. Returns a continuation reason and
@@ -9793,7 +9876,8 @@ fn kind_of(cause: Cause) -> vak_intent::control::ControlKind {
         | Cause::Truncated
         | Cause::VerificationStale
         | Cause::UnresolvedFailure
-        | Cause::WorkersRunning => ControlKind::StopGuard,
+        | Cause::WorkersRunning
+        | Cause::TopicsPlacement => ControlKind::StopGuard,
         Cause::Grounding => ControlKind::GroundingCheck,
         Cause::Fence => ControlKind::FenceCheck,
         Cause::DuplicateCard => ControlKind::DuplicateCardCheck,

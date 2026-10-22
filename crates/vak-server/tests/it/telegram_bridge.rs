@@ -147,10 +147,13 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
-    core.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![text("pong from agent")])),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![text("pong from agent")])),
+        }),
+    );
     std::mem::forget(dir);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let gw_addr = listener.local_addr().unwrap();
@@ -266,10 +269,13 @@ async fn bridge_survives_outage_window_and_resumes_cursor() {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
-    core.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![text("pong after outage")])),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![text("pong after outage")])),
+        }),
+    );
     std::mem::forget(dir);
     let listener2 = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let gw_addr = listener2.local_addr().unwrap();

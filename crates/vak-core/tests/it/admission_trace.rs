@@ -64,9 +64,12 @@ fn core(dir: &tempfile::TempDir) -> Core {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd, true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
-    core.set_provider_instance(Arc::new(Echo {
-        capacity_key: crate::support::CapacityKey::default(),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Echo {
+            capacity_key: crate::support::CapacityKey::default(),
+        }),
+    );
     core
 }
 

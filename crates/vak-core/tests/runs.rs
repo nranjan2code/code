@@ -92,7 +92,7 @@ fn core_at(cwd: &std::path::Path, home: &std::path::Path, delegate: bool) -> Cor
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.to_path_buf(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.to_path_buf()));
-    core.set_provider_instance(Scripted::new(delegate));
+    crate::support::set_provider_without_automatic_topics(&core, Scripted::new(delegate));
     core
 }
 

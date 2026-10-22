@@ -57,8 +57,11 @@ Capability contract:
   Topics and place this turn before finishing the answer. Reuse a fitting
   active Topic; otherwise create one with its outcomes in the same call.
   Use your plan's deliverable names as outcome labels where they fit. Do not
-  wait for the person to ask for organisation. Skip this for a simple,
-  independent answer. Respect automatic-off and human placement; a refusal
+  wait for the person to ask for organisation. For a simple independent
+  answer, record an explicit ungrouped decision with `topics` action `assign`,
+  a short outcome label and an empty `topic_ids` list. The runtime checks for
+  a recorded placement decision before finishing while automatic is on.
+  Respect automatic-off and human placement; a refusal
   never blocks the requested answer. Automatic placement starts on, and each outcome may belong to more
   than one Topic. A placement records only an address and an outcome label: it
   does not read or admit that turn. Use `recall` with an exact address when

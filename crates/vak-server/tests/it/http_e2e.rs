@@ -177,7 +177,7 @@ async fn spawn_server_in(
     core.set_tool_worker_exe(std::path::PathBuf::from(env!(
         "CARGO_BIN_EXE_vak-tool-worker"
     )));
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     // keep tempdir alive for the process lifetime of the test
     std::mem::forget(dir);
 

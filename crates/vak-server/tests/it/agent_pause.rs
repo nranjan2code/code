@@ -134,7 +134,7 @@ async fn setup() -> (Router, Arc<Hung>, tempfile::TempDir) {
         temp.path().join("sessions-home"),
     ));
     let provider = Arc::new(Hung::default());
-    core.set_provider_instance(provider.clone());
+    crate::support::set_provider_without_automatic_topics(&core, provider.clone());
     let app = vak_server::router(core);
     let profiles =
         json!({"agents":[profile("newsy","Newsy"),profile("other","Other")],"scope":"workspace"});

@@ -149,7 +149,7 @@ async fn spawn_with_config(provider: Arc<dyn Provider>, gateway_toml: &str) -> G
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(std::path::PathBuf::from(env!(
         "CARGO_BIN_EXE_vak-tool-worker"

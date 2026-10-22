@@ -34,8 +34,12 @@
 
 - [x] Add wheel/trackpad, drag and keyboard rolling, accepted-plan previews,
   honest loaded counts and lazy page-edge navigation; fix Topic refresh loop.
-- [ ] Qualify in the installed native desktop host. Automatic placement remains
-  model-directed; the prompt change does not backfill earlier unassigned turns.
+- [x] Enforce a recorded current-turn Topic placement decision at ordinary and
+  card-only completion through the shared correction ladder. Simple independent
+  answers can explicitly remain ungrouped; human placement, automatic-off and
+  failed organisation take precedence. No background backfill is introduced.
+- [ ] Qualify in the installed native desktop host. Topic choices remain
+  model-authored; the runtime check does not backfill earlier unassigned turns.
   See [acceptance](../audits/turn-navigator-2026-10-22.md).
 
 ## Request-focused Details (2026-10-22)

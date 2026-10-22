@@ -4,6 +4,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+#[allow(dead_code)]
+mod support;
+
 use std::path::{Path, PathBuf};
 use vak_core::state::{self, Root};
 
@@ -98,7 +101,10 @@ async fn no_undeclared_paths_any_root() {
     let big: String = (0..4000).map(|n| format!("item {n}\n")).collect();
     std::fs::write(workspace.path().join("big.txt"), big).unwrap();
     let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).expect("core");
-    core.set_provider_instance(std::sync::Arc::new(ReadThenAnswer));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        std::sync::Arc::new(ReadThenAnswer),
+    );
     let session = core.start_session().await.expect("session");
     let (tx, mut rx) = tokio::sync::mpsc::channel(256);
     tokio::spawn(async move { while rx.recv().await.is_some() {} });

@@ -180,8 +180,8 @@ pub fn parse_topics_args(args: &Value) -> Result<TopicRequest, String> {
                 .get("topic_ids")
                 .and_then(Value::as_array)
                 .ok_or("topic_ids must be a list")?;
-            if ids.is_empty() || ids.len() > 20 {
-                return Err("topic_ids must contain 1 to 20 topics".into());
+            if ids.len() > 20 {
+                return Err("topic_ids must contain at most 20 topics".into());
             }
             let mut topic_ids = Vec::with_capacity(ids.len());
             for value in ids {
@@ -214,7 +214,7 @@ impl Tool for TopicsTool {
         "topics"
     }
     fn description(&self) -> &str {
-        "Organize work into Topics when it helps. List pages through all topics, including older ones; open a topic to see its paged turn addresses and placements. Create or rename topics, pin them, and assign requested outcomes from this turn to one or more topics. When creating a topic for this turn, include its requested outcomes in `outcomes` to create and place them together; use assign for an existing topic. If a person asks to use an archived Topic, explain that it is archived and ask them to reopen it in Topics controls; do not create a substitute to bypass that choice. Assignment groups records only; it does not load their contents into context. Skip Topics for a simple, self-contained answer."
+        "Organize work into Topics when it helps. List pages through all topics, including older ones; open a topic to see its paged turn addresses and placements. Create or rename topics, pin them, and assign requested outcomes from this turn to one or more topics. When creating a topic for this turn, include its requested outcomes in `outcomes` to create and place them together; use assign for an existing topic. If a person asks to use an archived Topic, explain that it is archived and ask them to reopen it in Topics controls; do not create a substitute to bypass that choice. Assignment groups records only; it does not load their contents into context. For a simple, self-contained answer while automatic organisation is on, record an explicit ungrouped decision with assign, an outcome label, and an empty topic_ids list."
     }
     fn schema(&self) -> Value {
         json!({"type":"object","properties":{
@@ -225,7 +225,7 @@ impl Tool for TopicsTool {
             "title":{"type":"string"},"pinned":{"type":"boolean"},"enabled":{"type":"boolean"},
             "outcomes":{"type":"array","description":"Optional requested outcomes from this turn to place in this newly created topic in the same operation.","maxItems":20,"items":{"type":"string","maxLength":240}},
             "outcome":{"type":"string","description":"One requested outcome from the current turn, described in a few words."},
-            "topic_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":20}
+            "topic_ids":{"type":"array","description":"Topics for this outcome; an empty list explicitly leaves a simple independent answer ungrouped.","items":{"type":"string"},"maxItems":20}
         },"required":["action"]})
     }
     async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
@@ -313,6 +313,16 @@ mod tests {
                 .is_err()
         );
         assert!(parse_topics_args(&json!({"action":"assign","topic_ids":[]})).is_err());
+        assert_eq!(
+            parse_topics_args(
+                &json!({"action":"assign","outcome":"Independent answer","topic_ids":[]})
+            )
+            .unwrap(),
+            TopicRequest::Assign {
+                outcome: "Independent answer".into(),
+                topic_ids: vec![]
+            }
+        );
         assert!(parse_topics_args(&json!({"action":"assign","outcome":"Draft","topic_ids":["top_018f0f1e-7b3a-7abc-8def-0123456789ab"]})).is_ok());
     }
 }

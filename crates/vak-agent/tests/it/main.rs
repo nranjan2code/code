@@ -39,6 +39,7 @@ mod stop_guard;
 mod support;
 mod tool_call_ids;
 mod tool_refusal;
+mod topics_completion;
 mod turn_card_and_recall;
 mod work_receipts;
 mod worker_cards_and_windows;

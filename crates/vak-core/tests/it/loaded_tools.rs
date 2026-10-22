@@ -73,7 +73,7 @@ fn core(cwd: &std::path::Path, home: &std::path::Path, provider: Arc<Recording>)
     let core = Core::new_with_trust(cwd.to_path_buf(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.to_path_buf()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     core
 }
 

@@ -152,7 +152,7 @@ async fn spawn_gateway(
     core.set_tool_worker_exe(std::path::PathBuf::from(env!(
         "CARGO_BIN_EXE_vak-tool-worker"
     )));
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -182,7 +182,7 @@ async fn spawn_gateway_bare(
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -200,7 +200,7 @@ async fn spawn_plain(provider: Arc<dyn Provider>) -> (String, tokio::task::JoinH
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -576,10 +576,13 @@ async fn bindings_survive_process_restart() {
     vak_config::paths::isolate_home_for_tests();
     let core2 = Core::new(cwd.clone()).unwrap();
     core2.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
-    core2.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![text("reborn")])),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core2,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![text("reborn")])),
+        }),
+    );
     let listener2 = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr2 = listener2.local_addr().unwrap();
     let (app2, token2) = vak_server::secured_router_with(core2, true);
@@ -864,7 +867,7 @@ async fn empty_chat_allowlist_denies_by_default() {
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
-    core.set_provider_instance(provider);
+    crate::support::set_provider_without_automatic_topics(&core, provider);
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

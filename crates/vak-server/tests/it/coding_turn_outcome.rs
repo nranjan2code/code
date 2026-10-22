@@ -97,24 +97,27 @@ async fn a_planned_change_that_read_its_file_needs_no_source_support() {
     )));
     core.set_shared_scope(vak_config::scope::SharedScope::new(home));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
-    core.set_provider_instance(Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![
-            call(
-                "plan-a",
-                "plan",
-                serde_json::json!({"deliverables": [{"name": "fix add", "form": "change"}]}),
-            ),
-            call("read-a", "read", serde_json::json!({"path": "calc.py"})),
-            call(
-                "edit-a",
-                "edit",
-                serde_json::json!({"path": "calc.py",
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![
+                call(
+                    "plan-a",
+                    "plan",
+                    serde_json::json!({"deliverables": [{"name": "fix add", "form": "change"}]}),
+                ),
+                call("read-a", "read", serde_json::json!({"path": "calc.py"})),
+                call(
+                    "edit-a",
+                    "edit",
+                    serde_json::json!({"path": "calc.py",
                     "edits": [{"old_text": "a - b", "new_text": "a + b"}]}),
-            ),
-            message(vec![ContentBlock::text("Fixed add.")], StopReason::EndTurn),
-        ])),
-    }));
+                ),
+                message(vec![ContentBlock::text("Fixed add.")], StopReason::EndTurn),
+            ])),
+        }),
+    );
     let session = core.start_session().await.unwrap();
     let (tx, _rx) = tokio::sync::mpsc::channel(256);
     let (outcome, session) = core

@@ -182,7 +182,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
         temp.path().join("sessions-home"),
     ));
     let capture = Arc::new(Capture::default());
-    core.set_provider_instance(capture.clone());
+    crate::support::set_provider_without_automatic_topics(&core, capture.clone());
     let app = vak_server::router(core.clone());
     let profiles =
         json!({"agents":[profile("newsy","Newsy"),profile("other","Other")],"scope":"workspace"});
@@ -359,7 +359,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     other_core.set_shared_scope(vak_config::scope::SharedScope::new(
         core.shared_scope().into_root(),
     ));
-    other_core.set_provider_instance(capture);
+    crate::support::set_provider_without_automatic_topics(&other_core, capture);
     let other_app = vak_server::router(other_core);
     call(
         &other_app,
@@ -377,7 +377,10 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     concurrent_core.set_shared_scope(vak_config::scope::SharedScope::new(
         core.shared_scope().into_root(),
     ));
-    concurrent_core.set_provider_instance(Arc::new(Capture::default()));
+    crate::support::set_provider_without_automatic_topics(
+        &concurrent_core,
+        Arc::new(Capture::default()),
+    );
     let concurrent_app = vak_server::router(concurrent_core);
 
     let (status, opened) = call(&concurrent_app, "POST", "/agents/newsy/open", json!({})).await;
@@ -930,7 +933,7 @@ async fn browser_fixture() {
     core.set_shared_scope(vak_config::scope::SharedScope::new(
         temp.path().join("sessions"),
     ));
-    core.set_provider_instance(Arc::new(Capture::default()));
+    crate::support::set_provider_without_automatic_topics(&core, Arc::new(Capture::default()));
     let app = vak_server::router(core);
     call(
         &app,

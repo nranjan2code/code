@@ -134,10 +134,13 @@ async fn run_turns() -> Measured {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
-    core.set_provider_instance(Arc::new(ReadThenAnswer {
-        calls: AtomicUsize::new(0),
-        capacity_key: crate::support::CapacityKey::default(),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(ReadThenAnswer {
+            calls: AtomicUsize::new(0),
+            capacity_key: crate::support::CapacityKey::default(),
+        }),
+    );
 
     let mut session = core.start_session().await.unwrap();
     let ledger = session.path().to_path_buf();

@@ -84,10 +84,13 @@ async fn spawn_server(config_toml: &str) -> Server {
     // A REAL worker executable: the test harness itself cannot speak the
     // broker protocol.
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
-    core.set_provider_instance(Arc::new(Counting {
-        capacity_key: crate::support::CapacityKey::default(),
-        dispatches: Arc::new(AtomicUsize::new(0)),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Counting {
+            capacity_key: crate::support::CapacityKey::default(),
+            dispatches: Arc::new(AtomicUsize::new(0)),
+        }),
+    );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

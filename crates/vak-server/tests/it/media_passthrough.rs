@@ -80,7 +80,7 @@ async fn gateway_inbound_carries_images_to_the_model() {
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
-    core.set_provider_instance(core_provider);
+    crate::support::set_provider_without_automatic_topics(&core, core_provider);
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

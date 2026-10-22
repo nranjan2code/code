@@ -344,10 +344,13 @@ async fn serve(ws: &Path, home: &Path) -> Server {
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
     let dispatches = Arc::new(AtomicUsize::new(0));
-    core.set_provider_instance(Arc::new(Counting(
-        dispatches.clone(),
-        crate::support::CapacityKey::default(),
-    )));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Counting(
+            dispatches.clone(),
+            crate::support::CapacityKey::default(),
+        )),
+    );
     serve_core(core, dispatches).await
 }
 
@@ -425,10 +428,13 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     ledger.append_connected(account).unwrap();
 
     let dispatches = Arc::new(AtomicUsize::new(0));
-    core.set_provider_instance(Arc::new(Counting(
-        dispatches.clone(),
-        crate::support::CapacityKey::default(),
-    )));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Counting(
+            dispatches.clone(),
+            crate::support::CapacityKey::default(),
+        )),
+    );
     async fn token_refresh(
         axum::extract::State(calls): axum::extract::State<Arc<AtomicUsize>>,
         axum::Form(body): axum::Form<std::collections::HashMap<String, String>>,
@@ -559,12 +565,15 @@ async fn pausing_during_active_task_stops_future_admissions_and_lets_current_run
     let calls = Arc::new(AtomicUsize::new(0));
     let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel();
-    core.set_provider_instance(Arc::new(GatedProvider {
-        capacity_key: crate::support::CapacityKey::default(),
-        calls: calls.clone(),
-        started: started_tx,
-        release: tokio::sync::Mutex::new(Some(release_rx)),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(GatedProvider {
+            capacity_key: crate::support::CapacityKey::default(),
+            calls: calls.clone(),
+            started: started_tx,
+            release: tokio::sync::Mutex::new(Some(release_rx)),
+        }),
+    );
     let server = serve_core(core, calls.clone()).await;
 
     assert_eq!(server.run_now(id).await, reqwest::StatusCode::ACCEPTED);
@@ -683,12 +692,15 @@ async fn non_git_space_routine_runs_in_copy_environment() {
     let calls = Arc::new(AtomicUsize::new(0));
     let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel();
-    core.set_provider_instance(Arc::new(GatedProvider {
-        capacity_key: crate::support::CapacityKey::default(),
-        calls: calls.clone(),
-        started: started_tx,
-        release: tokio::sync::Mutex::new(Some(release_rx)),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(GatedProvider {
+            capacity_key: crate::support::CapacityKey::default(),
+            calls: calls.clone(),
+            started: started_tx,
+            release: tokio::sync::Mutex::new(Some(release_rx)),
+        }),
+    );
     let server = serve_core(core, calls.clone()).await;
 
     assert_eq!(server.run_now(id).await, reqwest::StatusCode::ACCEPTED);
@@ -934,7 +946,10 @@ async fn a_run_whose_dispatch_failed_delivers_the_failure_not_a_completion() {
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
-    core.set_provider_instance(Arc::new(Refusing(crate::support::CapacityKey::default())));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Refusing(crate::support::CapacityKey::default())),
+    );
     let server = serve_core(core, Arc::new(AtomicUsize::new(0))).await;
     let created = server
         .client()
@@ -991,10 +1006,13 @@ async fn a_run_that_answered_with_a_card_delivers_the_card_as_a_card() {
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
-    core.set_provider_instance(Arc::new(Carding(
-        crate::support::CapacityKey::default(),
-        std::sync::Mutex::new(0),
-    )));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Carding(
+            crate::support::CapacityKey::default(),
+            std::sync::Mutex::new(0),
+        )),
+    );
     let server = serve_core(core, Arc::new(AtomicUsize::new(0))).await;
     let created = server
         .client()
@@ -1095,10 +1113,13 @@ async fn a_page_automation_makes_each_run_a_version_of_its_page() {
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
-    core.set_provider_instance(Arc::new(Carding(
-        crate::support::CapacityKey::default(),
-        std::sync::Mutex::new(0),
-    )));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Carding(
+            crate::support::CapacityKey::default(),
+            std::sync::Mutex::new(0),
+        )),
+    );
     let space = vak_session::trace::local::space(&ws).to_string();
     let declare = |path: &str, kind| {
         core.artifacts()

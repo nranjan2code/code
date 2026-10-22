@@ -58,9 +58,12 @@ async fn checkpoint_label_has_no_prompt() {
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     let home = dir.path().join("home");
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
-    core.set_provider_instance(Arc::new(Echo {
-        capacity_key: crate::support::CapacityKey::default(),
-    }));
+    crate::support::set_provider_without_automatic_topics(
+        &core,
+        Arc::new(Echo {
+            capacity_key: crate::support::CapacityKey::default(),
+        }),
+    );
 
     let session = core.start_session().await.unwrap();
     let sid = session.header().unwrap().session_id.clone();
