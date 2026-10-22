@@ -1,10 +1,10 @@
 {
  "meta": {
   "version": "8.23.0",
-  "revision": "f1cdd36cf",
+  "revision": "df4642f77",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
-  "prose_reviewed": "8.21.0 · 2026-10-22"
+  "prose_reviewed": "8.23.0 · 2026-10-22"
  },
  "summary": {
   "text": "Vakyartha (`vak`) is a local-first agent harness for one owner: agents that work on code, documents, research and everyday tasks, reached from a desktop app, the browser, a terminal and chat apps, with every model input and tool result kept in an append-only record. Its thesis is strong safety, transparent operation, extensible integrations and a simple core.\n\nThe lower layers (storage, permission, the pure deciders, the document engines) are well shaped and change rarely. Above them, three large crates (`vak-core`, `vak-agent`, `vak-server`) hold the turn and most features, and that is where most of the work and most of the risk sit.",
@@ -19,11 +19,11 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2457,
+   "total_commits": 2458,
    "days": 63,
    "peak_day": 174,
-   "design_docs": 98,
-   "agents_words": 20576,
+   "design_docs": 99,
+   "agents_words": 20651,
    "subsystems": 64,
    "connections": 836,
    "flows": 11
@@ -97,6 +97,11 @@
     "id": "F5",
     "verdict": "Live smoke fails closed",
     "title": "The securely confined rendered browser does not launch local Chrome"
+   },
+   {
+    "id": "F6",
+    "verdict": "Observed in local use",
+    "title": "Generated work lacks a shared kept-operation contract"
    }
   ],
   "health": [
@@ -126,6 +131,22 @@
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "Kept work lifecycle (2026-10-22)",
+    "open": 10,
+    "items": [
+     "Default interactive delivery:",
+     "Script capability-admission matrix (doc 103 §6.1/K2):",
+     "Library live reconciliation:",
+     "Duty readiness:",
+     "K0:",
+     "K1:",
+     "K2:",
+     "K3:",
+     "K4:",
+     "K5:"
+    ]
+   },
    {
     "section": "Channel card rendering (2026-10-22)",
     "open": 1,
@@ -390,21 +411,21 @@
     ]
    }
   ],
-  "open_total": 101,
+  "open_total": 111,
   "measures_revision": "db6430ab3"
  },
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 514,
+  "commits": 515,
   "areas": [
    [
     "docs",
-    418
+    419
    ],
    [
     "(root)",
-    295
+    296
    ],
    [
     "vak-core",
@@ -501,7 +522,7 @@
    [
     "engineering",
     "Build, gate and release",
-    46
+    47
    ],
    [
     "library",
@@ -761,6 +782,16 @@
   ],
   "recent": [
    {
+    "hash": "df4642f77",
+    "date": "2026-10-22",
+    "subject": "Define general kept-work lifecycle",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs"
+    ]
+   },
+   {
     "hash": "f1cdd36cf",
     "date": "2026-10-22",
     "subject": "Record 8.23.0 release and verified local installation",
@@ -897,17 +928,11 @@
      "blueprint",
      "docs"
     ]
-   },
-   {
-    "hash": "a015c09f5",
-    "date": "2026-10-22",
-    "subject": "Finalize 8.20.0 changelog",
-    "areas": [
-     "(root)"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "Proposed a general lifecycle for saved interactive work, with edits creating versions on one Library item, visible operation controls, and script execution gated by current capabilities and enforceable isolation."
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1170,7 +1195,7 @@
   "counts": {
    "historical": 10,
    "implemented": 59,
-   "proposal": 6,
+   "proposal": 8,
    "superseded": 9,
    "in progress": 28,
    "reference": 2
@@ -1180,7 +1205,13 @@
     "path": "docs/design/100-workers.md",
     "title": "100 — Workers: work handed over, kept running",
     "status": "proposal",
-    "summary": "deferred by the maintainer on 2026-10-18: no stage starts until the maintainer reopens it"
+    "summary": "implementation deferred by the maintainer on 2026-10-18"
+   },
+   {
+    "path": "docs/design/103-kept-work-lifecycle.md",
+    "title": "103 — Kept work: create, change, run and use",
+    "status": "proposal",
+    "summary": "design revision requested by the maintainer on 2026-10-22"
    },
    {
     "path": "docs/design/49-live-voice.md",
@@ -1345,6 +1376,12 @@
     "summary": "The immediate defects are repaired (on main)"
    },
    {
+    "path": "docs/plans/kept-work-plan.md",
+    "title": "Plan — Kept work lifecycle",
+    "status": "proposal",
+    "summary": "design requested 2026-10-22"
+   },
+   {
     "path": "docs/plans/mail-calendar-implementation-plan.md",
     "title": "Plan — secure mail and calendar package",
     "status": "in progress",
@@ -1378,7 +1415,7 @@
     "path": "docs/plans/workers-plan.md",
     "title": "Plan — Workers (doc 100)",
     "status": "proposal",
-    "summary": "deferred by the maintainer on 2026-10-18"
+    "summary": "implementation deferred by the maintainer on 2026-10-18"
    }
   ]
  },
@@ -21964,9 +22001,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 133,
+   "commits": 134,
    "fixes": 21,
-   "recent": 46,
+   "recent": 47,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -21983,6 +22020,7 @@
   "docs_uncited": [
    "00-roadmap.md",
    "100-workers.md",
+   "103-kept-work-lifecycle.md",
    "35-tavily.md",
    "56-personal-multi-machine-system.md",
    "59-reference-ui-acceptance.md",
@@ -30841,6 +30879,14 @@
  ],
  "replay": [
   {
+   "hash": "df4642f77",
+   "date": "2026-10-22",
+   "subject": "Define general kept-work lifecycle",
+   "subsystems": [
+    "engineering"
+   ]
+  },
+  {
    "hash": "f1cdd36cf",
    "date": "2026-10-22",
    "subject": "Record 8.23.0 release and verified local installation",
@@ -37676,7 +37722,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1405,
+  "docs_commits": 1406,
   "hot": 655
  },
  "findings": [
@@ -37709,6 +37755,16 @@
    "matters": "Script-built pages currently lose rendered browsing on the measured Mac, and unqualified restricted backends lose worker/parser/MCP availability. Safe refusal closes the unsafe execution path but does not establish feature parity.",
    "fix": "Qualify browser launch and backend control-file enforcement with real process tests, preserving proxy-only TCP, private profile state and mandatory secret/control exclusions.",
    "sources": "[Security hardening acceptance](../docs/audits/security-hardening-2026-10-20.md); the ignored public-page browser smoke and native IPC tests."
+  },
+  {
+   "id": "F6",
+   "tag": "Contract",
+   "verdict": "Observed in local use",
+   "title": "Generated work lacks a shared kept-operation contract",
+   "evidence": "The local 2026-10-22 dashboard conversation produced code, an in-process refresh timer and a file-preview card, then used nohup through Bash to claim the app was running; the next turn found no listener. Bash intentionally kills remaining process-group children on return. Managed preview lifetimes exist in the server/UI, while workspace_read inventories installed declarative workspaces rather than running artifacts. No durable duty was registered. The broader Pieces/Workers lifecycle remains unbuilt; doc 103 corrects the design, not these runtime paths. Installed follow-through on 2026-10-22 found clocks blank and planner controls absent in the default paused-code preview despite successful syntax/marker checks. A free-form edit did retain one artifact and its version history, but the open Library metadata needed refresh. A home-Space one-shot ran; registered duties in an unserved Space did not, so registration alone does not establish runner coverage.",
+   "matters": "A saved file or successful immediate HTTP check can be presented as a connected, continuing app even though no runtime owns that promise after the turn or view ends.",
+   "fix": "Compose existing artifact versions, one pack, broker-owned lifetimes, scoped capability bindings and Trigger-backed duties; expose the same operations to Agent/UI/CLI and check operational claims against receipts. Preserve independent passive files, installed workspaces and ordinary automations.",
+   "sources": "[Kept-work design and dated evidence](../docs/design/103-kept-work-lifecycle.md); [installed everyday-use checks](../docs/audits/kept-work-everyday-use-2026-10-22.md); [implementation gates](../docs/plans/kept-work-plan.md); `crates/vak-tools/src/bash.rs`, `crates/vak-core/src/tools_workspaces.rs`, `crates/vak-core/src/presentation_tools.rs`, `crates/vak-server/src/lib.rs`, `crates/vak-server/src/automations.rs`."
   }
  ],
  "keep": [
