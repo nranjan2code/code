@@ -48,7 +48,7 @@ Only findings with a cost today; the evidence for each is under [Findings](#find
 | records | ok |
 | doc paths | ok |
 | versions | ok |
-| advisories | 0 known vulnerabilities not excepted, 10 warnings (measured at `db6430ab3`) |
+| advisories | 0 known vulnerabilities not excepted, 10 warnings (measured at `e63ab93b7`) |
 | record drift | 252 cited code names missing in 48 living documents (`run.py names`) |
 
 ### Open work (113 items)
