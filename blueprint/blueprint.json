@@ -1,31 +1,31 @@
 {
  "meta": {
   "version": "8.20.0",
-  "revision": "56e0bc59d",
+  "revision": "344a8466a",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
-  "prose_reviewed": "8.19.0 · 2026-10-22"
+  "prose_reviewed": "8.20.0 · 2026-10-22"
  },
  "summary": {
   "text": "Vakyartha (`vak`) is a local-first agent harness for one owner: agents that work on code, documents, research and everyday tasks, reached from a desktop app, the browser, a terminal and chat apps, with every model input and tool result kept in an append-only record. Its thesis is strong safety, transparent operation, extensible integrations and a simple core.\n\nThe lower layers (storage, permission, the pure deciders, the document engines) are well shaped and change rarely. Above them, three large crates (`vak-core`, `vak-agent`, `vak-server`) hold the turn and most features, and that is where most of the work and most of the risk sit.",
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 345905,
+   "rust_src": 347765,
    "rust_tests": 87619,
-   "ts_src": 64117,
-   "routes": 401,
+   "ts_src": 64915,
+   "routes": 404,
    "forms": 20,
    "worker_tasks": 14,
-   "state_paths": 80,
+   "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2444,
+   "total_commits": 2445,
    "days": 63,
    "peak_day": 174,
    "design_docs": 97,
    "agents_words": 20576,
    "subsystems": 64,
-   "connections": 828,
+   "connections": 835,
    "flows": 11
   },
   "tools": [
@@ -53,6 +53,7 @@
    "topics",
    "webfetch",
    "workers",
+   "workspace_edit",
    "write"
   ],
   "card_tools": [
@@ -96,11 +97,6 @@
     "id": "F5",
     "verdict": "Live smoke fails closed",
     "title": "The securely confined rendered browser does not launch local Chrome"
-   },
-   {
-    "id": "F6",
-    "verdict": "Defects found by review",
-    "title": "Canvas restoration can discard unknown tabs and alias inline content"
    }
   ],
   "health": [
@@ -131,14 +127,11 @@
   },
   "open_items": [
    {
-    "section": "Canvas workspace architecture review (2026-10-22)",
-    "open": 5,
+    "section": "Canvas workspace foundation (2026-10-22)",
+    "open": 2,
     "items": [
-     "Replace partial Canvas restoration with atomic current-contract validation and explicit unavailable-plugin state;",
-     "Replace inline/answer-subset short-hash identity with canonical scoped identity and explicit revision.",
-     "Define viewer-independent dirty state, checkpoint/suspend/restore and close/eviction handling for domain edits, beyond the frame's comment note.",
-     "Qualify focused Canvas keyboard entry, containment and focus return;",
-     "Review the proposed full-workspace host contract before implementation:"
+     "Add richer typed object/region selections, artifact chunk/stream adapters and complete installed stage/inspector/timeline workspaces, including a structurally different domain;",
+     "Qualify installed Tauri shell, Windows/Linux engines and physical touch/pen devices;"
     ]
    },
    {
@@ -390,37 +383,37 @@
     ]
    }
   ],
-  "open_total": 103,
+  "open_total": 100,
   "measures_revision": "431a828ac"
  },
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 501,
+  "commits": 502,
   "areas": [
    [
     "docs",
-    411
+    412
    ],
    [
     "(root)",
-    285
+    286
    ],
    [
     "vak-core",
-    209
+    210
    ],
    [
     "vak-server",
-    161
+    162
    ],
    [
     "vak-client-ui",
-    118
+    119
    ],
    [
     "vak-agent",
-    101
+    102
    ],
    [
     "vak-tools",
@@ -428,7 +421,7 @@
    ],
    [
     "vak-session",
-    78
+    79
    ],
    [
     "vak",
@@ -440,7 +433,7 @@
    ],
    [
     "vak-config",
-    47
+    48
    ],
    [
     "vak-control",
@@ -451,22 +444,22 @@
    [
     "server",
     "HTTP service",
-    104
+    105
    ],
    [
     "client",
     "Workspace client",
-    99
+    100
    ],
    [
     "turn",
     "Turn admission",
-    95
+    96
    ],
    [
     "cards",
     "Cards and presentation",
-    93
+    94
    ],
    [
     "loop",
@@ -476,7 +469,7 @@
    [
     "ledger",
     "Ledgers and records",
-    69
+    70
    ],
    [
     "tools",
@@ -496,12 +489,12 @@
    [
     "config",
     "Configuration and secrets",
-    47
+    48
    ],
    [
     "engineering",
     "Build, gate and release",
-    43
+    44
    ],
    [
     "library",
@@ -511,7 +504,7 @@
    [
     "state",
     "State registry and baseline",
-    40
+    41
    ],
    [
     "cli",
@@ -526,12 +519,12 @@
    [
     "catalog",
     "Catalog and search",
-    29
+    30
    ],
    [
     "workers",
     "Workers and delegation",
-    27
+    28
    ],
    [
     "automations",
@@ -546,7 +539,7 @@
    [
     "capabilities",
     "Capability registry",
-    23
+    24
    ],
    [
     "delivery",
@@ -556,7 +549,7 @@
    [
     "canvas",
     "Canvas and previews",
-    21
+    22
    ],
    [
     "llm",
@@ -584,6 +577,11 @@
     18
    ],
    [
+    "mail",
+    "Mail and calendar",
+    18
+   ],
+   [
     "memory",
     "Memory and learning",
     18
@@ -591,11 +589,6 @@
    [
     "runs",
     "Runs, effects and cursors",
-    17
-   ],
-   [
-    "mail",
-    "Mail and calendar",
     17
    ],
    [
@@ -631,7 +624,7 @@
    [
     "plugins",
     "Plugins and packages",
-    10
+    11
    ],
    [
     "flows",
@@ -760,6 +753,25 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "344a8466a",
+    "date": "2026-10-22",
+    "subject": "Complete Canvas workspace extensibility",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs",
+     "examples",
+     "vak-agent",
+     "vak-catalog",
+     "vak-client-ui",
+     "vak-config",
+     "vak-core",
+     "vak-plugin",
+     "vak-server",
+     "vak-session"
+    ]
+   },
    {
     "hash": "56e0bc59d",
     "date": "2026-10-22",
@@ -912,19 +924,15 @@
     "areas": [
      "(root)"
     ]
-   },
-   {
-    "hash": "9f302b359",
-    "date": "2026-10-21",
-    "subject": "Scope canvas answers to selected result",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-client-ui"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "Closing Canvas returns focus to its external opener even after switching conversations or replacing its view.",
+   "Enabled packages can contribute Canvas workspaces with typed fields and domain commands.",
+   "Canvas workspaces can share selected saved fields with the Agent through a logged context entry.",
+   "Canvas preserves workspace edits across tab switches, protects them from automatic eviction, and asks before discarding them.",
+   "Shared Canvas workspace registration, viewport metrics and drawing scheduling support owned interactive renderers across web and desktop."
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -955,6 +963,12 @@
     "title": "61 — Adaptive assistant experience",
     "status": "in progress",
     "summary": "Phase 1 implemented in the desktop and web client"
+   },
+   {
+    "path": "docs/design/66-immersive-artifact-canvas.md",
+    "title": "66 — Immersive Polyglot Artifact Canvas",
+    "status": "in progress",
+    "summary": "the shared workspace foundation is built (2026-10-22)"
    },
    {
     "path": "docs/design/70-calm-agent-experience-implementation.md",
@@ -1051,6 +1065,12 @@
     "title": "Architecture and presentation hardening",
     "status": "in progress",
     "summary": "requested on 2026-10-18 to address all observations from the session's architecture, answer/projection, surface and dynamic-card reviews"
+   },
+   {
+    "path": "docs/plans/canvas-plan.md",
+    "title": "Plan — the Canvas as a multi-surface workspace",
+    "status": "in progress",
+    "summary": "the shared workspace foundation is built"
    },
    {
     "path": "docs/plans/context-selection-repair.md",
@@ -1174,10 +1194,10 @@
  "specs": {
   "counts": {
    "historical": 10,
-   "implemented": 60,
+   "implemented": 58,
    "proposal": 6,
    "superseded": 9,
-   "in progress": 26,
+   "in progress": 28,
    "reference": 2
   },
   "open": [
@@ -1216,6 +1236,12 @@
     "title": "61 — Adaptive assistant experience",
     "status": "in progress",
     "summary": "Phase 1 implemented in the desktop and web client"
+   },
+   {
+    "path": "docs/design/66-immersive-artifact-canvas.md",
+    "title": "66 — Immersive Polyglot Artifact Canvas",
+    "status": "in progress",
+    "summary": "the shared workspace foundation is built (2026-10-22)"
    },
    {
     "path": "docs/design/70-calm-agent-experience-implementation.md",
@@ -1326,6 +1352,12 @@
     "summary": "requested on 2026-10-18 to address all observations from the session's architecture, answer/projection, surface and dynamic-card reviews"
    },
    {
+    "path": "docs/plans/canvas-plan.md",
+    "title": "Plan — the Canvas as a multi-surface workspace",
+    "status": "in progress",
+    "summary": "the shared workspace foundation is built"
+   },
+   {
     "path": "docs/plans/collaboration-and-shared-work-plan.md",
     "title": "Plan — collaboration, handover, Canvas and Review",
     "status": "proposal",
@@ -1379,7 +1411,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 86050,
+   "lines": 86848,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1391,7 +1423,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 81197,
+   "lines": 81721,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1401,7 +1433,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 66890,
+   "lines": 67282,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1411,7 +1443,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 56324,
+   "lines": 56739,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -1452,7 +1484,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 38960,
+   "lines": 39489,
    "crates": [
     "vak-session",
     "vak-config",
@@ -1477,9 +1509,9 @@
    ],
    "modules": 68,
    "parts": [],
-   "lines": 19069,
+   "lines": 19128,
    "largest": [
-    3210,
+    3241,
     "crates/vak-client-ui/src/api.ts"
    ],
    "routes": [
@@ -1577,9 +1609,9 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 516,
+   "commits": 517,
    "fixes": 74,
-   "recent": 99,
+   "recent": 100,
    "fix_density": 3.9,
    "out": [
     {
@@ -1616,7 +1648,7 @@
      "from": "client",
      "to": "canvas",
      "kind": "code",
-     "weight": 9,
+     "weight": 10,
      "example": [
       "crates/vak-client-ui/src/App.tsx",
       "crates/vak-client-ui/src/canvasSync.ts"
@@ -2268,7 +2300,7 @@
      "from": "canvas",
      "to": "client",
      "kind": "code",
-     "weight": 37,
+     "weight": 45,
      "example": [
       "crates/vak-client-ui/src/artifactPreview.ts",
       "crates/vak-client-ui/src/api.ts"
@@ -4388,9 +4420,9 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 14398,
+   "lines": 14409,
    "largest": [
-    12549,
+    12560,
     "crates/vak-core/src/lib.rs"
    ],
    "routes": [
@@ -4421,9 +4453,9 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 387,
+   "commits": 388,
    "fixes": 59,
-   "recent": 95,
+   "recent": 96,
    "fix_density": 4.1,
    "out": [
     {
@@ -4809,6 +4841,16 @@
      ]
     },
     {
+     "from": "canvas",
+     "to": "turn",
+     "kind": "code",
+     "weight": 5,
+     "example": [
+      "crates/vak-core/src/canvas_workspaces.rs",
+      "crates/vak-core/src/lib.rs"
+     ]
+    },
+    {
      "from": "abilities",
      "to": "turn",
      "kind": "code",
@@ -5075,16 +5117,6 @@
      "weight": 1,
      "example": [
       "crates/vak-server/src/bus.rs",
-      "crates/vak-core/src/lib.rs"
-     ]
-    },
-    {
-     "from": "canvas",
-     "to": "turn",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-server/src/canvas.rs",
       "crates/vak-core/src/lib.rs"
      ]
     },
@@ -5597,9 +5629,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 3405,
+   "lines": 3406,
    "largest": [
-    1871,
+    1872,
     "crates/vak-agent/src/task.rs"
    ],
    "routes": [
@@ -5625,9 +5657,9 @@
     "crates/vak-agent/src/write_lease.rs",
     "crates/vak-client-ui/src/components/WorkersPanel.tsx"
    ],
-   "commits": 88,
+   "commits": 89,
    "fixes": 9,
-   "recent": 27,
+   "recent": 28,
    "fix_density": 2.6,
    "out": [
     {
@@ -7876,6 +7908,16 @@
      ]
     },
     {
+     "from": "canvas",
+     "to": "tools",
+     "kind": "code",
+     "weight": 4,
+     "example": [
+      "crates/vak-core/src/canvas_workspaces.rs",
+      "crates/vak-tools/src/contract.rs"
+     ]
+    },
+    {
      "from": "cards",
      "to": "tools",
      "kind": "code",
@@ -8248,7 +8290,7 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 4355,
+   "lines": 4382,
    "largest": [
     1123,
     "crates/vak-core/src/skills.rs"
@@ -8279,9 +8321,9 @@
     "crates/vak-core/src/packages.rs",
     "crates/vak-core/src/skills.rs"
    ],
-   "commits": 77,
+   "commits": 78,
    "fixes": 16,
-   "recent": 23,
+   "recent": 24,
    "fix_density": 3.7,
    "out": [
     {
@@ -8422,6 +8464,16 @@
      "example": [
       "crates/vak-core/src/capability/provider.rs",
       "crates/vak-core/src/prompts.rs"
+     ]
+    },
+    {
+     "from": "capabilities",
+     "to": "telemetry",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-core/src/capability/provider.rs",
+      "crates/vak-telemetry/src/lib.rs"
      ]
     }
    ],
@@ -9083,9 +9135,9 @@
     "packages/social-x",
     "packages/social-youtube"
    ],
-   "lines": 3566,
+   "lines": 3623,
    "largest": [
-    2982,
+    3039,
     "crates/vak-plugin/src/lib.rs"
    ],
    "routes": [
@@ -9125,9 +9177,9 @@
     "packages/social-x",
     "packages/social-youtube"
    ],
-   "commits": 39,
+   "commits": 40,
    "fixes": 4,
-   "recent": 10,
+   "recent": 11,
    "fix_density": 1.1,
    "out": [
     {
@@ -9190,6 +9242,16 @@
      "example": [
       "crates/vak-client-ui/src/api.ts",
       "/plugins/catalog/install"
+     ]
+    },
+    {
+     "from": "canvas",
+     "to": "plugins",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-core/src/canvas_workspaces.rs",
+      "crates/vak-plugin/src/lib.rs"
      ]
     },
     {
@@ -9857,6 +9919,16 @@
      "example": [
       "crates/vak-terminal/src/api.rs",
       "/config/mode"
+     ]
+    },
+    {
+     "from": "canvas",
+     "to": "permission",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-core/src/tools_workspaces.rs",
+      "crates/vak-permission/src/reach.rs"
      ]
     },
     {
@@ -10775,9 +10847,9 @@
    ],
    "modules": 18,
    "parts": [],
-   "lines": 13149,
+   "lines": 13165,
    "largest": [
-    3857,
+    3866,
     "crates/vak-session/src/log.rs"
    ],
    "routes": [
@@ -10813,9 +10885,9 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 198,
+   "commits": 199,
    "fixes": 18,
-   "recent": 69,
+   "recent": 70,
    "fix_density": 1.4,
    "out": [
     {
@@ -10896,6 +10968,16 @@
      "example": [
       "crates/vak-server/src/conversation_history.rs",
       "crates/vak-server/src/lib.rs"
+     ]
+    },
+    {
+     "from": "ledger",
+     "to": "canvas",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-session/src/log.rs",
+      "crates/vak-session/src/workspaces.rs"
      ]
     },
     {
@@ -11101,6 +11183,16 @@
      ]
     },
     {
+     "from": "canvas",
+     "to": "ledger",
+     "kind": "code",
+     "weight": 9,
+     "example": [
+      "crates/vak-core/src/canvas_workspaces.rs",
+      "crates/vak-session/src/trace.rs"
+     ]
+    },
+    {
      "from": "abilities",
      "to": "ledger",
      "kind": "code",
@@ -11287,16 +11379,6 @@
      "weight": 3,
      "example": [
       "crates/vak-core/src/backup.rs",
-      "crates/vak-session/src/documents.rs"
-     ]
-    },
-    {
-     "from": "canvas",
-     "to": "ledger",
-     "kind": "code",
-     "weight": 3,
-     "example": [
-      "crates/vak-server/src/canvas.rs",
       "crates/vak-session/src/documents.rs"
      ]
     },
@@ -11999,6 +12081,16 @@
      ]
     },
     {
+     "from": "canvas",
+     "to": "runs",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-server/src/canvas_workspaces.rs",
+      "crates/vak-session/src/runs.rs"
+     ]
+    },
+    {
      "from": "client",
      "to": "runs",
      "kind": "http",
@@ -12081,9 +12173,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 5577,
+   "lines": 5669,
    "largest": [
-    1520,
+    1586,
     "crates/vak-catalog/src/ingest.rs"
    ],
    "routes": [
@@ -12107,9 +12199,9 @@
     "crates/vak-core/src/catalog.rs",
     "crates/vak-server/src/catalog_api.rs"
    ],
-   "commits": 42,
+   "commits": 43,
    "fixes": 2,
-   "recent": 29,
+   "recent": 30,
    "fix_density": 0.4,
    "out": [
     {
@@ -12200,6 +12292,16 @@
      "example": [
       "crates/vak-core/src/catalog.rs",
       "crates/vak-core/src/lib.rs"
+     ]
+    },
+    {
+     "from": "catalog",
+     "to": "canvas",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-catalog/src/ingest.rs",
+      "crates/vak-session/src/workspaces.rs"
      ]
     },
     {
@@ -12453,9 +12555,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 3727,
+   "lines": 3732,
    "largest": [
-    1842,
+    1847,
     "crates/vak-core/src/state.rs"
    ],
    "routes": [
@@ -12474,9 +12576,9 @@
     "crates/vak-core/src/state.rs",
     "crates/vak/src/data.rs"
    ],
-   "commits": 79,
+   "commits": 80,
    "fixes": 6,
-   "recent": 40,
+   "recent": 41,
    "fix_density": 1.6,
    "out": [
     {
@@ -13063,6 +13165,16 @@
      ]
     },
     {
+     "from": "canvas",
+     "to": "lifecycle",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-server/src/canvas.rs",
+      "crates/vak-core/src/trash.rs"
+     ]
+    },
+    {
      "from": "client",
      "to": "lifecycle",
      "kind": "code",
@@ -13090,16 +13202,6 @@
      "example": [
       "crates/vak-core/src/lib.rs",
       "crates/vak-core/src/lifecycle.rs"
-     ]
-    },
-    {
-     "from": "canvas",
-     "to": "lifecycle",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-server/src/canvas.rs",
-      "crates/vak-core/src/trash.rs"
      ]
     },
     {
@@ -13703,7 +13805,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 9896,
+   "lines": 9903,
    "largest": [
     6437,
     "crates/vak-config/src/lib.rs"
@@ -13732,9 +13834,9 @@
     "crates/vak-config/src/test_scope.rs",
     "crates/vak-server/src/restart.rs"
    ],
-   "commits": 209,
+   "commits": 210,
    "fixes": 31,
-   "recent": 47,
+   "recent": 48,
    "fix_density": 3.1,
    "out": [
     {
@@ -14190,6 +14292,16 @@
      ]
     },
     {
+     "from": "canvas",
+     "to": "config",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-server/src/canvas.rs",
+      "crates/vak-config/src/scope.rs"
+     ]
+    },
+    {
      "from": "cards",
      "to": "config",
      "kind": "code",
@@ -14267,16 +14379,6 @@
      "example": [
       "crates/vak-server/src/bus.rs",
       "crates/vak-config/src/lib.rs"
-     ]
-    },
-    {
-     "from": "canvas",
-     "to": "config",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-server/src/canvas.rs",
-      "crates/vak-config/src/scope.rs"
      ]
     },
     {
@@ -14497,6 +14599,16 @@
      "weight": 1,
      "example": [
       "crates/vak-server/src/bus.rs",
+      "crates/vak-telemetry/src/lib.rs"
+     ]
+    },
+    {
+     "from": "capabilities",
+     "to": "telemetry",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-core/src/capability/provider.rs",
       "crates/vak-telemetry/src/lib.rs"
      ]
     },
@@ -14726,7 +14838,7 @@
    ],
    "modules": 26,
    "parts": [],
-   "lines": 19423,
+   "lines": 19424,
    "largest": [
     6677,
     "crates/vak-server/src/projection.rs"
@@ -14794,9 +14906,9 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 308,
+   "commits": 309,
    "fixes": 53,
-   "recent": 93,
+   "recent": 94,
    "fix_density": 2.7,
    "out": [
     {
@@ -15442,15 +15554,21 @@
    "role": "The artifact canvas, its viewers, live previews and the preview origin",
    "homes": [
     "vak-client-ui",
-    "vak-server"
+    "vak-server",
+    "vak-session",
+    "vak-plugin",
+    "vak-core"
    ],
    "layers": [
+    "L1",
+    "L4",
+    "L5",
     "L6",
     "L7"
    ],
-   "modules": 36,
+   "modules": 53,
    "parts": [],
-   "lines": 4957,
+   "lines": 6951,
    "largest": [
     794,
     "crates/vak-server/src/preview.rs"
@@ -15460,6 +15578,9 @@
     "/previews/{id}",
     "/sessions/{id}/canvas",
     "/sessions/{id}/canvas/recovery-key",
+    "/sessions/{id}/canvas/workspaces",
+    "/sessions/{id}/canvas/workspaces/ask",
+    "/sessions/{id}/canvas/workspaces/module",
     "/sessions/{id}/launch",
     "/sessions/{id}/launch/lease",
     "/sessions/{id}/launch/logs",
@@ -15474,6 +15595,10 @@
    ],
    "units": [
     "crates/vak-client-ui/src/artifactPreview.ts",
+    "crates/vak-client-ui/src/canvasCompute.ts",
+    "crates/vak-client-ui/src/canvasComputeClient.ts",
+    "crates/vak-client-ui/src/canvasComputeWorker.ts",
+    "crates/vak-client-ui/src/canvasDrawing.ts",
     "crates/vak-client-ui/src/canvasRebase.ts",
     "crates/vak-client-ui/src/canvasRecovery.ts",
     "crates/vak-client-ui/src/canvasSelection.ts",
@@ -15482,15 +15607,20 @@
     "crates/vak-client-ui/src/canvasSync.ts",
     "crates/vak-client-ui/src/canvasSyncState.ts",
     "crates/vak-client-ui/src/canvasViewers.ts",
+    "crates/vak-client-ui/src/canvasWorkspace.ts",
+    "crates/vak-client-ui/src/canvasWorkspaceInputs.ts",
+    "crates/vak-client-ui/src/canvasWorkspaces.ts",
     "crates/vak-client-ui/src/components/ArtifactCanvas.tsx",
     "crates/vak-client-ui/src/components/HtmlPreview.tsx",
     "crates/vak-client-ui/src/components/LivePreviewPanel.tsx",
     "crates/vak-client-ui/src/components/canvas/AnswerViewer.tsx",
     "crates/vak-client-ui/src/components/canvas/AutomationViewer.tsx",
     "crates/vak-client-ui/src/components/canvas/CanvasContext.tsx",
+    "crates/vak-client-ui/src/components/canvas/CanvasResize.tsx",
     "crates/vak-client-ui/src/components/canvas/CanvasSaveNotice.tsx",
     "crates/vak-client-ui/src/components/canvas/DeviceViewport.tsx",
     "crates/vak-client-ui/src/components/canvas/HtmlViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/InstalledWorkspaceViewer.tsx",
     "crates/vak-client-ui/src/components/canvas/LoadState.tsx",
     "crates/vak-client-ui/src/components/canvas/MediaViewer.tsx",
     "crates/vak-client-ui/src/components/canvas/NewVersionNotice.tsx",
@@ -15501,28 +15631,56 @@
     "crates/vak-client-ui/src/components/canvas/SourcePane.tsx",
     "crates/vak-client-ui/src/components/canvas/SourceViewer.tsx",
     "crates/vak-client-ui/src/components/canvas/TableViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/WorkspaceContext.tsx",
+    "crates/vak-client-ui/src/components/canvas/WorkspaceLauncher.tsx",
+    "crates/vak-client-ui/src/components/canvas/WorkspaceViewer.tsx",
     "crates/vak-client-ui/src/components/canvas/createLoader.ts",
     "crates/vak-client-ui/src/components/canvas/draftThread.ts",
     "crates/vak-client-ui/src/components/canvas/types.ts",
     "crates/vak-client-ui/src/components/canvas/viewers.ts",
     "crates/vak-client-ui/src/previewLibraries.ts",
     "crates/vak-client-ui/src/previewTheme.ts",
+    "crates/vak-core/src/canvas_workspaces.rs",
+    "crates/vak-core/src/tools_workspaces.rs",
+    "crates/vak-plugin/src/workspace.rs",
     "crates/vak-server/src/canvas.rs",
-    "crates/vak-server/src/preview.rs"
+    "crates/vak-server/src/canvas_workspaces.rs",
+    "crates/vak-server/src/preview.rs",
+    "crates/vak-session/src/workspaces.rs"
    ],
-   "commits": 70,
+   "commits": 71,
    "fixes": 5,
-   "recent": 21,
-   "fix_density": 1.0,
+   "recent": 22,
+   "fix_density": 0.7,
    "out": [
     {
      "from": "canvas",
      "to": "client",
      "kind": "code",
-     "weight": 37,
+     "weight": 45,
      "example": [
       "crates/vak-client-ui/src/artifactPreview.ts",
       "crates/vak-client-ui/src/api.ts"
+     ]
+    },
+    {
+     "from": "canvas",
+     "to": "ledger",
+     "kind": "code",
+     "weight": 9,
+     "example": [
+      "crates/vak-core/src/canvas_workspaces.rs",
+      "crates/vak-session/src/trace.rs"
+     ]
+    },
+    {
+     "from": "canvas",
+     "to": "turn",
+     "kind": "code",
+     "weight": 5,
+     "example": [
+      "crates/vak-core/src/canvas_workspaces.rs",
+      "crates/vak-core/src/lib.rs"
      ]
     },
     {
@@ -15537,12 +15695,12 @@
     },
     {
      "from": "canvas",
-     "to": "ledger",
+     "to": "tools",
      "kind": "code",
-     "weight": 3,
+     "weight": 4,
      "example": [
-      "crates/vak-server/src/canvas.rs",
-      "crates/vak-session/src/documents.rs"
+      "crates/vak-core/src/canvas_workspaces.rs",
+      "crates/vak-tools/src/contract.rs"
      ]
     },
     {
@@ -15557,6 +15715,16 @@
     },
     {
      "from": "canvas",
+     "to": "server",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-server/src/canvas.rs",
+      "crates/vak-server/src/lib.rs"
+     ]
+    },
+    {
+     "from": "canvas",
      "to": "cards",
      "kind": "code",
      "weight": 2,
@@ -15567,12 +15735,32 @@
     },
     {
      "from": "canvas",
-     "to": "server",
+     "to": "config",
      "kind": "code",
      "weight": 2,
      "example": [
       "crates/vak-server/src/canvas.rs",
-      "crates/vak-server/src/lib.rs"
+      "crates/vak-config/src/scope.rs"
+     ]
+    },
+    {
+     "from": "canvas",
+     "to": "lifecycle",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-server/src/canvas.rs",
+      "crates/vak-core/src/trash.rs"
+     ]
+    },
+    {
+     "from": "canvas",
+     "to": "plugins",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-core/src/canvas_workspaces.rs",
+      "crates/vak-plugin/src/lib.rs"
      ]
     },
     {
@@ -15587,26 +15775,6 @@
     },
     {
      "from": "canvas",
-     "to": "config",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-server/src/canvas.rs",
-      "crates/vak-config/src/scope.rs"
-     ]
-    },
-    {
-     "from": "canvas",
-     "to": "lifecycle",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-server/src/canvas.rs",
-      "crates/vak-core/src/trash.rs"
-     ]
-    },
-    {
-     "from": "canvas",
      "to": "mail",
      "kind": "code",
      "weight": 1,
@@ -15617,12 +15785,22 @@
     },
     {
      "from": "canvas",
-     "to": "turn",
+     "to": "permission",
      "kind": "code",
      "weight": 1,
      "example": [
-      "crates/vak-server/src/canvas.rs",
-      "crates/vak-core/src/lib.rs"
+      "crates/vak-core/src/tools_workspaces.rs",
+      "crates/vak-permission/src/reach.rs"
+     ]
+    },
+    {
+     "from": "canvas",
+     "to": "runs",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-server/src/canvas_workspaces.rs",
+      "crates/vak-session/src/runs.rs"
      ]
     }
    ],
@@ -15631,7 +15809,7 @@
      "from": "client",
      "to": "canvas",
      "kind": "code",
-     "weight": 9,
+     "weight": 10,
      "example": [
       "crates/vak-client-ui/src/App.tsx",
       "crates/vak-client-ui/src/canvasSync.ts"
@@ -15661,7 +15839,7 @@
      "from": "mail",
      "to": "canvas",
      "kind": "code",
-     "weight": 3,
+     "weight": 4,
      "example": [
       "crates/vak-client-ui/src/components/canvas/DailyMailCalendarViewer.tsx",
       "crates/vak-client-ui/src/components/canvas/LoadState.tsx"
@@ -15685,6 +15863,26 @@
      "example": [
       "crates/vak-terminal/src/api.rs",
       "/sessions/{id}/launch"
+     ]
+    },
+    {
+     "from": "ledger",
+     "to": "canvas",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-session/src/log.rs",
+      "crates/vak-session/src/workspaces.rs"
+     ]
+    },
+    {
+     "from": "catalog",
+     "to": "canvas",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-catalog/src/ingest.rs",
+      "crates/vak-session/src/workspaces.rs"
      ]
     },
     {
@@ -16468,7 +16666,7 @@
    ],
    "modules": 24,
    "parts": [],
-   "lines": 28436,
+   "lines": 28473,
    "largest": [
     7839,
     "crates/vak-mail-calendar/src/provider.rs"
@@ -16532,9 +16730,9 @@
     "crates/vak-server/src/mail_calendar.rs",
     "crates/vak-tools/src/mail_calendar.rs"
    ],
-   "commits": 164,
+   "commits": 165,
    "fixes": 13,
-   "recent": 17,
+   "recent": 18,
    "fix_density": 0.5,
    "out": [
     {
@@ -16569,6 +16767,16 @@
     },
     {
      "from": "mail",
+     "to": "canvas",
+     "kind": "code",
+     "weight": 4,
+     "example": [
+      "crates/vak-client-ui/src/components/canvas/DailyMailCalendarViewer.tsx",
+      "crates/vak-client-ui/src/components/canvas/LoadState.tsx"
+     ]
+    },
+    {
+     "from": "mail",
      "to": "runs",
      "kind": "code",
      "weight": 4,
@@ -16595,16 +16803,6 @@
      "example": [
       "crates/vak-server/src/mail_calendar.rs",
       "crates/vak-core/src/agent_definitions.rs"
-     ]
-    },
-    {
-     "from": "mail",
-     "to": "canvas",
-     "kind": "code",
-     "weight": 3,
-     "example": [
-      "crates/vak-client-ui/src/components/canvas/DailyMailCalendarViewer.tsx",
-      "crates/vak-client-ui/src/components/canvas/LoadState.tsx"
      ]
     },
     {
@@ -18968,9 +19166,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 32599,
+   "lines": 32950,
    "largest": [
-    28765,
+    29116,
     "crates/vak-server/src/lib.rs"
    ],
    "routes": [
@@ -19008,9 +19206,9 @@
     "crates/vak-server/src/web.rs",
     "crates/vak-session/src/turn_marks.rs"
    ],
-   "commits": 555,
+   "commits": 556,
    "fixes": 85,
-   "recent": 104,
+   "recent": 105,
    "fix_density": 2.6,
    "out": [
     {
@@ -19556,6 +19754,16 @@
      ]
     },
     {
+     "from": "canvas",
+     "to": "server",
+     "kind": "code",
+     "weight": 3,
+     "example": [
+      "crates/vak-server/src/canvas.rs",
+      "crates/vak-server/src/lib.rs"
+     ]
+    },
+    {
      "from": "identity",
      "to": "server",
      "kind": "code",
@@ -19582,16 +19790,6 @@
      "weight": 3,
      "example": [
       "crates/vak-server/src/social/linkedin.rs",
-      "crates/vak-server/src/lib.rs"
-     ]
-    },
-    {
-     "from": "canvas",
-     "to": "server",
-     "kind": "code",
-     "weight": 2,
-     "example": [
-      "crates/vak-server/src/canvas.rs",
       "crates/vak-server/src/lib.rs"
      ]
     },
@@ -21763,9 +21961,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 130,
+   "commits": 131,
    "fixes": 21,
-   "recent": 43,
+   "recent": 44,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -21773,10 +21971,10 @@
   }
  ],
  "coverage": {
-  "units": 718,
-  "claimed": 718,
-  "routes": 401,
-  "routes_claimed": 401,
+  "units": 735,
+  "claimed": 735,
+  "routes": 404,
+  "routes_claimed": 404,
   "verbs": 36,
   "verbs_claimed": 36,
   "docs_uncited": [
@@ -21798,7 +21996,7 @@
    "from": "canvas",
    "to": "client",
    "kind": "code",
-   "weight": 37,
+   "weight": 45,
    "example": [
     "crates/vak-client-ui/src/artifactPreview.ts",
     "crates/vak-client-ui/src/api.ts"
@@ -22145,6 +22343,16 @@
    ]
   },
   {
+   "from": "client",
+   "to": "canvas",
+   "kind": "code",
+   "weight": 10,
+   "example": [
+    "crates/vak-client-ui/src/App.tsx",
+    "crates/vak-client-ui/src/canvasSync.ts"
+   ]
+  },
+  {
    "from": "context",
    "to": "ledger",
    "kind": "code",
@@ -22195,6 +22403,16 @@
    ]
   },
   {
+   "from": "canvas",
+   "to": "ledger",
+   "kind": "code",
+   "weight": 9,
+   "example": [
+    "crates/vak-core/src/canvas_workspaces.rs",
+    "crates/vak-session/src/trace.rs"
+   ]
+  },
+  {
    "from": "cards",
    "to": "delivery",
    "kind": "code",
@@ -22202,16 +22420,6 @@
    "example": [
     "crates/vak-agent/src/cards.rs",
     "crates/vak-delivery/src/skills.rs"
-   ]
-  },
-  {
-   "from": "client",
-   "to": "canvas",
-   "kind": "code",
-   "weight": 9,
-   "example": [
-    "crates/vak-client-ui/src/App.tsx",
-    "crates/vak-client-ui/src/canvasSync.ts"
    ]
   },
   {
@@ -22955,6 +23163,16 @@
    ]
   },
   {
+   "from": "canvas",
+   "to": "turn",
+   "kind": "code",
+   "weight": 5,
+   "example": [
+    "crates/vak-core/src/canvas_workspaces.rs",
+    "crates/vak-core/src/lib.rs"
+   ]
+  },
+  {
    "from": "catalog",
    "to": "client",
    "kind": "code",
@@ -23395,6 +23613,16 @@
    ]
   },
   {
+   "from": "canvas",
+   "to": "tools",
+   "kind": "code",
+   "weight": 4,
+   "example": [
+    "crates/vak-core/src/canvas_workspaces.rs",
+    "crates/vak-tools/src/contract.rs"
+   ]
+  },
+  {
    "from": "cards",
    "to": "sandbox",
    "kind": "code",
@@ -23652,6 +23880,16 @@
    "example": [
     "crates/vak-agent/src/lib.rs",
     "crates/vak-control/src/provenance.rs"
+   ]
+  },
+  {
+   "from": "mail",
+   "to": "canvas",
+   "kind": "code",
+   "weight": 4,
+   "example": [
+    "crates/vak-client-ui/src/components/canvas/DailyMailCalendarViewer.tsx",
+    "crates/vak-client-ui/src/components/canvas/LoadState.tsx"
    ]
   },
   {
@@ -24006,22 +24244,22 @@
   },
   {
    "from": "canvas",
-   "to": "ledger",
-   "kind": "code",
-   "weight": 3,
-   "example": [
-    "crates/vak-server/src/canvas.rs",
-    "crates/vak-session/src/documents.rs"
-   ]
-  },
-  {
-   "from": "canvas",
    "to": "office",
    "kind": "code",
    "weight": 3,
    "example": [
     "crates/vak-client-ui/src/canvasSubject.ts",
     "crates/vak-client-ui/src/officeFiles.ts"
+   ]
+  },
+  {
+   "from": "canvas",
+   "to": "server",
+   "kind": "code",
+   "weight": 3,
+   "example": [
+    "crates/vak-server/src/canvas.rs",
+    "crates/vak-server/src/lib.rs"
    ]
   },
   {
@@ -24482,16 +24720,6 @@
    "example": [
     "crates/vak-server/src/mail_calendar.rs",
     "crates/vak-core/src/agent_definitions.rs"
-   ]
-  },
-  {
-   "from": "mail",
-   "to": "canvas",
-   "kind": "code",
-   "weight": 3,
-   "example": [
-    "crates/vak-client-ui/src/components/canvas/DailyMailCalendarViewer.tsx",
-    "crates/vak-client-ui/src/components/canvas/LoadState.tsx"
    ]
   },
   {
@@ -25156,12 +25384,32 @@
   },
   {
    "from": "canvas",
-   "to": "server",
+   "to": "config",
    "kind": "code",
    "weight": 2,
    "example": [
     "crates/vak-server/src/canvas.rs",
-    "crates/vak-server/src/lib.rs"
+    "crates/vak-config/src/scope.rs"
+   ]
+  },
+  {
+   "from": "canvas",
+   "to": "lifecycle",
+   "kind": "code",
+   "weight": 2,
+   "example": [
+    "crates/vak-server/src/canvas.rs",
+    "crates/vak-core/src/trash.rs"
+   ]
+  },
+  {
+   "from": "canvas",
+   "to": "plugins",
+   "kind": "code",
+   "weight": 2,
+   "example": [
+    "crates/vak-core/src/canvas_workspaces.rs",
+    "crates/vak-plugin/src/lib.rs"
    ]
   },
   {
@@ -25882,6 +26130,16 @@
    "example": [
     "crates/vak-core/src/intent.rs",
     "crates/vak-core/src/lib.rs"
+   ]
+  },
+  {
+   "from": "ledger",
+   "to": "canvas",
+   "kind": "code",
+   "weight": 2,
+   "example": [
+    "crates/vak-session/src/log.rs",
+    "crates/vak-session/src/workspaces.rs"
    ]
   },
   {
@@ -27136,26 +27394,6 @@
   },
   {
    "from": "canvas",
-   "to": "config",
-   "kind": "code",
-   "weight": 1,
-   "example": [
-    "crates/vak-server/src/canvas.rs",
-    "crates/vak-config/src/scope.rs"
-   ]
-  },
-  {
-   "from": "canvas",
-   "to": "lifecycle",
-   "kind": "code",
-   "weight": 1,
-   "example": [
-    "crates/vak-server/src/canvas.rs",
-    "crates/vak-core/src/trash.rs"
-   ]
-  },
-  {
-   "from": "canvas",
    "to": "mail",
    "kind": "code",
    "weight": 1,
@@ -27166,12 +27404,22 @@
   },
   {
    "from": "canvas",
-   "to": "turn",
+   "to": "permission",
    "kind": "code",
    "weight": 1,
    "example": [
-    "crates/vak-server/src/canvas.rs",
-    "crates/vak-core/src/lib.rs"
+    "crates/vak-core/src/tools_workspaces.rs",
+    "crates/vak-permission/src/reach.rs"
+   ]
+  },
+  {
+   "from": "canvas",
+   "to": "runs",
+   "kind": "code",
+   "weight": 1,
+   "example": [
+    "crates/vak-server/src/canvas_workspaces.rs",
+    "crates/vak-session/src/runs.rs"
    ]
   },
   {
@@ -27252,6 +27500,16 @@
    "example": [
     "crates/vak-core/src/capability/provider.rs",
     "crates/vak-core/src/prompts.rs"
+   ]
+  },
+  {
+   "from": "capabilities",
+   "to": "telemetry",
+   "kind": "code",
+   "weight": 1,
+   "example": [
+    "crates/vak-core/src/capability/provider.rs",
+    "crates/vak-telemetry/src/lib.rs"
    ]
   },
   {
@@ -27342,6 +27600,16 @@
    "example": [
     "crates/vak-core/src/presentation_store.rs",
     "crates/vak-telemetry/src/lib.rs"
+   ]
+  },
+  {
+   "from": "catalog",
+   "to": "canvas",
+   "kind": "code",
+   "weight": 1,
+   "example": [
+    "crates/vak-catalog/src/ingest.rs",
+    "crates/vak-session/src/workspaces.rs"
    ]
   },
   {
@@ -30559,6 +30827,27 @@
   }
  ],
  "replay": [
+  {
+   "hash": "344a8466a",
+   "date": "2026-10-22",
+   "subject": "Complete Canvas workspace extensibility",
+   "subsystems": [
+    "canvas",
+    "capabilities",
+    "cards",
+    "catalog",
+    "client",
+    "config",
+    "engineering",
+    "ledger",
+    "mail",
+    "plugins",
+    "server",
+    "state",
+    "turn",
+    "workers"
+   ]
+  },
   {
    "hash": "56e0bc59d",
    "date": "2026-10-22",
@@ -35530,10 +35819,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 17212,
+   "src": 17213,
    "tests": 19973,
    "files": 13,
-   "commits": 356,
+   "commits": 357,
    "deps": [
     "vak-config",
     "vak-context",
@@ -35625,10 +35914,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "SQLite catalog: nodes, lineage, FTS5",
-   "src": 5052,
+   "src": 5144,
    "tests": 0,
    "files": 5,
-   "commits": 37,
+   "commits": 38,
    "deps": [
     "vak-config",
     "vak-llm",
@@ -35652,7 +35941,7 @@
     "tracing"
    ],
    "largest": [
-    1520,
+    1586,
     "crates/vak-catalog/src/ingest.rs"
    ],
    "subsystems": [
@@ -35664,10 +35953,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 39154,
+   "src": 39952,
    "tests": 324,
-   "files": 195,
-   "commits": 654,
+   "files": 207,
+   "commits": 655,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -35683,7 +35972,7 @@
     "solid-js"
    ],
    "largest": [
-    3210,
+    3241,
     "crates/vak-client-ui/src/api.ts"
    ],
    "subsystems": [
@@ -35755,10 +36044,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Layered TOML, credentials, paths, scopes",
-   "src": 9834,
+   "src": 9841,
    "tests": 867,
    "files": 8,
-   "commits": 217,
+   "commits": 218,
    "deps": [
     "vak-control",
     "vak-llm"
@@ -35875,10 +36164,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 62336,
+   "src": 62728,
    "tests": 10484,
-   "files": 74,
-   "commits": 660,
+   "files": 76,
+   "commits": 661,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -35938,7 +36227,7 @@
     "walkdir"
    ],
    "largest": [
-    12549,
+    12560,
     "crates/vak-core/src/lib.rs"
    ],
    "subsystems": [
@@ -35965,6 +36254,7 @@
     "sync",
     "checkpoints",
     "cards",
+    "canvas",
     "library",
     "mail",
     "intake",
@@ -36596,10 +36886,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Plugin manifests, stores, catalog signatures",
-   "src": 3176,
+   "src": 3590,
    "tests": 0,
-   "files": 2,
-   "commits": 18,
+   "files": 3,
+   "commits": 19,
    "deps": [
     "vak-presentation",
     "vak-tools"
@@ -36623,11 +36913,12 @@
     "walkdir"
    ],
    "largest": [
-    2982,
+    3039,
     "crates/vak-plugin/src/lib.rs"
    ],
    "subsystems": [
-    "plugins"
+    "plugins",
+    "canvas"
    ]
   },
   {
@@ -36712,10 +37003,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 77028,
+   "src": 77552,
    "tests": 24505,
-   "files": 54,
-   "commits": 848,
+   "files": 55,
+   "commits": 849,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -36778,7 +37069,7 @@
     "zeroize"
    ],
    "largest": [
-    28765,
+    29116,
     "crates/vak-server/src/lib.rs"
    ],
    "subsystems": [
@@ -36817,10 +37108,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 17581,
+   "src": 18011,
    "tests": 4918,
-   "files": 26,
-   "commits": 215,
+   "files": 27,
+   "commits": 216,
    "deps": [
     "vak-config",
     "vak-control",
@@ -36861,7 +37152,7 @@
     "uuid"
    ],
    "largest": [
-    3857,
+    3866,
     "crates/vak-session/src/log.rs"
    ],
    "subsystems": [
@@ -36870,6 +37161,7 @@
     "runs",
     "lifecycle",
     "cards",
+    "canvas",
     "agents",
     "server"
    ]
@@ -37088,11 +37380,11 @@
   "files": [
    {
     "file": "crates/vak-server/src/lib.rs",
-    "lines": 28765
+    "lines": 29116
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12549
+    "lines": 12560
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
@@ -37124,7 +37416,7 @@
    },
    {
     "file": "crates/vak-session/src/log.rs",
-    "lines": 3857
+    "lines": 3866
    },
    {
     "file": "crates/vak-core/src/finops.rs",
@@ -37145,7 +37437,7 @@
    {
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6663,
+    "line": 6674,
     "lines": 1721
    },
    {
@@ -37161,16 +37453,16 @@
     "lines": 756
    },
    {
+    "name": "router_with_state",
+    "file": "crates/vak-server/src/lib.rs",
+    "line": 906,
+    "lines": 738
+   },
+   {
     "name": "gateway_inbound",
     "file": "crates/vak-server/src/gateway.rs",
     "line": 2680,
     "lines": 729
-   },
-   {
-    "name": "router_with_state",
-    "file": "crates/vak-server/src/lib.rs",
-    "line": 905,
-    "lines": 726
    },
    {
     "name": "execute",
@@ -37200,12 +37492,12 @@
     "name": "execute_inner",
     "file": "crates/vak-agent/src/task.rs",
     "line": 685,
-    "lines": 504
+    "lines": 505
    },
    {
     "name": "patch_config_scope",
     "file": "crates/vak-server/src/lib.rs",
-    "line": 18040,
+    "line": 18056,
     "lines": 483
    }
   ],
@@ -37285,8 +37577,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1398,
-  "hot": 654
+  "docs_commits": 1399,
+  "hot": 655
  },
  "findings": [
   {
@@ -37294,7 +37586,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 192 (rank 1 of 4,505 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 24. 155 commits changed the first (6% of all) and 215 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.2 per thousand lines, against a median of 4.4 over 408 files; file size alone does not predict the rate (ρ = -0.14).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 192 (rank 1 of 4,505 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 24. 155 commits changed the first (6% of all) and 215 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.2 per thousand lines, against a median of 4.2 over 413 files; file size alone does not predict the rate (ρ = -0.13).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
@@ -37318,16 +37610,6 @@
    "matters": "Script-built pages currently lose rendered browsing on the measured Mac, and unqualified restricted backends lose worker/parser/MCP availability. Safe refusal closes the unsafe execution path but does not establish feature parity.",
    "fix": "Qualify browser launch and backend control-file enforcement with real process tests, preserving proxy-only TCP, private profile state and mandatory secret/control exclusions.",
    "sources": "[Security hardening acceptance](../docs/audits/security-hardening-2026-10-20.md); the ignored public-page browser smoke and native IPC tests."
-  },
-  {
-   "id": "F6",
-   "tag": "Structure",
-   "verdict": "Defects found by review",
-   "title": "Canvas restoration can discard unknown tabs and alias inline content",
-   "evidence": "The direct production-function probes of 2026-10-22 reproduce both paths. `fromStored` omits an unrecognised subject and `toStored` sends the reduced set on a later write, including omission of its unsent note. Inline subject identity omits session resource scope and uses a rolling digest with a reproduced collision; `HtmlViewer` loads by that unchanged identity. No production incident is established by these probes.",
-   "matters": "Partial restoration can silently discard work, and a reused inline tab can retain bytes from a different subject. Plugin workspaces require explicit unavailable states and sound resource identity.",
-   "fix": "Validate the current contract atomically, represent unavailable plugins explicitly, and give content canonical scoped identity with an explicit revision. Replace superseded paths without legacy readers or migration adapters, as the maintainer directed.",
-   "sources": "[Canvas workspace architecture review](../docs/audits/canvas-workspace-architecture-2026-10-22.md), C1 and C2; `canvasStack.ts`, `canvasSubject.ts`, `HtmlViewer.tsx`."
   }
  ],
  "keep": [
