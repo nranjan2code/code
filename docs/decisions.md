@@ -1,5 +1,10 @@
 # Decisions
 
+- 2026-10-22: The maintainer requested a version bump, release and local
+  install of the native channel-card fix. Prepare 8.23.0 through the normal
+  release gate and managed installer, then reconcile and verify the installed
+  services. Keep real provider/client visual qualification explicit.
+
 - 2026-10-22: The maintainer requested a proper channel-card design and fix,
   with no domain rules, hardcoded subjects or backward-compatibility paths.
   Draw the existing typed forms through shared semantic projection and native

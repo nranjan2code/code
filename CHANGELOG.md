@@ -1,4 +1,4 @@
-## Unreleased
+## 8.23.0 — 2026-10-22
 
 - Channel cards now render from their typed forms through one shared delivery
   path: native Telegram rich messages, Slack rich-text/table blocks and Discord
