@@ -1,3 +1,5 @@
+## Unreleased
+
 ## 8.25.0 — 2026-10-22
 
 - Shared web and desktop UI: composed answers use open sections with fewer
