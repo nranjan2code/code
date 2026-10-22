@@ -5,7 +5,9 @@ Live review and proposed direction are in
 example of fragmentation; all changes must remain independent of domain.
 The first shared-client implementation and browser acceptance are in
 [the implementation record](../audits/chat-projection-ux-implementation-2026-10-22.md).
-Both bundles are rebuilt; no local reinstall was performed.
+Both bundles are rebuilt and Vakyartha 8.25.0 is installed and verified locally.
+An installed native smoke inspection showed the updated renderer; full native
+window-control and target-size/theme qualification remains open.
 
 - [x] Inspect actual local-home conversation, Details, Library, saved preview
   and Canvas, native screenshot/tree, and all twenty forms in the source gallery.
@@ -22,9 +24,9 @@ Both bundles are rebuilt; no local reinstall was performed.
 - [x] Qualify answer composition/live replacement, result files, twenty-form
   gallery and Library fixtures at both target sizes/themes. Correct stale
   preview-execution assertions without changing production sandbox behavior.
-- [ ] Qualify the changed UI in installed native WebKit and native window
-  controls; complete the expanded-queue phone check. Browser access was disabled
-  before that last interaction; no installed bundle was updated.
+- [ ] Finish detailed native WebKit layout and window-control qualification,
+  plus the expanded-queue phone check. Browser access is disabled in Work settings;
+  the installed app has been updated and smoke-inspected without bypassing it.
 - [ ] Investigate the failed-answer fixture's MCP-network disclosure assertion;
   the earlier failure prose/approval assertions passed, but the full fixture did not.
 
