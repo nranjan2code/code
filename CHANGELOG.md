@@ -1,3 +1,5 @@
+## Unreleased
+
 ## 8.27.0 — 2026-10-22
 
 - A conversation keeps its thread: each request now carries the newest
