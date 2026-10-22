@@ -1,5 +1,7 @@
 ## Unreleased
 
+## 8.24.0 — 2026-10-22
+
 - Proposed a general lifecycle for saved interactive work, with edits creating
   versions on one Library item, visible operation controls, and script
   execution gated by current capabilities and enforceable isolation. The
