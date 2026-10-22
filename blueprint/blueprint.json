@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.26.0",
-  "revision": "cd39bd9b9",
+  "version": "8.27.0",
+  "revision": "faba3c91e",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -11,19 +11,19 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 349749,
-   "rust_tests": 88470,
+   "rust_src": 349262,
+   "rust_tests": 88828,
    "ts_src": 64879,
    "routes": 404,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2469,
+   "total_commits": 2473,
    "days": 63,
    "peak_day": 174,
    "design_docs": 99,
-   "agents_words": 20651,
+   "agents_words": 20783,
    "subsystems": 64,
    "connections": 837,
    "flows": 11
@@ -131,6 +131,15 @@
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "Conversation continuity: the filled window (2026-10-22)",
+    "open": 3,
+    "items": [
+     "The live summary path has run only in scripted tests:",
+     "`TurnCard::line` still cuts a turn's answer at twelve words and its request at sixty, a picked number.",
+     "The answer side still asks the model to author layout (the `plan` tool, per-card `deliverable`, `replaces`, `beside_previous`, `then`, the forced card and `topics` calls at turn end)."
+    ]
+   },
    {
     "section": "Answer design contract (2026-10-22)",
     "open": 2,
@@ -427,29 +436,29 @@
     ]
    }
   ],
-  "open_total": 115,
+  "open_total": 118,
   "measures_revision": "cd39bd9b9"
  },
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 526,
+  "commits": 530,
   "areas": [
    [
     "docs",
-    424
+    427
    ],
    [
     "(root)",
-    306
+    310
    ],
    [
     "vak-core",
-    212
+    213
    ],
    [
     "vak-server",
-    165
+    166
    ],
    [
     "vak-client-ui",
@@ -457,7 +466,7 @@
    ],
    [
     "vak-agent",
-    105
+    107
    ],
    [
     "vak-tools",
@@ -465,7 +474,7 @@
    ],
    [
     "vak-session",
-    79
+    80
    ],
    [
     "vak",
@@ -488,7 +497,7 @@
    [
     "server",
     "HTTP service",
-    108
+    109
    ],
    [
     "client",
@@ -508,12 +517,12 @@
    [
     "loop",
     "Agent loop",
-    91
+    93
    ],
    [
     "ledger",
     "Ledgers and records",
-    70
+    71
    ],
    [
     "tools",
@@ -643,17 +652,17 @@
    [
     "eval",
     "Evaluation",
-    15
+    16
    ],
    [
     "context",
     "Context engine",
-    14
+    15
    ],
    [
     "agents",
     "Agents",
-    14
+    15
    ],
    [
     "recall",
@@ -681,6 +690,11 @@
     10
    ],
    [
+    "prompt",
+    "Prompt layers",
+    9
+   ],
+   [
     "mcp",
     "MCP integrations",
     9
@@ -689,11 +703,6 @@
     "finops",
     "Cost and budgets",
     9
-   ],
-   [
-    "prompt",
-    "Prompt layers",
-    8
    ],
    [
     "commitments",
@@ -798,6 +807,49 @@
   ],
   "recent": [
    {
+    "hash": "faba3c91e",
+    "date": "2026-10-22",
+    "subject": "Prepare 8.27.0 release",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "52fc35a28",
+    "date": "2026-10-22",
+    "subject": "Carry the newest exchanges whole with one stored summary",
+    "areas": [
+     "(root)",
+     "docs",
+     "scripts",
+     "vak-agent",
+     "vak-context",
+     "vak-core",
+     "vak-eval",
+     "vak-session"
+    ]
+   },
+   {
+    "hash": "92a7ad551",
+    "date": "2026-10-22",
+    "subject": "Stop treating an equal answer as drift",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent"
+    ]
+   },
+   {
+    "hash": "9f11bb811",
+    "date": "2026-10-22",
+    "subject": "Keep the caller's surface across pooled Agent workspaces",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-server"
+    ]
+   },
+   {
     "hash": "cd39bd9b9",
     "date": "2026-10-22",
     "subject": "Record 8.26.0 release and local install",
@@ -894,46 +946,6 @@
     "subject": "Bump version to 8.24.0",
     "areas": [
      "(root)"
-    ]
-   },
-   {
-    "hash": "df4642f77",
-    "date": "2026-10-22",
-    "subject": "Define general kept-work lifecycle",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs"
-    ]
-   },
-   {
-    "hash": "f1cdd36cf",
-    "date": "2026-10-22",
-    "subject": "Record 8.23.0 release and verified local installation",
-    "areas": [
-     "(root)",
-     "docs"
-    ]
-   },
-   {
-    "hash": "c2c2ccb0a",
-    "date": "2026-10-22",
-    "subject": "Prepare 8.23.0 native channel cards release",
-    "areas": [
-     "(root)",
-     "docs"
-    ]
-   },
-   {
-    "hash": "db6430ab3",
-    "date": "2026-10-22",
-    "subject": "Render channel cards from typed forms with native provider layouts",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "vak-delivery",
-     "vak-server"
     ]
    }
   ],
@@ -1452,7 +1464,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 81679,
+   "lines": 81727,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1462,7 +1474,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 67309,
+   "lines": 67317,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1472,7 +1484,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 56935,
+   "lines": 56057,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -1513,7 +1525,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 39489,
+   "lines": 39824,
    "crates": [
     "vak-session",
     "vak-config",
@@ -5285,9 +5297,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 13345,
+   "lines": 13174,
    "largest": [
-    12331,
+    12160,
     "crates/vak-agent/src/lib.rs"
    ],
    "routes": [],
@@ -5303,9 +5315,9 @@
     "crates/vak-agent/src/stop_policy.rs",
     "crates/vak-agent/src/workspace.rs"
    ],
-   "commits": 304,
+   "commits": 306,
    "fixes": 57,
-   "recent": 91,
+   "recent": 93,
    "fix_density": 4.3,
    "out": [
     {
@@ -6090,7 +6102,7 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 3714,
+   "lines": 3007,
    "largest": [
     1330,
     "crates/vak-context/src/capacity.rs"
@@ -6110,10 +6122,10 @@
     "crates/vak-context/src/planner.rs",
     "crates/vak-core/src/indexed_history.rs"
    ],
-   "commits": 42,
+   "commits": 43,
    "fixes": 3,
-   "recent": 14,
-   "fix_density": 0.8,
+   "recent": 15,
+   "fix_density": 1.0,
    "out": [
     {
      "from": "context",
@@ -6295,9 +6307,9 @@
    ],
    "modules": 2,
    "parts": [],
-   "lines": 1745,
+   "lines": 1747,
    "largest": [
-    1385,
+    1387,
     "crates/vak-core/src/prompts.rs"
    ],
    "routes": [
@@ -6318,9 +6330,9 @@
     "crates/vak-core/src/prompts.rs",
     "crates/vak/src/prompts.rs"
    ],
-   "commits": 32,
+   "commits": 33,
    "fixes": 3,
-   "recent": 8,
+   "recent": 9,
    "fix_density": 1.7,
    "out": [
     {
@@ -10886,9 +10898,9 @@
    ],
    "modules": 18,
    "parts": [],
-   "lines": 13165,
+   "lines": 13500,
    "largest": [
-    3866,
+    3977,
     "crates/vak-session/src/log.rs"
    ],
    "routes": [
@@ -10924,10 +10936,10 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 199,
+   "commits": 200,
    "fixes": 18,
-   "recent": 70,
-   "fix_density": 1.4,
+   "recent": 71,
+   "fix_density": 1.3,
    "out": [
     {
      "from": "ledger",
@@ -18667,7 +18679,7 @@
    ],
    "modules": 18,
    "parts": [],
-   "lines": 5841,
+   "lines": 5888,
    "largest": [
     1182,
     "crates/vak-session/src/work_threads.rs"
@@ -18717,9 +18729,9 @@
     "crates/vak/src/agents_cli.rs",
     "crates/vak/src/topics.rs"
    ],
-   "commits": 82,
+   "commits": 83,
    "fixes": 16,
-   "recent": 14,
+   "recent": 15,
    "fix_density": 2.7,
    "out": [
     {
@@ -19234,9 +19246,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 32981,
+   "lines": 32982,
    "largest": [
-    29135,
+    29136,
     "crates/vak-server/src/lib.rs"
    ],
    "routes": [
@@ -19274,9 +19286,9 @@
     "crates/vak-server/src/web.rs",
     "crates/vak-session/src/turn_marks.rs"
    ],
-   "commits": 559,
+   "commits": 560,
    "fixes": 85,
-   "recent": 108,
+   "recent": 109,
    "fix_density": 2.6,
    "out": [
     {
@@ -21753,7 +21765,7 @@
     "scripts/scenarios",
     "scripts/test_harness_500.py"
    ],
-   "lines": 3167,
+   "lines": 3173,
    "largest": [
     664,
     "crates/vak-eval/src/cases.rs"
@@ -21791,9 +21803,9 @@
     "scripts/scenarios",
     "scripts/test_harness_500.py"
    ],
-   "commits": 74,
+   "commits": 75,
    "fixes": 7,
-   "recent": 15,
+   "recent": 16,
    "fix_density": 2.2,
    "out": [
     {
@@ -30926,6 +30938,41 @@
  ],
  "replay": [
   {
+   "hash": "faba3c91e",
+   "date": "2026-10-22",
+   "subject": "Prepare 8.27.0 release",
+   "subsystems": []
+  },
+  {
+   "hash": "52fc35a28",
+   "date": "2026-10-22",
+   "subject": "Carry the newest exchanges whole with one stored summary",
+   "subsystems": [
+    "context",
+    "eval",
+    "ledger",
+    "loop",
+    "prompt"
+   ]
+  },
+  {
+   "hash": "92a7ad551",
+   "date": "2026-10-22",
+   "subject": "Stop treating an equal answer as drift",
+   "subsystems": [
+    "loop"
+   ]
+  },
+  {
+   "hash": "9f11bb811",
+   "date": "2026-10-22",
+   "subject": "Keep the caller's surface across pooled Agent workspaces",
+   "subsystems": [
+    "agents",
+    "server"
+   ]
+  },
+  {
    "hash": "cd39bd9b9",
    "date": "2026-10-22",
    "subject": "Record 8.26.0 release and local install",
@@ -36093,10 +36140,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 17397,
-   "tests": 20523,
+   "src": 17226,
+   "tests": 20697,
    "files": 13,
-   "commits": 360,
+   "commits": 362,
    "deps": [
     "vak-config",
     "vak-context",
@@ -36134,7 +36181,7 @@
     "uuid"
    ],
    "largest": [
-    12331,
+    12160,
     "crates/vak-agent/src/lib.rs"
    ],
    "subsystems": [
@@ -36368,10 +36415,10 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Capacity profiles, working-set planner, prompt assembly",
-   "src": 2909,
+   "src": 2202,
    "tests": 0,
    "files": 4,
-   "commits": 32,
+   "commits": 33,
    "deps": [
     "vak-control",
     "vak-llm",
@@ -36438,10 +36485,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 62755,
+   "src": 62757,
    "tests": 10639,
    "files": 76,
-   "commits": 663,
+   "commits": 664,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -36634,10 +36681,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "Deterministic suite, live mode, context and banned-token gates",
-   "src": 2459,
+   "src": 2465,
    "tests": 225,
    "files": 7,
-   "commits": 58,
+   "commits": 59,
    "deps": [
     "vak-agent",
     "vak-context",
@@ -37277,10 +37324,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 77510,
+   "src": 77558,
    "tests": 24651,
    "files": 54,
-   "commits": 852,
+   "commits": 853,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -37343,7 +37390,7 @@
     "zeroize"
    ],
    "largest": [
-    29135,
+    29136,
     "crates/vak-server/src/lib.rs"
    ],
    "subsystems": [
@@ -37382,10 +37429,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 18011,
-   "tests": 4918,
+   "src": 18346,
+   "tests": 5102,
    "files": 27,
-   "commits": 216,
+   "commits": 217,
    "deps": [
     "vak-config",
     "vak-control",
@@ -37426,7 +37473,7 @@
     "uuid"
    ],
    "largest": [
-    3866,
+    3977,
     "crates/vak-session/src/log.rs"
    ],
    "subsystems": [
@@ -37654,7 +37701,7 @@
   "files": [
    {
     "file": "crates/vak-server/src/lib.rs",
-    "lines": 29135
+    "lines": 29136
    },
    {
     "file": "crates/vak-core/src/lib.rs",
@@ -37662,7 +37709,7 @@
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
-    "lines": 12331
+    "lines": 12160
    },
    {
     "file": "crates/vak-mail-calendar/src/provider.rs",
@@ -37690,7 +37737,7 @@
    },
    {
     "file": "crates/vak-session/src/log.rs",
-    "lines": 3866
+    "lines": 3977
    },
    {
     "file": "crates/vak-core/src/finops.rs",
@@ -37705,8 +37752,8 @@
    {
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 1885,
-    "lines": 1932
+    "line": 1883,
+    "lines": 1902
    },
    {
     "name": "run_turn_recorded",
@@ -37753,7 +37800,7 @@
    {
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5767,
+    "line": 5668,
     "lines": 564
    },
    {
@@ -37771,7 +37818,7 @@
    {
     "name": "patch_config_scope",
     "file": "crates/vak-server/src/lib.rs",
-    "line": 18060,
+    "line": 18061,
     "lines": 483
    }
   ],
@@ -37851,7 +37898,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1411,
+  "docs_commits": 1414,
   "hot": 656
  },
  "findings": [
@@ -37860,7 +37907,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 203 (rank 1 of 4,554 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 25. 157 commits changed the first (6% of all) and 216 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.2 per thousand lines, against a median of 4.1 over 421 files; file size alone does not predict the rate (ρ = -0.11).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 203 (rank 1 of 4,554 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 25. 159 commits changed the first (6% of all) and 216 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.5 per thousand lines, against a median of 4.1 over 421 files; file size alone does not predict the rate (ρ = -0.11).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own. The 2026-10-22 answer investigation found another lossy decision input: plan receipts retained a deliverable name but discarded the actual form. The correction keeps active typed receipts and applies the same pure plan check in the loop and settlement, preserving exact replacement addresses. Broader state consolidation remains open.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`; [answer design investigation](../docs/audits/answer-design-contract-2026-10-22.md)."
@@ -37907,7 +37954,7 @@
   },
   {
    "name": "vak-context",
-   "text": "2,909 lines of pure planning and assembly over the ledger."
+   "text": "2,202 lines of pure planning and assembly over the ledger."
   },
   {
    "name": "vak-ooxml, vak-pdf",
