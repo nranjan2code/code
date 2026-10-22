@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.22.0",
-  "revision": "db6430ab3",
+  "version": "8.23.0",
+  "revision": "c2c2ccb0a",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.21.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2455,
+   "total_commits": 2456,
    "days": 63,
    "peak_day": 174,
    "design_docs": 98,
@@ -396,15 +396,15 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 512,
+  "commits": 513,
   "areas": [
    [
     "docs",
-    416
+    417
    ],
    [
     "(root)",
-    293
+    294
    ],
    [
     "vak-core",
@@ -761,6 +761,15 @@
   ],
   "recent": [
    {
+    "hash": "c2c2ccb0a",
+    "date": "2026-10-22",
+    "subject": "Prepare 8.23.0 native channel cards release",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "db6430ab3",
     "date": "2026-10-22",
     "subject": "Render channel cards from typed forms with native provider layouts",
@@ -895,23 +904,9 @@
     "areas": [
      "(root)"
     ]
-   },
-   {
-    "hash": "b05801713",
-    "date": "2026-10-22",
-    "subject": "Improve turn navigation and agent work labels",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "vak-client-ui",
-     "vak-core"
-    ]
    }
   ],
-  "unreleased": [
-   "Channel cards now render from their typed forms through one shared delivery path:"
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30845,6 +30840,12 @@
  ],
  "replay": [
   {
+   "hash": "c2c2ccb0a",
+   "date": "2026-10-22",
+   "subject": "Prepare 8.23.0 native channel cards release",
+   "subsystems": []
+  },
+  {
    "hash": "db6430ab3",
    "date": "2026-10-22",
    "subject": "Render channel cards from typed forms with native provider layouts",
@@ -37668,7 +37669,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1403,
+  "docs_commits": 1404,
   "hot": 655
  },
  "findings": [
