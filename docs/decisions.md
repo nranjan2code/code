@@ -1,5 +1,35 @@
 # Decisions
 
+- 2026-10-22: The maintainer asked whether script restrictions were covered
+  and should be evaluated rather than applied automatically. The design now
+  specifies capability-based script admission: existing authority plus
+  qualified enforcement, not a blanket ban or automatic trust of generated
+  code. Model/static judgement cannot grant access or prove isolation. Current
+  protection stays until its replacement passes the explicit script matrix;
+  the local checks observed pausing but did not enable script execution. See
+  [script admission](design/103-kept-work-lifecycle.md#61-script-admission-is-a-capability-decision).
+
+- 2026-10-22: The maintainer requested installed local `vak-home` try-outs
+  with no expectation of technical users, and clarified that free-form edits
+  to the same work create versions on the same artifact/Library card, not
+  duplicate entries. Existing history/actual parent and human edits must be
+  preserved; an independent copy is a separate semantic request. The normal
+  Open/Use path must expose usable controls and understandable necessary
+  consent, rather than source filenames, setup commands or inert pages marked
+  ready. See [the contract](design/103-kept-work-lifecycle.md#52-everyday-use-and-free-form-changes)
+  and [installed observations](audits/kept-work-everyday-use-2026-10-22.md).
+
+- 2026-10-22: The maintainer requested fixing the general design for creating,
+  editing, running and using kept work, without domain routing or a dashboard
+  spot fix. Keep the existing artifact identity; compose optional execution,
+  views, capability bindings and duties through one Agent-owned pack and
+  existing runtime services. Workers operate the artifact rather than define
+  it. Separate view, process, turn, duty and data lifetimes; operational claims
+  require linked runtime receipts. This reopens design only, not Worker or
+  kept-work implementation, public hosting or remote placement. See
+  [Kept work](design/103-kept-work-lifecycle.md) and
+  [the stage gates](plans/kept-work-plan.md).
+
 - 2026-10-22: The maintainer requested a version bump, release and local
   install of the native channel-card fix. Prepare 8.23.0 through the normal
   release gate and managed installer, then reconcile and verify the installed

@@ -76,6 +76,13 @@ A sandbox contains local execution. It does not make a connected live service a 
 
 ## 1. Three separate questions
 
+The proposed [kept-work lifecycle](103-kept-work-lifecycle.md) composes these
+environments with optional long-lived execution, bound capabilities and views.
+A kept service's lifetime is admitted separately from a turn or preview
+lease. Its preparation, code revisions and outputs still use this document's
+environment, Review and promotion boundaries. The proposal does not add a
+second broker or make an execution root a durable application store.
+
 | Question | Options | Who decides? |
 |---|---|---|
 | Where may working files change? | Task draft, isolated project copy, existing workspace | Runtime selects within recorded human authority; source mutation needs that authority. |

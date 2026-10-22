@@ -1,9 +1,11 @@
 # 81 — Pieces and Home: kept, live and hosted work
 
-Status: **superseded (2026-10-18) by `100-workers.md`, never built.** A piece
-is a kept worker there: one description (the worker's pack), not a
+Status: **superseded (2026-10-18) by `100-workers.md`, never built.** The
+2026-10-22 composition design in `103-kept-work-lifecycle.md` separates the
+kept artifact from its optional worker; read that contract for the current
+direction. Doc 100 retains one description (the pack), not a
 `piece.toml` beside it. Doc 100 §10 records which of this document's ideas
-are deferred (tiles, micro apps, hosting, the gateways) and why; read this
+remain deferred (the tile platform, public hosting and the gateways) and why; read this
 one only as design context. Written as a proposal on 2026-10-01, it
 recorded a direction discussed with the maintainer and authorized no
 implementation milestone. It builds on the data architecture

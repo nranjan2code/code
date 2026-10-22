@@ -92,6 +92,11 @@ Read before changing behaviour in these areas:
 - **Workers** — `84-worker-questions-and-control.md` (questions, the
   `workers` tool, pause and stop now); the direction for workers that
   outlive a turn is `100-workers.md` (proposal, deferred).
+- **Kept artifacts and runnable work** — `103-kept-work-lifecycle.md`
+  (proposal; design revised 2026-10-22, implementation not started) composes
+  artifact identity, optional execution/views, bound capabilities and duties.
+  Its stages are `docs/plans/kept-work-plan.md`. A kept artifact is not a
+  Worker; Workers use the same pack and operation services when built.
 - **Turn graph** — `85-turn-graph.md` (turn ids, turn and recall links).
 - **Topics** — `101-topics.md` (dynamic work organisation, Agent/human access,
   membership corrections and archive). Topic membership never admits history or
@@ -109,6 +114,9 @@ Read before changing behaviour in these areas:
   supersedes `81-pieces-and-home.md`), `79-private-headless-fleet.md`:
   designs not built; they use the data architecture's shared primitives (triggers,
   cursors, effects, fencing, connections, principals) rather than their own.
+  `103-kept-work-lifecycle.md` is the design for composing private kept work
+  over those primitives; it does not reopen Worker implementation or public
+  hosting. No code stage is authorized by the design-only revision.
 
 ### Keeping the record current
 

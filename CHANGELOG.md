@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Proposed a general lifecycle for saved interactive work, with edits creating
+  versions on one Library item, visible operation controls, and script
+  execution gated by current capabilities and enforceable isolation. The
+  proposal records local everyday-use findings and leaves implementation open.
+
 ## 8.23.0 — 2026-10-22
 
 - Channel cards now render from their typed forms through one shared delivery

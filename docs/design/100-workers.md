@@ -1,12 +1,15 @@
 # 100 — Workers: work handed over, kept running
 
-Status: proposal, deferred by the maintainer on 2026-10-18: no stage
-starts until the maintainer reopens it. Nothing in this document is built. It
+Status: proposal, implementation deferred by the maintainer on 2026-10-18.
+The 2026-10-22 design revision in `103-kept-work-lifecycle.md` separates kept
+artifacts from workers and supplies their common operation contract; it does
+not reopen Worker implementation. No stage starts until the maintainer
+reopens it. Nothing in this document is built. It
 records the maintainer's direction for workers and the narrow scope chosen
 to build first (§9); everything else is recorded as deferred with its
 reason (§10). The four choices left open were decided on 2026-10-18 (§12). The stages and their gates are
 `docs/plans/workers-plan.md`. It supersedes `81-pieces-and-home.md` (its
-pieces become kept workers, §3.4) and, once stage W2 is built, the
+pieces become artifacts operated through the shared pack, §3.4) and, once stage W2 is built, the
 lifetime, depth and cap rules of `84-worker-questions-and-control.md` §5.
 It builds on the trigger, run, effect, cursor and Library primitives of
 `73-data-architecture-and-lifecycle.md`, scheduled work
@@ -136,14 +139,20 @@ task environment, each delivered as a candidate through the one Review
 path. Messages are information, never authority: a request that needs a
 new host, account or folder waits for the owner to change the pack.
 
-### 3.4 Kept workers replace pieces
+### 3.4 Workers operate kept artifacts
 
-Doc 81 proposed pieces: kept work with a description, versions, jobs and
-views. A piece is a worker whose pack holds code steps and a view, with
-the "keep it current" duty. There is one description, the pack, not a
-`piece.toml` beside it (invariant 30). Doc 81's ladder (document, live
-document, tile, micro app, system), Home and tiles, and its gateways are
-carried as ideas into §10.
+[Kept work](103-kept-work-lifecycle.md) is the composition contract. The
+thing kept is an existing Library artifact; execution, views and duties are
+independent optional capabilities described by one pack. A worker can operate
+that artifact and use the same pack, but a saved file, offline interactive
+tool or deterministic scheduled job does not require a Worker identity,
+conversation or model loop. There is no `piece.toml` beside the pack and no
+copied schedule or authority (invariant 30).
+
+Doc 81's equation of document/live document/tile/micro app/system with a
+lifecycle ladder is replaced by that composition. Its Home tiles and public
+hosting gateways remain deferred in §10. Private operation in the home's
+existing execution boundary is designed in doc 103; it is not public hosting.
 
 ## 4. The pack
 
@@ -169,6 +178,12 @@ The pack reuses existing types rather than defining new ones: deliverables
 are the `plan` tool's `Deliverable`, criteria are doc 42's `WorkCriterion`,
 and the run's outcome is checked by `vak_judge::plan` against receipts, so
 a worker's result is judged the same way a turn's is.
+
+The optional execution, view, binding, state and duty references are specified
+once in doc 103 §3.1. A Worker references that pack, not a Worker-only copy.
+The shared operation foundation's implementation gates are
+`docs/plans/kept-work-plan.md`; the stages below add Worker hand-over,
+conversations and model work on top of it.
 
 ## 5. The run
 
@@ -270,7 +285,7 @@ review. These are recorded so a later session does not start them unasked.
 | Copies of one worker serving traffic, autoscaling | Depends on hosting. Fan-out over items (W3) covers batch scale. |
 | Moving workers between places | Depends on remote placement. |
 | Enterprise use: many users, roles, teams, single sign-on, compliance | Vakyartha is a single-owner app by decision (doc 29); workers do not change that. Governed batch and scheduled work (W2, W3) is what an enterprise would value, and it stays compatible with the tenant and principal primitives already in the data model. |
-| Doc 81's Home tiles, micro apps and ingress/egress gateways as a platform | Home shows workers (§6); tiles and micro apps wait on W2 to W4 proving that kept work is used. |
+| Doc 81's Home tiles and ingress/egress gateways as a platform | Home shows workers (§6); a new tile platform and public gateways remain deferred. Doc 103 separately revises the design for private kept artifacts, including interactive programs; this does not reopen implementation or public hosting. |
 | The bus (`vak-bus`) as the work queue | Triggers and claims already give one start per slot or item; a second queue is forbidden by the data rules. The bus is reconsidered only with remote placement. |
 
 ## 11. Rules this keeps or changes

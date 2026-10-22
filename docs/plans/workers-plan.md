@@ -1,11 +1,24 @@
 # Plan — Workers (doc 100)
 
-Status: proposal, deferred by the maintainer on 2026-10-18. No stage has
+Status: proposal, implementation deferred by the maintainer on 2026-10-18.
+The design-only revision on 2026-10-22 separates kept artifacts and their
+operation from Workers (`docs/design/103-kept-work-lifecycle.md`). No stage has
 started, and none starts until the maintainer reopens the work. The design is
 `docs/design/100-workers.md`; the maintainer chose the narrow path on
 2026-10-18 (`docs/decisions.md`). Stages run in order, and each passes its
 gate on the installed route before the next starts. A failed gate stops
 the path there and is recorded here and in `docs/plans/open-items.md`.
+
+## Shared operation foundation
+
+[The kept-work plan](kept-work-plan.md) supplies the common pack, execution
+lifetime, capability bindings, duties, results and lifecycle. Its K0 to K4
+are dependencies for the corresponding Worker capabilities, not a competing
+worker scheduler. W0 reuses the one pack; W1 adds Worker hand-over and its
+conversation over shared operation; W2 references the same enabled duties
+and result publication as ordinary kept artifacts. W3/W4 add fan-out and
+model-led revisions without forking those services. Neither plan is started
+by the maintainer's request to fix the design.
 
 ## Rules for every stage
 

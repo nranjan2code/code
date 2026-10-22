@@ -4,6 +4,18 @@ Status: **in progress — the shared workspace foundation is built (2026-10-22);
 
 ## 1. Product Decision & Thesis
 
+### Planned operation contract
+
+[Kept work](103-kept-work-lifecycle.md) specifies the proposed connection
+between a saved artifact, an admitted running instance, bound capabilities
+and a Canvas view. It separates view leases from explicitly kept service
+lifetimes and recurring duties. File/markup previews are document views,
+not proof that an application backend is running. Installed workspace
+contributions are one independent capability; an empty contribution list
+does not describe executable artifact or server availability. This contract
+is not implemented; the current preview behaviour below remains the shipped
+boundary until replaced through [its stage gates](../plans/kept-work-plan.md).
+
 When agents generate deliverables — web applications, prototypes, diagrams, reports, data models, or running dev servers — the traditional interface alternatives fall into two extremes:
 1. **Passive link cards / geeky sidebars**: Asking the operator to "click a link and check a new tab", or cramming rich outputs into a narrow fixed right-hand dock panel where neither the conversation nor the application has enough breathing room.
 2. **Aggressive hijackers**: Forcibly opening previews on tool completion, disrupting ongoing reading or typing.

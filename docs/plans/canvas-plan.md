@@ -56,6 +56,16 @@ needs a design decision on how a remote deployment names and reaches the
 preview origin. K4 needs the maintainer to authorize collaboration stage C0 or
 later.
 
+## Kept-work operation — design only, 2026-10-22
+
+[Kept work](../design/103-kept-work-lifecycle.md) and
+[its plan](kept-work-plan.md) define the proposed shared lifecycle behind a
+running Canvas subject. View leases, kept-service lifetime and recurring duties
+are independent. This is separate from installed workspace rendering below;
+neither requires the other, and neither inventory proves the other absent.
+Use one core operation service and typed receipts; file-preview cards cannot
+stand in for a backend-connected view. No implementation stage has started.
+
 ## Workspace foundation — 2026-10-22
 
 Current-contract identity/restoration, the owned workspace registry, host

@@ -90,6 +90,20 @@ which chat made it and scrolling.
 
 ## 2. The model
 
+[Kept work](103-kept-work-lifecycle.md) proposes attaching optional operation
+to this existing artifact identity. It does not introduce a second app id or
+mandatory Worker conversation. Executable revision, saved state and result
+version are distinct; file state still comes from the existing authoritative
+projection. The proposed operational status must not be inferred from the
+older conceptual Live mark below. None of this lifecycle proposal is shipped.
+
+The maintainer clarified on 2026-10-22: a free-form request to edit existing
+work creates a version of that artifact, with its actual parent; it does not
+create another Library card. One artifact has one card and a version history.
+An independent copy is a separate semantic request, never inferred from a
+new turn or changed title. Current local evidence and remaining live-refresh
+limits are in [the everyday-use checks](../audits/kept-work-everyday-use-2026-10-22.md).
+
 ```
 Artifact "Sales dashboard"                     (art_ id at M8; derived key before)
  ├─ Versions       v1 Vak · "Q3 numbers", turn 12

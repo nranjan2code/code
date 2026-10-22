@@ -443,6 +443,13 @@ enum Cause {
 
 ## 5. Data classes
 
+The proposed [kept-work lifecycle](103-kept-work-lifecycle.md) §8 applies
+these classes to runnable artifacts. The Application row is a class in the
+model, not proof of an implemented arbitrary-database adapter: fenced writes,
+consistent encrypted snapshots, lineage, backup/restore, retention and erasure
+must be qualified before such an adapter advertises durable support. Bounded
+state and deliverables use existing Documents, objects and Library versions.
+
 Every path belongs to exactly one class, and the class decides everything
 else. The registry in `state.rs` becomes a registry of *classes and
 locations*, not of file names.

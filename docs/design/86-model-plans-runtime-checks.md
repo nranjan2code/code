@@ -91,6 +91,17 @@ dispatch on every turn.
 | The model | Its plan: the deliverables it will produce for this request, each with its form. | Whether a deliverable is satisfied (invariant 33). |
 | The runtime | Whether each declared deliverable was produced, from receipts it observed: cards recorded, final text, files delivered, changes and checks run. | What the user meant. |
 
+### Planned operational requirements
+
+[Kept work](103-kept-work-lifecycle.md) §9 proposes optional typed operational
+requirements alongside a deliverable's delivery form: subject/version,
+lifetime, bindings, readiness, recurrence and freshness. These are not built.
+The main model declares what the request needs; the runtime checks linked
+operation receipts. A file/card receipt cannot prove a service is running,
+and an armed future schedule cannot prove a later refresh happened. Ordinary
+answers and code-only work acquire no such requirement through keywords or
+a classifier. The existing correction ladder and evidence strengths apply.
+
 ### 2.1 The plan is data
 
 The model declares its plan with the broker-owned `plan` tool, intercepted

@@ -1,3 +1,49 @@
+## Kept work lifecycle (2026-10-22)
+
+Design revision requested by the maintainer; implementation has not started.
+The contract is [Kept work](../design/103-kept-work-lifecycle.md); scope,
+dependencies and exit evidence are in [the plan](kept-work-plan.md).
+
+- [x] Trace the installed failure and separate artifact identity from optional
+  Worker operation; specify composable execution, views, bindings and duties,
+  independent lifetimes, shared controls, storage and operational receipts.
+  Reconcile Workers/Pieces, Canvas, Library, time and ownership records.
+- [x] Run installed everyday prompts and inspect actual browser Open/history:
+  checklist saved; a free-form planner edit retained the artifact with Version
+  2 parented to Version 1 and one Library card. A one-shot in the actual
+  home's Space ran and delivered after setup ended. These are bounded checks,
+  not completion of K0–K5. See [the evidence](../audits/kept-work-everyday-use-2026-10-22.md).
+- [ ] Default interactive delivery: the planner had no meal choices and the
+  clocks showed placeholders under paused page code despite reported checks
+  passing. Qualify ordinary Open/Use and necessary plain-language consent;
+  do not disable isolation or equate syntax/marker checks with working UI.
+- [ ] Script capability-admission matrix (doc 103 §6.1/K2): qualify allowed
+  bounded interaction, brokered connections, denied undeclared effects,
+  WebRTC/network and control-plane isolation, resource limits, revision-bound
+  authority, revocation, reload/reopen and surface/engine parity. Live tests
+  so far observed the paused default only; script execution was not enabled.
+- [ ] Library live reconciliation: an open detail/list retained old metadata
+  during the free-form edit; re-entry/reload showed the correct same card and
+  two versions. Update the authoritative projection without manual reload,
+  preserving an explicit old-version selection and pending edits.
+- [ ] Duty readiness: checks registered for an unserved try-out Space did
+  not run, while the active-home control did. Establish live runner coverage
+  before promising operation, and present scheduled results in everyday words
+  rather than raw shell/protocol text. Keep the existing scheduler/claims.
+- [ ] K0: the shared pack, ownership, status and operational requirement types.
+- [ ] K1: one broker-owned execution-lifetime and operation service across
+  Agent/UI/CLI; replace process-map lifecycle truth and qualify restart/stop.
+- [ ] K2: discovered scoped capability bindings and isolated running views;
+  correct preview/tool contracts and qualify authority/revocation boundaries.
+- [ ] K3: existing Trigger-backed duties, saved results, eligibility and honest
+  freshness; qualify later slots, overlap, sleep/restart and last-good CAS.
+- [ ] K4: reviewed revision activation and state recovery through existing
+  lifecycle, backup/restore, sync, retention and erasure paths.
+- [ ] K5: installed varied-workload and preservation gate, including passive
+  files, offline tools, connected views, headless batches, services, installed
+  workspaces, external effects and ordinary conversation. No runtime fix is
+  claimed by completing this design.
+
 ## Channel card rendering (2026-10-22)
 
 - [x] Trace the installed screenshot through supported data readers: the model
@@ -1288,6 +1334,10 @@ Deferred by the maintainer (2026-10-18): nothing below starts until
 the work is reopened. Proposal only; the stages, gates and "done when" are
 `docs/plans/workers-plan.md`. No stage has started.
 
+The 2026-10-22 design-only revision separates kept artifacts from Workers.
+The shared pack/operation dependencies are in `docs/plans/kept-work-plan.md`;
+W0/W1/W2 must reuse those services, not create their own lifecycle or schedule.
+
 - [ ] W0: the pack contract, the worker record and its catalog source.
 - [ ] W1: give it to a worker (approval sheet, `worker` tool, conversation,
   card, Workers page), runs that survive a restart.
@@ -1523,8 +1573,10 @@ machines that both wrote; `recall` opening another conversation except
 through an attached artifact (2026-10-14).
 Workers on machines other than their home, our own hosting and inbound
 gateway, requests from outside to a worker, serving copies and
-autoscaling, moving workers, enterprise identity, doc 81's tiles and micro
-apps, and the bus as a work queue (doc 100 §10, 2026-10-18).
+autoscaling, moving workers, enterprise identity, doc 81's Home tile platform,
+and the bus as a work queue (doc 100 §10, 2026-10-18). Private kept artifacts
+and interactive programs now have the design in doc 103 (2026-10-22);
+implementation remains unstarted, separately from public hosting.
 
 ## Recorded model choices (no work unless asked)
 

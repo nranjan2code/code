@@ -51,6 +51,13 @@ The maintainer, 2026-10-15:
 
 ## 3. The model
 
+The proposed [kept-work lifecycle](103-kept-work-lifecycle.md) attaches duties
+to these existing Triggers, claims and Runs; it introduces no app scheduler.
+Deterministic entry points need no model per refresh. Eligibility semantics
+belong in versioned extensions, while shared slot, zone, catch-up and overlap
+rules stay here. Duty controls and result publication must use the same core
+operations as ordinary automations. This composition is not yet implemented.
+
 A trigger (`vak_core::triggers::Trigger`, a Document) keeps its engine
 fields and gains, additively (invariant 29):
 

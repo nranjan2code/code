@@ -50,6 +50,13 @@ permission and does not admit historical instructions into a model request.
 
 ## Runtime model
 
+The proposed [kept-work lifecycle](103-kept-work-lifecycle.md) composes
+artifact versions, optional execution/views and durable duties under this
+ownership model. An app is not another Agent, Topic or conversation owner;
+an optional Worker operates the same artifact and pack. This is a design
+extension, not shipped lifecycle behaviour or authority to start unattended
+work. Library continuation and existing audience boundaries remain canonical.
+
 ```text
 Inbound surface
   → Bot (transport credential)
