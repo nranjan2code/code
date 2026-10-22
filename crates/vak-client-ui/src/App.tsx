@@ -53,6 +53,7 @@ import {
   sideOpen,
   bestOfOpen,
   dockWidth,
+  canvasSplitWidth,
   setDockWidth,
   setHydratingId,
   setSidebarOpen,
@@ -1631,10 +1632,10 @@ export default function App() {
           classList={{
             "sidebar-collapsed": !sidebarOpen(),
             "canvas-active": canvasOpen(),
-            "canvas-split-active": canvasOpen() && canvasMode() === "split",
+            "canvas-split-active": canvasOpen() && !narrowViewport() && canvasMode() === "split",
             "canvas-focused-active": canvasOpen() && canvasMode() === "focused",
           }}
-          style={`--sidebar-width:${sidebarWidth()}px;--dock-width:${dockWidth()}px`}
+          style={`--sidebar-width:${sidebarWidth()}px;--dock-width:${dockWidth()}px;${canvasSplitWidth() === null ? "" : `--canvas-split-width:min(${canvasSplitWidth()}px, calc(100vw - 360px));`}`}
         >
           <Sidebar />
           <Show when={workspaceSwitching()}><div class="workspace-switching"><span class="dot run" />Opening workspace…</div></Show>

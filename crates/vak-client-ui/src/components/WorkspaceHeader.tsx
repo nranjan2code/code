@@ -45,6 +45,7 @@ import Icon, { type IconName } from "./Icon";
 import AgentPresence from "./AgentPresence";
 import Sheet from "./Sheet";
 import TopicsPanel from "./TopicsPanel";
+import WorkspaceLauncher from "./canvas/WorkspaceLauncher";
 
 const INBOX_POLL_MS = 20_000;
 
@@ -67,6 +68,7 @@ const devTools: { id: "diff" | "terminal" | "editor" | "pr"; label: string; icon
 const tools = [...generalTools, ...devTools];
 
 export default function WorkspaceHeader() {
+  const [workspacesOpen,setWorkspacesOpen]=createSignal(false);
   const session = createMemo(() => sessions().find((item) => item.session_id === activeId()));
   const title = createMemo(() => agentForSession(activeId()).name);
   // Each Agent now has its own workspace (server-resolved per agent id), so
@@ -293,6 +295,7 @@ export default function WorkspaceHeader() {
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setSideOpen(!sideOpen()); }}><Icon name="chat" />Side question ⌘;</button>
               <Show when={technicalDetails()}><button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setBestOfOpen(true); }}><Icon name="layers" />Compare approaches</button></Show>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void toggleSplit(); }}><Icon name="grid" />Split view ⌘\</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkspacesOpen(true); }}><Icon name="layers" />Canvas workspaces</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setHistoryOpen(true); }}><Icon name="history" />History</button>
               <Show when={technicalDetails()}><button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Activity log</button></Show>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><Icon name="sync" />Background tasks</button>
@@ -303,6 +306,6 @@ export default function WorkspaceHeader() {
           </div>
         </details>
       </div>
-    </header><ConfirmModal config={confirmConfig()} onClose={() => setConfirmConfig(null)} /><Show when={topicsOpen() && activeId()}>{(id) => <Sheet title="Topics" subtitle="Organize answers from this conversation. Active work and schedules continue independently." size="wide" onClose={() => setTopicsOpen(false)}><TopicsPanel sessionId={id()} /></Sheet>}</Show><Show when={sharing() && activeId()}>{(id) => <CoworkingShare sessionId={id()} onClose={() => setSharing(false)} />}</Show></>
+    </header><Show when={workspacesOpen() && activeId()} keyed>{id=><WorkspaceLauncher session={id} onClose={()=>setWorkspacesOpen(false)}/>}</Show><ConfirmModal config={confirmConfig()} onClose={() => setConfirmConfig(null)} /><Show when={topicsOpen() && activeId()}>{(id) => <Sheet title="Topics" subtitle="Organize answers from this conversation. Active work and schedules continue independently." size="wide" onClose={() => setTopicsOpen(false)}><TopicsPanel sessionId={id()} /></Sheet>}</Show><Show when={sharing() && activeId()}>{(id) => <CoworkingShare sessionId={id()} onClose={() => setSharing(false)} />}</Show></>
   );
 }

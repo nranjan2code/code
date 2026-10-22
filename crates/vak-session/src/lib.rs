@@ -29,6 +29,7 @@ pub mod types;
 pub mod verify;
 pub mod work;
 pub mod work_threads;
+pub mod workspaces;
 
 pub use log::{SessionLog, SessionPath, TailSections};
 pub use turns::{

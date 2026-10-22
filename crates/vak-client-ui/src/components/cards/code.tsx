@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, useContext } from "solid-js";
 import type { AdaptiveRenderNode } from "../../types";
 import { previewSandbox, safeUrl, sandboxedSrcdoc } from "../../safeUrl";
-import { activeId, openInEditor, openArtifactCanvas, openArtifactFile, uiPreferences } from "../../store";
+import { activeId, openInEditor, openInlineCanvas, openArtifactFile, uiPreferences } from "../../store";
 import { inlineTitle } from "../../canvasSubject";
 import { artifactPreviewHtml } from "../../artifactPreview";
 import * as api from "../../api";
@@ -398,7 +398,7 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
   const openInCanvas = () => {
     const html = inlineHtml();
     const libraries = Array.isArray(node.props.libraries) ? node.props.libraries.filter((name): name is string => typeof name === "string") : undefined;
-    if (html) openArtifactCanvas({ kind: "inline", title: inlineTitle(html, str(node.props, "title")), html, basePath: path() || undefined, sessionId: session, libraries });
+    if (html) void openInlineCanvas({ title: inlineTitle(html, str(node.props, "title")), html, basePath: path() || undefined, sessionId: session, libraries });
     else if (path()) openArtifactFile(path(), { sessionId: session });
   };
 

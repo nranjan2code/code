@@ -1,4 +1,10 @@
 import { canvasConflictReview, canvasSaveState, resolveCanvasConflict, retryCanvas } from "../canvasSync";
+import { canvasViewport, observeCanvasViewport } from "../canvasDrawing";
+import { CanvasWorkspaceContext, type CanvasWorkspace } from "./canvas/WorkspaceContext";
+import { createWorkspaceEdits } from "../canvasWorkspace";
+import { trapFocus } from "../focusTrap";
+import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
+import CanvasResize from "./canvas/CanvasResize";
 import CanvasSaveNotice from "./canvas/CanvasSaveNotice";
 import { createEffect, createMemo, createSignal, ErrorBoundary, For, on, onCleanup, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
@@ -32,6 +38,8 @@ import { createDraftThread, type DraftSubject } from "./canvas/draftThread";
 import type { ViewerHandle } from "./canvas/types";
 import { VIEWERS } from "./canvas/viewers";
 
+void trapFocus;
+
 const DEVICES = [
   { id: "desktop", label: "Desktop", icon: "monitor" },
   { id: "tablet", label: "Tablet", icon: "tablet" },
@@ -59,12 +67,14 @@ const EXIT_MS = 220;
 export default function ArtifactCanvas() {
   /** The tab sliding away: the conversation it belongs to, so switching
    *  conversation part way through still closes it. */
+  const [confirmClose, setConfirmClose] = createSignal<ConfirmConfig | null>(null);
   const [closing, setClosing] = createSignal<{ conversation: string; key: string } | null>(null);
   const [arriving, setArriving] = createSignal(false);
   const [reloadKey, setReloadKey] = createSignal(0);
   const [handle, setHandle] = createSignal<ViewerHandle | null>(null);
   const query = window.matchMedia(NARROW);
   const [narrow, setNarrow] = createSignal(query.matches);
+  const effectiveMode = () => narrow() ? "focused" : canvasMode();
   let closeTimeout: ReturnType<typeof setTimeout> | undefined;
   let arrivalTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -77,6 +87,7 @@ export default function ArtifactCanvas() {
   });
 
   const entryKey = createMemo(() => canvasEntry()?.key);
+  const entryIdentity = createMemo(() => entryKey() ? JSON.stringify([canvasConversation(), entryKey()]) : undefined);
   const subject = () => canvasEntry()?.subject;
   const spec = () => { const current = subject(); return current ? viewerSpec(current) : undefined; };
   const draft = createMemo(() => {
@@ -106,6 +117,22 @@ export default function ArtifactCanvas() {
     setHandle(null);
   }, { defer: true }));
 
+  // Keep the external opener across conversation/view remounts. A replacement
+  // dialog can otherwise capture a header control from the departing Canvas,
+  // leaving no connected element to restore when the final Canvas closes.
+  let externalOpener: HTMLElement | null = null;
+  createEffect(on(canvasOpen, open => {
+    if (open) {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body && !active.closest(".artifact-canvas, [role='dialog']")) externalOpener = active;
+    } else {
+      queueMicrotask(() => {
+        const active = document.activeElement;
+        if (!canvasOpen() && externalOpener?.isConnected && (active === document.body || (active instanceof HTMLElement && active.closest(".artifact-canvas")))) externalOpener.focus({ preventScroll: true });
+      });
+    }
+  }));
+
   // A Canvas a reader opened slides in; one coming back with its conversation,
   // or opened on another surface, is simply there.
   createEffect(on(canvasOpen, (open) => {
@@ -116,12 +143,24 @@ export default function ArtifactCanvas() {
     if (arrival) arrivalTimeout = setTimeout(() => setArriving(false), 400);
   }));
 
+  const requestClose = (key: string, conversation = canvasConversation()) => {
+    const entry = canvasEntries().find(item => item.key === key);
+    if (Object.keys(entry?.checkpoints ?? {}).length) {
+      setConfirmClose({ title: "Close with unsaved edits?", description: "Save your work in this workspace before closing, or discard these edits.",
+        confirmLabel: "Discard edits and close", cancelLabel: "Keep working", isDanger: true,
+        onConfirm: () => closeCanvasEntry(key, conversation) });
+      return false;
+    }
+    closeCanvasEntry(key, conversation);
+    return true;
+  };
+
   const handleClose = () => {
     const key = entryKey();
     if (closing() || !key) return;
     // Another tab comes forward at once; only the last one slides away.
-    if (canvasEntries().length > 1) {
-      closeCanvasEntry(key);
+    if (Object.keys(canvasEntry()?.checkpoints ?? {}).length || canvasEntries().length > 1) {
+      requestClose(key);
       return;
     }
     setClosing({ conversation: canvasConversation(), key });
@@ -155,12 +194,12 @@ export default function ArtifactCanvas() {
       <div
         class="artifact-canvas-backdrop"
         classList={{
-          focused: canvasMode() === "focused",
+          focused: effectiveMode() === "focused",
           "canvas-arriving": arriving(),
           "canvas-closing": !!closing(),
         }}
         onClick={(e) => {
-          if (e.target === e.currentTarget && canvasMode() === "focused") handleClose();
+          if (e.target === e.currentTarget && effectiveMode() === "focused") handleClose();
         }}
         role="presentation"
       />
@@ -169,15 +208,18 @@ export default function ArtifactCanvas() {
       <div
         class="artifact-canvas"
         classList={{
-          "canvas-split": canvasMode() === "split",
-          "canvas-focused": canvasMode() === "focused",
+          "canvas-split": effectiveMode() === "split",
+          "canvas-focused": effectiveMode() === "focused",
           "canvas-arriving": arriving(),
           "canvas-closing": !!closing(),
         }}
         role="dialog"
         aria-label={`Canvas: ${title()}`}
-        aria-modal={canvasMode() === "focused" ? "true" : "false"}
+        aria-modal={effectiveMode() === "focused" || narrow() ? "true" : "false"}
+        use:trapFocus={effectiveMode() === "focused" || narrow()}
       >
+        <Show when={!narrow() && effectiveMode() === "split"}><CanvasResize /></Show>
+        <ConfirmModal config={confirmClose()} onClose={() => setConfirmClose(null)} />
         {/* Title bar */}
         <header class="artifact-canvas-header" data-titlebar>
           <div class="artifact-canvas-title-group">
@@ -237,7 +279,7 @@ export default function ArtifactCanvas() {
               <button type="button" class="artifact-canvas-btn" onClick={() => setReloadKey((key) => key + 1)} title="Reload" aria-label="Reload"><Icon name="sync" size={14} /></button>
             </Show>
             <Show when={!narrow()}>
-              <button type="button" class="artifact-canvas-btn" onClick={toggleCanvasMode} title={canvasMode() === "split" ? "Expand to full width" : "Show beside conversation"} aria-label={canvasMode() === "split" ? "Expand to full width" : "Show beside conversation"}><Icon name={canvasMode() === "split" ? "layers" : "restore"} size={14} /></button>
+              <button type="button" class="artifact-canvas-btn" onClick={toggleCanvasMode} title={effectiveMode() === "split" ? "Expand to full width" : "Show beside conversation"} aria-label={effectiveMode() === "split" ? "Expand to full width" : "Show beside conversation"}><Icon name={effectiveMode() === "split" ? "layers" : "restore"} size={14} /></button>
             </Show>
             <Show when={spec()?.popout && handle()?.popout}>{(popout) =>
               <button type="button" class="artifact-canvas-btn" onClick={popout()} title="Open in new window" aria-label="Open in new window"><Icon name="preview" size={14} /></button>
@@ -266,21 +308,30 @@ export default function ArtifactCanvas() {
           <div class="artifact-canvas-tabs" role="tablist" aria-label="Open in this conversation">
             <For each={canvasEntries()}>{(item) =>
               <div class="artifact-canvas-tab" classList={{ active: item.key === entryKey() }}>
-                <button type="button" role="tab" aria-selected={item.key === entryKey()} class="artifact-canvas-tab-label" title={technicalDetails() ? subjectPath(item.subject) || item.subject.title : item.subject.title} onClick={() => activateCanvasEntry(item.key)}>{item.subject.title}</button>
-                <button type="button" class="artifact-canvas-tab-close" aria-label={`Close ${item.subject.title}`} onClick={() => closeCanvasEntry(item.key)}><Icon name="close" size={12} /></button>
+                <button type="button" role="tab" aria-selected={item.key === entryKey()} class="artifact-canvas-tab-label" tabIndex={item.key === entryKey() ? 0 : -1} onKeyDown={event => {
+                  if (event.key === "Delete") { event.preventDefault(); requestClose(item.key); return; }
+                  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                  event.preventDefault();
+                  const tabs = canvasEntries();
+                  const at = tabs.findIndex(tab => tab.key === item.key);
+                  const index = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (at + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+                  activateCanvasEntry(tabs[index].key);
+                  (event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[index])?.focus();
+                }} title={technicalDetails() ? subjectPath(item.subject) || item.subject.title : item.subject.title} onClick={() => activateCanvasEntry(item.key)}>{item.subject.title}<Show when={Object.keys(item.checkpoints ?? {}).length}><span class="canvas-unsaved" aria-label="Unsaved edits"> ·</span></Show></button>
+                <button type="button" class="artifact-canvas-tab-close" aria-label={`Close ${item.subject.title}`} onClick={() => requestClose(item.key)}><Icon name="close" size={12} /></button>
               </div>
             }</For>
           </div>
         </Show>
 
         <CanvasSaveNotice status={canvasSaveState(canvasConversation())} conflict={canvasConflictReview(canvasConversation())} onResolve={(token, choices) => resolveCanvasConflict(canvasConversation(), token, choices)} onRetry={() => retryCanvas(canvasConversation())} onCopy={async () => {
-          const notes = canvasEntries().filter((entry) => entry.draft.length > 0)
-            .map((entry) => `${entry.subject.title}\n${entry.draft}`).join("\n\n");
+          const notes = canvasEntries().filter((entry) => entry.draft.length > 0 || Object.keys(entry.checkpoints ?? {}).length > 0)
+            .map((entry) => `${entry.subject.title}\n${entry.draft}\n${Object.values(entry.checkpoints ?? {}).map(item => item.summary).join("\n")}`).join("\n\n");
           try {
             await navigator.clipboard.writeText(notes);
-            setNotice({ kind: "info", text: "Unsent Canvas notes copied." });
+            setNotice({ kind: "info", text: "Unsaved Canvas work copied." });
           } catch {
-            setNotice({ kind: "error", text: "Could not copy. Select and copy each unsent note before closing." });
+            setNotice({ kind: "error", text: "Could not copy. Select and copy your unsaved work before closing." });
           }
         }} />
 
@@ -291,11 +342,13 @@ export default function ArtifactCanvas() {
         }</Show>
 
         {/* Keyed by identity: another tab in front is a new viewer, with its own load and error state. */}
-        <Show when={entryKey()} keyed>{(key) => {
+        <Show when={entryIdentity()} keyed>{(_identity) => {
+          const key = entryKey()!;
+          const conversation = canvasConversation();
           let last = canvasEntry()!;
           const current = () => {
             const found = canvasEntry();
-            if (found?.key === key) last = found;
+            if (canvasConversation() === conversation && found?.key === key) last = found;
             return last;
           };
           // What each viewer is handed changes only when it changes: a reader's
@@ -303,9 +356,20 @@ export default function ArtifactCanvas() {
           const subjectNow = createMemo(() => current().subject);
           const viewNow = createMemo(() => current().view);
           const selectionNow = createMemo(() => current().selection, undefined, { equals: sameSelection });
+          const [viewport, setViewport] = createSignal(canvasViewport(0, 0, window.devicePixelRatio));
+          const stage = (element: HTMLDivElement) => {
+            const dispose = observeCanvasViewport(element, setViewport);
+            onCleanup(dispose);
+          };
+          const edits = createWorkspaceEdits(() => current().checkpoints,
+            checkpoints => updateCanvasEntry({ checkpoints }, key, conversation));
+          onCleanup(edits.dispose);
+          const workspace: CanvasWorkspace = { viewport, signal: edits.signal,
+            read: edits.read, checkpoint: edits.checkpoint, clear: edits.clear };
+
           return (
             <>
-              <div class="artifact-canvas-body">
+              <div class="artifact-canvas-body" ref={stage}>
                 <ErrorBoundary fallback={(error, reset) =>
                   <div class="artifact-canvas-error" role="alert">
                     <Icon name="warning" size={16} />
@@ -314,16 +378,16 @@ export default function ArtifactCanvas() {
                     <button type="button" class="artifact-canvas-btn" onClick={handleClose}>Close</button>
                   </div>
                 }>
-                  <Dynamic
+                  <CanvasWorkspaceContext.Provider value={workspace}><Dynamic
                     component={VIEWERS[viewerSpec(subjectNow()).type]}
                     subject={subjectNow()}
                     view={viewNow()}
                     reloadKey={reloadKey()}
                     selection={selectionNow()}
-                    onSelect={(selection: Selection | null) => updateCanvasEntry(selection ? { selection, feedbackOpen: true, panel: "discussion" } : { selection }, key)}
-                    onReview={returnToReview}
-                    register={setHandle}
-                  />
+                    onSelect={(selection: Selection | null) => { if (!edits.signal.aborted) updateCanvasEntry(selection ? { selection, feedbackOpen: true, panel: "discussion" } : { selection }, key, conversation); }}
+                    onReview={(candidateId: string | undefined) => { if (!edits.signal.aborted) returnToReview(candidateId); }}
+                    register={(handle: ViewerHandle | null) => { if (!edits.signal.aborted) setHandle(handle); }}
+                  /></CanvasWorkspaceContext.Provider>
                 </ErrorBoundary>
               </div>
               <Show when={current().feedbackOpen}>

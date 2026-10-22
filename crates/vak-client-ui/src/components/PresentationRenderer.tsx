@@ -23,6 +23,7 @@ import {
   isPreviewableArtifact,
   openArtifactFile,
   openArtifactCanvas,
+  openInlineCanvas,
   openCandidateReview,
   openTurnDetails,
   openOfficeCitation,
@@ -304,7 +305,7 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
   };
 
   const openPreview = () => {
-    openArtifactCanvas({ kind: "inline", title: inlineTitle(props.content, props.filename), html: props.content, sessionId: pageResources ? undefined : activeId() ?? undefined });
+    void openInlineCanvas({ title: inlineTitle(props.content, props.filename), html: props.content, sessionId: pageResources ? undefined : activeId() ?? undefined });
   };
 
   return (

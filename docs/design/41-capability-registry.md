@@ -350,3 +350,14 @@ Skills are listed once, in the prompt (name and description); the `skill`
 tool carries only the admitted names as its schema enum and loads a body
 on demand after checking its admitted digest. No skill body is inlined into
 the prompt.
+
+## Workspace contributions — 2026-10-22
+
+`CapabilityKind::Workspace` records enabled inspected package workspace types
+through the existing provider, with scope, digest and declared commands. The
+kind is configuration, not an executable tool or independent authority grant.
+Session-bound `workspace_read` and `workspace_edit` remain normal tool
+capabilities with their declared permissions. Scoped delegation and channel
+plugin policy carry the Workspace kind through the same admitted inventory.
+The [Canvas contract](66-immersive-artifact-canvas.md#installed-workspace-contract-v1-2026-10-22)
+defines the installed v1 resource/command boundary.

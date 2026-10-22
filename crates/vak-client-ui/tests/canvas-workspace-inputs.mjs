@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import { workspaceArguments,acceptWorkspaceSave } from "../src/canvasWorkspaceInputs.ts";
+const fields=[{path:"/name",kind:"text",label:"Name"},{path:"/length",kind:"number",label:"Length"}];
+const spec={fields};
+const command={edits:[{target:"/length",argument:"/dimensions/length"}]};
+assert.deepEqual(workspaceArguments(spec,command,{"/name":"New label","/length":"12.5"}),{dimensions:{length:12.5}});
+assert.deepEqual(acceptWorkspaceSave(spec,{"/name":"New label","/length":"12.5"},{name:"Old label",length:12.5},["/length"],true),{values:{"/name":"New label","/length":"12.5"},pending:true});
+assert.deepEqual(acceptWorkspaceSave(spec,{"/name":"Old label","/length":"14"},{name:"Old label",length:12.5},["/length"],false),{values:{"/name":"Old label","/length":"14"},pending:true});
+assert.deepEqual(acceptWorkspaceSave(spec,{"/name":"New label","/length":"12.5"},{name:"New label",length:12.5},undefined,true).pending,false);
+assert.throws(()=>workspaceArguments(spec,command,{"/length":""}),/valid number/);
+assert.throws(()=>workspaceArguments(spec,{edits:[{target:"/name",argument:"/__proto__/polluted"}]},{"/name":"wrong"}),/invalid argument/);
+assert.throws(()=>workspaceArguments(spec,{edits:[{target:"/name",argument:"/value"},{target:"/length",argument:"/value/child"}]},{"/name":"a","/length":"1"}),/overlap/);
+assert.equal({}.polluted,undefined);
+console.log("Workspace command input typing, partial saves, concurrent typing and prototype/address refusals passed");

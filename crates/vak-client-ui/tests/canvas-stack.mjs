@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { inlineSubject } from "../src/canvasSubject.ts";
 import { activateEntry, activeEntry, applyOp, closeEntry, entriesOf, fromStored, isShared, MAX_ENTRIES, openEntry, toStored, updateEntry, withCanvas } from "../src/canvasStack.ts";
 import { freshEntry, viewerSpec } from "../src/canvasViewers.ts";
 import { fileSubject, subjectKey } from "../src/canvasSubject.ts";
@@ -31,7 +32,7 @@ assert.equal(activeEntry(stacks, "a").draft, "tighten the header");
 // The same name in another run, or another version of a draft, is another subject.
 assert.notEqual(subjectKey(file("a.html")), subjectKey(file("a.html", { sessionId: "s1", executionId: "e1" })));
 assert.notEqual(subjectKey(file("a.html", { sessionId: "s1", candidateId: "c1" })), subjectKey(file("a.html", { sessionId: "s1", candidateId: "c2" })));
-assert.notEqual(subjectKey({ kind: "inline", title: "t", html: "<p>a</p>" }), subjectKey({ kind: "inline", title: "t", html: "<p>b</p>" }));
+assert.notEqual(subjectKey(await inlineSubject({ title: "t", html: "<p>a</p>" })), subjectKey(await inlineSubject({ title: "t", html: "<p>b</p>" })));
 
 // Closing brings the neighbour forward; the last close empties the conversation.
 stacks = open(stacks, "a", file("third.tsv"));
@@ -132,9 +133,9 @@ assert.equal(freshEntry({ kind: "automation", title: "r", taskId: "t1" }, false)
   assert.equal(after.active, subjectKey(file("x.html")));
   assert.equal(after.entries[0], local.entries[0]);
   assert.equal(after.entries[0].mode, "focused");
-  // What this client cannot show is left out, never drawn.
+  // An unreadable entry refuses the entire snapshot without a reduced write.
   const hostile = { entries: [{ key: "k", subject: { kind: "nope", title: "?" } }, ...stored.entries], active: null };
-  assert.equal(fromStored(hostile, undefined, fresh).entries.length, 3);
+  assert.throws(() => fromStored(hostile, undefined, fresh), /saved Canvas is invalid/);
   assert.equal(fromStored({ entries: [], active: null }, local, fresh), null);
 
   // Every declared subject kind survives the production open/store/read path.
@@ -142,7 +143,7 @@ assert.equal(freshEntry({ kind: "automation", title: "r", taskId: "t1" }, false)
     file("workspace.txt"),
     file("run.txt", { sessionId: "s1", executionId: "e1" }),
     file("draft.txt", { sessionId: "s1", candidateId: "c1", executionId: "e1" }),
-    { kind: "inline", title: "Inline", html: "<p>x</p>", libraries: ["chart"] },
+    await inlineSubject({ title: "Inline", html: "<p>x</p>", libraries: ["chart"] }),
     { kind: "automation", title: "Routine", taskId: "task-1" },
     { kind: "daily_mail_calendar", title: "Today", agentId: "agent-1" },
     { kind: "answer", title: "Answer", sessionId: "s1", turnId: "turn-1" },
@@ -160,7 +161,7 @@ assert.equal(freshEntry({ kind: "automation", title: "r", taskId: "t1" }, false)
   }
   const answerEntry = { key: subjectKey(subjects[6]), subject: subjects[6], ...freshEntry(subjects[6], false) };
   const pageEntry = { key: subjectKey(subjects[7]), subject: subjects[7], ...freshEntry(subjects[7], false) };
-  assert.equal(fromStored({ entries: [{ ...answerEntry, key: pageEntry.key }], active: pageEntry.key }, undefined, freshEntry), null,
+  assert.throws(() => fromStored({ entries: [{ ...answerEntry, key: pageEntry.key }], active: pageEntry.key }, undefined, freshEntry),
     "an answer cannot be restored under a page identity");
   assert.deepEqual(withCanvas({ a: local }, "a", null), {});
 }

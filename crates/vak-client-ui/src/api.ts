@@ -3208,3 +3208,34 @@ export function copyNow(): Promise<unknown> {
 export function takeOverHere(discard: boolean): Promise<{ restart_required: boolean; restarting?: boolean }> {
   return req("/sync/takeover", { method: "POST", body: JSON.stringify({ discard }) });
 }
+
+/** Installed workspace contracts are inert data; no package code enters the host. */
+export interface WorkspaceSpec {
+  schema: 1; id: string; title: string; description: string;
+  initial: unknown; state_schema: unknown;
+  fields: { path: string; label: string; kind: "text" | "number" | "boolean" | "json"; unit?: string | null }[];
+  commands: { id: string; title: string; arguments: unknown; edits: { target: string; argument: string }[]; compute?: string | null }[];
+  context: string[];
+}
+export interface WorkspaceContribution { plugin: string; digest: string; generation: number; spec: WorkspaceSpec }
+export interface WorkspaceResource {
+  id: string; workspace_type: string; plugin_digest: string; title: string; revision: number; data: unknown;
+  undo: unknown[]; redo: unknown[];
+}
+export async function canvasWorkspaces(session: string, signal?: AbortSignal): Promise<{contributions: WorkspaceContribution[]; resources: WorkspaceResource[]}> {
+  const value = await req<{contributions: WorkspaceContribution[]; resources: WorkspaceResource[]}>(`/sessions/${encodeURIComponent(session)}/canvas/workspaces`, {signal});
+  if (!Array.isArray(value.contributions) || !Array.isArray(value.resources)) throw new Error("The workspace inventory is invalid.");
+  return value;
+}
+export function changeWorkspace(session: string, action: Record<string, unknown>, signal?: AbortSignal): Promise<WorkspaceResource> {
+  return req(`/sessions/${encodeURIComponent(session)}/canvas/workspaces`, {method:"POST",body:JSON.stringify(action),signal});
+}
+export function askWorkspace(session: string, request: {resource: string; revision: number; digest: string; generation: number; prompt: string; context: string[]}): Promise<unknown> {
+  return req(`/sessions/${encodeURIComponent(session)}/canvas/workspaces/ask`, {method:"POST",body:JSON.stringify(request)});
+}
+
+export async function workspaceModule(session:string, request: {workspace_type:string;digest:string;generation:number;command:string}, signal?:AbortSignal):Promise<ArrayBuffer> {
+  const response=await authFetch(`/sessions/${encodeURIComponent(session)}/canvas/workspaces/module`,{method:"POST",body:JSON.stringify(request),headers:{"Content-Type":"application/json"},signal});
+  if(!response.ok)throw new Error("This workspace computation is unavailable or its activation changed.");
+  return response.arrayBuffer();
+}

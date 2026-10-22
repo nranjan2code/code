@@ -5803,6 +5803,20 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
   display: block;
 }
 
+.canvas-resizer { position: absolute; top: 0; bottom: 0; left: 0; width: 6px; z-index: 2; cursor: col-resize; touch-action: none; }
+.canvas-resizer:hover, .canvas-resizer:focus-visible { background: var(--accent); }
+.canvas-unsaved { color: var(--live-ink); }
+.canvas-installed-workspace { padding: 20px; overflow: auto; width: 100%; min-width: 0; }
+.canvas-installed-workspace h2 { font-size: 20px; margin: 0 0 8px; }
+.canvas-installed-workspace h3 { font-size: 16px; }
+.canvas-workspace-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 16px; margin: 16px 0; }
+.canvas-workspace-fields label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; min-width: 0; }
+.canvas-installed-workspace input, .canvas-installed-workspace textarea { max-width: 100%; min-width: 0; padding: 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.canvas-installed-workspace textarea { width: 100%; min-height: 100px; }
+.canvas-installed-workspace button { padding: 8px 12px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.canvas-workspace-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+
+
 /* --- Header ------------------------------------------------------------- */
 .artifact-canvas-header {
   display: flex;

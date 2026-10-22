@@ -1,9 +1,10 @@
+import { validCheckpoints } from "./canvasWorkspace";
 import { rebaseCanvas } from "./canvasRebase";
 // Keeps each conversation's Canvas in step across surfaces (docs/design/66 §0a).
 // Failed writes remain in the in-memory operation queue until acknowledged.
 import { createEffect, createRoot, on, onCleanup, createSignal } from "solid-js";
 import * as api from "./api";
-import { applyOp, fromStored, toStored, withCanvas, type CanvasOp, type StoredCanvasShape } from "./canvasStack";
+import { applyOp, diffCanvas, fromStored, toStored, withCanvas, type CanvasOp, type StoredCanvasShape } from "./canvasStack";
 import { isCanvasSubject, subjectKey } from "./canvasSubject";
 import { createCanvasRecovery } from "./canvasRecovery";
 import { activeId, canvasStacks, freshCanvasEntry, onCanvasChange, setCanvasStacks } from "./store";
@@ -27,10 +28,11 @@ function show(conversation: string, stored: api.StoredCanvas, pending: readonly 
 type Checkpoint = CanvasCheckpoint<CanvasOp, StoredCanvasShape, api.StoredCanvas>;
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 function validPatch(patch: Record<string, unknown>): boolean {
-  const fields = ["mode", "view", "selection", "draft", "feedbackOpen", "panel", "dismissedVersion"];
+  const fields = ["mode", "view", "selection", "draft", "feedbackOpen", "panel", "dismissedVersion", "checkpoints"];
   if (!Object.keys(patch).every((key) => fields.includes(key))) return false;
   if (patch.mode !== undefined && patch.mode !== "split" && patch.mode !== "focused") return false;
   if (patch.view !== undefined && patch.view !== null && typeof patch.view !== "string") return false;
+  if (patch.checkpoints !== undefined && !validCheckpoints(patch.checkpoints)) return false;
   if (patch.draft !== undefined && typeof patch.draft !== "string") return false;
   if (patch.feedbackOpen !== undefined && typeof patch.feedbackOpen !== "boolean") return false;
   if (patch.panel !== undefined && !["discussion", "activity", "changes"].includes(String(patch.panel))) return false;
@@ -46,7 +48,7 @@ function validShape(value: unknown): value is StoredCanvasShape {
   const keys = new Set<string>();
   for (const entry of value.entries) {
     if (!object(entry) || !isCanvasSubject(entry.subject) || entry.key !== subjectKey(entry.subject) || keys.has(entry.key as string)) return false;
-    if (typeof entry.draft !== "string") return false;
+    if (typeof entry.draft !== "string" || (entry.checkpoints !== undefined && !validCheckpoints(entry.checkpoints))) return false;
     keys.add(entry.key as string);
   }
   return keys.size === 0 ? value.active === null : typeof value.active === "string" && keys.has(value.active);
@@ -76,10 +78,11 @@ function restore(conversation: string, snapshot: StoredCanvasShape, pending: rea
   const recovered = fromStored(snapshot, stacks[conversation], freshCanvasEntry);
   // An edit made before unlocking must not silently replace an earlier note.
   for (const op of pending) {
-    if (op.op !== "update" || op.patch.draft === undefined) continue;
+    if (op.op !== "update" || (op.patch.draft === undefined && op.patch.checkpoints === undefined)) continue;
     const prior = recovered?.entries.find((entry) => entry.key === op.key);
-    if (!prior && op.patch.draft) return false;
-    if (prior?.draft && prior.draft !== op.patch.draft) return false;
+    if (!prior && (op.patch.draft || Object.keys(op.patch.checkpoints ?? {}).length)) return false;
+    if (prior?.draft && op.patch.draft !== undefined && prior.draft !== op.patch.draft) return false;
+    if (prior && op.patch.checkpoints !== undefined && JSON.stringify(prior.checkpoints ?? {}) !== JSON.stringify(op.patch.checkpoints)) return false;
   }
   let next = withCanvas(stacks, conversation, recovered);
   for (const op of pending) {
@@ -125,7 +128,7 @@ export function canvasConflictReview(conversation: string) {
   const local = new Map(conflict.local.entries.map((entry) => [String(entry.key), entry]));
   const remote = new Map(conflict.remote.entries.map((entry) => [String(entry.key), entry]));
   const baseline = new Map((conflict.baseline?.entries ?? []).map((entry) => [String(entry.key), entry]));
-  const keys = new Set(conflict.pending.flatMap((op) => op.op === "update" && op.patch.draft !== undefined ? [op.key] : []));
+  const keys = new Set(conflict.pending.flatMap((op) => op.op === "update" && (op.patch.draft !== undefined || op.patch.checkpoints !== undefined) ? [op.key] : []));
   const notes: CanvasConflictNote[] = [];
   for (const key of keys) {
     const mine = local.get(key);
@@ -133,9 +136,12 @@ export function canvasConflictReview(conversation: string) {
     const saved = remote.get(key);
     const oldDraft = typeof baseline.get(key)?.draft === "string" ? String(baseline.get(key)?.draft) : "";
     const savedDraft = typeof saved?.draft === "string" ? String(saved.draft) : "";
-    if (String(mine.draft ?? "") === savedDraft || (saved && savedDraft === oldDraft)) continue;
+    const mineWork = JSON.stringify(mine.checkpoints ?? {});
+    const savedWork = JSON.stringify(saved?.checkpoints ?? {});
+    const oldWork = JSON.stringify(baseline.get(key)?.checkpoints ?? {});
+    if ((String(mine.draft ?? "") === savedDraft && mineWork === savedWork) || (saved && savedDraft === oldDraft && savedWork === oldWork)) continue;
     const subject = mine.subject as Record<string, unknown> | undefined;
-    notes.push({ key, title: typeof subject?.title === "string" ? subject.title : "Canvas note", local: String(mine.draft ?? ""), saved: saved ? savedDraft : "This note was removed from the saved Canvas." });
+    notes.push({ key, title: typeof subject?.title === "string" ? subject.title : "Canvas note", local: [String(mine.draft ?? ""), ...Object.values((mine.checkpoints ?? {}) as Record<string, { summary: string }>).map(item => item.summary)].filter(Boolean).join("\n\n"), saved: saved ? [savedDraft, ...Object.values((saved.checkpoints ?? {}) as Record<string, { summary: string }>).map(item => item.summary)].filter(Boolean).join("\n\n") : "This work was removed from the saved Canvas." });
   }
   return { token: conflict.token, notes, remote: conflict.remote, baseline: conflict.baseline, local: conflict.local, pending: conflict.pending };
 }
@@ -152,27 +158,6 @@ export async function resolveCanvasConflict(conversation: string, token: number,
   const accepted = await coordinator.resolve(conversation, token, target, pending);
   if (accepted) setConflicts((current) => ({ ...current, [conversation]: undefined }));
   return accepted;
-}
-
-function diffCanvas(remote: ReturnType<typeof fromStored>, target: ReturnType<typeof fromStored>): CanvasOp[] {
-  const before = remote?.entries ?? [];
-  const after = target?.entries ?? [];
-  const ops: CanvasOp[] = [];
-  const beforeByKey = new Map(before.map((entry) => [entry.key, entry]));
-  const afterByKey = new Map(after.map((entry) => [entry.key, entry]));
-  for (const entry of after) if (!beforeByKey.has(entry.key)) ops.push({ op: "open", subject: entry.subject });
-  for (const entry of before) if (!afterByKey.has(entry.key)) ops.push({ op: "close", key: entry.key });
-  for (const entry of after) {
-    const old = beforeByKey.get(entry.key);
-    if (!old) continue;
-    const patch: Partial<typeof entry> = {};
-    for (const field of ["view", "selection", "draft", "feedbackOpen", "panel", "dismissedVersion"] as const) {
-      if (JSON.stringify(entry[field]) !== JSON.stringify(old[field])) Object.assign(patch, { [field]: entry[field] });
-    }
-    if (Object.keys(patch).length) ops.push({ op: "update", key: entry.key, patch });
-  }
-  if (target && target.active !== remote?.active) ops.push({ op: "activate", key: target.active });
-  return ops;
 }
 
 /** True while any operation has not yet received a successful write receipt. */

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { inlineSubject } from "../src/canvasSubject.ts";
 import {
   displayType,
   fileSubject,
@@ -36,7 +37,7 @@ assert.equal(fileSubject("a.txt", runOrigin({ executionId: "e9" }), "a.txt").kin
 assert.equal(fileSubject("a.txt", runOrigin({ sessionId: "s", executionId: "e9" }), "a.txt").kind, "execution_artifact");
 
 // Inline markup has no file and no conversation of its own.
-const inline = { kind: "inline", title: "HTML Preview", html: "<p>x</p>" };
+const inline = await inlineSubject({ title: "HTML Preview", html: "<p>x</p>" });
 assert.equal(subjectPath(inline), "");
 assert.equal(subjectSessionId(inline), undefined);
 assert.equal(displayType(inline), "html");
@@ -123,3 +124,14 @@ assert.equal(inlineTitle("<p>x</p>"), "Web page");
 assert.equal(inlineTitle("<svg viewBox='0 0 1 1'></svg>"), "Picture");
 
 console.log("canvas subject ok");
+
+// Content identities are independent of display names and include scope and libraries.
+{
+  const a = await inlineSubject({ title: "Same", html: "<p>Aa</p>", sessionId: "s1" });
+  const b = await inlineSubject({ title: "Same", html: "<p>B@</p>", sessionId: "s1" });
+  assert.notEqual(subjectKey(a), subjectKey(b), "the old rolling-hash collision is gone");
+  assert.equal(subjectKey(a), subjectKey({ ...a, title: "Renamed" }));
+  assert.notEqual(subjectKey(a), subjectKey({ ...a, sessionId: "s2" }));
+  assert.notEqual(subjectKey(a), subjectKey(await inlineSubject({ ...a, libraries: ["diagram"] })));
+  assert.notEqual(subjectKey({ kind: "answer", title: "A", sessionId: "s", turnId: "t", itemIds: ["a\0b"] }), subjectKey({ kind: "answer", title: "A", sessionId: "s", turnId: "t", itemIds: ["a", "b"] }));
+}

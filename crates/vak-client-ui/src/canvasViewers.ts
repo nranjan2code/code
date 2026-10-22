@@ -3,6 +3,7 @@
 // a new subject kind is a registry entry plus a viewer component
 // (docs/plans/canvas-plan.md K2).
 
+import { canvasWorkspace } from "./canvasWorkspaces.ts";
 import { displayType, type ArtifactDisplayType, type CanvasSubject } from "./canvasSubject.ts";
 import type { CanvasMode } from "./canvasStack.ts";
 import type { SelectionKind } from "./canvasSelection.ts";
@@ -42,6 +43,7 @@ const PREVIEW_OR_CODE: readonly ViewChoice[] = [
 ];
 
 const SPECS: Record<ArtifactDisplayType, ViewerSpec> = {
+  workspace: { type: "workspace", badge: "Workspace", views: [], defaultView: () => null, layout: "focused", reloadable: false, devices: false, popout: false, feedback: "none", selects: () => null, safetyFooter: false },
   html: { type: "html", badge: "Preview", views: PREVIEW_OR_CODE, defaultView: () => "preview", layout: "split", reloadable: true, devices: true, popout: true, feedback: "always", selects: (view) => (view === "source" ? "lines" : null), safetyFooter: true },
   server: { type: "server", badge: "Live preview", views: [], defaultView: () => null, layout: "split", reloadable: true, devices: true, popout: true, feedback: "always", selects: () => null, safetyFooter: true },
   code: { type: "code", badge: "Preview", views: [], defaultView: () => null, layout: "split", reloadable: false, devices: false, popout: false, feedback: "always", selects: () => "lines", safetyFooter: true },
@@ -69,6 +71,10 @@ const SPECS: Record<ArtifactDisplayType, ViewerSpec> = {
 };
 
 export function viewerSpec(subject: CanvasSubject): ViewerSpec {
+  if (subject.kind === "workspace") {
+    const definition = canvasWorkspace(subject.workspaceType);
+    if (definition) return { ...definition.spec, type: "workspace" };
+  }
   return SPECS[displayType(subject)];
 }
 

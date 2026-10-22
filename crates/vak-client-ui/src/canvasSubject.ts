@@ -10,7 +10,7 @@
 
 import { isOfficePath } from "./officeFiles.ts";
 
-export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office" | "automation" | "daily_mail_calendar" | "answer" | "page";
+export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office" | "automation" | "daily_mail_calendar" | "answer" | "page" | "workspace";
 
 interface SubjectBase {
   title: string;
@@ -21,6 +21,7 @@ interface SubjectBase {
 }
 
 export type CanvasSubject =
+  | (SubjectBase & { kind: "workspace"; workspaceType: string; resourceId: string; revision: string; sessionId?: string })
   /** A file in the workspace, read through the workspace file route. */
   | (SubjectBase & { kind: "file"; path: string; sessionId?: string })
   /** A file one run left in its scratch directory. */
@@ -29,7 +30,7 @@ export type CanvasSubject =
   | (SubjectBase & { kind: "draft_file"; path: string; sessionId: string; candidateId: string; executionId?: string })
   /** Markup shown from the conversation itself, with no file behind it. Files
    *  it names beside `basePath` are read from the conversation's folder. */
-  | (SubjectBase & { kind: "inline"; html: string; basePath?: string; sessionId?: string; libraries?: string[] })
+  | (SubjectBase & { kind: "inline"; contentHash: string; html: string; basePath?: string; sessionId?: string; libraries?: string[] })
   /** A scheduled routine, read from the task list. */
   | (SubjectBase & { kind: "automation"; taskId: string })
   /** A live, owner-only daily view of connected mail and calendar accounts. */
@@ -84,6 +85,7 @@ export function previewSource(subject: CanvasSubject): PreviewSource | null {
     case "daily_mail_calendar":
     case "answer":
     case "page":
+    case "workspace":
     case "live_server": return null;
   }
 }
@@ -111,6 +113,7 @@ export function subjectPath(subject: CanvasSubject): string {
     case "daily_mail_calendar": return "";
     case "answer": return "";
     case "page": return "";
+    case "workspace": return "";
     default: return subject.path;
   }
 }
@@ -139,9 +142,10 @@ export function subjectKey(subject: CanvasSubject): string {
     case "live_server": return `server:${subject.sessionId}:${subject.candidateId ?? ""}:${subject.serverName}`;
     case "automation": return `task:${subject.taskId}`;
     case "daily_mail_calendar": return `daily_mail_calendar:${subject.agentId}`;
-    case "answer": return `answer:${subject.sessionId}:${subject.turnId}:${subject.itemIds ? digest([...subject.itemIds].sort().join("\0")) : "turn"}`;
+    case "answer": return `answer:${subject.sessionId}:${subject.turnId}:${subject.itemIds ? JSON.stringify([...subject.itemIds].sort()) : "turn"}`;
+    case "workspace": return `workspace:${JSON.stringify([subject.workspaceType, subject.sessionId ?? null, subject.resourceId, subject.revision])}`;
     case "page": return `page:${subject.artifactId}`;
-    case "inline": return `inline:${subject.basePath ?? ""}:${subject.title}:${digest(subject.html)}`;
+    case "inline": return `inline:${JSON.stringify([subject.sessionId ?? null, subject.basePath ?? null, subject.contentHash])}`;
   }
 }
 
@@ -183,22 +187,27 @@ export function isCanvasSubject(value: unknown): value is CanvasSubject {
     case "file": return text(subject.path) && optionalText(subject.sessionId);
     case "execution_artifact": return text(subject.path) && text(subject.sessionId) && text(subject.executionId);
     case "draft_file": return text(subject.path) && text(subject.sessionId) && text(subject.candidateId) && optionalText(subject.executionId);
-    case "inline": return typeof subject.html === "string" && optionalText(subject.basePath) && optionalText(subject.sessionId)
+    case "inline": return typeof subject.contentHash === "string" && /^[a-f0-9]{64}$/.test(subject.contentHash) && typeof subject.html === "string" && optionalText(subject.basePath) && optionalText(subject.sessionId)
       && (subject.libraries === undefined || (Array.isArray(subject.libraries) && subject.libraries.every(text)));
     case "automation": return text(subject.taskId);
     case "daily_mail_calendar": return text(subject.agentId);
     case "answer": return text(subject.sessionId) && text(subject.turnId) &&
       (subject.itemIds === undefined || (Array.isArray(subject.itemIds) && subject.itemIds.length > 0 && subject.itemIds.length <= 4096 && subject.itemIds.every(text) && new Set(subject.itemIds).size === subject.itemIds.length));
+    case "workspace": return typeof subject.workspaceType === "string" && /^[a-z][a-z0-9_.-]*\/[a-z][a-z0-9_.-]*$/.test(subject.workspaceType) && text(subject.resourceId) && text(subject.revision) && optionalText(subject.sessionId);
     case "page": return text(subject.artifactId);
     case "live_server": return text(subject.serverName) && text(subject.sessionId) && optionalText(subject.candidateId) && optionalText(subject.path);
     default: return false;
   }
 }
 
-function digest(text: string): string {
-  let hash = 5381;
-  for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
-  return (hash >>> 0).toString(36);
+export type InlineSubjectInput = Omit<Extract<CanvasSubject, { kind: "inline" }>, "kind" | "contentHash">;
+
+/** Content identity includes the libraries that change the rendered document. */
+export async function inlineSubject(input: InlineSubjectInput): Promise<Extract<CanvasSubject, { kind: "inline" }>> {
+  const bytes = new TextEncoder().encode(JSON.stringify([input.html, input.libraries ?? []]));
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  const contentHash = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
+  return { ...input, kind: "inline", contentHash };
 }
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/;
@@ -211,6 +220,7 @@ export function displayType(subject: CanvasSubject): ArtifactDisplayType {
   if (subject.kind === "daily_mail_calendar") return "daily_mail_calendar";
   if (subject.kind === "answer") return "answer";
   if (subject.kind === "page") return "page";
+  if (subject.kind === "workspace") return "workspace";
   const path = subject.path.toLowerCase();
   if (path.endsWith(".pdf")) return "pdf";
   if (path.endsWith(".csv") || path.endsWith(".tsv")) return "table";

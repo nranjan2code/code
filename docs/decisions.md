@@ -1,5 +1,21 @@
 # Decisions
 
+- 2026-10-22: The maintainer explicitly requested completing installable Canvas
+  plugins, isolation, domain commands, undo and Agent context. Implement v1
+  through existing package/capability and sealed state/admission services. Use
+  owned declarative UI and disposable no-import WebAssembly calculations; keep
+  specialized full domain surfaces and physical-device qualification explicit.
+  See [contract](design/66-immersive-artifact-canvas.md#installed-workspace-contract-v1-2026-10-22).
+
+- 2026-10-22: The Canvas is a shared workspace host, with domain engines in
+  extensions. Research other systems without adopting another agent UI runtime.
+  Compiled registration and editing checkpoints are the first foundation;
+  executable contributions require an isolated capability boundary. Security
+  should preserve useful rendering, interaction and computation through scoped
+  authority, not impose domain-specific feature bans. See
+  [research](research/canvas-workspaces-2026-10-22.md) and
+  [acceptance](audits/canvas-foundation-2026-10-22.md).
+
 - 2026-10-22: For the Canvas workspace redesign, the maintainer requires one
   common web/desktop core and a clean end-state implementation: no stale
   parallel paths, migrations or backward-compatibility code. Remove what a

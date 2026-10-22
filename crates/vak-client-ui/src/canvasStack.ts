@@ -9,6 +9,7 @@
 // wrote first. These are the only rules for what a change does; the server
 // stores what they produce.
 
+import { validCheckpoints, type WorkspaceCheckpoints } from "./canvasWorkspace.ts";
 import { isCanvasSubject, sameSubject, subjectKey, type CanvasSubject } from "./canvasSubject.ts";
 import { sameSelection, type Selection } from "./canvasSelection.ts";
 
@@ -29,6 +30,7 @@ export interface CanvasEntry {
   selection: Selection | null;
   /** The note being written for the Agent, not yet sent. */
   draft: string;
+  checkpoints?: WorkspaceCheckpoints;
   feedbackOpen: boolean;
   panel: ContextPanel;
   /** The newest version whose arrival the reader has dismissed. */
@@ -76,7 +78,7 @@ export function openEntry(
   } else {
     entries = [...current, { key, subject, ...fresh(subject) }];
     while (entries.length > MAX_ENTRIES) {
-      const oldest = entries.findIndex((entry) => entry.key !== key && entry.draft.length === 0);
+      const oldest = entries.findIndex((entry) => entry.key !== key && entry.draft.length === 0 && Object.keys(entry.checkpoints ?? {}).length === 0);
       // Opening something else is never permission to discard an unsent note.
       // Refuse the open when every existing tab has one; keep the current
       // Canvas unchanged so callers can explain the limit without syncing it.
@@ -183,15 +185,23 @@ function sameEntry(a: CanvasEntry, b: CanvasEntry): boolean {
  * A Canvas read from the server, as this device shows it. Each tab keeps the
  * layout this device gave it, and a tab that has not changed stays the same
  * object, so nothing already drawn is drawn or read again. A tab this client
- * cannot show is left out. `null` when no tab is open.
+ * cannot interpret rejects the whole snapshot. `null` when no tab is open.
  */
+export class CanvasStateError extends Error {
+  readonly status = 400;
+  constructor() { super("The saved Canvas is invalid. Its contents have not been changed."); }
+}
+
 export function fromStored(stored: { entries: readonly unknown[]; active: string | null }, local: ConversationCanvas | undefined, fresh: FreshEntry): ConversationCanvas | null {
+  if (!Array.isArray(stored.entries) || stored.entries.length > MAX_ENTRIES) throw new CanvasStateError();
   const entries: CanvasEntry[] = [];
   for (const raw of stored.entries) {
-    if (!raw || typeof raw !== "object") continue;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new CanvasStateError();
     const value = raw as Record<string, unknown>;
-    if (typeof value.key !== "string" || !isCanvasSubject(value.subject) || subjectKey(value.subject) !== value.key) continue;
-    if (entries.some((entry) => entry.key === value.key)) continue;
+    if (typeof value.key !== "string" || !isCanvasSubject(value.subject) || subjectKey(value.subject) !== value.key) throw new CanvasStateError();
+    if (entries.some((entry) => entry.key === value.key)) throw new CanvasStateError();
+    if (value.draft !== undefined && typeof value.draft !== "string") throw new CanvasStateError();
+    if (value.checkpoints !== undefined && !validCheckpoints(value.checkpoints)) throw new CanvasStateError();
     const previous = local?.entries.find((entry) => entry.key === value.key);
     const base = fresh(value.subject);
     const next: CanvasEntry = {
@@ -208,8 +218,12 @@ export function fromStored(stored: { entries: readonly unknown[]; active: string
     };
     entries.push(previous && sameEntry(previous, next) ? previous : next);
   }
-  if (entries.length === 0) return null;
-  const active = stored.active && entries.some((entry) => entry.key === stored.active) ? stored.active : entries[entries.length - 1].key;
+  if (entries.length === 0) {
+    if (stored.active !== null) throw new CanvasStateError();
+    return null;
+  }
+  if (typeof stored.active !== "string" || !entries.some(entry => entry.key === stored.active)) throw new CanvasStateError();
+  const active = stored.active;
   if (local && local.active === active && local.entries.length === entries.length && local.entries.every((entry, index) => entry === entries[index])) return local;
   return { entries, active };
 }
@@ -223,4 +237,25 @@ export function withCanvas(stacks: CanvasStacks, conversation: string, canvas: C
     return rest;
   }
   return { ...stacks, [conversation]: canvas };
+}
+
+/** Replay all restored editor state after opening a previously absent tab. */
+export function diffCanvas(remote: ReturnType<typeof fromStored>, target: ReturnType<typeof fromStored>): CanvasOp[] {
+  const before = remote?.entries ?? [];
+  const after = target?.entries ?? [];
+  const ops: CanvasOp[] = [];
+  const beforeByKey = new Map(before.map((entry) => [entry.key, entry]));
+  const afterByKey = new Map(after.map((entry) => [entry.key, entry]));
+  for (const entry of after) if (!beforeByKey.has(entry.key)) ops.push({ op: "open", subject: entry.subject });
+  for (const entry of before) if (!afterByKey.has(entry.key)) ops.push({ op: "close", key: entry.key });
+  for (const entry of after) {
+    const old = beforeByKey.get(entry.key);
+    const patch: Partial<typeof entry> = {};
+    for (const field of ["view", "selection", "draft", "checkpoints", "feedbackOpen", "panel", "dismissedVersion"] as const) {
+      if (JSON.stringify(entry[field]) !== JSON.stringify(old?.[field])) Object.assign(patch, { [field]: entry[field] });
+    }
+    if (Object.keys(patch).length) ops.push({ op: "update", key: entry.key, patch });
+  }
+  if (target && target.active !== remote?.active) ops.push({ op: "activate", key: target.active });
+  return ops;
 }

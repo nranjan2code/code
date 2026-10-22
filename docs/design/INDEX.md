@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 3 proposal, 20 in progress, 58 implemented, 2 reference, 9 superseded, 5 historical.
+Counts: 3 proposal, 21 in progress, 57 implemented, 2 reference, 9 superseded, 5 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -72,7 +72,7 @@ Counts: 3 proposal, 20 in progress, 58 implemented, 2 reference, 9 superseded, 5
 | [63-agent-first-conversations.md](63-agent-first-conversations.md) | 63 — Agent-first conversations | superseded | and implemented — September 13, 2026 |
 | [64-agent-owned-platform.md](64-agent-owned-platform.md) | 64 — Agent-owned platform | implemented | and audited — September 13, 2026 |
 | [65-universal-adaptive-platform.md](65-universal-adaptive-platform.md) | 65 — Universal and Adaptable Platform | implemented | and audited — September 14, 2026 |
-| [66-immersive-artifact-canvas.md](66-immersive-artifact-canvas.md) | 66 — Immersive Polyglot Artifact Canvas | implemented | for a Canvas on this computer — the viewer, split/focused modes, device switcher and polyglot formats shipped in 3.0.85 |
+| [66-immersive-artifact-canvas.md](66-immersive-artifact-canvas.md) | 66 — Immersive Polyglot Artifact Canvas | in progress | the shared workspace foundation is built (2026-10-22) |
 | [67-presentation-renderer-guide.md](67-presentation-renderer-guide.md) | 67 — Adding or editing a card form | reference | the contributor guide for shipped code, rewritten for the card forms on 2026-10-14 (docs/design/92-card-forms.md) |
 | [68-context-engine.md](68-context-engine.md) | 68 — Context engine: measured capacity, turn working set, recallable evidence | implemented | Crate: `vak-context` (`capacity`, `planner`, `assemble`) over the ledger in `vak-session` |
 | [69-shared-conversation-coworking.md](69-shared-conversation-coworking.md) | 69 — Shared conversation and draft coworking | implemented | Office workspace collaboration added 2026-09-26, pending live visual and multi-client audit |

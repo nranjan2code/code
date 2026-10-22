@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-22",
+  "host": "web-vite-in-app-browser",
+  "api": "fixture stub; authority tested separately via HTTP",
+  "results": [
+    {
+      "fixture": "host",
+      "theme": "light",
+      "height": 844,
+      "result": "PASS: 15 host lifecycle checks",
+      "width": 390
+    },
+    {
+      "fixture": "host",
+      "theme": "dark",
+      "height": 844,
+      "result": "PASS: 15 host lifecycle checks",
+      "width": 390
+    },
+    {
+      "fixture": "host",
+      "theme": "light",
+      "height": 900,
+      "result": "PASS: 15 host lifecycle checks",
+      "width": 1440
+    },
+    {
+      "fixture": "host",
+      "theme": "dark",
+      "height": 900,
+      "result": "PASS: 15 host lifecycle checks",
+      "width": 1440
+    },
+    {
+      "fixture": "installed",
+      "theme": "light",
+      "height": 844,
+      "result": "PASS: 18 installed workspace checks",
+      "width": 390
+    },
+    {
+      "fixture": "installed",
+      "theme": "dark",
+      "height": 844,
+      "result": "PASS: 18 installed workspace checks",
+      "width": 390
+    },
+    {
+      "fixture": "installed",
+      "theme": "light",
+      "height": 900,
+      "result": "PASS: 18 installed workspace checks",
+      "width": 1440
+    },
+    {
+      "fixture": "installed",
+      "theme": "dark",
+      "height": 900,
+      "result": "PASS: 18 installed workspace checks",
+      "width": 1440
+    }
+  ]
+}

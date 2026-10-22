@@ -171,6 +171,7 @@ pub fn standing_section(set: &CapabilitySet, delta: Option<&CapabilityDelta>) ->
             c.id.kind != vak_session::types::CapabilityKind::Hook
                 && c.id.kind != vak_session::types::CapabilityKind::Command
                 && c.id.kind != vak_session::types::CapabilityKind::Presentation
+                && c.id.kind != vak_session::types::CapabilityKind::Workspace
         })
         .collect();
     if !unusable.is_empty() {

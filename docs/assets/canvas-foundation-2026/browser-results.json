@@ -1,0 +1,122 @@
+[
+  {
+    "fixture": "canvas-3d",
+    "size": [
+      1440,
+      900,
+      2
+    ],
+    "theme": "light",
+    "checks": "PASS",
+    "metrics": "{\"viewport\":[1440,900],\"dpr\":2,\"samples\":116,\"medianIntervalMs\":8.300000000000068,\"p95IntervalMs\":8.900000000000034,\"observedRafHz\":120,\"p95CpuSubmissionMs\":0.10000002384185791,\"backing\":[2880,1522],\"css\":[1440,761],\"fidelity\":true,\"noPageOverflow\":true}"
+  },
+  {
+    "fixture": "canvas-3d",
+    "size": [
+      1440,
+      900,
+      2
+    ],
+    "theme": "dark",
+    "checks": "PASS",
+    "metrics": "{\"viewport\":[1440,900],\"dpr\":2,\"samples\":116,\"medianIntervalMs\":8.300000000000011,\"p95IntervalMs\":9.199999999999932,\"observedRafHz\":120,\"p95CpuSubmissionMs\":0.10000002384185791,\"backing\":[2880,1522],\"css\":[1440,761],\"fidelity\":true,\"noPageOverflow\":true}"
+  },
+  {
+    "fixture": "canvas-3d",
+    "size": [
+      390,
+      844,
+      3
+    ],
+    "theme": "light",
+    "checks": "PASS",
+    "metrics": "{\"viewport\":[390,844],\"dpr\":3,\"samples\":116,\"medianIntervalMs\":8.300000000000011,\"p95IntervalMs\":9.100000000000023,\"observedRafHz\":120,\"p95CpuSubmissionMs\":0.10000002384185791,\"backing\":[1170,1727],\"css\":[390,576],\"fidelity\":true,\"noPageOverflow\":true}"
+  },
+  {
+    "fixture": "canvas-3d",
+    "size": [
+      390,
+      844,
+      3
+    ],
+    "theme": "dark",
+    "checks": "PASS",
+    "metrics": "{\"viewport\":[390,844],\"dpr\":3,\"samples\":116,\"medianIntervalMs\":8.300000000000011,\"p95IntervalMs\":9.099999999999966,\"observedRafHz\":120,\"p95CpuSubmissionMs\":0.10000002384185791,\"backing\":[1170,1727],\"css\":[390,576],\"fidelity\":true,\"noPageOverflow\":true}"
+  },
+  {
+    "fixture": "canvas-drawing",
+    "size": [
+      1440,
+      900,
+      2
+    ],
+    "theme": "light",
+    "checks": "PASS: checkpoint remount, dirty close, keyboard tabs, responsive sizing, backing pixels, frame sampling",
+    "metrics": "{\n  \"viewport\": [\n    1440,\n    900\n  ],\n  \"dpr\": 2,\n  \"visibility\": \"visible\",\n  \"backing\": [\n    1902,\n    1246\n  ],\n  \"css\": [\n    951,\n    623\n  ],\n  \"samples\": 120,\n  \"medianIntervalMs\": 8.300000000000068,\n  \"p95IntervalMs\": 9.200000000000045,\n  \"observedRafHz\": 120,\n  \"p95PaintMs\": 0.19999992847442627,\n  \"inputToDrawP95Ms\": 16.899999976158142,\n  \"frames\": 161,\n  \"mounts\": 5,\n  \"noPageOverflow\": true,\n  \"fidelity\": true\n}"
+  },
+  {
+    "fixture": "canvas-drawing",
+    "size": [
+      1440,
+      900,
+      2
+    ],
+    "theme": "dark",
+    "checks": "PASS: checkpoint remount, dirty close, keyboard tabs, responsive sizing, backing pixels, frame sampling",
+    "metrics": "{\n  \"viewport\": [\n    1440,\n    900\n  ],\n  \"dpr\": 2,\n  \"visibility\": \"visible\",\n  \"backing\": [\n    1902,\n    1246\n  ],\n  \"css\": [\n    951,\n    623\n  ],\n  \"samples\": 120,\n  \"medianIntervalMs\": 8.300000000000068,\n  \"p95IntervalMs\": 9.199999999999818,\n  \"observedRafHz\": 120,\n  \"p95PaintMs\": 0.20000004768371582,\n  \"inputToDrawP95Ms\": 17.699999928474426,\n  \"frames\": 160,\n  \"mounts\": 5,\n  \"noPageOverflow\": true,\n  \"fidelity\": true\n}"
+  },
+  {
+    "fixture": "canvas-drawing",
+    "size": [
+      390,
+      844,
+      3
+    ],
+    "theme": "light",
+    "checks": "PASS: checkpoint remount, dirty close, keyboard tabs, responsive sizing, backing pixels, frame sampling",
+    "metrics": "{\n  \"viewport\": [\n    390,\n    844\n  ],\n  \"dpr\": 3,\n  \"visibility\": \"visible\",\n  \"backing\": [\n    1170,\n    1266\n  ],\n  \"css\": [\n    390,\n    422\n  ],\n  \"samples\": 120,\n  \"medianIntervalMs\": 8.299999999999955,\n  \"p95IntervalMs\": 9.299999999999955,\n  \"observedRafHz\": 120,\n  \"p95PaintMs\": 0.20000004768371582,\n  \"inputToDrawP95Ms\": 17.199999928474426,\n  \"frames\": 156,\n  \"mounts\": 5,\n  \"noPageOverflow\": true,\n  \"fidelity\": true\n}"
+  },
+  {
+    "fixture": "canvas-drawing",
+    "size": [
+      390,
+      844,
+      3
+    ],
+    "theme": "dark",
+    "checks": "PASS: checkpoint remount, dirty close, keyboard tabs, responsive sizing, backing pixels, frame sampling",
+    "metrics": "{\n  \"viewport\": [\n    390,\n    844\n  ],\n  \"dpr\": 3,\n  \"visibility\": \"visible\",\n  \"backing\": [\n    1170,\n    1266\n  ],\n  \"css\": [\n    390,\n    422\n  ],\n  \"samples\": 120,\n  \"medianIntervalMs\": 8.300000000000068,\n  \"p95IntervalMs\": 9.299999999999955,\n  \"observedRafHz\": 120,\n  \"p95PaintMs\": 0.10000002384185791,\n  \"inputToDrawP95Ms\": 16.899999976158142,\n  \"frames\": 156,\n  \"mounts\": 5,\n  \"noPageOverflow\": true,\n  \"fidelity\": true\n}"
+  },
+  {
+    "fixture": "canvas",
+    "size": [
+      1440,
+      900,
+      2
+    ],
+    "theme": "light",
+    "checks": "39 checks passed"
+  },
+  {
+    "fixture": "canvas",
+    "size": [
+      390,
+      844,
+      3
+    ],
+    "theme": "dark",
+    "checks": "38 checks passed",
+    "noPageOverflow": true
+  },
+  {
+    "fixture": "canvas",
+    "size": [
+      390,
+      844,
+      3
+    ],
+    "theme": "light",
+    "checks": "38 checks passed",
+    "noPageOverflow": true
+  }
+]

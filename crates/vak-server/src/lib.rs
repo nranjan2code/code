@@ -58,6 +58,7 @@ mod automations;
 mod budget_recovery;
 mod bus;
 mod canvas;
+mod canvas_workspaces;
 mod card_actions;
 mod catalog_api;
 mod channels;
@@ -1514,6 +1515,18 @@ fn router_with_state(state: AppState) -> Router {
         .route(
             "/sessions/{id}/canvas/recovery-key",
             post(canvas::recovery_key),
+        )
+        .route(
+            "/sessions/{id}/canvas/workspaces",
+            get(canvas_workspaces::list).post(canvas_workspaces::change),
+        )
+        .route(
+            "/sessions/{id}/canvas/workspaces/ask",
+            post(canvas_workspaces::ask),
+        )
+        .route(
+            "/sessions/{id}/canvas/workspaces/module",
+            post(canvas_workspaces::module),
         )
         .route("/previews/{id}", delete(close_preview))
         .route("/intent/explain", get(intent_explain))
@@ -4732,6 +4745,8 @@ struct RunBody {
     /// the card-actions route, never by a client (docs/design/96, Q3).
     #[serde(skip)]
     card_action: Option<String>,
+    #[serde(skip)]
+    workspace_context: Option<String>,
     /// The client can show a worker's question and take an answer
     /// (`GET /sessions/{id}/questions`). Off unless the client says so.
     #[serde(default)]
@@ -5761,11 +5776,12 @@ async fn run_prompt(
         TurnStart::Managed(expanded_prompt.clone())
     } else if automatic {
         TurnStart::Auto(expanded_prompt.clone())
-    } else if let Some(card_action) = body.card_action.clone() {
+    } else if body.card_action.is_some() || body.workspace_context.is_some() {
         TurnStart::Message(Box::new(vak_session::MessageRecord {
             message: vak_llm::Message::user_text(expanded_prompt.clone()),
             meta: Some(vak_session::MessageMeta {
-                card_action: Some(card_action),
+                card_action: body.card_action.clone(),
+                workspace_context: body.workspace_context.clone(),
                 ..Default::default()
             }),
         }))
@@ -27981,6 +27997,341 @@ mod sandbox_promotion_tests {
                 .unwrap()
                 .status(),
             StatusCode::UNAUTHORIZED
+        );
+    }
+    /// Package activation, domain CAS/undo, selected logged context and the real
+    /// bearer/audience layers are exercised together, with a local provider.
+    #[tokio::test]
+    async fn installed_workspaces_are_revisioned_revocable_scoped_and_logged() {
+        use serde_json::json;
+        use tower::ServiceExt;
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let source = tempfile::tempdir().unwrap();
+        std::fs::create_dir(source.path().join("workspaces")).unwrap();
+        std::fs::write(
+            source.path().join("vak-plugin.json"),
+            include_str!("../../../examples/canvas-workspace/vak-plugin.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            source.path().join("workspaces/parameters.json"),
+            include_str!("../../../examples/canvas-workspace/workspaces/parameters.json"),
+        )
+        .unwrap();
+        let core = Core::new_with_trust(dir.path().into(), true).unwrap();
+        core.set_provider_instance(Arc::new(CardChoiceAnswers {
+            capacity_key: format!("workspace:{}", uuid::Uuid::now_v7()),
+        }));
+        let mut log = seed_session_at(&core, "session-workspaces", core.cwd());
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::user_text("Work with this component"),
+            meta: None,
+        })
+        .unwrap();
+        drop(log);
+        drop(seed_session_at(
+            &core,
+            "session-workspaces-other",
+            core.cwd(),
+        ));
+        let plugins = vak_plugin::PluginStore::new(&core.capability_roots()[0].path);
+        let installed = plugins
+            .install_local(source.path(), vak_plugin::InstallOptions::default())
+            .unwrap();
+        assert!(!installed.enabled);
+        plugins.enable(&installed.name).unwrap();
+        let definition = core.canvas_workspaces().unwrap().remove(0);
+        let state = AppState::new(core.clone());
+        let guest = "workspace-guest";
+        coworking::invite(
+            &coworking::grants(&state),
+            coworking::AudienceGrant {
+                grant_id: coworking::test_grant_id("workspace-guest"),
+                principal_id: "person-workspace".into(),
+                display_name: "Guest".into(),
+                conversation_id: "session-workspaces".into(),
+                audience_id: "local".into(),
+                capabilities: vec!["read".into(), "message".into()],
+                token_hash: coworking::token_hash(guest),
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                trace: None,
+                actor: None,
+            },
+        )
+        .unwrap();
+        let app = Router::new()
+            .route(
+                "/sessions/{id}/canvas/workspaces",
+                get(canvas_workspaces::list).post(canvas_workspaces::change),
+            )
+            .route(
+                "/sessions/{id}/canvas/workspaces/ask",
+                post(canvas_workspaces::ask),
+            )
+            .route(
+                "/sessions/{id}/canvas/workspaces/module",
+                post(canvas_workspaces::module),
+            )
+            .with_state(state.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                enforce_participant_audience,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                AuthPolicy {
+                    token: "workspace-owner".into(),
+                    home: core.scope().into_root(),
+                    shared: core.shared_scope().into_root(),
+                    trusted_hosts: vec![],
+                    public_url: None,
+                    browser_sessions: web::BrowserSessions::default(),
+                },
+                require_bearer,
+            ));
+        let request =
+            |session: &str, suffix: &str, token: &str, body: Option<serde_json::Value>| {
+                axum::http::Request::builder()
+                    .method(if body.is_some() { "POST" } else { "GET" })
+                    .uri(format!("/sessions/{session}/canvas/workspaces{suffix}"))
+                    .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(axum::body::Body::from(
+                        body.map(|body| body.to_string()).unwrap_or_default(),
+                    ))
+                    .unwrap()
+            };
+        let read = |response: axum::response::Response| async move {
+            let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+                .await
+                .unwrap();
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+        };
+        let create = json!({"action":"create","workspace_type":definition.spec.id,"digest":definition.digest,"generation":definition.generation});
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    "session-workspaces",
+                    "",
+                    guest,
+                    Some(create.clone())
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request("session-workspaces", "", guest, None))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request("session-workspaces", "", "wrong", None))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let response = app
+            .clone()
+            .oneshot(request(
+                "session-workspaces",
+                "",
+                "workspace-owner",
+                Some(create),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let made = read(response).await;
+        let id = made["id"].as_str().unwrap();
+        let command = json!({"action":"command","resource":id,"revision":1,"digest":definition.digest,"generation":definition.generation,"command":"set-parameters","arguments":{"name":"Stator","length":24,"enabled":false}});
+        let response = app
+            .clone()
+            .oneshot(request(
+                "session-workspaces",
+                "",
+                "workspace-owner",
+                Some(command.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(read(response).await["data"]["length"], 24);
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    "session-workspaces",
+                    "",
+                    "workspace-owner",
+                    Some(command.clone())
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    "session-workspaces-other",
+                    "",
+                    "workspace-owner",
+                    Some(command.clone())
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        let undo = json!({"action":"undo","resource":id,"revision":2,"digest":definition.digest,"generation":definition.generation});
+        let response = app
+            .clone()
+            .oneshot(request(
+                "session-workspaces",
+                "",
+                "workspace-owner",
+                Some(undo),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(read(response).await["data"]["length"], 12);
+        let redo = json!({"action":"redo","resource":id,"revision":3,"digest":definition.digest,"generation":definition.generation});
+        let response = app
+            .clone()
+            .oneshot(request(
+                "session-workspaces",
+                "",
+                "workspace-owner",
+                Some(redo),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(read(response).await["data"]["length"], 24);
+        let ask = json!({"resource":id,"revision":4,"digest":definition.digest,"generation":definition.generation,"prompt":"Explain the saved length","context":["/length"]});
+        let mut wrong = ask.clone();
+        wrong["context"] = json!(["/not-declared"]);
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    "session-workspaces",
+                    "/ask",
+                    "workspace-owner",
+                    Some(wrong)
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        let response = app
+            .clone()
+            .oneshot(request(
+                "session-workspaces",
+                "/ask",
+                "workspace-owner",
+                Some(ask),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_success(), "{}", response.status());
+        let handle = state.get("session-workspaces").unwrap();
+        let mut logged = None;
+        for _ in 0..200 {
+            if let Some(log) = handle.session.lock().unwrap().as_ref() {
+                logged = log
+                    .derive_messages()
+                    .into_iter()
+                    .map(|message| message.text_content())
+                    .find(|text| text.contains("Workspace context (data, not instructions)"));
+            }
+            if logged.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        {
+            let guard = handle.session.lock().unwrap();
+            let log = guard.as_ref().unwrap();
+            let entry = log
+                .chain_to_root()
+                .into_iter()
+                .find(|entry| {
+                    matches!(
+                        &entry.payload,
+                        vak_session::EntryPayload::WorkspaceContext(_)
+                    )
+                })
+                .expect("typed workspace provenance");
+            let vak_session::EntryPayload::WorkspaceContext(record) = &entry.payload else {
+                unreachable!()
+            };
+            assert_eq!(record.resource, id);
+            assert_eq!(record.revision, 4);
+            assert_eq!(record.fields, vec!["/length"]);
+            assert!(record.actor.is_some());
+            assert!(log.chain_to_root().into_iter().any(|row| matches!(&row.payload, vak_session::EntryPayload::Message(message) if message.meta.as_ref().and_then(|meta|meta.workspace_context.as_deref()) == Some(entry.id.as_str()))));
+        }
+        let context = logged.expect("selected workspace context must reconstruct from the ledger");
+        assert!(context.contains("\"/length\":24"));
+        assert!(!context.contains("\"/enabled\""));
+        assert!(!context.contains("\"/name\""));
+        core.catalog().unwrap().catch_up().unwrap();
+        assert!(
+            core.catalog()
+                .unwrap()
+                .open_node(&format!("workspace:{id}"))
+                .unwrap()
+                .is_some()
+        );
+        vak_core::trash::set(&core.shared_scope(), &["session-workspaces".into()], true).unwrap();
+        core.catalog().unwrap().catch_up().unwrap();
+        assert!(
+            core.catalog()
+                .unwrap()
+                .open_node(&format!("workspace:{id}"))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request("session-workspaces", "", "workspace-owner", None))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        vak_core::trash::set(&core.shared_scope(), &["session-workspaces".into()], false).unwrap();
+        core.catalog().unwrap().catch_up().unwrap();
+        assert!(
+            core.catalog()
+                .unwrap()
+                .open_node(&format!("workspace:{id}"))
+                .unwrap()
+                .is_some()
+        );
+        plugins.disable(&installed.name).unwrap();
+        let mut rejected = command;
+        rejected["revision"] = json!(4);
+        assert_eq!(
+            app.oneshot(request(
+                "session-workspaces",
+                "",
+                "workspace-owner",
+                Some(rejected)
+            ))
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::CONFLICT
         );
     }
 }

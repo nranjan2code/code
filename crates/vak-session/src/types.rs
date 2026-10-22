@@ -18,6 +18,8 @@ pub enum CapabilityKind {
     /// A presentation pack: how cards of the kinds it accepts are drawn
     /// (docs/design/91-presentation-capabilities.md).
     Presentation,
+    /// An installed Canvas workspace contract; execution uses admitted tools.
+    Workspace,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -444,6 +446,9 @@ pub struct MessageMeta {
     /// chose an option on a card (docs/design/96, Q3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card_action: Option<String>,
+    /// Frozen workspace projection explicitly selected for this directive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_context: Option<String>,
     /// A person-selected destination for this turn. Admission validates this
     /// against the active TopicStore and records a whole-turn human placement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1136,6 +1141,7 @@ pub enum EntryPayload {
     /// itself: a choice reaches the model as the directive that names it,
     /// a tick in the next turn's `<card_marks>` tail block.
     CardAction(crate::card_actions::CardActionRecord),
+    WorkspaceContext(crate::workspaces::WorkspaceContextRecord),
     /// A person set a turn aside (docs/design/99-turns-that-do-not-poison.md
     /// §4 F): no later turn sees it. Never model-visible; nothing is removed.
     TurnSetAside(crate::turn_marks::TurnMarkRecord),

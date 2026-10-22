@@ -1,6 +1,6 @@
 /** Queue and retry policy for conversation Canvas writes. Kept independent of
  * Solid and the browser so failures and races can be exercised in Node. */
-export type CanvasSaveReason = "auth" | "too_large" | "missing" | "throttled" | "server" | "invalid" | "newer_schema" | "conflict" | "recovery" | "recovery_cleanup";
+export type CanvasSaveReason = "auth" | "too_large" | "missing" | "throttled" | "server" | "invalid" | "unsupported_schema" | "conflict" | "recovery" | "recovery_cleanup";
 export type CanvasSaveState = "saved" | "saving" | "pending" | "error";
 export interface CanvasSaveStatus { state: CanvasSaveState; reason?: CanvasSaveReason; recovery?: "saving" | "ready" | "unavailable" | "locked" }
 export interface CanvasWriteError { status?: number; kind?: string }
@@ -44,14 +44,14 @@ interface Queue<Op, Snapshot, Stored> {
 
 function reasonOf(error: unknown): CanvasSaveReason | undefined {
   const e = error as CanvasWriteError | null;
-  if (e?.kind === "newer_schema") return "newer_schema";
+  if (e?.kind === "unsupported_schema") return "unsupported_schema";
   switch (e?.status) {
     case 401: case 403: return "auth";
     case 404: case 410: return "missing";
     case 413: return "too_large";
     case 429: return "throttled";
     case 400: return "invalid";
-    case 409: return "newer_schema";
+    case 409: return "unsupported_schema";
     case undefined: return undefined;
     default: return (e?.status ?? 0) >= 500 ? "server" : "invalid";
   }
@@ -210,7 +210,10 @@ export function createCanvasSyncCoordinator<Op, Snapshot, Stored>(options: Optio
       if (q.read && options.revision(stored) <= q.base) return;
       if (options.applyStored(id, stored, [], q.baseline) === false) return;
       q.base = options.revision(stored); q.read = true; q.baseline = stored;
-    } catch { /* A later level-triggered read can try again. */ }
+    } catch (error) {
+      const reason = reasonOf(error);
+      if (reason) publish(id, q, { state: "error", reason });
+    }
   }
   return {
     enqueue(id: string, op: Op, delay = 0) {

@@ -207,8 +207,8 @@ fn decode_canvas(raw: &str) -> Result<ConversationCanvas, Refusal> {
     }
     let canvas: ConversationCanvas =
         serde_json::from_str(raw).map_err(|error| Refusal::Unreadable(error.to_string()))?;
-    if canvas.schema > SCHEMA {
-        return Err(Refusal::Newer);
+    if canvas.schema != SCHEMA {
+        return Err(Refusal::Unsupported);
     }
     validate_canvas(&canvas)?;
     Ok(canvas)
@@ -230,86 +230,7 @@ fn decode_document(raw: Option<&str>, _session: &str) -> Result<ConversationCanv
     }
 }
 
-/// Convert an existing plaintext Canvas once, under its historical lock.
-/// Documents are the only normal read/write path; any failed conversion
-/// leaves the source file available for recovery.
-fn ensure_document(path: &FsPath, session: &str) -> Result<(), Refusal> {
-    if !path.exists() {
-        return Ok(());
-    }
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(Refusal::Unreadable(error.to_string())),
-    };
-    if !metadata.file_type().is_file() {
-        return Err(Refusal::Legacy);
-    }
-    if metadata.len() > MAX_BYTES as u64 {
-        return Err(Refusal::TooLarge);
-    }
-    vak_session::fence::check().map_err(|error| Refusal::Unreadable(error.to_string()))?;
-    let lock_path = path.with_extension("lock");
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(lock_path)
-        .map_err(|error| Refusal::Unreadable(error.to_string()))?;
-    lock.lock()
-        .map_err(|error| Refusal::Unreadable(error.to_string()))?;
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(Refusal::Unreadable(error.to_string())),
-    };
-    if !metadata.file_type().is_file() {
-        return Err(Refusal::Legacy);
-    }
-    if metadata.len() > MAX_BYTES as u64 {
-        return Err(Refusal::TooLarge);
-    }
-    let legacy = match std::fs::read_to_string(path) {
-        Ok(legacy) => legacy,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(Refusal::Unreadable(error.to_string())),
-    };
-    let legacy_canvas = decode_canvas(&legacy)?;
-    let scope = conversation_scope(session);
-    let current = vak_session::documents::read_sealed(path, &scope).map_err(Refusal::Unreadable)?;
-    if let Some(current) = current {
-        let stored = decode_document(Some(&current), session)?;
-        if stored != legacy_canvas {
-            return Err(Refusal::Legacy);
-        }
-    } else {
-        let document = serde_json::to_string(&legacy_canvas)
-            .map_err(|error| Refusal::Unreadable(error.to_string()))?;
-        match vak_session::documents::create_sealed(path, &scope, &document) {
-            Ok(()) => {}
-            Err(error) => {
-                let winner = vak_session::documents::read_sealed(path, &scope)
-                    .map_err(Refusal::Unreadable)?;
-                let stored = decode_document(winner.as_deref(), session)?;
-                if stored != legacy_canvas {
-                    return Err(Refusal::Unreadable(error));
-                }
-            }
-        }
-    }
-    let verified =
-        vak_session::documents::read_sealed(path, &scope).map_err(Refusal::Unreadable)?;
-    if decode_document(verified.as_deref(), session)? != legacy_canvas {
-        return Err(Refusal::Legacy);
-    }
-    vak_session::fence::check().map_err(|error| Refusal::Unreadable(error.to_string()))?;
-    std::fs::remove_file(path).map_err(|error| Refusal::Unreadable(error.to_string()))?;
-    Ok(())
-}
-
 fn read(path: &FsPath, session: &str) -> Result<ConversationCanvas, Refusal> {
-    ensure_document(path, session)?;
     let raw = vak_session::documents::read_sealed(path, &conversation_scope(session))
         .map_err(Refusal::Unreadable)?;
     decode_document(raw.as_deref(), session)
@@ -318,11 +239,10 @@ fn read(path: &FsPath, session: &str) -> Result<ConversationCanvas, Refusal> {
 #[derive(Debug)]
 enum Refusal {
     Unreadable(String),
-    Newer,
+    Unsupported,
     Invalid(&'static str),
     TooLarge,
     Stale(ConversationCanvas),
-    Legacy,
 }
 
 impl IntoResponse for Refusal {
@@ -333,11 +253,11 @@ impl IntoResponse for Refusal {
                 Json(serde_json::json!({ "error": format!("The Canvas could not be read: {error}") })),
             )
                 .into_response(),
-            Refusal::Newer => (
+            Refusal::Unsupported => (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
-                    "error": "This Canvas was saved by a newer version of Vakyartha.",
-                    "reason": "newer_schema",
+                    "error": "This Canvas does not use the supported format.",
+                    "reason": "unsupported_schema",
                 })),
             )
                 .into_response(),
@@ -358,10 +278,7 @@ impl IntoResponse for Refusal {
                 Json(serde_json::json!({ "reason": "stale", "canvas": current })),
             )
                 .into_response(),
-            Refusal::Legacy => (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({
-                "reason": "legacy_canvas",
-                "error": "This saved Canvas could not be safely converted. Its original data is still available for recovery."
-            }))).into_response(),
+
         }
     }
 }
@@ -408,7 +325,6 @@ fn commit(
     write: CanvasWrite,
 ) -> Result<ConversationCanvas, Refusal> {
     check(&write)?;
-    ensure_document(path, session)?;
     let mut refusal = None;
     let session_scope = conversation_scope(session);
     let result = vak_session::documents::update_sealed(path, &session_scope, |raw| {
@@ -616,56 +532,13 @@ mod tests {
     }
 
     #[test]
-    fn legacy_canvas_converts_once_and_unsafe_legacy_stays_recoverable() {
-        let (path, session) = setup();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let legacy = r#"{"schema":1,"revision":4,"entries":[],"active":null,"layout":"wide"}"#;
-        std::fs::write(&path, legacy).unwrap();
-        let converted = read(&path, &session).unwrap();
-        assert_eq!(converted.revision, 4);
-        assert_eq!(converted.other["layout"], "wide");
-        assert!(!path.exists());
-        let saved = vak_session::documents::read(&path).unwrap().unwrap();
-        assert!(!saved.contains("wide"));
-        assert_eq!(
-            vak_session::documents::read_sealed(&path, &conversation_scope(&session))
-                .unwrap()
-                .unwrap(),
-            serde_json::to_string(&converted).unwrap()
-        );
-
-        let (bad_path, bad_session) = setup();
-        std::fs::create_dir_all(bad_path.parent().unwrap()).unwrap();
-        let bad = r#"{"schema":2,"revision":4,"entries":[],"active":null}"#;
-        std::fs::write(&bad_path, bad).unwrap();
-        assert!(matches!(read(&bad_path, &bad_session), Err(Refusal::Newer)));
-        assert_eq!(std::fs::read_to_string(&bad_path).unwrap(), bad);
-        assert!(
-            vak_session::documents::read_sealed(&bad_path, &conversation_scope(&bad_session))
-                .unwrap()
-                .is_none()
-        );
-
-        let (divergent_path, divergent_session) = setup();
-        let mut stored_canvas = ConversationCanvas::empty();
-        stored_canvas.revision = 1;
-        seed(&divergent_path, &divergent_session, &stored_canvas);
-        std::fs::create_dir_all(divergent_path.parent().unwrap()).unwrap();
-        let divergent = r#"{"schema":1,"revision":4,"entries":[],"active":null}"#;
-        std::fs::write(&divergent_path, divergent).unwrap();
-        assert!(matches!(
-            read(&divergent_path, &divergent_session),
-            Err(Refusal::Legacy)
-        ));
-        assert_eq!(std::fs::read_to_string(&divergent_path).unwrap(), divergent);
-        assert!(
-            vak_session::documents::read_sealed(
-                &divergent_path,
-                &conversation_scope(&divergent_session)
-            )
-            .unwrap()
-            .is_some()
-        );
+    fn only_the_current_schema_is_read() {
+        for schema in [0, SCHEMA + 1] {
+            let raw =
+                serde_json::json!({"schema": schema, "revision": 0, "entries": [], "active": null})
+                    .to_string();
+            assert!(matches!(decode_canvas(&raw), Err(Refusal::Unsupported)));
+        }
     }
 
     #[test]

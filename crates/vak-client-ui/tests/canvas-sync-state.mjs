@@ -32,7 +32,7 @@ function harness(put) {
   return { coordinator, enqueue, timers, applied, reads, fire };
 }
 
-for (const [status, reason] of [[401, "auth"], [403, "auth"], [404, "missing"], [409, "newer_schema"], [413, "too_large"]]) {
+for (const [status, reason] of [[401, "auth"], [403, "auth"], [404, "missing"], [409, "unsupported_schema"], [413, "too_large"]]) {
   const h = harness(async () => { throw Object.assign(new Error("write failed"), { status }); });
   h.enqueue("c", "draft"); await h.fire(0);
   assert.deepEqual(h.coordinator.status("c"), { state: "error", reason });

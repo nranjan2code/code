@@ -1,12 +1,13 @@
 //! Secure plugin package inspection and immutable local installation.
 
 pub mod native_adapter;
+pub mod workspace;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -39,8 +40,6 @@ pub enum PluginError {
         "plugin '{0}' has no declared license; pass allow_unlicensed only after reviewing its terms"
     )]
     Unlicensed(String),
-    #[error("plugin registry is busy; another mutation may be in progress")]
-    RegistryBusy,
     #[error("plugin I/O failed at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -96,6 +95,8 @@ pub struct Components {
     pub policies: Vec<String>,
     pub themes: Vec<String>,
     pub presentation: Vec<String>,
+    #[serde(default)]
+    pub workspaces: Vec<String>,
     pub assets: Vec<String>,
 }
 
@@ -113,6 +114,7 @@ impl Components {
             .chain(self.policies.iter().map(|path| ("policy", path)))
             .chain(self.themes.iter().map(|path| ("theme", path)))
             .chain(self.presentation.iter().map(|path| ("presentation", path)))
+            .chain(self.workspaces.iter().map(|path| ("workspace", path)))
             .chain(self.assets.iter().map(|path| ("asset", path)))
     }
 }
@@ -156,6 +158,8 @@ pub struct CapabilityInventory {
     pub policies: Vec<String>,
     pub themes: Vec<String>,
     pub presentation: Vec<String>,
+    #[serde(default)]
+    pub workspaces: Vec<String>,
     pub scripts: Vec<String>,
     pub executables: Vec<String>,
     pub assets: Vec<String>,
@@ -175,6 +179,50 @@ pub struct PackageInspection {
 }
 
 impl PackageInspection {
+    /// Validate every declared workspace at inspection, including its namespace.
+    pub fn workspace_specs(&self) -> Result<Vec<workspace::WorkspaceSpec>, PluginError> {
+        let mut specs = Vec::new();
+        let mut ids = BTreeSet::new();
+        for relative in &self.capabilities.workspaces {
+            let path = self.root.join(relative);
+            let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+            if bytes.len() > 256 * 1024 {
+                return Err(PluginError::LimitExceeded("workspace spec".into()));
+            }
+            let spec: workspace::WorkspaceSpec = serde_json::from_slice(&bytes)
+                .map_err(|source| PluginError::Json { path, source })?;
+            spec.validate(&self.manifest.name)
+                .map_err(PluginError::InvalidManifest)?;
+            for module in spec
+                .commands
+                .iter()
+                .filter_map(|command| command.compute.as_ref())
+            {
+                validate_relative_path(module)?;
+                if !module.ends_with(".wasm") || !self.files.iter().any(|file| &file.path == module)
+                {
+                    return Err(PluginError::InvalidManifest(
+                        "workspace computation must name an inspected WebAssembly asset".into(),
+                    ));
+                }
+                let path = self.root.join(module);
+                let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+                if !bytes.starts_with(b"\0asm\x01\0\0\0") {
+                    return Err(PluginError::InvalidManifest(
+                        "invalid WebAssembly module".into(),
+                    ));
+                }
+            }
+            if !ids.insert(spec.id.clone()) {
+                return Err(PluginError::InvalidManifest(
+                    "duplicate workspace identity".into(),
+                ));
+            }
+            specs.push(spec);
+        }
+        Ok(specs)
+    }
+
     /// Load only declared JSON presentation specs, through the same bounded
     /// validator used by runtime selection. Plugin files remain inert data;
     /// no plugin-authored code is executed during inspection.
@@ -702,7 +750,7 @@ pub fn inspect_package_with_limits(
     if manifest.publisher.is_none() {
         warnings.push("no publisher identity declared".into());
     }
-    Ok(PackageInspection {
+    let inspection = PackageInspection {
         manifest,
         format,
         root,
@@ -712,7 +760,9 @@ pub fn inspect_package_with_limits(
         files,
         capabilities,
         warnings,
-    })
+    };
+    inspection.workspace_specs()?;
+    Ok(inspection)
 }
 
 fn load_manifest(
@@ -868,6 +918,7 @@ fn normalize_client_manifest(
         themes: paths_or_inline(object.get("themes"), "themes", manifest_path)?,
         presentation: string_or_strings(object.get("presentation"), "presentation")?,
         assets: string_or_strings(object.get("assets"), "assets")?,
+        workspaces: Vec::new(),
     };
     if object.get("mcpServers").is_some() {
         components.mcp.push(manifest_path.to_string());
@@ -1347,6 +1398,7 @@ fn inventory_capabilities(
     inventory.policies = component_files(root, &components.policies, Some("toml"))?;
     inventory.themes = component_files(root, &components.themes, None)?;
     inventory.presentation = component_files(root, &components.presentation, None)?;
+    inventory.workspaces = component_files(root, &components.workspaces, Some("json"))?;
     inventory.assets = component_files(root, &components.assets, None)?;
     for file in files {
         let path = Path::new(&file.path);
@@ -1819,6 +1871,29 @@ impl PluginStore {
 
     pub fn list(&self) -> Result<Vec<InstalledPlugin>, PluginError> {
         Ok(self.load()?.plugins.into_values().collect())
+    }
+
+    /// Hold the existing activation writer barrier through one bounded state commit.
+    /// Disable/update cannot return while an old generation is still committing.
+    pub fn with_enabled<T>(
+        &self,
+        name: &str,
+        digest: &str,
+        generation: u64,
+        commit: impl FnOnce() -> T,
+    ) -> Result<T, PluginError> {
+        let _lock = RegistryLock::acquire(&self.home.join("plugins"))?;
+        let registry = self.load()?;
+        let plugin = registry
+            .plugins
+            .get(name)
+            .ok_or_else(|| PluginError::NotInstalled(name.into()))?;
+        if registry.generation != generation || !plugin.enabled || plugin.digest != digest {
+            return Err(PluginError::InvalidManifest(
+                "workspace activation changed".into(),
+            ));
+        }
+        Ok(commit())
     }
 
     pub fn enabled(&self) -> Result<Vec<InstalledPlugin>, PluginError> {
@@ -2315,44 +2390,26 @@ fn now_unix() -> u64 {
         .as_secs()
 }
 
+/// One OS-owned writer barrier for activation and bounded workspace commits.
+/// The inode remains in place; process exit releases the lock, without stale
+/// timeouts that could admit a second writer while the first is still alive.
 struct RegistryLock {
-    path: PathBuf,
+    _file: File,
 }
-
 impl RegistryLock {
     fn acquire(root: &Path) -> Result<Self, PluginError> {
         fs::create_dir_all(root).map_err(|error| io_error(root, error))?;
         let path = root.join(".registry.lock");
-        match create_lock(&path) {
-            Ok(()) => Ok(Self { path }),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let stale = fs::metadata(&path)
-                    .and_then(|metadata| metadata.modified())
-                    .ok()
-                    .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-                    .is_some_and(|age| age > Duration::from_secs(120));
-                if !stale {
-                    return Err(PluginError::RegistryBusy);
-                }
-                fs::remove_file(&path).map_err(|remove_error| io_error(&path, remove_error))?;
-                create_lock(&path).map_err(|retry_error| io_error(&path, retry_error))?;
-                Ok(Self { path })
-            }
-            Err(error) => Err(io_error(&path, error)),
-        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|error| io_error(&path, error))?;
+        file.lock().map_err(|error| io_error(&path, error))?;
+        Ok(Self { _file: file })
     }
-}
-
-impl Drop for RegistryLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-fn create_lock(path: &Path) -> std::io::Result<()> {
-    let mut lock = OpenOptions::new().write(true).create_new(true).open(path)?;
-    writeln!(lock, "{} {}", std::process::id(), now_unix())?;
-    lock.sync_all()
 }
 
 #[cfg(test)]

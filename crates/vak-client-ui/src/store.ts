@@ -4,7 +4,7 @@ import { isThemeChoice, type ThemeChoice } from "./theme";
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
 import { keepLiveGates } from "./liveGates";
-import { fileSubject, matchExecutionArtifact, type ArtifactOrigin, type CanvasSubject } from "./canvasSubject";
+import { inlineSubject, type InlineSubjectInput, fileSubject, matchExecutionArtifact, type ArtifactOrigin, type CanvasSubject } from "./canvasSubject";
 import { activeEntry, applyOp, entriesOf, isShared, type CanvasMode, type CanvasOp, type CanvasStacks, type EntryPatch } from "./canvasStack";
 import { freshEntry } from "./canvasViewers";
 import { displayFileName } from "./attachFiles";
@@ -375,7 +375,7 @@ export function changeCanvas(conversation: string, op: CanvasOp) {
   const before = canvasStacks();
   const next = applyOp(before, conversation, op, freshCanvasEntry);
   if (next === before) {
-    if (op.op === "open") setNotice({ kind: "info", text: "All eight Canvas tabs contain unsent notes. Finish a note before opening another tab." });
+    if (op.op === "open") setNotice({ kind: "info", text: "All eight Canvas tabs contain unsent work. Save or finish your work before opening another tab." });
     return;
   }
   setCanvasStacks(next);
@@ -412,12 +412,28 @@ export const canvasOpen = () => canvasEntry() !== null;
  * already there. User-initiated only. The subject keeps its own identity for
  * reading, so it can belong to another conversation than the one showing it.
  */
+let canvasOpenGeneration = 0;
+
 export function openArtifactCanvas(subject: CanvasSubject) {
+  canvasOpenGeneration += 1;
   // On a phone the sidebar is a drawer over the page; the Canvas replaces it.
   if (sidebarOpen() && narrowNow()) setSidebarOpen(false);
   const conversation = canvasConversation();
   if (!activeEntry(canvasStacks(), conversation)) canvasArrival = true;
   changeCanvas(conversation, { op: "open", subject });
+}
+
+/** Hashing runs outside the render thread; a later open/navigation keeps priority. */
+export async function openInlineCanvas(input: InlineSubjectInput) {
+  const generation = ++canvasOpenGeneration;
+  const conversation = canvasConversation();
+  try {
+    const subject = await inlineSubject(input);
+    if (generation !== canvasOpenGeneration || conversation !== canvasConversation()) return;
+    openArtifactCanvas(subject);
+  } catch {
+    if (generation === canvasOpenGeneration) setNotice({ kind: "error", text: "This preview could not be prepared. Try opening it again." });
+  }
 }
 
 /** Close the one in front; the last one closed closes the Canvas. */
@@ -616,6 +632,7 @@ export const [narrowViewport, setNarrowViewport] = createSignal(
 export const [sidebarOpen, setSidebarOpen] = createSignal(!narrowViewport());
 export const [sidebarWidth, setSidebarWidth] = createSignal(252);
 export const [dockWidth, setDockWidth] = createSignal(520);
+export const [canvasSplitWidth, setCanvasSplitWidth] = createSignal<number | null>(null);
 
 /**
  * Split view: the session shown in the non-focused pane. `activeId` always

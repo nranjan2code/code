@@ -273,3 +273,22 @@ Agent authorship or a local file path. External script downloads and ordinary
 fetch stay blocked. See [the page-code contract](66-immersive-artifact-canvas.md#explicit-page-code-permission--2026-10-21). Explicitly started live dev servers are a
 separate capability. The [security acceptance](../audits/security-hardening-2026-10-20.md)
 records the probe and regression.
+
+### Installed Canvas computation — 2026-10-22
+
+Workspace package descriptions are validated data consumed by the owned shared
+renderer. Package JavaScript has no host-origin entrypoint. Optional pure
+numeric WebAssembly executes in a disposable dedicated worker with no imports,
+bounded nonshared linear memory/tables/module/messages and abort/deadline
+termination. No module can request DOM, fetch, native IPC or credentials through
+this ABI. This language/worker boundary is not a promised OS process-memory
+quota or proof of numerical correctness; browser engines remain trusted.
+
+Authenticated owner routes and session-bound Agent tools validate current
+package digest/generation, conversation and expected resource revision through
+one command service. Disable/update synchronizes with bounded commits under
+the registry OS lock. Guest admission middleware and owner checks protect all
+workspace routes. Agent context is explicit, saved-revision-bound, selected and
+logged with typed provenance; opening a workspace does not send its data.
+See [acceptance](../audits/canvas-plugins-2026-10-22.md) for tests and the still-open
+native-device qualification; shared browser UI/worker follow-through passed.

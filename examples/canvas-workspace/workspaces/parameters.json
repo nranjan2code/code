@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "workspace-lab/parameters",
+  "title": "Component parameters",
+  "description": "Edit a component's name and parameters, undo a saved change, and share selected saved values with the Agent.",
+  "initial": { "name": "Rotor", "length": 12, "enabled": true },
+  "state_schema": {
+    "type": "object",
+    "properties": { "name": { "type": "string" }, "length": { "type": "number" }, "enabled": { "type": "boolean" } },
+    "required": ["name", "length", "enabled"], "additionalProperties": false
+  },
+  "fields": [
+    { "path": "/name", "label": "Component name", "kind": "text" },
+    { "path": "/length", "label": "Length", "kind": "number", "unit": "mm" },
+    { "path": "/enabled", "label": "Enabled", "kind": "boolean" }
+  ],
+  "commands": [{
+    "id": "set-parameters", "title": "Apply parameters",
+    "arguments": {
+      "type": "object", "properties": { "name": { "type": "string" }, "length": { "type": "number" }, "enabled": { "type": "boolean" } },
+      "required": ["name", "length", "enabled"], "additionalProperties": false
+    },
+    "edits": [ { "target": "/name", "argument": "/name" }, { "target": "/length", "argument": "/length" }, { "target": "/enabled", "argument": "/enabled" } ]
+  }],
+  "context": ["/name", "/length", "/enabled"]
+}

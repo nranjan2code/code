@@ -5,7 +5,7 @@ import {
   uiPreferences,
   isPreviewableArtifact,
   openArtifactFile,
-  openArtifactCanvas,
+  openInlineCanvas,
   openWorkbenchFolder,
   isScratchDirectory,
   openOfficeCitation,
@@ -86,7 +86,7 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
     const target = event.target as HTMLElement;
     if (target.classList.contains("cb-preview")) {
       const codeContent = target.getAttribute("data-preview") ?? "";
-      openArtifactCanvas({ kind: "inline", title: inlineTitle(codeContent), html: codeContent, sessionId: activeId() ?? undefined });
+      void openInlineCanvas({ title: inlineTitle(codeContent), html: codeContent, sessionId: activeId() ?? undefined });
       return;
     }
     if (target.classList.contains("cb-copy")) {

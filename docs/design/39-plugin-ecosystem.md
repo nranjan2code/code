@@ -4,7 +4,7 @@ Status: implemented in 2.0.0
 ## Decision
 
 Vak plugins are versioned capability packages. A plugin may contribute skills,
-commands, MCP connections, hooks, presentation recipes, or static assets, but
+commands, MCP connections, hooks, presentation recipes, Canvas workspaces or static assets, but
 installation never grants permission. Components enter the same registries and
 the same permission-before-dispatch boundary used by local runs, gateway runs,
 flows, plans, tasks, workers, server runs, and desktop runs.
@@ -395,3 +395,16 @@ Execution commands stream live telemetry into the frontend Workbench panel:
 - Compatibility does not claim endorsement by another marketplace owner.
 - Public ranking, payments, reviews, and publisher analytics do not precede the
   secure local lifecycle.
+
+## Installed Canvas workspaces — 2026-10-22
+
+Native packages may declare `components.workspaces`. Inspection validates a
+bounded namespaced v1 definition, supported schemas and declared WASM assets.
+Enabled contributions enter the capability registry as `Workspace` with their
+actual scope/digest. The common client interprets declarative fields; package
+JavaScript is never imported into the host. Optional pure numeric WebAssembly
+calculations run in disposable no-import workers. Domain transactions and
+Agent tools use the same revisioned conversation service. Registry disable and
+update share an OS-held writer lock with bounded commits, so revocation does
+not expire beneath an active writer. See [Canvas](66-immersive-artifact-canvas.md#installed-workspace-contract-v1-2026-10-22)
+and [authoring](../canvas-workspace-authoring.md) for limits and qualification.

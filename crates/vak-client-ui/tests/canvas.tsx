@@ -80,14 +80,14 @@ const seg = (label: string) => [...document.querySelectorAll<HTMLElement>(".arti
 const shown = () => /<h1>([^<]*)<\/h1>/.exec(frame()?.srcdoc ?? "")?.[1];
 const check = (ok: unknown, message: string) => { if (!ok) throw new Error(message); return message; };
 const clear = () => { while (store.canvasOpen()) store.closeArtifactCanvas(); };
-const open = async (run: () => void) => { clear(); await settle(); requests.length = 0; previewCalls.length = 0; run(); await settle(); };
+const open = async (run: () => void | Promise<void>) => { clear(); await settle(); requests.length = 0; previewCalls.length = 0; await run(); await settle(); };
 const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bash", command: "", language: "", scratchDir: "", stdout: "", stderr: "", packages: [], artifacts: [{ path, mimeType: "text/html", sizeBytes: 1 }], status: "completed" as const, timestamp: "" });
 
 (window as any).runChecks = async () => {
   const passed: string[] = [];
   (window as any).__passed = passed;
 
-  await open(() => store.openArtifactCanvas({ kind: "inline", title: "Probe", html: "<h1>inline</h1><script>1</script>" }));
+  await open(() => store.openInlineCanvas({ title: "Probe", html: "<h1>inline</h1><script>1</script>" }));
   passed.push(check(shown() === "inline" && requests.length === 0, "Inline markup renders without reading any file"));
   passed.push(check(frame()?.getAttribute("sandbox") === "allow-forms", "A static preview pauses code without same-origin access"));
   passed.push(check(/^<!doctype html><meta http-equiv="Content-Security-Policy"/.test(frame()?.srcdoc ?? "") && /connect-src 'none'/.test(frame()!.srcdoc), "The no-network policy comes first in the frame"));
@@ -123,7 +123,7 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   passed.push(check(frame()?.getAttribute("sandbox") === "allow-scripts allow-same-origin allow-forms allow-popups", "A preview origin frame keeps its own storage and opens windows"));
   await open(() => store.openArtifactCanvas(fileSubject("site/index.html", { sessionId: sid, candidateId: "c1" }, "index.html")));
   passed.push(check(previewCalls.join() === "open:candidate:site/index.html", "A saved version opens its local preview from the saved draft identity"));
-  await open(() => store.openArtifactCanvas({ kind: "inline", title: "Probe", html: "<h1>inline</h1>" }));
+  await open(() => store.openInlineCanvas({ title: "Probe", html: "<h1>inline</h1>" }));
   passed.push(check(previewCalls.length === 0 && shown() === "inline", "Markup from the conversation never gets an origin"));
   await open(() => store.openArtifactFile("site/index.html", { sessionId: sid }));
   previewCalls.length = 0;
@@ -273,7 +273,7 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   await settle();
   if (store.canvasStacks() !== before) throw new Error("Opening a ninth tab discarded unsent work");
   if (store.canvasEntry()?.draft !== "Unsent note 7") throw new Error("The active note changed");
-  if (!document.querySelector(".toast")?.textContent?.includes("unsent notes")) throw new Error("The tab-limit explanation is missing");
+  if (!document.querySelector(".toast")?.textContent?.includes("unsent work")) throw new Error("The tab-limit explanation is missing");
   store.updateCanvasEntry({ draft: "" });
   store.openArtifactCanvas(fileSubject("overflow.html", { sessionId: sid }, "overflow.html"));
   await settle();
@@ -281,3 +281,13 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   if (store.canvasEntries().filter(entry => entry.draft.length > 0).length !== 7) throw new Error("A protected note was evicted");
   return ["A full Canvas preserves all eight unsent notes", "The limit has a visible explanation", "Only a clean tab makes room"];
 };
+
+if (new URLSearchParams(location.search).has("run")) {
+  void (window as any).runChecks().then((passed: string[]) => {
+    document.documentElement.dataset.checks = `${passed.length} checks passed`;
+    const output = document.createElement("pre"); output.textContent = passed.join("\n"); document.body.append(output);
+  }).catch((error: unknown) => {
+    document.documentElement.dataset.checks = `FAILED: ${String(error)}`;
+    const output = document.createElement("pre"); output.textContent = String(error); document.body.append(output);
+  });
+}

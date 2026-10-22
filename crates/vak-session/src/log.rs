@@ -912,6 +912,15 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::CardAction(record)))
     }
 
+    /// Records the provenance of an explicitly selected workspace projection.
+    pub fn append_workspace_context(
+        &mut self,
+        record: crate::workspaces::WorkspaceContextRecord,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::WorkspaceContext(record)))
+    }
+
     /// Appends a person setting a turn aside, or restoring it (doc 99 §4 F).
     pub fn append_turn_mark(
         &mut self,

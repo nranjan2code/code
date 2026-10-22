@@ -1,6 +1,6 @@
 # 66 — Immersive Polyglot Artifact Canvas
 
-Status: **implemented for a Canvas on this computer — the viewer, split/focused modes, device switcher and polyglot formats shipped in 3.0.85; preview isolation (§3.1), the frame and per-conversation Canvas (§0a), subject identity (§0) and preview origins (§3.2) landed after it. Previewing several files or a dev server from a browser on another machine is not built; `docs/plans/canvas-plan.md` has the remaining work.**
+Status: **in progress — the shared workspace foundation is built (2026-10-22); installable declarative contributions, isolated pure WebAssembly calculations, revisioned commands/undo and logged Agent context are built; complete specialized surfaces and device qualification remain open. Implemented for a Canvas on this computer — the viewer, split/focused modes, device switcher and polyglot formats shipped in 3.0.85; preview isolation (§3.1), the frame and per-conversation Canvas (§0a), subject identity (§0) and preview origins (§3.2) landed after it. Previewing several files or a dev server from a browser on another machine is not built; `docs/plans/canvas-plan.md` has the remaining work.**
 
 ## 1. Product Decision & Thesis
 
@@ -25,8 +25,8 @@ When agents generate deliverables — web applications, prototypes, diagrams, re
 `ArtifactCanvas.tsx` is a frame: header, tab strip, comment area and footer. What each kind of subject can do (its views, whether it can be reloaded, shown at device widths or opened in its own window, where it opens, whether comments are always there) is data in `canvasViewers.ts`, and each kind is drawn by a viewer in `components/canvas/`. Each viewer reads its own content through `createLoader`, which discards a load that has been overtaken and releases what it allocated (a blob URL, a running dev server). A viewer that throws is contained by an error boundary and offers another go. A new subject kind is a registry entry and a viewer.
 
 Each conversation has its own Canvas (`canvasStack.ts`): the subjects opened in it are tabs, reopening one brings it forward and keeps the view, selection and unsent note the reader left in it (the same subject is not read again), and at most eight are kept. Automatic eviction skips every tab with an
-unsent note. If all eight have notes, opening another subject leaves the
-Canvas unchanged and explains that a note must be finished first; reopening
+unsent note or workspace checkpoint. If all eight contain unsaved work, opening another subject leaves the
+Canvas unchanged and explains that work must be saved or finished first; reopening
 an existing subject remains allowed. Only an explicit close can remove a
 tab that still has a note. This protects tab visibility changes, not remote
 sync failures or reload durability; those remain open under hardening P06. Leaving a conversation hides its Canvas and coming back finds it as it was. Documents open on the whole viewport and can be placed beside the conversation; a phone always uses the whole viewport.
@@ -107,14 +107,9 @@ future retrieval and reload, not a claim to wipe a person's browser memory.
 This does not provide offline unlocking or recovery across arbitrary new
 tabs/machines, and does not close the wider S5 authorization/acceptance work.
 
-Existing plaintext Canvas files from the supported data baseline are
-converted once under their historical writer lock. The converter validates
-the source, creates an Agent-owned Document containing conversation-key ciphertext,
-reads that copy back, checks fencing, then removes the identical plaintext
-source. A conflict or failed conversion preserves the source and refuses
-rather than treating the Canvas as empty. Ordinary reads and writes use
-Documents only, without a separate Canvas lock or retry model. Conversation
-holds and erasure act through the existing conversation key; Document
+Canvas reads and writes use the current Document contract only. The plaintext
+conversion path has been removed; there is no legacy reader or migration.
+Conversation holds and erasure act through the existing conversation key; Document
 collection remains confined to its Agent scope, separate from conversation
 ledger objects. The ciphertext is owned by the Document version, so
 history pruning releases old snapshots through ordinary Document collection.
@@ -283,3 +278,229 @@ have disclosures, while failed checks and verification warnings stay visible.
 Addressed comments exit Focus and reveal their composer. The pinned footer
 explains unread, empty or omitted-edit decisions. The shared control system
 applies to every file type. See [acceptance](../audits/control-density-review-2026-10-21.md).
+
+## Shared workspace foundation (2026-10-22)
+
+The current workspace subject carries a namespaced type, resource id, scope
+and explicit revision. `canvasWorkspaces.ts` registers owned compiled
+renderers; `WorkspaceViewer` retains an unavailable subject rather than
+discarding it when a contribution is absent. This is not an executable plugin
+loader. Saved current-contract Canvas shapes are validated atomically; an
+invalid shape refuses restoration instead of saving a reduced tab set. Inline
+subjects use scoped SHA-256 content identity, independent of display title.
+
+`CanvasWorkspaceContext` supplies viewport metrics and small JSON checkpoints
+(schema, summary and data). Checkpoints live in the existing encrypted Canvas
+Document and recovery/CAS path. They survive tab unmount, protect eviction,
+participate in conflict resolution and prompt before close. They are pending
+edits, not saved artifact versions. Mail/calendar composers use this context
+when hosted in Canvas; standalone composers retain their existing behavior.
+
+`canvasDrawing.ts` exposes logical/physical dimensions and frame-coalesced
+resize/DPI updates. Its optional drawing surface schedules animation at display
+cadence and stops hidden, offscreen, disposed or context-lost work. Owned
+renderers manage GPU state and domain models. The split divider supports pointer
+and keyboard resizing; tabs have roving keyboard navigation; focused/narrow
+Canvas contains keyboard focus, while split Canvas leaves conversation access.
+
+The design direction and remaining specialized-surface and device gates are in the [research](../research/canvas-workspaces-2026-10-22.md).
+The [acceptance](../audits/canvas-foundation-2026-10-22.md) distinguishes browser
+fixtures, actual native WebKit and the still-open installed-shell/hardware gates.
+The real 3D workspace is a test renderer, not a shipping simulation engine.
+
+## Installed workspace contract v1 (2026-10-22)
+
+The maintainer requested installation, isolation, domain commands, undo and
+Agent context. These are implemented through existing packages, capabilities,
+Documents, runs, tools and conversation admission. The
+[authoring guide](../canvas-workspace-authoring.md) describes the supported
+contract and [acceptance](../audits/canvas-plugins-2026-10-22.md) records its
+verification limits. Arbitrary package JavaScript/React is not executed in the
+application origin. Declarative fields use our shared renderer; optional pure
+WebAssembly runs in disposable workers with no imports. Longer/external work
+uses existing brokered tools and effect/trigger contracts.
+
+Package definitions are inspected before activation, namespaced and bound to
+package digest and registry generation. Disable/update shares the OS registry
+writer lock with bounded resource commits: old commits finish before disable
+returns, and stale requests are refused. Every edit has an explicit actor,
+recorded run and expected resource revision. Undo/redo changes the resource
+revision through the same validation path; it does not rewind external actions.
+Resources and history are conversation-sealed Documents; the catalog inherits
+conversation scope and removes hidden work. Large meshes/volumes belong in
+existing artifact resources rather than the bounded resource document.
+
+The launcher opens saved work in its conversation. Pending field edits use the
+existing Canvas checkpoints and survive unavailability. Poll/focus refresh
+rechecks activation; worker jobs abort on replacement or disposal. Resource
+writes always check current activation on the server. A 30-second worker budget
+bounds interactive calculations; numerical correctness is the domain author's
+responsibility, and server validation of a computed proposal is not proof of
+its numerical truth.
+
+Ask Agent freezes only explicitly selected declared fields from the saved
+revision. It writes a typed `WorkspaceContext` entry whose projection is a
+conversation object, then admits the ordinary message linked to that entry.
+Unsent fields are excluded. Session-bound `workspace_read` / `workspace_edit`
+tools give the Agent the same command/CAS/undo service through normal tool
+permissions. Opening a workspace alone sends no data to a model.
+
+## Broader workspace direction (2026-10-22)
+
+The requirements below guide richer domain adapters beyond v1. General typed
+object/region selection, streamed artifact resources, arbitrary specialized
+installed UI layouts and device certification remain open; the declarative
+parameter example is not a CAD or scientific solver. The compiled owned 3D
+fixture proves a renderer path, not an installable 3D product.
+
+### Package contribution and capability negotiation
+
+One package can contribute several workspaces. Each definition needs a schema,
+plugin-qualified stable id, label, accepted resource/media schemas, entrypoint
+mode, declared command/context/selection schemas and required/optional host
+capabilities. Bind the definition to the inspected plugin digest and activation
+generation; a matching string name is insufficient. Inspect contribution bytes
+before activation, using the existing bounded package reader. Unknown executable
+modes and unsupported security requirements refuse activation with a reason.
+Do not silently reinterpret a script as a declarative pack.
+
+Keep three things distinct: a renderer's availability, a device's technical
+capabilities and a principal's authority. For example, WebGL2 support is not
+permission to read a model, and permission to read a model is not permission to
+send it to a service. Required technical capability absence shows unavailable;
+optional capability absence lets the extension supply a useful alternate view.
+Do not route on desktop/web names. The same contract and resource revisions
+apply to both, with small adapters reporting what the actual engine supports.
+
+A declarative workspace composes Vakyartha's owned primitives and typed commands.
+An executable workspace runs outside the application origin/process authority
+through an owned isolated host. Select the concrete isolation mechanism only
+after tests establish origin separation, GPU/worker support, resource transfer,
+network enforcement and native/Web parity. An iframe alone is not a promise of
+network confinement. Never expose app bearer tokens, native IPC, credentials,
+policy writes, arbitrary privileged fetch or raw filesystem access to it.
+
+Security must preserve useful capabilities. Rendering, animation, camera input,
+local interaction and suitable worker computation are normal workspace work.
+Authorized resource access, connected services and long computations use scoped
+host operations. An offline renderer need not lose animation; a network-enabled
+simulation need not receive every credential. A person's explicit trust choice
+can permit broader execution through existing policy, never an automatic
+fallback after denial. No feature-specific blanket ban substitutes for an
+actual boundary. These requirements extend the existing agent security contract.
+
+### Resource and command services
+
+A resource handle identifies an existing authoritative resource and immutable
+revision, plus its audience/scope. Its live binding includes the principal,
+plugin digest, instance id and permission generation. Handles are issued and
+checked by the authority layer, never accepted merely because UI echoed one.
+Workspace type and display title confer no access. Use Library artifact/version
+identity for reviewed deliverables, Documents for structured Agent state and
+existing provider-account provenance for connected data. Do not build a Canvas
+file store, second scene database or alternate grant list.
+
+Expose bounded metadata, range/chunk reads and subscriptions as needed. Large
+meshes, image volumes, media and solver outputs stay out of Canvas snapshots.
+Use transferable buffers or streams at the rendering boundary where supported;
+never base64 a full volume through repeated state updates. Cancel a view's
+reads and release handles on disposal. Retain immutable version/evidence
+references so a result is reproducible and can be reopened on another device.
+
+A domain command request names its registered command, resource handle, expected
+revision and schema-validated arguments. Bind execution to current authority,
+not an iframe's claimed human gesture. Return typed outcomes: applied with a
+new revision/receipt, conflict with the current revision, denied, unavailable,
+cancelled with partial work, or failed with a typed reason. A stale command
+never silently rebases a transform, measurement or constraint. Domain adapters
+may offer an explicit conflict-resolution operation.
+
+The extension owns meaning and validation: units, coordinate frames, object
+references, numerical constraints, scene graphs and simulation parameters. The
+host owns the envelope, admission, cancellation and receipt. Agent calls use
+the same admitted operations; a UI command must not become a bypass around
+tool permissions. A computation uses a recorded run, external mutations use
+effects, repeated work uses triggers, and artifacts name their real parent.
+
+Undo/redo belongs to domain edit transactions, not Canvas tab history. A
+transaction may return an inverse command tied to the resulting revision.
+Concurrent changes require domain validation again. For an external action,
+undo is an explicit supported compensation with its own effect/receipt, never
+a UI promise to erase the action. Simulation pause/stop and renderer disposal
+are separate: closing a viewport releases graphics but does not secretly stop
+a durable run, and pausing animation does not pause the numerical solver.
+
+### Selection and Agent context
+
+Domain selection has a registered namespace/schema, resource revision, typed
+locator and human description. It can address an object/face, component,
+series/frame/region, cell/range, equation or time interval without adding those
+semantics to the core. A selection is not authority and does not automatically
+become model context. Changing the current resource invalidates an incompatible
+selection; a missing target stays missing rather than rebinding by position.
+
+An explicit “Ask Agent” operation freezes a bounded context projection with its
+resource/evidence references and pending-edit status. Admit that projection
+through the ordinary logged conversation path, so anything sent to a model is
+reconstructable from its ledger. Opening a medical or engineering workspace
+must not silently send its full data, screenshots, hidden panels or renderer
+memory to the model. A checkpoint is recoverable editing state, not proof that
+an Agent or provider saw it. UI-only interactions need no model round trip.
+
+### Complete working surfaces and adaptive layout
+
+A workspace may own its full content area: stage, tool strip, inspector,
+resource tree, timeline, console or results. The host supplies consistent entry,
+close, navigation, status and conversation access, without forcing all domain
+controls into the common toolbar. A simple viewer should not pay for unused
+docking, simulation or scene services. Default full-workspace mode uses the
+whole area; split mode preserves a usable conversation reading width.
+
+On narrow displays, keep the primary stage usable and expose tools/inspector
+as reachable panels rather than squeezing every desktop column into view.
+Persist document edits independently of local layout/camera preferences.
+Keyboard, touch and pen are input channels; do not infer edit authority from
+one device class. Preserve IME, pointer cancellation, capture, multi-pointer
+ownership, focus return and readable controls. Dialogs stack above the working
+surface, and the most specific active interaction handles Escape first.
+
+### Lifetime, fidelity and performance
+
+The host distinguishes unavailable, mounting, active, suspended, failed and
+disposed views. Pending edits belong to the resource/tab and survive these
+transitions. The built editing lease aborts on tab unmount or compiled renderer
+replacement; late callbacks cannot mutate the tab. Checkpoint values are copied
+at both sides, reject accessors/cycles/runtime objects and are bounded to 64
+levels and 100,000 values. They are small recovery values, not a domain engine
+limit: large/high-fidelity data uses the resource service.
+
+A renderer owns its GPU/decoder/worker allocations and releases them on disposal.
+Context restoration rebuilds graphics from domain state. Static work renders
+on invalidation; animation uses display-paced callbacks and elapsed time.
+Simulation, animation and media playback have separate clocks, so rendering
+load does not change numerical meaning. Accumulate high-frequency input locally
+and commit meaningful edit transactions, not durable pointer events per frame.
+
+Match physical backing pixels to actual layout/DPI, including fractional scale
+and moving between displays. A renderer may negotiate an explicit quality level
+for constrained GPUs; report reduced fidelity rather than silently advertising
+full resolution. Check device texture/buffer limits and memory pressure. Heavy
+preprocessing/solvers leave the input thread. Measure input latency, presented
+frames/GPU time where available, memory and power under representative work;
+callback intervals alone establish neither smooth presentation nor solver
+performance. The current acceptance matrix states its narrower evidence.
+
+### Remaining broader-workspace gates
+
+1. Add validated workspace contributions to the existing package inventory and
+   capability lifecycle, with digest-bound enable/disable/replacement tests.
+2. Establish the isolated execution transport and scoped resource/command
+   service, including adversarial attempts to use foreign handles, stale
+   generations, oversized messages, forged gestures and cross-origin access.
+3. Add domain selection/context and logged Agent actions, checking exact resource
+   revisions and context provenance; demonstrate command/undo conflicts.
+4. Exercise a complete workspace with a stage and inspector/timeline, then a
+   structurally different domain. Keep the common frame domain-neutral.
+5. Qualify browser/native engines, permissions revoked mid-operation, cross-surface
+   reopen/conflicts, input devices and representative rendering workloads. An
+   unsupported feature has an actionable reason and preserves work.

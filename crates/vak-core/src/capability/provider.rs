@@ -307,6 +307,24 @@ impl Core {
             });
         }
 
+        // Workspace definitions are capabilities; their UI never grants execution.
+        match self.canvas_workspaces() {
+            Ok(definitions) => {
+                for definition in definitions {
+                    out.push(Declaration {
+                id:CapabilityId::new(CapabilityKind::Workspace,&definition.spec.id),
+                origin:Origin::Plugin{plugin:definition.plugin.clone(),scope:definition.scope.clone()},
+                summary:definition.spec.description.clone(),serves:Serves::Undeclared,
+                digest:Some(definition.digest),source:None,
+                configuration:serde_json::json!({"commands":definition.spec.commands.iter().map(|command|&command.id).collect::<Vec<_>>()}),
+            });
+                }
+            }
+            Err(error) => {
+                tracing::warn!(error_kind=%vak_telemetry::error_kind(&error),"workspace contributions could not be verified")
+            }
+        }
+
         // --- commands ----------------------------------------------------
         for command in self.custom_commands() {
             out.push(Declaration {

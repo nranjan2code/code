@@ -849,7 +849,8 @@ impl TaskTool {
                 CapabilityKind::Tool => child_tool_names.contains(&capability.name.as_str()),
                 CapabilityKind::Skill
                 | CapabilityKind::McpServer
-                | CapabilityKind::Presentation => true,
+                | CapabilityKind::Presentation
+                | CapabilityKind::Workspace => true,
                 CapabilityKind::Hook | CapabilityKind::Command => false,
             })
             .cloned()

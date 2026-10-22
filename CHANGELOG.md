@@ -1,3 +1,28 @@
+## Unreleased
+
+- Closing Canvas returns focus to its external opener even after switching
+  conversations or replacing its view.
+
+- Enabled packages can contribute Canvas workspaces with typed fields and domain
+  commands. Saved state has revision checks and undo/redo; disabling or updating
+  a plugin refuses stale operations and keeps its work. Optional pure WebAssembly
+  calculations run in disposable workers without host imports.
+- Canvas workspaces can share selected saved fields with the Agent through a
+  logged context entry. Conversation-bound Agent tools use the same edit service;
+  pending UI edits remain local until applied. The shared web/desktop launcher
+  opens saved work or starts an enabled workspace.
+
+- Canvas preserves workspace edits across tab switches, protects them from automatic
+  eviction, and asks before discarding them. Conflicting edits can be compared.
+  Malformed saved Canvases are refused intact; inline previews use scoped SHA-256
+  identities. The plaintext Canvas conversion path is removed.
+- Shared Canvas workspace registration, viewport metrics and drawing scheduling
+  support owned interactive renderers across web and desktop. The divider supports
+  pointer and keyboard resizing; tabs support keyboard navigation. Disposed or
+  replaced renderers lose their editing lease; independent note and domain edits
+  merge without carrying stale values from the other field. The real 3D
+  renderer is an acceptance fixture, not an installed domain plugin.
+
 ## 8.20.0 — 2026-10-22
 
 - The turn navigator rolls with the mouse wheel, trackpad, drag and keyboard;

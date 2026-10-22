@@ -1,6 +1,6 @@
 # Plan — the Canvas as a multi-surface workspace
 
-Status: **implemented. K0 to K6 are done (K6 on 2026-10-02): K5 for scheduled routines (2026-09-30) and K5b, the mail and calendar viewer, arrived with the mail and calendar work (the `daily_mail_calendar` subject, `components/canvas/viewers.ts`); K3 is for a Canvas on this computer. Live provider data in that viewer is open with the mail and calendar plan.** Review of the
+Status: **in progress — the shared workspace foundation is built; installable v1 contributions, isolated calculations, domain commands/undo and Agent context are built; specialized full surfaces and device qualification remain open. K0 to K6 are done (K6 on 2026-10-02): K5 for scheduled routines (2026-09-30) and K5b, the mail and calendar viewer, arrived with the mail and calendar work (the `daily_mail_calendar` subject, `components/canvas/viewers.ts`); K3 is for a Canvas on this computer. Live provider data in that viewer is open with the mail and calendar plan.** Review of the
 Canvas at `61393a37` against `66-immersive-artifact-canvas.md`,
 `80-mail-and-calendar.md` ("Preview and working area", on
 `codex/mail-calendar`), `72-openxml-documents.md` and
@@ -55,3 +55,49 @@ K3 took a loopback port per preview and removed the dock preview outright. K3b
 needs a design decision on how a remote deployment names and reaches the
 preview origin. K4 needs the maintainer to authorize collaboration stage C0 or
 later.
+
+## Workspace foundation — 2026-10-22
+
+Current-contract identity/restoration, the owned workspace registry, host
+checkpoints, shared viewport/drawing scheduling and keyboard/resize work are
+built. The [research](../research/canvas-workspaces-2026-10-22.md) sets the
+broader specialized-surface and qualification gates;
+the [acceptance](../audits/canvas-foundation-2026-10-22.md) records measured scope.
+The 3D scene is a real WebGL2 acceptance renderer, not a production domain
+plugin. No new UI SDK, store or compatibility layer was introduced.
+
+### Next stages for complete working surfaces
+
+| Stage | Work | Exit evidence |
+| --- | --- | --- |
+| W1 — lifecycle foundation (built, browser follow-through passed) | Scoped identity, atomic restore, compiled contributions, revocable copied checkpoints, shared drawing/focus/resize | Node/TypeScript/build checks and dated rendering matrix; 15 host lifecycle checks per desktop/phone light/dark run |
+| W2 — contribution admission (v1 built; broader negotiation open) | Existing package/capability inventory, digest-bound definitions, required/optional capability negotiation, enable/disable/replacement | Same package on web/native; unsupported capability stays explicit and preserves work; no executable loading without its isolated host |
+| W3 — isolated services (v1 built; GPU/stream transport open) | Own execution transport, scoped resource handles, admitted domain commands, current permission generations | Hostile handle/message/origin/revocation cases and real GPU/worker/resource transfer qualification |
+| W4 — Agent collaboration (v1 built; typed object/region selection open) | Version-bound domain selections, bounded logged context, command/undo transactions and receipts | Agent and human modify the same resource through the same authority; stale/conflicting revisions remain explicit |
+| W5 — complete workspace | Stage, inspector/tools/timeline plus a structurally different second domain | Domain meaning stays in extensions; adaptive layout/keyboard/touch/pen retain useful work and conversation access |
+| W6 — device qualification | Representative heavy work, memory/power/input latency, native shells and multiple refresh rates | Measurements from actual devices/engines, not a blanket claim based on a cube or emulated viewport |
+
+The target interfaces and security-with-capability principle are specified in
+[the workspace extension contract](../design/66-immersive-artifact-canvas.md#installed-workspace-contract-v1-2026-10-22).
+Security constrains authority and resource use; it should not ban rendering,
+interaction or domain computation as a class. Respect existing explicit trust
+choices, and never weaken a promised boundary to make an unsupported feature run.
+
+### Installed contract v1 — 2026-10-22
+
+Implemented inspected native package workspace definitions, closed supported
+schema vocabulary, shared fields UI, package-digest/generation checks and an OS
+registry lock barrier for disable/update. Pure numeric WebAssembly calculations
+run in fresh no-import workers; linear memory/table/module/message limits and
+abort/deadline termination bound interactive work. The host does not accept
+package JavaScript, arbitrary URLs or native IPC requests.
+
+Revisioned conversation Documents hold state and command history, with atomic
+CAS undo/redo and explicit actor/run traces. The catalog inherits conversation
+visibility. Human HTTP and session-bound Agent tools share the same command
+service. Ask Agent logs selected saved context with a typed provenance entry
+and a conversation object. See [authoring](../canvas-workspace-authoring.md)
+and [acceptance](../audits/canvas-plugins-2026-10-22.md). Shared-browser UI/worker qualification passed after browser access returned:
+15 lifecycle and 18 installed-contract checks per desktop/phone light/dark run.
+The focus-return bug found in the first run was fixed. W5/W6 and installed
+native-shell/device qualification remain open. No installed app or real-home package was changed.

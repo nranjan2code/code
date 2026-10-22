@@ -1,4 +1,5 @@
 import { createSignal, Show } from "solid-js";
+import { inlineSubject } from "../src/canvasSubject";
 import { render } from "solid-js/web";
 import HtmlViewer from "../src/components/canvas/HtmlViewer";
 import HtmlPreview from "../src/components/HtmlPreview";
@@ -20,13 +21,14 @@ window.addEventListener("message", e => { if (typeof e.data === "string") receip
 const html = `<!doctype html><h1>Daily pulse</h1><p>Interactive market chart</p><button onclick="parent.postMessage('clicked','*')">Explore scenario</button><div id="chart"></div><script>document.querySelector('#chart').textContent='Chart drawn';let isolated=false;try{parent.document.body}catch{isolated=true}parent.postMessage(isolated?'isolated':'escaped','*')</script><script src="https://example.invalid/external.js"></script><script type="application/json">{"data":true}</script>`;
 const local = `<h1>Local chart</h1><script src="chart.js"></script>`;
 const reader = { readFile: async (path: string) => ({ path, kind: "text" as const, bytes: 64, editable: false, content: `parent.postMessage('local:${path}','*')` }), readFileRaw: async () => { throw new Error("Unexpected media read"); } };
+const previewSubject = await inlineSubject({ title: "Daily pulse", html });
 render(() => <main style="height:100dvh;display:flex;flex-direction:column;min-width:0">
   <nav style="display:flex;flex-wrap:wrap;gap:8px;padding:8px">
     <button id="review" class="btn" onClick={() => setReview(true)}>Review spreadsheet</button>
     <button id="source" class="btn" onClick={() => setView(view() === "source" ? "preview" : "source")}>Source / Preview</button>
     <button id="reload" class="btn" onClick={() => setReload(x => x + 1)}>Reload</button>
   </nav>
-  <section id="canvas-preview" style="flex:1;min-height:0"><HtmlViewer subject={{ kind: "inline", title: "Daily pulse", html }} view={view()} reloadKey={reload()} selection={null} onSelect={() => {}} register={value => { handle = value; }} /></section>
+  <section id="canvas-preview" style="flex:1;min-height:0"><HtmlViewer subject={previewSubject} view={view()} reloadKey={reload()} selection={null} onSelect={() => {}} register={value => { handle = value; }} /></section>
   <section id="local-preview" style="height:260px"><HtmlPreview html={local} page={sandboxedSrcdoc(local)} title="Local chart" sourceLabel="Synthetic selected file" frameClass="library-html-frame" localFiles libraries={libraries()} prepare={() => artifactPreviewMarkup("site/index.html", local, reader)} /></section>
   {/* The production Details container is a CSS size container. It establishes
       a containing block for fixed descendants; Review must escape it. */}

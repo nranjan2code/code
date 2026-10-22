@@ -1,1 +1,1 @@
-{"extends":"./tsconfig.json","include":["src","tests/canvas.tsx","tests/presentation.tsx","tests/canvas-recovery.tsx"]}
+{"extends":"./tsconfig.json","include":["src","tests/canvas.tsx","tests/canvas-drawing.tsx","tests/canvas-3d.tsx","tests/canvas-host.tsx","tests/canvas-installed.tsx","tests/presentation.tsx","tests/canvas-recovery.tsx"]}

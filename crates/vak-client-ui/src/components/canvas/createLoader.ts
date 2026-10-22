@@ -25,7 +25,7 @@ export interface Loader<T> {
  */
 export function createLoader<S, T>(
   source: () => S,
-  load: (source: S, current: () => boolean) => Promise<T>,
+  load: (source: S, current: () => boolean, signal: AbortSignal) => Promise<T>,
   dispose?: (value: T) => void,
   options?: { reloadOn?: () => unknown },
 ): Loader<T> {
@@ -35,6 +35,7 @@ export function createLoader<S, T>(
   const [detail, setDetail] = createSignal<string | null>(null);
   const [attempt, setAttempt] = createSignal(0);
   let generation = 0;
+  let controller: AbortController | undefined;
   let held: { value: T } | undefined;
   let loadedSource: S | undefined;
   let hasLoadedSource = false;
@@ -53,13 +54,16 @@ export function createLoader<S, T>(
     const wanted = wantedSource();
     attempt();
     const mine = ++generation;
+    controller?.abort();
+    controller = new AbortController();
+    const signal = controller.signal;
     const current = () => mine === generation;
     const keepPrevious = held !== undefined && hasLoadedSource && sameSource(loadedSource, wanted);
     if (!keepPrevious) release();
     setLoading(true);
     setError(null);
     setDetail(null);
-    untrack(() => load(wanted, current))
+    untrack(() => load(wanted, current, signal))
       .then((value) => {
         if (!current()) {
           dispose?.(value);
@@ -88,6 +92,7 @@ export function createLoader<S, T>(
 
   onCleanup(() => {
     generation += 1;
+    controller?.abort();
     release();
     loadedSource = undefined;
     hasLoadedSource = false;

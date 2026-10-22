@@ -34,6 +34,13 @@ pub enum Source {
         agent: String,
         tenant: PathBuf,
     },
+    /// Sealed domain resources inherit the conversation's scope and audience.
+    Workspaces {
+        path: PathBuf,
+        session: String,
+        agent: String,
+        tenant: PathBuf,
+    },
     /// An intake source Document; its cursor counts versions.
     IntakeSource(PathBuf),
     /// The intake chain, with the tenant whose objects hold item bodies.
@@ -60,6 +67,7 @@ impl Source {
             Self::Trigger(path) => ("trigger", path),
             Self::Memory { path, .. } => ("memory", path),
             Self::Topics { path, .. } => ("topics", path),
+            Self::Workspaces { path, .. } => ("workspaces", path),
             Self::IntakeSource(path) => ("source", path),
             Self::Intake { dir, .. } => ("intake", dir),
             Self::Artifacts(dir) => ("artifacts", dir),
@@ -92,6 +100,12 @@ impl Source {
                 vak_session::documents::version_count(path) as u64 > from.frames
             }
             Self::Topics {
+                path,
+                session,
+                tenant,
+                ..
+            }
+            | Self::Workspaces {
                 path,
                 session,
                 tenant,
@@ -197,6 +211,18 @@ pub fn discover(data: &Path) -> Vec<Source> {
                     found.push(Source::Sandbox {
                         dir: events,
                         session: Some(id.clone()),
+                    });
+                }
+                let workspace_path = scope.canvas_workspaces(&id);
+                if vak_session::documents::version_count(&workspace_path) > 0 {
+                    found.push(Source::Workspaces {
+                        path: workspace_path,
+                        session: id.clone(),
+                        agent: agent.clone(),
+                        tenant: vak_config::paths::tenant_home_at(
+                            data,
+                            vak_config::paths::LOCAL_TENANT,
+                        ),
                     });
                 }
                 let path = scope.work_threads(&id);

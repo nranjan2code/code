@@ -7,12 +7,12 @@ function explanation(reason?: string): string {
   switch (reason) {
     case "recovery_cleanup": return "Canvas changes saved, but local recovery cleanup failed. Keep this window open and retry before reloading.";
     case "recovery": return "Earlier Canvas changes could not be recovered. Connect and sign in, then retry. Copy any notes written in this window before reloading. Earlier recovery data is kept.";
-    case "conflict": return "Another window changed these notes or filled the Canvas. Your local changes are kept here. Copy your notes, resolve the other window, then retry.";
+    case "conflict": return "Another window changed this work or filled the Canvas. Your local changes are kept here. Compare both versions or copy your work before retrying.";
     case "auth": return "Canvas changes haven’t saved. Sign in again, then retry.";
     case "too_large": return "Canvas changes are too large to save. Shorten a note or close an unused tab, then retry.";
     case "missing": return "This conversation is unavailable. Copy your unsent notes before closing.";
     case "throttled": return "Saving is delayed. Your changes remain here and will retry.";
-    case "newer_schema": return "This Canvas needs a newer app. Copy your unsent notes before closing or updating.";
+    case "unsupported_schema": return "This Canvas uses an unsupported format. Its saved contents are kept. Copy unsaved work before closing.";
     case "invalid": return "Canvas changes couldn’t be saved. Copy your unsent notes before closing.";
     default: return "Canvas changes haven’t saved. Your changes remain here and will retry.";
   }
@@ -43,18 +43,18 @@ export default function CanvasSaveNotice(props: {
   return <Show when={props.status.state !== "saved"}>
     <div class="artifact-canvas-notice">
       <span role="status" aria-live="polite">{props.status.reason === "conflict" && props.conflict?.notes.length
-        ? "These notes changed in another window. Compare both versions and choose what to keep for each note."
+        ? "This work changed in another window. Compare both versions and choose what to keep."
         : props.status.state === "error" ? explanation(props.status.reason) : "Saving Canvas changes…"}</span>
       <Show when={props.status.reason === "conflict" && props.conflict}>
         {(review) => <div class="canvas-conflict-review" aria-live="off">
           <Show when={review().notes.length === 0}>
-            <p>There is no note-only resolution for this Canvas change. Copy your notes, then retry after resolving the Canvas elsewhere.</p>
+            <p>This Canvas change needs to be resolved in the other window. Copy your work before retrying.</p>
           </Show>
           <For each={review().notes}>{(note) => <section class="canvas-conflict-note">
             <h3>{note.title}</h3>
             <div class="canvas-conflict-versions">
-              <div><strong>Your changes</strong><pre>{note.local || "(empty note)"}</pre></div>
-              <div><strong>Saved copy</strong><pre>{note.saved || "(empty note)"}</pre></div>
+              <div><strong>Your changes</strong><pre>{note.local || "(no pending edits)"}</pre></div>
+              <div><strong>Saved copy</strong><pre>{note.saved || "(no pending edits)"}</pre></div>
             </div>
             <div class="settings-actions">
               <button type="button" class="settings-button" aria-pressed={choices()[note.key] === "mine"} disabled={resolving()} onClick={() => setChoices((current) => ({ ...current, [note.key]: "mine" }))}>Keep my changes</button>
@@ -75,7 +75,7 @@ export default function CanvasSaveNotice(props: {
         <span>Recovery is kept in this tab. After a reload, connect and sign in to restore it.</span>
       </Show>
       <Show when={(props.status.reason === "conflict" || props.status.reason === "recovery" || props.status.recovery === "unavailable") && props.onCopy}>
-        <button type="button" class="artifact-canvas-btn" onClick={() => props.onCopy?.()}>Copy unsent notes</button>
+        <button type="button" class="artifact-canvas-btn" onClick={() => props.onCopy?.()}>Copy unsaved work</button>
       </Show>
       <Show when={props.status.state === "error"}>
         <button type="button" class="artifact-canvas-btn" onClick={props.onRetry}>Retry saving</button>

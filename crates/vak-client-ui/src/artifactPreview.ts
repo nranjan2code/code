@@ -25,6 +25,7 @@ export function subjectReader(subject: CanvasSubject): ArtifactPreviewReader | n
     case "daily_mail_calendar":
     case "answer":
     case "page":
+    case "workspace":
       return null;
   }
 }

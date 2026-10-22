@@ -1,21 +1,34 @@
-## Canvas workspace architecture review (2026-10-22)
+## Canvas workspace foundation (2026-10-22)
 
-- [ ] Replace partial Canvas restoration with atomic current-contract
-  validation and explicit unavailable-plugin state; never save a reduced
-  snapshot after silently skipping a subject. No legacy/compatibility reader.
-- [ ] Replace inline/answer-subset short-hash identity with canonical scoped
-  identity and explicit revision. The inline collision is reproduced.
-- [ ] Define viewer-independent dirty state, checkpoint/suspend/restore and
-  close/eviction handling for domain edits, beyond the frame's comment note.
-- [ ] Qualify focused Canvas keyboard entry, containment and focus return;
-  preserve conversation access in split mode.
-- [ ] Review the proposed full-workspace host contract before implementation:
-  namespaced plugin contributions, scoped resources, commands, Agent context,
-  state schemas, revocation and an explicitly designed isolated execution
-  boundary. Build one clean shared web/desktop implementation, remove
-  superseded paths, and add no migration/backward-compatibility layer.
-  This proposal does not authorize a new executable UI runtime.
-  See the [architecture review](../audits/canvas-workspace-architecture-2026-10-22.md).
+- [x] Atomic current-contract restoration, explicit unavailable workspace, scoped
+  inline SHA-256 identity; remove plaintext conversion without compatibility.
+- [x] Shared compiled workspace registry, viewport/DPI metrics and drawing
+  scheduler; checkpointed edits survive remount, protect eviction/close and
+  participate in conflict recovery. Keyboard tabs and split resizing.
+- [x] Research comparable systems and validate shared desktop/phone light/dark
+  drawing/3D fixtures; probe actual native WebKit. See
+  [research](../research/canvas-workspaces-2026-10-22.md),
+  [acceptance](../audits/canvas-foundation-2026-10-22.md) and the
+  [original review](../audits/canvas-workspace-architecture-2026-10-22.md).
+- [x] Run `tests/canvas-host.html?run` at 1440 × 900 and 390 × 844,
+  light/dark: 15 checks each. Fixed lost opener focus across conversation/view
+  replacement; all four runs pass.
+- [x] Installable v1 package contributions, activation/revocation barrier,
+  owned declarative UI and no-import WebAssembly calculation workers; revisioned
+  domain commands, undo/redo, scoped Agent tools and selected logged context.
+  See [authoring](../canvas-workspace-authoring.md) and
+  [acceptance](../audits/canvas-plugins-2026-10-22.md).
+- [x] Qualify installed workspace form/launcher and actual Worker computation
+  and cancellation in the shared browser UI: 18 checks at each size/theme.
+  API fixtures are stubs; server authority has separate integration coverage.
+  See the browser follow-through in the acceptance record above.
+- [ ] Add richer typed object/region selections, artifact chunk/stream adapters
+  and complete installed stage/inspector/timeline workspaces, including a
+  structurally different domain; v1 fields are not a full CAD/science UI.
+- [ ] Qualify installed Tauri shell, Windows/Linux engines and physical touch/pen
+  devices; representative heavy scenes, long-session memory, input-to-photon,
+  GPU/context loss, reduced motion, background/resume and multiple refresh rates.
+  Same-machine viewport emulation is not device certification.
 
 ## Turn navigator and automatic Topics (2026-10-22)
 

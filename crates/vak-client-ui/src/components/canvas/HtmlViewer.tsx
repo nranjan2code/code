@@ -31,7 +31,7 @@ type Shown =
 export default function HtmlViewer(props: ViewerProps) {
   const [running, setRunning] = createSignal(false);
   const loader = createLoader(
-    () => subjectKey(props.subject),
+    () => [subjectKey(props.subject), props.subject.kind === "inline" ? props.subject.html : ""],
     async () => {
       const subject = props.subject;
       const reader = subjectReader(subject);

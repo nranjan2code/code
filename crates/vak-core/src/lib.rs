@@ -48,6 +48,7 @@ pub type PermissionRuleLists = (Vec<String>, Vec<String>, Vec<String>);
 
 pub mod ability_review;
 pub mod ability_sheet;
+pub mod canvas_workspaces;
 mod catalog;
 pub mod elsewhere;
 mod indexed_history;
@@ -73,6 +74,7 @@ pub mod gateway_token;
 pub mod scheduled;
 pub mod tools_automations;
 pub mod tools_commitments;
+mod tools_workspaces;
 pub mod transcript_md;
 pub mod triggers;
 pub mod trust;
@@ -3823,7 +3825,8 @@ impl Core {
                     CapabilityKind::Tool => tools.contains(&capability.name.as_str()),
                     CapabilityKind::Skill
                     | CapabilityKind::McpServer
-                    | CapabilityKind::Presentation => true,
+                    | CapabilityKind::Presentation
+                    | CapabilityKind::Workspace => true,
                     CapabilityKind::Hook | CapabilityKind::Command => false,
                 })
                 .cloned()
@@ -4092,6 +4095,14 @@ impl Core {
             vak_delivery::FORMS,
         )));
         tools.push(Arc::new(vak_tools::TopicsTool));
+        for edit in [false, true] {
+            tools.push(Arc::new(tools_workspaces::WorkspaceTool {
+                core: self.clone(),
+                agent: scope.agent_id.clone().unwrap_or_else(|| "vak".into()),
+                session: scope.session_id.clone(),
+                edit,
+            }));
+        }
         tools.push(Arc::new(tools_automations::AutomationsTool {
             shared: self.shared_scope(),
             runs: self.runs(),

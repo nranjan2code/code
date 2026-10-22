@@ -11,7 +11,7 @@
 // Import the module once per file (`import "../focusTrap"` or the named
 // export below) so the TS compiler keeps the JSX directive registered.
 
-import type { Accessor } from "solid-js";
+import { createEffect, type Accessor } from "solid-js";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -38,7 +38,9 @@ function sameControl(name: string | null): HTMLElement | null {
     .at(-1) ?? null;
 }
 
-export function trapFocus(el: HTMLElement, _accessor?: Accessor<unknown>): void {
+export function trapFocus(el: HTMLElement, accessor?: Accessor<unknown>): void {
+  const enabled = () => accessor?.() !== false;
+  let tookFocus = false;
   const previouslyFocused = document.activeElement as HTMLElement | null;
   const openerName = controlName(previouslyFocused);
   const hadTabIndex = el.hasAttribute("tabindex");
@@ -48,13 +50,17 @@ export function trapFocus(el: HTMLElement, _accessor?: Accessor<unknown>): void 
   // needs `tabindex="-1"` in markup were it not already interactive) so a
   // dialog with no controls yet (a loading state) still receives focus
   // rather than leaving it on whatever was behind it.
-  queueMicrotask(() => {
-    const first = focusableIn(el)[0];
-    (first ?? el).focus({ preventScroll: true });
+  createEffect(() => {
+    if (!enabled()) return;
+    queueMicrotask(() => {
+      if (!enabled() || !document.contains(el)) return;
+      tookFocus = true;
+      if (!el.contains(document.activeElement)) (focusableIn(el)[0] ?? el).focus({ preventScroll: true });
+    });
   });
 
   const onKeydown = (e: KeyboardEvent) => {
-    if (e.key !== "Tab") return;
+    if (!enabled() || e.key !== "Tab") return;
     const focusable = focusableIn(el);
     if (focusable.length === 0) {
       e.preventDefault();
@@ -88,6 +94,7 @@ export function trapFocus(el: HTMLElement, _accessor?: Accessor<unknown>): void 
       if (!hadTabIndex) el.removeAttribute("tabindex");
       // Restore focus to whatever opened the dialog — a closed modal must
       // not strand focus on `document.body`.
+      if (!tookFocus) { observer.disconnect(); return; }
       if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus({ preventScroll: true });
       else {
         // The replacement can take a few frames to draw; give up after about

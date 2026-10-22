@@ -427,6 +427,11 @@ pub const REGISTRY: &[StateEntry] = &[
     // is written (docs/design/66 §0a).
     agent_entry("agents/{agent}/canvas", "vak-server", Class::Document),
     agent_entry(
+        "agents/{agent}/canvas-workspaces",
+        "vak-session",
+        Class::Document,
+    ),
+    agent_entry(
         "agents/{agent}/canvas-recovery",
         "vak-server",
         Class::Document,

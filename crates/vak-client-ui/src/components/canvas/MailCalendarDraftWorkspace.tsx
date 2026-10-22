@@ -1,4 +1,5 @@
 import { createEffect, createSignal, For, Show, untrack } from "solid-js";
+import { checkpointValue, useCanvasWorkspace } from "./WorkspaceContext";
 import * as api from "../../api";
 import type { MailCalendarCandidate, MailCalendarDraftAction, MailCalendarMailPreview, MailCalendarAccount } from "../../api";
 import ConfirmModal from "../ConfirmModal";
@@ -13,6 +14,10 @@ const actionName = (action: MailCalendarDraftAction) => action.kind === "send_ma
 const actionVerb = (action: MailCalendarDraftAction) => action.kind === "send_mail" ? "send" : action.kind === "cancel_event" ? "cancel" : action.kind === "respond_to_event" ? "respond" : action.kind === "update_event" ? "update" : "create";
 
 export default function MailCalendarDraftWorkspace(props: { agentId: string; openCandidate?: api.MailCalendarCandidate | null; focusReply?: boolean; inlineReply?: boolean; onCloseInlineReply?: () => void; onCandidateOpened?: (candidate: api.MailCalendarCandidate) => void }) {
+  const workspace = useCanvasWorkspace();
+  const checkpointName = props.inlineReply ? "mail-calendar/reply" : "mail-calendar/draft";
+  let inputGeneration = 0;
+  let checkpointSignature = "";
   const [expanded, setExpanded] = createSignal(false);
   const [accounts, setAccounts] = createSignal<MailCalendarAccount[]>([]);
   const [candidates, setCandidates] = createSignal<MailCalendarCandidate[]>([]);
@@ -261,6 +266,7 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
     if (!action) { setError("Enter valid start and end times before saving this draft."); return; }
     if (action.kind === "send_mail" && accountId() !== LOCAL_DRAFT && action.draft.to.length + action.draft.cc.length + action.draft.bcc.length === 0) { setError("Add at least one recipient before saving an account-bound email draft."); return; }
     if (action.kind === "create_event" && accountId() !== LOCAL_DRAFT && !action.draft.title.trim()) { setError("Add an event title before saving an account-bound event draft."); return; }
+    const savedGeneration = inputGeneration;
     const previous = asNew ? null : selected(); setBusy(true); setError(""); setNote(""); setRevisionConflict(false);
     try {
       const result = await api.saveMailCalendarCandidate(props.agentId, {
@@ -269,6 +275,8 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
         ...(previous ? {} : { source_refs: selected()?.source_refs ?? [] }), action,
       });
       setSelected(result.candidate); setEditorKind(result.candidate.action.kind === "send_mail" ? "mail" : result.candidate.action.kind === "respond_to_event" ? "response" : "calendar");
+      if (inputGeneration === savedGeneration) workspace?.clear(checkpointName);
+      else checkpointEdits();
       setNote("Saved in this Agent’s encrypted work area. Nothing was sent or changed on the provider.");
       await refresh(props.agentId);
     } catch (cause) {
@@ -312,7 +320,36 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
     props.onCandidateOpened?.(candidate);
   });
 
-  return <section class="daily-mail-calendar-section mail-calendar-canvas-workspace" aria-label={props.inlineReply ? "Reply composer" : "Mail and calendar drafts and review"}>
+  const checkpointEdits = () => {
+    if (!workspace || !editorKind()) return;
+    const data = checkpointValue({ selected: selected(), accountId: accountId(), editorKind: editorKind(),
+      to: to(), cc: cc(), bcc: bcc(), subject: subject(), body: body(), title: title(),
+      description: description(), location: location(), starts: starts(), ends: ends() });
+    checkpointSignature = JSON.stringify(data);
+    const summary = editorKind() === "mail" ? `To: ${to()}\n${subject()}\n${body()}`
+      : `${title()}\n${starts()} – ${ends()}\n${location()}\n${description()}`;
+    workspace.checkpoint(checkpointName, { schema: 1, summary, data });
+  };
+  createEffect(() => {
+    const saved = workspace?.read(checkpointName);
+    if (!saved || saved.schema !== 1 || !saved.data || typeof saved.data !== "object" || Array.isArray(saved.data)) return;
+    const signature = JSON.stringify(saved.data);
+    if (signature === checkpointSignature) return;
+    const data = saved.data;
+    if (!["mail", "calendar", "response"].includes(String(data.editorKind))
+      || !["accountId", "to", "cc", "bcc", "subject", "body", "title", "description", "location", "starts", "ends"].every(key => typeof data[key] === "string")) return;
+    checkpointSignature = signature;
+    untrack(() => {
+      setSelected(data.selected as unknown as MailCalendarCandidate | null);
+      setAccountId(data.accountId as string); setEditorKind(data.editorKind as "mail" | "calendar" | "response");
+      setTo(data.to as string); setCc(data.cc as string); setBcc(data.bcc as string);
+      setSubject(data.subject as string); setBody(data.body as string); setTitle(data.title as string);
+      setDescription(data.description as string); setLocation(data.location as string);
+      setStarts(data.starts as string); setEnds(data.ends as string); setExpanded(true);
+    });
+  });
+
+  return <section onInput={() => { inputGeneration += 1; checkpointEdits(); }} onChange={() => { inputGeneration += 1; checkpointEdits(); }} class="daily-mail-calendar-section mail-calendar-canvas-workspace" aria-label={props.inlineReply ? "Reply composer" : "Mail and calendar drafts and review"}>
     <Show when={!props.inlineReply}><header class="daily-mail-calendar-calendar-heading"><div><h3>Drafts and Review</h3><span>Saved privately for this Agent · {candidates().length} drafts</span></div><button type="button" class="artifact-canvas-btn" aria-expanded={expanded()} onClick={() => { setExpanded((value) => !value); if (!expanded()) void refresh(); }}>{expanded() ? "Hide drafts" : "Open drafts and review"}</button></header></Show>
     <Show when={props.inlineReply && !expanded()}><p role="status" class="settings-hint">Preparing your private reply draft…</p></Show>
     <Show when={expanded()}>

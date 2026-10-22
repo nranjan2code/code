@@ -368,6 +368,72 @@ pub(crate) fn source(
                 frames: versions.max(from.frames),
             }
         }
+        Source::Workspaces {
+            path,
+            session,
+            agent,
+            tenant,
+        } => {
+            let versions = vak_session::documents::version_count(path) as u64;
+            let hidden = vak_session::conversation_state::get(tenant, session)?.hidden()
+                || vak_session::objects::TenantObjects::for_tenant(tenant)?
+                    .scope_destroyed(&vak_session::objects::conversation_scope(session));
+            let mut statement =
+                tx.prepare("SELECT id FROM nodes WHERE kind = 'workspace' AND session = ?1")?;
+            let ids = statement
+                .query_map([session_node(session)], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(statement);
+            for id in ids {
+                tx.execute("DELETE FROM texts WHERE node = ?1", [&id])?;
+                tx.execute("DELETE FROM edges WHERE src = ?1 OR dst = ?1", [&id])?;
+                tx.execute("DELETE FROM nodes WHERE id = ?1", [&id])?;
+            }
+            if !hidden {
+                let scope = vak_config::scope::AgentScope::new(
+                    path.parent()
+                        .and_then(std::path::Path::parent)
+                        .ok_or(rusqlite::Error::InvalidQuery)?,
+                );
+                let resources = vak_session::workspaces::WorkspaceStore::new(&scope, session)
+                    .and_then(|store| store.list())
+                    .map_err(|error| {
+                        vak_session::types::SessionError::Objects(error.to_string())
+                    })?;
+                let (space, audience): (Option<String>, Option<String>) = tx.query_row(
+                    "SELECT space,audience FROM nodes WHERE id = ?1 AND kind = 'session'",
+                    [session_node(session)],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                for resource in resources {
+                    let id = format!("workspace:{}", resource.id);
+                    upsert(
+                        tx,
+                        Upsert {
+                            id: &id,
+                            kind: "workspace",
+                            space: space.clone(),
+                            agent: Some(agent_id(agent)),
+                            agent_name: Some(agent.clone()),
+                            session: Some(session_node(session)),
+                            audience: audience.clone(),
+                            title: Some(resource.title.clone()),
+                            actor: resource.trace.actor.as_ref().map(ToString::to_string),
+                            run: Some(resource.trace.run.to_string()),
+                            status: Some("open".into()),
+                            locator: Some(path.display().to_string()),
+                            ..Default::default()
+                        },
+                    )?;
+                    set_text(tx, &id, &resource.title)?;
+                    edge(tx, &id, "part_of", &session_node(session))?;
+                }
+            }
+            Position {
+                segment: u64::from(hidden),
+                frames: versions.max(from.frames),
+            }
+        }
         Source::Topics {
             path,
             session,

@@ -107,6 +107,11 @@ fn visible_on_channel(id: &CapabilityId, policy: &ChannelPolicy) -> bool {
         CapabilityKind::Skill => {
             crate::Core::allowed_by(&policy.skills_allow, &policy.skills_deny, &id.name)
         }
+        CapabilityKind::Workspace => crate::Core::allowed_by(
+            &policy.plugins_allow,
+            &policy.plugins_deny,
+            id.name.split('/').next().unwrap_or_default(),
+        ),
         CapabilityKind::Presentation => crate::Core::allowed_by(
             &policy.presentations_allow,
             &policy.presentations_deny,

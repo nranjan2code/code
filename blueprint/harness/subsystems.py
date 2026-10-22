@@ -256,7 +256,7 @@ SUBSYSTEMS = [
      [], [], ["30-output-engineering.md"]),
     ("canvas", "Canvas and previews",
      "The artifact canvas, its viewers, live previews and the preview origin",
-     ["crates/vak-server/src/canvas.rs", "crates/vak-server/src/preview.rs",
+     ["crates/vak-server/src/canvas.rs", "crates/vak-server/src/canvas_workspaces.rs", "crates/vak-core/src/canvas_workspaces.rs", "crates/vak-core/src/tools_workspaces.rs", "crates/vak-session/src/workspaces.rs", "crates/vak-plugin/src/workspace.rs", "crates/vak-server/src/preview.rs",
       "crates/vak-client-ui/src/components/canvas/**", "crates/vak-client-ui/src/components/ArtifactCanvas.tsx",
       "crates/vak-client-ui/src/components/HtmlPreview.tsx",
       "crates/vak-client-ui/src/components/LivePreviewPanel.tsx", "crates/vak-client-ui/src/canvas*.ts",
