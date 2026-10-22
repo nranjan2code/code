@@ -4666,14 +4666,14 @@ fn resolve_process_core_for_cwd(state: &AppState, active: &Core, cwd: &std::path
         return active.clone();
     }
     if cwd == state.core.cwd().as_path() {
-        return state.core.clone();
+        return state.core.clone().with_surface(active.surface().clone());
     }
     if let Ok(c) = state
         .gateway
         .core_pool
         .resolve_at(cwd, None, std::time::Instant::now())
     {
-        return c;
+        return c.with_surface(active.surface().clone());
     }
     // `resolve_at` failing here is not a trust decision — an unconditional
     // `true` would let a workspace whose trust prompt an operator declined
@@ -4681,6 +4681,7 @@ fn resolve_process_core_for_cwd(state: &AppState, active: &Core, cwd: &std::path
     // trust the same way `resolve_at` does rather than assuming it.
     vak_core::Core::new_with_trust(cwd.to_path_buf(), vak_core::trust::is_trusted(cwd))
         .unwrap_or_else(|_| state.core.clone())
+        .with_surface(active.surface().clone())
 }
 
 #[derive(serde::Deserialize, Default)]

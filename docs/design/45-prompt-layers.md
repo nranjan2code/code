@@ -1,5 +1,5 @@
 # 45 — Editable prompt layers
-Status: implemented in 2.0.0; checked against the code on 2026-10-14.
+Status: implemented; prompt ownership and consuming-surface propagation checked on 2026-10-22.
 
 ## Current composition algorithm
 
@@ -35,6 +35,15 @@ composition order within a block.
 
 How these layers fit with the runtime sections, the per-turn tail, history
 and side dispatches is drawn end to end in `docs/design/83-prompt-system.md`.
+
+## Consuming surface and conversation resolution (2026-10-22)
+
+A pooled Core resolves a workspace, not the person or program consuming its
+answer. Re-rooting a request into an Agent workspace or reattaching another
+workspace preserves the caller's declared `Surface`, including its file-preview
+contract. A pool default must not replace a rich client with an HTTP API label;
+API, channel and background callers retain their own surface as well. This is
+transport-independent propagation, with no Agent-name or tool-name routing.
 
 ## Problem
 

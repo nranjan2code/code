@@ -203,7 +203,13 @@ pub(crate) fn pinned_core_for_workspace(
         }
         resolved
     };
-    Ok(core.with_agent_identity(Some(identity.clone())))
+    // Workspace pooling is transport-neutral. Resolving another Agent's
+    // workspace must preserve the actual caller's consuming surface, just as
+    // it preserves the caller's other runtime pins. Otherwise a rich client
+    // is described to the model as a generic HTTP consumer.
+    Ok(core
+        .with_surface(active.surface().clone())
+        .with_agent_identity(Some(identity.clone())))
 }
 
 #[derive(Deserialize, Default)]
@@ -462,4 +468,45 @@ pub(crate) async fn open(
             },
         );
     opened_response(&sid, &identity, &core)
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    #[test]
+    fn another_workspace_preserves_the_callers_consuming_surface() {
+        vak_config::paths::isolate_home_for_tests();
+        let root = tempfile::tempdir().unwrap();
+        let agent_workspace = tempfile::tempdir().unwrap();
+        let base = vak_core::Core::new_with_trust(root.path().into(), true).unwrap();
+        let state = AppState::new(base.clone());
+        for surface in [
+            vak_core::Surface::Web,
+            vak_core::Surface::Desktop,
+            vak_core::Surface::Server,
+            vak_core::Surface::Background,
+            vak_core::Surface::Chat {
+                channel: "test-transport".into(),
+            },
+        ] {
+            let active = base.clone().with_surface(surface.clone());
+            let core = pinned_core_for_workspace(
+                &state,
+                &active,
+                &vak_core::vak_agent_identity(),
+                agent_workspace.path(),
+            )
+            .unwrap();
+            assert_eq!(core.surface(), &surface);
+            assert_eq!(
+                core.surface().previews_files(),
+                active.surface().previews_files()
+            );
+            assert_eq!(
+                core.effective_permission_mode(),
+                active.effective_permission_mode()
+            );
+        }
+    }
 }

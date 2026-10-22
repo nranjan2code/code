@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Working in another Agent's workspace keeps the surface you are using, so
+  the desktop and web apps are no longer described to the model as a plain
+  HTTP client.
+
 ## 8.26.0 — 2026-10-22
 
 - Answer design: align the shared presentation guidance, surface descriptions

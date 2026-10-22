@@ -51,7 +51,7 @@ Counts: 4 proposal, 21 in progress, 58 implemented, 2 reference, 9 superseded, 5
 | [42-managed-work-contracts.md](42-managed-work-contracts.md) | 42 — Managed work contracts | implemented | for the shipped managed-work paths |
 | [43-governed-self-evolution.md](43-governed-self-evolution.md) | 43-governed-self-evolution.md | superseded | by [93-self-evolving-capabilities](93-self-evolving-capabilities.md) (2026-10-14) |
 | [44-shared-config.md](44-shared-config.md) | 44-shared-config.md | implemented | in 3.0.24 |
-| [45-prompt-layers.md](45-prompt-layers.md) | 45 — Editable prompt layers | implemented | in 2.0.0 |
+| [45-prompt-layers.md](45-prompt-layers.md) | 45 — Editable prompt layers | implemented | prompt ownership and consuming-surface propagation checked on 2026-10-22 |
 | [46-stabilization-install-and-onboarding.md](46-stabilization-install-and-onboarding.md) | 46 — Stabilization: one bundle, one install, one first run | historical | proposal, superseded by the shipped 2.0.0 baseline and 3.0.10 lifecycle hardening |
 | [47-commitment-kernel.md](47-commitment-kernel.md) | 47 — The commitment kernel | implemented | The current deterministic reader is `vak_intent::RESOLVER_VERSION = 22` (its history is on the constant |
 | [48-web-client.md](48-web-client.md) | 48 — The web client: one workspace surface, three hosts | implemented | Phases 0–4 (checked against the code on 2026-10-14) |
