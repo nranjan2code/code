@@ -124,8 +124,12 @@ required to call the card tool of that kind, once, when the plan named one
   with no kind.
 
 An entry is a part of the answer, and an entry shown as cards takes as many
-cards as its content has parts; each names the entry in `deliverable`, and
-the first one covers it (`vak_judge::plan::gap`).
+cards as its content has parts; each names the entry in `deliverable`. A
+generic card is covered by a named accepted card. A specifically named form
+needs a card with that actual semantic type or base form: another form with
+the same deliverable name is supporting material and does not cover the
+promise (`vak_judge::plan::gap`). Replacing a card retires its receipt; unrelated
+active receipts remain. The loop and settled evaluation apply the same rule.
 
 The plan's record is the `plan` call itself: its arguments are ledgered
 untruncated with its result, so it is model-visible and `derive_messages()`

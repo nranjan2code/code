@@ -11,6 +11,37 @@ use std::sync::Arc;
 use serde_json::Value;
 use vak_tools::Tool;
 
+/// The presentation receipt and its accepted replacement address. The loop
+/// keeps this small projection as cards arrive; checking a plan never replays
+/// the ledger or counts a retired form.
+pub(crate) struct Accepted {
+    pub id: String,
+    pub replaces: Option<String>,
+    pub receipt: vak_judge::plan::CardReceipt,
+}
+
+#[derive(Default)]
+pub(crate) struct Receipts(std::collections::BTreeMap<String, vak_judge::plan::CardReceipt>);
+
+impl Receipts {
+    pub fn accept(&mut self, card: Accepted) {
+        if let Some(replaced) = card.replaces {
+            self.0.remove(&replaced);
+        }
+        self.0.insert(card.id, card.receipt);
+    }
+
+    pub fn active(&self) -> Vec<vak_judge::plan::CardReceipt> {
+        self.0.values().cloned().collect()
+    }
+
+    /// Delegation can deduplicate to a parent's existing presentation id.
+    /// Seeing it again must not erase that parent's accepted attribution.
+    pub fn observe_unattributed(&mut self, id: String) {
+        self.0.entry(id).or_default();
+    }
+}
+
 /// A `plan` deliverable whose form names a kind of card is a card of that
 /// kind: the kind is kept so a step can be required to call the tool that
 /// owns it. Read from the admitted tools' own kinds, at the call boundary,
@@ -80,6 +111,42 @@ mod tests {
     use serde_json::json;
     use vak_tools::ToolOutput;
     use vak_tools::context::ToolContext;
+
+    #[test]
+    fn replacement_removes_only_the_addressed_plan_receipt() {
+        let mut receipts = Receipts::default();
+        let accepted = |id: &str, replaces: Option<&str>, form: &str| Accepted {
+            id: id.into(),
+            replaces: replaces.map(str::to_string),
+            receipt: vak_judge::plan::CardReceipt {
+                deliverable: Some(id.into()),
+                semantic_type: form.into(),
+                block: None,
+            },
+        };
+        receipts.accept(accepted("chart", None, "chart"));
+        receipts.observe_unattributed("chart".into());
+        assert_eq!(receipts.active()[0].semantic_type, "chart");
+        receipts.accept(accepted("other", None, "table"));
+        receipts.accept(accepted("replacement", Some("chart"), "sources"));
+        let active = receipts.active();
+        assert_eq!(active.len(), 2);
+        assert!(
+            !active
+                .iter()
+                .any(|receipt| receipt.semantic_type == "chart")
+        );
+        assert!(
+            active
+                .iter()
+                .any(|receipt| receipt.semantic_type == "table")
+        );
+        assert!(
+            active
+                .iter()
+                .any(|receipt| receipt.semantic_type == "sources")
+        );
+    }
 
     struct Card(&'static str, &'static [&'static str]);
 

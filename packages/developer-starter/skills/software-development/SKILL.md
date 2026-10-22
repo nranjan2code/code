@@ -17,10 +17,9 @@ serves: code-exec, documents, vcs, filesystem
 4. Add or update a test for the behaviour you changed, then run the
    project's own test and lint commands with `bash`. Run the narrowest
    command that proves the change first, then the wider one.
-5. Report exactly what ran and how it ended: a command's output belongs
-   in an `emit_terminal_card` or, for a test run, an
-   `emit_test_report_card`, both filled from the call that ran it. Say
-   what you did not verify. Never describe a check as passed that did
-   not run.
-6. Show a change someone should look at with an `emit_diff_card`. Do not
-   commit or push unless asked.
+5. Report exactly what ran and how it ended, and what remains unverified.
+   When showing command output or test results, use the recorded call's
+   presentation rather than inventing or retyping a receipt. Never describe
+   a check as passed that did not run.
+6. Make the actual change available for inspection and distinguish it from
+   a proposed change. Do not commit or push unless asked.

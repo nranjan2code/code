@@ -4,15 +4,15 @@
   "revision": "16cbd38b4",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
-  "prose_reviewed": "8.23.0 · 2026-10-22"
+  "prose_reviewed": "8.25.0 · 2026-10-22"
  },
  "summary": {
   "text": "Vakyartha (`vak`) is a local-first agent harness for one owner: agents that work on code, documents, research and everyday tasks, reached from a desktop app, the browser, a terminal and chat apps, with every model input and tool result kept in an append-only record. Its thesis is strong safety, transparent operation, extensible integrations and a simple core.\n\nThe lower layers (storage, permission, the pure deciders, the document engines) are well shaped and change rarely. Above them, three large crates (`vak-core`, `vak-agent`, `vak-server`) hold the turn and most features, and that is where most of the work and most of the risk sit.",
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 349571,
-   "rust_tests": 88405,
+   "rust_src": 349749,
+   "rust_tests": 88470,
    "ts_src": 64879,
    "routes": 404,
    "forms": 20,
@@ -25,7 +25,7 @@
    "design_docs": 99,
    "agents_words": 20651,
    "subsystems": 64,
-   "connections": 836,
+   "connections": 837,
    "flows": 11
   },
   "tools": [
@@ -131,6 +131,14 @@
    "documents": 48
   },
   "open_items": [
+   {
+    "section": "Answer design contract (2026-10-22)",
+    "open": 2,
+    "items": [
+     "Broader semantic-quality and existing-artifact revision acceptance;",
+     "Design supplied-evidence versus retrieval sufficiency:"
+    ]
+   },
    {
     "section": "Shared chat and projection UX (2026-10-22)",
     "open": 2,
@@ -419,7 +427,7 @@
     ]
    }
   ],
-  "open_total": 113,
+  "open_total": 115,
   "measures_revision": "e63ab93b7"
  },
  "activity": {
@@ -920,7 +928,9 @@
     ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "Answer design:"
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1047,6 +1057,12 @@
     "title": "99 — Turns that do not poison later turns",
     "status": "in progress",
     "summary": "(2026-10-17): stages A to F and A2 to A4 built, with retry from a turn"
+   },
+   {
+    "path": "docs/plans/answer-design-contract-plan.md",
+    "title": "Answer design contract",
+    "status": "in progress",
+    "summary": "The coordinated instruction/typed-receipt correction is built and passes focused and fixed-corpus live acceptance (2026-10-22)"
    },
    {
     "path": "docs/plans/architecture-and-presentation-hardening-plan.md",
@@ -1177,7 +1193,7 @@
     "links": []
    }
   ],
-  "total": 48
+  "total": 49
  },
  "specs": {
   "counts": {
@@ -1185,7 +1201,7 @@
    "implemented": 59,
    "proposal": 8,
    "superseded": 9,
-   "in progress": 28,
+   "in progress": 29,
    "reference": 2
   },
   "open": [
@@ -1340,6 +1356,12 @@
     "summary": "(2026-10-17): stages A to F and A2 to A4 built, with retry from a turn"
    },
    {
+    "path": "docs/plans/answer-design-contract-plan.md",
+    "title": "Answer design contract",
+    "status": "in progress",
+    "summary": "The coordinated instruction/typed-receipt correction is built and passes focused and fixed-corpus live acceptance (2026-10-22)"
+   },
+   {
     "path": "docs/plans/architecture-and-presentation-hardening-plan.md",
     "title": "Architecture and presentation hardening",
     "status": "in progress",
@@ -1433,7 +1455,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 67282,
+   "lines": 67309,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1443,7 +1465,7 @@
   {
    "id": "L4",
    "name": "Agent runtime",
-   "lines": 56836,
+   "lines": 56935,
    "crates": [
     "vak-agent",
     "vak-tools",
@@ -1457,7 +1479,7 @@
   {
    "id": "L3",
    "name": "Decision and policy",
-   "lines": 21257,
+   "lines": 21309,
    "crates": [
     "vak-intent",
     "vak-sandbox",
@@ -4420,9 +4442,9 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 14409,
+   "lines": 14431,
    "largest": [
-    12560,
+    12582,
     "crates/vak-core/src/lib.rs"
    ],
    "routes": [
@@ -5256,9 +5278,9 @@
    ],
    "modules": 5,
    "parts": [],
-   "lines": 13315,
+   "lines": 13345,
    "largest": [
-    12301,
+    12331,
     "crates/vak-agent/src/lib.rs"
    ],
    "routes": [],
@@ -5387,6 +5409,16 @@
      "example": [
       "crates/vak-agent/src/lib.rs",
       "crates/vak-tools/src/capability.rs"
+     ]
+    },
+    {
+     "from": "loop",
+     "to": "cards",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-agent/src/lib.rs",
+      "crates/vak-agent/src/cards.rs"
      ]
     },
     {
@@ -6256,9 +6288,9 @@
    ],
    "modules": 2,
    "parts": [],
-   "lines": 1742,
+   "lines": 1745,
    "largest": [
-    1382,
+    1385,
     "crates/vak-core/src/prompts.rs"
    ],
    "routes": [
@@ -6804,7 +6836,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 4030,
+   "lines": 4084,
    "largest": [
     1007,
     "crates/vak-control/src/lib.rs"
@@ -6908,6 +6940,16 @@
      ]
     },
     {
+     "from": "cards",
+     "to": "control",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-agent/src/cards.rs",
+      "crates/vak-judge/src/plan.rs"
+     ]
+    },
+    {
      "from": "context",
      "to": "control",
      "kind": "code",
@@ -6945,16 +6987,6 @@
      "example": [
       "crates/vak-admin-ui/src/api.ts",
       "/config/control"
-     ]
-    },
-    {
-     "from": "cards",
-     "to": "control",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-server/src/projection.rs",
-      "crates/vak-tools/src/plan.rs"
      ]
     },
     {
@@ -8290,9 +8322,9 @@
    ],
    "modules": 12,
    "parts": [],
-   "lines": 4382,
+   "lines": 4384,
    "largest": [
-    1123,
+    1125,
     "crates/vak-core/src/skills.rs"
    ],
    "routes": [
@@ -8324,7 +8356,7 @@
    "commits": 78,
    "fixes": 16,
    "recent": 24,
-   "fix_density": 3.7,
+   "fix_density": 3.6,
    "out": [
     {
      "from": "capabilities",
@@ -14838,7 +14870,7 @@
    ],
    "modules": 26,
    "parts": [],
-   "lines": 19381,
+   "lines": 19448,
    "largest": [
     6677,
     "crates/vak-server/src/projection.rs"
@@ -14993,6 +15025,16 @@
     },
     {
      "from": "cards",
+     "to": "control",
+     "kind": "code",
+     "weight": 2,
+     "example": [
+      "crates/vak-agent/src/cards.rs",
+      "crates/vak-judge/src/plan.rs"
+     ]
+    },
+    {
+     "from": "cards",
      "to": "intent",
      "kind": "code",
      "weight": 2,
@@ -15049,16 +15091,6 @@
      "example": [
       "crates/vak-client-ui/src/components/PresentationRenderer.tsx",
       "crates/vak-client-ui/src/components/AutomationCard.tsx"
-     ]
-    },
-    {
-     "from": "cards",
-     "to": "control",
-     "kind": "code",
-     "weight": 1,
-     "example": [
-      "crates/vak-server/src/projection.rs",
-      "crates/vak-tools/src/plan.rs"
      ]
     },
     {
@@ -15271,6 +15303,16 @@
      "example": [
       "crates/vak-client-ui/src/components/SharedConversation.tsx",
       "crates/vak-client-ui/src/components/PresentationRenderer.tsx"
+     ]
+    },
+    {
+     "from": "loop",
+     "to": "cards",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-agent/src/lib.rs",
+      "crates/vak-agent/src/cards.rs"
      ]
     },
     {
@@ -25473,6 +25515,16 @@
   },
   {
    "from": "cards",
+   "to": "control",
+   "kind": "code",
+   "weight": 2,
+   "example": [
+    "crates/vak-agent/src/cards.rs",
+    "crates/vak-judge/src/plan.rs"
+   ]
+  },
+  {
+   "from": "cards",
    "to": "intent",
    "kind": "code",
    "weight": 2,
@@ -27563,16 +27615,6 @@
   },
   {
    "from": "cards",
-   "to": "control",
-   "kind": "code",
-   "weight": 1,
-   "example": [
-    "crates/vak-server/src/projection.rs",
-    "crates/vak-tools/src/plan.rs"
-   ]
-  },
-  {
-   "from": "cards",
    "to": "library",
    "kind": "code",
    "weight": 1,
@@ -29229,6 +29271,16 @@
    "example": [
     "crates/vak-agent/src/lib.rs",
     "crates/vak-tools/src/capability.rs"
+   ]
+  },
+  {
+   "from": "loop",
+   "to": "cards",
+   "kind": "code",
+   "weight": 1,
+   "example": [
+    "crates/vak-agent/src/lib.rs",
+    "crates/vak-agent/src/cards.rs"
    ]
   },
   {
@@ -36007,8 +36059,8 @@
    "layer": "L4",
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, plan check, workers",
-   "src": 17300,
-   "tests": 20458,
+   "src": 17397,
+   "tests": 20523,
    "files": 13,
    "commits": 359,
    "deps": [
@@ -36048,7 +36100,7 @@
     "uuid"
    ],
    "largest": [
-    12301,
+    12331,
     "crates/vak-agent/src/lib.rs"
    ],
    "subsystems": [
@@ -36352,7 +36404,7 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 62728,
+   "src": 62755,
    "tests": 10639,
    "files": 76,
    "commits": 662,
@@ -36415,7 +36467,7 @@
     "walkdir"
    ],
    "largest": [
-    12560,
+    12582,
     "crates/vak-core/src/lib.rs"
    ],
    "subsystems": [
@@ -36743,7 +36795,7 @@
    "layer": "L3",
    "kind": "rust",
    "role": "Receipts to verdicts: call, plan check, outcome",
-   "src": 1999,
+   "src": 2051,
    "tests": 159,
    "files": 6,
    "commits": 15,
@@ -37462,7 +37514,7 @@
    "layer": "L4",
    "kind": "rust",
    "role": "Built-in tools, argument reader, broker worker protocol, egress proxy",
-   "src": 16867,
+   "src": 16869,
    "tests": 1217,
    "files": 30,
    "commits": 214,
@@ -37572,11 +37624,11 @@
    },
    {
     "file": "crates/vak-core/src/lib.rs",
-    "lines": 12560
+    "lines": 12582
    },
    {
     "file": "crates/vak-agent/src/lib.rs",
-    "lines": 12301
+    "lines": 12331
    },
    {
     "file": "crates/vak-mail-calendar/src/provider.rs",
@@ -37620,13 +37672,13 @@
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
     "line": 1885,
-    "lines": 1928
+    "lines": 1932
    },
    {
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
     "line": 6674,
-    "lines": 1721
+    "lines": 1742
    },
    {
     "name": "snapshot_inner",
@@ -37667,7 +37719,7 @@
    {
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5763,
+    "line": 5767,
     "lines": 564
    },
    {
@@ -37775,9 +37827,9 @@
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
    "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 201 (rank 1 of 4,553 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 25. 156 commits changed the first (6% of all) and 215 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.1 per thousand lines, against a median of 4.1 over 421 files; file size alone does not predict the rate (ρ = -0.11).",
-   "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
+   "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own. The 2026-10-22 answer investigation found another lossy decision input: plan receipts retained a deliverable name but discarded the actual form. The correction keeps active typed receipts and applies the same pure plan check in the loop and settlement, preserving exact replacement addresses. Broader state consolidation remains open.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
-   "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."
+   "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`; [answer design investigation](../docs/audits/answer-design-contract-2026-10-22.md)."
   },
   {
    "id": "F3",

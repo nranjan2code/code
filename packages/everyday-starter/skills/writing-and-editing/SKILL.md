@@ -23,6 +23,7 @@ serves: documents
      rewrite the file with a script;
    - a new document: `office_apply` with the new path, starting from
      the blank for its format.
-5. For a summary, lead with an `emit_summary_card` (the gist and its key
-   points); for before and after of a short passage, an
-   `emit_diff_card`.
+5. Preserve the requested genre and delivery: literal text stays literal,
+   a draft reads as the draft, and a summary preserves the source's meaning.
+   Keep commentary about the work distinct from the work itself; do not add
+   commentary when the person requested only the text.

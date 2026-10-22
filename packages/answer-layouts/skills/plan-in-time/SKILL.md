@@ -5,9 +5,6 @@ description: Lay out a plan that happens over time (a day, a trip, a routine, an
 
 # A plan in time
 
-Compose the answer in this order, each part its own card, each naming the
-plan deliverable it delivers:
-
 Use only the blocks needed for this request; a summary is optional. Each block
 must add information or interaction rather than repeat another. The following
 order is a composition guide, not a requirement to emit every listed card.

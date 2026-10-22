@@ -15,8 +15,7 @@ order is a composition guide, not a requirement to emit every listed card.
 2. `emit_comparison_card`: every option with a short verdict, its
    strengths and weaknesses, the aspects they differ on (the same aspects,
    in the same order, for every option), and the recommendation.
-3. `emit_table_card` only when there are more than four aspects or more
-   than four options: one row per option, one column per aspect.
+3. `emit_table_card` when shared attributes need inspection as records: one row per option, one column per aspect.
 4. `emit_callout_card` with tone `warning` for a risk that would change
    the choice, only when there is one.
 

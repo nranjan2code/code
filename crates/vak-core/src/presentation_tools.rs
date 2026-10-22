@@ -431,7 +431,7 @@ fn table_fields() -> Value {
                 },
                 "description": "The table, one string per line: first the column names in one string, then one string for each row. Example: [\"Name | Value\", \"A | 1\", \"B | 2\"]."
             },
-            "numeric_columns": texts("Optional. Column labels whose non-empty cells are numeric decimals. The labels must match one column exactly; numeric text is kept exactly as written. Commas and non-finite values are not accepted. A cell beginning with = remains a live expression.")
+            "numeric_columns": texts("Optional. Column labels whose non-empty cells are numeric decimals. The labels must match one column exactly; numeric text is kept exactly as written. Use ASCII signs and a decimal point, without grouping commas or unit/percent suffixes; put units in the column label. Leave a missing value empty, not a dash or N/A. Non-finite values are not accepted. A cell beginning with = remains a live expression.")
         }),
         &["rows"],
     )
@@ -517,7 +517,7 @@ fn table_numeric_flags(
             }
             if !plain_decimal(cell) {
                 return Err(format!(
-                    "cell {} in numeric column `{label}` must be a plain decimal number or a `= expression`",
+                    "cell {} in numeric column `{label}` must be a plain decimal number or a `= expression`. Use ASCII signs, no grouping commas or unit suffixes, and an empty cell for a missing value. Correct the cell rather than removing its numeric declaration",
                     row_index + 1
                 ));
             }
@@ -1782,7 +1782,7 @@ fn ability_table_fields() -> Value {
             "call_id": string(CALL_ID),
             "list": string(LIST),
             "columns": texts("Optional. The keys of a record to show as columns, in order. Every key of the first record when left out."),
-            "numeric_columns": texts("Optional. Column labels whose non-empty cells are numeric decimals. The labels must match one column exactly; numeric text is kept exactly as written. Commas and non-finite values are not accepted. A cell beginning with = remains a live expression.")
+            "numeric_columns": texts("Optional. Column labels whose non-empty cells are numeric decimals. The labels must match one column exactly; numeric text is kept exactly as written. Use ASCII signs and a decimal point, without grouping commas or unit/percent suffixes; put units in the column label. Leave a missing value empty, not a dash or N/A. Non-finite values are not accepted. A cell beginning with = remains a live expression.")
         }),
         &["from", "call_id"],
     )

@@ -1,3 +1,27 @@
+## Answer design contract (2026-10-22)
+
+The maintainer requested a general design correction, preserving the recent
+display optimizations. [Installed evidence](../audits/answer-design-contract-2026-10-22.md)
+and [the coordinated plan](answer-design-contract-plan.md) distinguish instruction
+contradictions, typed delivery checks and semantic quality.
+
+- [x] Inspect installed prompt provenance, actual calls/receipts, loaded skill,
+  projected forms and native desktop. Cards reach the client; no global card
+  outage was established.
+- [x] Obtain a critical review through the configured OpenAI Luna route and
+  freeze seven varied baseline scenarios before product edits.
+- [x] Complete the integrated instruction/typed-receipt batch, focused checks,
+  scenario comparison and running-client inspection. No domain recipes or
+  card quotas; preserve Continuous answer and compact file collections.
+- [ ] Broader semantic-quality and existing-artifact revision acceptance;
+  structural receipts alone do not establish appropriate presentation. A live
+  two-turn file revision preserves one Library item and its parented versions;
+  interactive-artifact and broader workload acceptance remain.
+- [ ] Design supplied-evidence versus retrieval sufficiency: supplied-only
+  scenarios still receive a generic `evidence-1`/Partial result warning without
+  an external retrieval receipt. Keep the warning visible until that contract
+  is corrected; do not infer support from a card or suppress it by subject.
+
 ## Shared chat and projection UX (2026-10-22)
 
 Live review and proposed direction are in

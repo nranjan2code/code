@@ -13,16 +13,11 @@ serves: orchestration
 3. Size the plan to the work: a few steps for an afternoon, phases for a
    project. Every step is a short action someone can start; keep owners,
    deadlines and open decisions explicit.
-4. Lay it out from cards, each naming the `plan` deliverable it delivers:
-   - `emit_summary_card`: the plan in a headline and a sentence, with
-     the start, the end and the one thing not to miss as points;
-   - `emit_steps_card`: the steps in order, each with its `time` or
-     `duration_minutes` when known;
-   - `emit_list_card` with `checkable: true`: what to bring, buy or
-     prepare, when there is any;
-   - `emit_calendar_card` when the plan is events on dates;
-   - `emit_callout_card` (`tone: "warning"` or `"tip"`) for the one risk
-     or decision a step cannot carry.
+4. Make dependencies, dates, preparation and open decisions easy to follow.
+   Keep each action's owner and timing with that action. Distinguish scheduled
+   events from a proposed sequence, and unknown dates from agreed dates.
+   Do not repeat the plan as both a detailed sequence and a summary of that
+   same sequence.
 5. When the person wants to be reminded or wants something to happen
    later, make it with `automations` (in their time zone) rather than
    telling them to set a reminder. Keep a decision worth remembering

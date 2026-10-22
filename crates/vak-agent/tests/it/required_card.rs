@@ -721,6 +721,71 @@ impl Tool for CalloutBlock {
     }
 }
 
+/// A supporting card may name the same outcome, but cannot complete a
+/// specifically promised form or make `then: done` bypass its correction.
+#[tokio::test]
+async fn a_different_accepted_form_does_not_complete_the_planned_form() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, requests) = agent(
+        &dir,
+        "wrong-form-receipt",
+        vec![
+            plan("steps"),
+            call(
+                "note",
+                "callout_block",
+                serde_json::json!({
+                    "deliverable": "watering", "text": "Use the agreed days.", "then": "done"
+                }),
+            ),
+            text("The note is enough."),
+            text("Still no sequence."),
+            call(
+                "sequence",
+                "steps_block",
+                serde_json::json!({
+                    "deliverable": "watering", "steps": ["Water Monday", "Water Thursday"], "then": "done"
+                }),
+            ),
+        ],
+    );
+    agent.config.tools = vec![
+        Arc::new(vak_tools::PlanTool::default()),
+        Arc::new(StepsBlock),
+        Arc::new(CalloutBlock),
+    ];
+    assert!(matches!(
+        run(&mut agent).await,
+        TurnOutcome::Completed { .. }
+    ));
+    assert_eq!(
+        requests.lock().unwrap().last(),
+        Some(&Some("steps_block".into()))
+    );
+    let session = agent.session.lock().await;
+    let results: Vec<_> = session
+        .derive_messages()
+        .into_iter()
+        .flat_map(|message| message.content)
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                is_error,
+                ..
+            } => Some((tool_use_id, is_error)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        results.contains(&("note".into(), false)),
+        "supporting card remains accepted"
+    );
+    assert!(
+        results.contains(&("sequence".into(), false)),
+        "promised sequence is delivered"
+    );
+}
+
 /// A card sent to a tool that does not show its kind is told which tool
 /// does, from the tools' own declared kinds.
 #[tokio::test]

@@ -1,0 +1,68 @@
+{
+  "choice": {
+    "session": "01a1633d-f5ec-7ab3-863a-35290c3e3e59",
+    "forms": [
+      "comparison"
+    ],
+    "visible_prose": "",
+    "tool_errors": 0
+  },
+  "conflicting": {
+    "session": "01a1633e-764a-76e2-a726-65d52b03623a",
+    "forms": [
+      "summary",
+      "table",
+      "details"
+    ],
+    "visible_prose": "",
+    "tool_errors": 0
+  },
+  "direct": {
+    "session": "01a1633c-ad11-79e2-b797-4592c58ebe6c",
+    "forms": [],
+    "visible_prose": "56",
+    "tool_errors": 0
+  },
+  "records": {
+    "session": "01a1633d-55a1-7e30-a0d8-b0dea838c644",
+    "forms": [
+      "table"
+    ],
+    "visible_prose": "",
+    "tool_errors": 0
+  },
+  "sequence": {
+    "session": "01a1633e-3def-7fd2-9fbd-547d51788f21",
+    "forms": [
+      "calendar"
+    ],
+    "visible_prose": "",
+    "tool_errors": 0
+  },
+  "trend": {
+    "session": "01a1633d-95df-7b60-9aad-38dfaede30cb",
+    "forms": [
+      "chart",
+      "table",
+      "callout"
+    ],
+    "visible_prose": "",
+    "tool_errors": 0
+  },
+  "verbatim": {
+    "session": "01a1633c-ddc0-7ec3-b418-0760ec486058",
+    "forms": [],
+    "visible_prose": "The lantern is blue.",
+    "tool_errors": 0
+  },
+  "artifact_revision": {
+    "session": "01a1633f-9852-7643-a428-8069a3c7a5e8",
+    "one_item": "art_00000000-0000-721f-a9ee-606d6ce46a9c",
+    "versions": 2,
+    "second_parent_is_first": true
+  },
+  "loaded_skill": {
+    "session": "01a16340-144b-7e23-b95f-e0ea136b4650",
+    "updated_procedure_and_nonexclusive_wrapper": true
+  }
+}

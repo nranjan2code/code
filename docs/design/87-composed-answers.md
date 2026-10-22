@@ -77,6 +77,28 @@ Canvas; its answer view uses the same renderer. Browser acceptance and native
 qualification limits are in
 [the implementation record](../audits/chat-projection-ux-implementation-2026-10-22.md).
 
+## Answer design authority (2026-10-22)
+
+The code-owned presentation contract is the shared source for how the model
+chooses forms. Selection follows relationships in the available information
+and what the person needs to understand or do, never domain names. Procedure
+skills guide evidence, execution and verification without compulsory answer
+recipes. Their related-tool lists are nonexclusive hints; they do not narrow
+the admitted interface. Rich surface descriptions acknowledge typed forms and
+Markdown prose together. Literal, creative and direct prose remain valid.
+
+The initial plan names requested outcomes and can be refined as evidence makes
+useful parts and forms clear. A generic card permits several appropriate forms;
+a specifically named form promises that form. Receipt validation retains the
+actual semantic type/base form and accepted replacement addresses; another form
+cannot satisfy that promise merely by sharing its deliverable name. Structural
+delivery is separate from evidence sufficiency and quality of composition.
+
+The coordinated correction, frozen acceptance scenarios and completion gates
+are in [the answer design plan](../plans/answer-design-contract-plan.md), with
+the installed evidence in [the investigation](../audits/answer-design-contract-2026-10-22.md).
+The Continuous answer renderer and recent display optimizations are preserved.
+
 ## Conversation state handoff (2026-10-19)
 
 The shared client hydrates from `/sessions/{id}/snapshot`: transcript

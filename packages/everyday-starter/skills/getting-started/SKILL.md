@@ -22,5 +22,4 @@ ask for what they want.
    a menu of everything.
 4. Ask only for what is really missing, one question at a time.
 
-Show the next step as an `emit_steps_card` only when there are several
-steps to follow; otherwise answer in a few sentences.
+Keep the response focused on the person's next useful action.

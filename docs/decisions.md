@@ -406,6 +406,12 @@ listed here unless the maintainer reopens it.
   including Indian languages, using account discovery rather
   than a static model list. Evidence and limits: [voice experience review](audits/voice-experience-2026-10-20.md).
 
+- 2026-10-22 — Investigate installed plain-looking answers and make one proper
+  general design correction, using the configured OpenAI Luna route for
+  judgment where useful. No domain-hardcoded fix; preserve the recent display
+  optimizations. [Evidence](audits/answer-design-contract-2026-10-22.md) and
+  [implementation plan](plans/answer-design-contract-plan.md).
+
 - 2026-10-21 — Before launch, replace complete conversation hydration with
   recent history pages and scroll-driven loading; keep model context and
   retention separate. Maintainer approval: “lets do it”. Contract and current

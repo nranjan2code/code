@@ -1,5 +1,14 @@
 ## Unreleased
 
+- Answer design: align the shared presentation guidance, surface descriptions
+  and shipped skills so useful form selection follows the information instead
+  of a compulsory summary/sources recipe. Skill tool hints no longer exclude
+  other admitted tools. Specifically planned forms require an active accepted
+  receipt of that form; replacement retires the old receipt. Preserve the
+  continuous answer surface and compact file collections. Numeric-table
+  feedback explains missing values and decimal syntax without silently
+  dropping numerical semantics.
+
 ## 8.25.0 — 2026-10-22
 
 - Shared web and desktop UI: composed answers use open sections with fewer

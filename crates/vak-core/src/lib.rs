@@ -1218,16 +1218,16 @@ is rendered in an interactive terminal TUI with rich typography, syntax-highligh
 diffs, collapsible tool execution cards, and live progress indicators. Plain text \
 and fenced code blocks render with full fidelity; images render via inline terminal graphics."
                 .to_string(),
-            Surface::Desktop => "desktop app. Your reply is rendered as markdown \
-in a conversation window on the person's own machine. Other panes (files, \
+            Surface::Desktop => "desktop app. Typed forms and Markdown prose share \
+the conversation's answer surface on the person's own machine. Other panes (files, \
 changes, terminal) open only when the person opens them, so do not assume \
 they can already see what you changed — say it."
                 .to_string(),
             Surface::Server => "HTTP API. Your reply is consumed by a client \
 program over HTTP/SSE, which may render it any way it likes, or not at all."
                 .to_string(),
-            Surface::Web => "web client. Your reply is rendered as markdown in \
-a browser, possibly on a phone and possibly far from the machine you are \
+            Surface::Web => "web client. Typed forms and Markdown prose share \
+the answer surface in a browser, possibly on a phone and possibly far from the machine you are \
 working on. The diff, editor, and terminal panes may not be open or may not \
 exist, so do not assume the reader can already see what you changed — say it."
                 .to_string(),
@@ -8194,7 +8194,18 @@ impl Core {
                     )
                 });
             let unresolved_failure = failures.has_unrecovered();
-            let cards_recorded = session.presentations_for_latest_turn().len();
+            let turn_id = session.latest_directive_entry_id();
+            let card_receipts: Vec<_> = session
+                .active_presentations()
+                .into_iter()
+                .filter(|(_, record)| Some(record.turn_id.as_str()) == turn_id.as_deref())
+                .map(|(_, record)| vak_judge::plan::CardReceipt {
+                    deliverable: record.placement.part.clone(),
+                    semantic_type: record.semantic_type.clone(),
+                    block: record.block.clone(),
+                })
+                .collect();
+            let cards_recorded = card_receipts.len();
             let mut status = vak_judge::outcome::evaluate_response_with_failures(
                 response_text.as_deref(),
                 cards_recorded,
@@ -8216,16 +8227,26 @@ impl Core {
                 planned_cards,
                 cards_shown: cards_recorded,
             }
-            .observed();
+            .observed()
+                && vak_judge::plan::gap(
+                    &accepted_plan,
+                    &vak_judge::plan::Produced {
+                        cards: &card_receipts,
+                        final_text: response_text.as_deref().unwrap_or_default(),
+                        files_delivered: usize::from(delivered),
+                        changed: false,
+                        checked: false,
+                        cards_withdrawn: false,
+                    },
+                )
+                .cards_short()
+                    == 0;
             if status == vak_intent::OutcomeStatus::Produced && !deliverable_observed {
                 status = vak_intent::OutcomeStatus::Unknown;
             }
-            let evidence_card = session
-                .presentations_for_latest_turn()
-                .iter()
-                .any(|record| {
-                    record.block.as_deref().unwrap_or(&record.semantic_type) == "sources"
-                });
+            let evidence_card = card_receipts.iter().any(|receipt| {
+                receipt.block.as_deref().unwrap_or(&receipt.semantic_type) == "sources"
+            });
             let requirement_evaluations = vak_judge::outcome::evaluate_requirements(
                 &outcome_spec,
                 &vak_judge::outcome::TurnFacts {
@@ -9205,11 +9226,12 @@ mod channel_mcp_network_tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         let prompt = |surface: Surface| core.clone().with_surface(surface).system_prompt();
-        let cards = "Choose prose or card";
+        let cards = "available structured forms";
         let preview = "appear in the user's preview automatically";
 
         let desktop = prompt(Surface::Desktop);
         assert!(desktop.contains(cards));
+        assert!(desktop.contains("Typed forms and Markdown prose share"));
         assert!(desktop.contains(preview));
 
         let chat = prompt(Surface::Chat {

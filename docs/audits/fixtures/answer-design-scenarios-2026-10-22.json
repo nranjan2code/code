@@ -1,0 +1,9 @@
+{
+  "direct": "What is 7 times 8? Answer directly.",
+  "verbatim": "Reply with exactly this sentence and nothing else: The lantern is blue.",
+  "records": "Using only these records, help me inspect the quantities and identify the largest and smallest. Aster: 120 units, Birch: 85 units, Cedar: 140 units, Dogwood: 95 units. Keep every original value available. Do not fetch sources or create files.",
+  "trend": "Explain how this measured series changed, make its pattern easy to see, and identify the largest jump. Measurements in order: T1=10, T2=12, T3=11, T4=25, T5=26. Use only these supplied values. Do not fetch sources or create files.",
+  "choice": "Help me choose between these supplied options. A costs 20 per month, supports two people, and works offline. B costs 35 per month, supports five people, and requires internet. I need three people and sometimes lose internet. Explain the tradeoff without inventing capabilities. Do not fetch sources or create files.",
+  "sequence": "Organize these supplied milestones so I can follow what happens when: draft on 2 November 2026, review on 5 November, revision on 9 November, handover on 12 November. Keep the dates and make the sequence easy to use. Do not fetch sources or create files.",
+  "conflicting": "Using only the following supplied evidence, write a research brief explaining what can and cannot be concluded. Report A measured 120 units in April and 150 in May. Report B measured 118 units in April and 135 in May. Their measurement definitions are unavailable. Preserve both accounts, distinguish agreement from disagreement, and do not imply the disagreement has been resolved. Do not fetch sources or create files."
+}

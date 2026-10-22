@@ -7,11 +7,29 @@
 use vak_control::{AnswerVerdict, Cause};
 use vak_intent::{Deliverable, DeliverableForm};
 
+/// An accepted presentation, retaining what it actually renders rather than
+/// only the plan entry it names. A layout can also implement a base form.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CardReceipt {
+    pub deliverable: Option<String>,
+    pub semantic_type: String,
+    pub block: Option<String>,
+}
+
+impl CardReceipt {
+    fn covers(&self, deliverable: &Deliverable) -> bool {
+        deliverable
+            .kind
+            .as_deref()
+            .is_none_or(|kind| self.semantic_type == kind || self.block.as_deref() == Some(kind))
+    }
+}
+
 /// What the turn produced, as the loop observed it.
 pub struct Produced<'a> {
-    /// Every card recorded this turn, in emit order, with the deliverable
-    /// its `answers` field named.
-    pub cards: &'a [Option<String>],
+    /// Every active card recorded this turn, with the deliverable
+    /// it names and its actual form. Only active accepted cards count.
+    pub cards: &'a [CardReceipt],
     pub final_text: &'a str,
     /// How many distinct files were delivered for review or declared as
     /// artifacts. Each planned file needs one: two drafts of one workbook
@@ -66,8 +84,8 @@ pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
     let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     let mut covered = vec![false; plan.len()];
     let mut cards_unattributed = 0usize;
-    for answers in produced.cards {
-        let Some(name) = answers.as_deref() else {
+    for receipt in produced.cards {
+        let Some(name) = receipt.deliverable.as_deref() else {
             cards_unattributed += 1;
             continue;
         };
@@ -78,6 +96,7 @@ pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
                     DeliverableForm::Card | DeliverableForm::Text
                 )
                 && same(&deliverable.name, name)
+                && receipt.covers(deliverable)
         });
         match covers {
             Some(at) => covered[at] = true,
@@ -186,6 +205,14 @@ pub fn evidence_requirements(
 mod tests {
     use super::*;
 
+    fn card(name: Option<&str>) -> CardReceipt {
+        CardReceipt {
+            deliverable: name.map(str::to_string),
+            semantic_type: "summary".into(),
+            block: None,
+        }
+    }
+
     fn plan(entries: &[(&str, DeliverableForm)]) -> Vec<Deliverable> {
         entries
             .iter()
@@ -198,7 +225,7 @@ mod tests {
             .collect()
     }
 
-    fn produced<'a>(cards: &'a [Option<String>], text: &'a str) -> Produced<'a> {
+    fn produced<'a>(cards: &'a [CardReceipt], text: &'a str) -> Produced<'a> {
         Produced {
             cards,
             final_text: text,
@@ -215,7 +242,7 @@ mod tests {
         assert_eq!(evidence_requirements(&[], true).len(), 1);
         let mut declared = plan(&[("findings", DeliverableForm::Card)]);
         declared[0].questions = vec!["Which effects were independently measured?".into()];
-        let cards = [Some("findings".into())];
+        let cards = [card(Some("findings"))];
         assert!(gap(&declared, &produced(&cards, "")).is_empty());
         let mut spec = vak_intent::OutcomeSpec::from_reading(
             "investigate",
@@ -264,7 +291,7 @@ mod tests {
             ("routine", DeliverableForm::Card),
             ("comparison", DeliverableForm::Card),
         ]);
-        let cards = [Some("Comparison".to_string())];
+        let cards = [card(Some("Comparison"))];
         let left = gap(&declared, &produced(&cards, ""));
         assert_eq!(left.cards_short(), 1);
         assert_eq!(left.cards_unnamed.len(), 1);
@@ -272,8 +299,36 @@ mod tests {
 
         // Two cards that name nothing cover neither planned card: two such
         // cards answering another request once stood for a plan of two.
-        let cards = [None, None];
+        let cards = [card(None), card(None)];
         assert_eq!(gap(&declared, &produced(&cards, "")).cards_short(), 2);
+    }
+
+    #[test]
+    fn a_named_form_needs_its_actual_form_not_just_its_deliverable_name() {
+        let mut declared = plan(&[("measured change", DeliverableForm::Card)]);
+        declared[0].kind = Some("chart".into());
+        let mut receipt = card(Some("measured change"));
+        receipt.semantic_type = "sources".into();
+        assert_eq!(
+            gap(&declared, &produced(std::slice::from_ref(&receipt), "")).cards_short(),
+            1
+        );
+        receipt.semantic_type = "chart".into();
+        assert!(gap(&declared, &produced(&[receipt], "")).is_empty());
+    }
+
+    #[test]
+    fn a_layout_satisfies_its_base_form_but_not_a_different_layout() {
+        let mut declared = plan(&[("key figures", DeliverableForm::Card)]);
+        declared[0].kind = Some("stats".into());
+        let receipt = CardReceipt {
+            deliverable: Some("key figures".into()),
+            semantic_type: "at_a_glance".into(),
+            block: Some("stats".into()),
+        };
+        assert!(gap(&declared, &produced(std::slice::from_ref(&receipt), "")).is_empty());
+        declared[0].kind = Some("another_layout".into());
+        assert_eq!(gap(&declared, &produced(&[receipt], "")).cards_short(), 1);
     }
 
     /// Found live (run_01a1293b-45c3-7f21-8fbf-bff3e2f9d3c6): one card that
@@ -286,7 +341,7 @@ mod tests {
             ("comparison", DeliverableForm::Card),
             ("plan", DeliverableForm::Card),
         ]);
-        let cards = [Some("first week".to_string())];
+        let cards = [card(Some("first week"))];
         let left = gap(&declared, &produced(&cards, ""));
         assert_eq!(left.cards_short(), 2);
         assert_eq!(left.cards_unnamed.len(), 2);
@@ -302,7 +357,7 @@ mod tests {
             ("proof", DeliverableForm::Check),
             ("report", DeliverableForm::File),
         ]);
-        let none: [Option<String>; 0] = [];
+        let none: [CardReceipt; 0] = [];
         let left = gap(&declared, &produced(&none, " "));
         assert_eq!(left.others.len(), 4);
         let all = Produced {
@@ -322,7 +377,7 @@ mod tests {
             ("route", DeliverableForm::Text),
             ("link", DeliverableForm::Text),
         ]);
-        let cards = [Some("route".to_string())];
+        let cards = [card(Some("route"))];
         let gap = gap(&plan, &produced(&cards, ""));
         assert_eq!(gap.cards_unattributed, 0);
         let left: Vec<&str> = gap.others.iter().map(|d| d.name.as_str()).collect();
@@ -338,10 +393,7 @@ mod tests {
             ("parser fix", DeliverableForm::Change),
             ("tests pass", DeliverableForm::Check),
         ]);
-        let cards = [
-            Some("parser fix".to_string()),
-            Some("Tests pass".to_string()),
-        ];
+        let cards = [card(Some("parser fix")), card(Some("Tests pass"))];
         let left = gap(&declared, &produced(&cards, ""));
         assert_eq!(left.cards_unattributed, 0);
         assert_eq!(left.others.len(), 2, "a card is no change and no check");
@@ -373,7 +425,7 @@ mod tests {
             ("report document", DeliverableForm::File),
             ("workbook", DeliverableForm::File),
         ]);
-        let none: [Option<String>; 0] = [];
+        let none: [CardReceipt; 0] = [];
         let one = Produced {
             files_delivered: 1,
             ..produced(&none, "The workbook is ready.")

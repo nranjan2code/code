@@ -126,6 +126,8 @@ impl Tool for PlanTool {
         "Say what your answer will deliver before you produce it: one entry for each part \
          of the answer, in reading order, named in a few words, with how it reaches the \
          person. Plan the requested outcomes, not optional enrichment or every available card. \
+         Refine the plan as evidence makes useful parts and their forms clear; name a \
+         specific card form when promising that form, or card for a composition of forms. \
          Vakyartha checks each entry against what you actually produce and tells you if one \
          is missing. For parts that need evidence, declare the questions the sources must \
          settle, including the date or scope that matters. Output receipts do not prove \

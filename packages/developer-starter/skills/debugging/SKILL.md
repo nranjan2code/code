@@ -20,6 +20,6 @@ serves: code-exec, observability
    it.
 5. Fix the cause with the smallest change, add a test that failed
    before the fix and passes after it, and run it.
-6. Report: the cause with its evidence, the fix, and the run that shows
-   it (`emit_test_report_card` or `emit_terminal_card` from that call).
-   Say what is still unexplained.
+6. Report the cause with its evidence, the fix and the run that verifies
+   it. Any displayed command output or test report comes from that recorded
+   call. Say what is still unexplained.

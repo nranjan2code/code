@@ -364,8 +364,10 @@ impl SkillTool {
             return String::new();
         }
         format!(
-            "\n<skill-tools>\nTools of this turn for this skill's work; use them rather than \
-             another format or a script:\n{}\n</skill-tools>",
+            "\n<skill-tools>\nRelated tools, matched by their declared capabilities. \
+             This is a nonexclusive guide, not a restriction: other admitted tools, \
+             including presentation tools, remain available. Follow each tool's \
+             contract and the shared presentation guidance:\n{}\n</skill-tools>",
             lines.join("\n")
         )
     }

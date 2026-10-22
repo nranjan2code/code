@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "name": "developer-starter",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Core developer workflows for implementation, debugging, and code review.",
   "license": "MIT",
   "components": {

@@ -1487,7 +1487,7 @@ pub struct Agent {
     ladder: vak_control::Ladder,
     /// Each card a call of this step showed, with the plan deliverable
     /// its `deliverable` named, until the loop adds them to the plan's receipts.
-    shown_cards: std::sync::Mutex<Vec<Option<String>>>,
+    shown_cards: std::sync::Mutex<Vec<cards::Accepted>>,
     /// The tool the next step must call: the frame change a correction
     /// asked for (`OutputForm::Tool`). Taken when that step is framed.
     must_call: Option<String>,
@@ -2136,9 +2136,9 @@ impl Agent {
         let mut files_delivered_this_run: BTreeSet<String> = BTreeSet::new();
         // A call succeeded this run: an empty step is told its result stands.
         let mut call_succeeded_this_run = false;
-        // Each card recorded this run, in emit order, with the plan
-        // deliverable its `deliverable` field named.
-        let mut card_answers: Vec<Option<String>> = Vec::new();
+        // Active typed receipts for this run, updated at acceptance rather
+        // than inferred from card counts or replayed history.
+        let mut card_answers = cards::Receipts::default();
         // The deliverables the last plan check named, so the same gap is
         // named once.
         // Append-only requests within a turn (docs/design/68-context-
@@ -3078,7 +3078,7 @@ impl Agent {
                         Some(plan) => {
                             let final_text = response.text_content();
                             let produced = vak_judge::plan::Produced {
-                                cards: &card_answers,
+                                cards: &card_answers.active(),
                                 final_text: &final_text,
                                 files_delivered: files_delivered_this_run.len(),
                                 changed: receipts.has_execution_receipt(),
@@ -3562,7 +3562,9 @@ impl Agent {
                 .record_delegated_cards(&call_issue_order, &mut yields, &mut results)
                 .await;
             cards_emitted_this_run |= !imported_cards.is_empty();
-            card_answers.extend(imported_cards.into_iter().map(|_| None));
+            for id in imported_cards {
+                card_answers.observe_unattributed(id);
+            }
             let shown = std::mem::take(
                 &mut *self
                     .shown_cards
@@ -3570,7 +3572,9 @@ impl Agent {
                     .unwrap_or_else(std::sync::PoisonError::into_inner),
             );
             cards_emitted_this_run |= !shown.is_empty();
-            card_answers.extend(shown);
+            for card in shown {
+                card_answers.accept(card);
+            }
             for (id, out) in &results {
                 match out {
                     ToolRunOutput::Ok(_) => {
@@ -3786,7 +3790,7 @@ impl Agent {
                     vak_judge::plan::gap(
                         plan,
                         &vak_judge::plan::Produced {
-                            cards: &card_answers,
+                            cards: &card_answers.active(),
                             final_text: &final_text,
                             files_delivered: files_delivered_this_run.len(),
                             changed: receipts.has_execution_receipt(),
@@ -7734,7 +7738,23 @@ impl Agent {
             self.shown_cards
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(answers);
+                .push(cards::Accepted {
+                    id: call.id.clone(),
+                    replaces: input
+                        .get("replaces")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    receipt: vak_judge::plan::CardReceipt {
+                        deliverable: answers,
+                        semantic_type: input
+                            .get("semantic_type")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .or_else(|| tool.card_kinds().first().cloned())
+                            .unwrap_or_default(),
+                        block: tool.card_kinds().first().cloned(),
+                    },
+                });
             return (ToolRunOutput::Ok(checked.content), CallVerdict::Accepted);
         };
         // The tool accepted the call, so a card that cannot be rebuilt from
@@ -7910,6 +7930,12 @@ impl Agent {
             block: info.block,
             data_call_id: info.data_call_id,
         };
+        let receipt = vak_judge::plan::CardReceipt {
+            deliverable: answers.clone(),
+            semantic_type: record.semantic_type.clone(),
+            block: record.block.clone(),
+        };
+        let replaces = record.placement.replaces.clone();
         match session.append_presentation(record) {
             Ok(entry) => {
                 if let Some(name) = &answers {
@@ -7921,7 +7947,11 @@ impl Agent {
                 self.shown_cards
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(answers);
+                    .push(cards::Accepted {
+                        id: entry.id.clone(),
+                        replaces,
+                        receipt,
+                    });
                 (
                     ToolRunOutput::Ok(format!("{} (presentation {})", checked.content, entry.id)),
                     CallVerdict::Accepted,

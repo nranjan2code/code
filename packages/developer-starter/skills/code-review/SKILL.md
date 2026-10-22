@@ -19,7 +19,6 @@ serves: vcs, documents
    unverified rather than stating it as fact.
 4. Each finding: the file and line, what goes wrong and for which input,
    why it matters, and the fix. Order them most severe first.
-5. Show findings as an `emit_table_card` (`Severity | Location |
-   Finding | Fix`), or an `emit_list_card` when there are only a few,
-   and an `emit_diff_card` for a suggested change. Say plainly when
-   nothing was found.
+5. Keep every finding's severity, location, impact and correction together.
+   Say plainly when nothing was found. Distinguish a suggested change from
+   a change actually made; a diff of actual changes comes from their receipt.

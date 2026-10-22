@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "name": "everyday-starter",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Writing, planning, research and data for everyday work, with a date calculator and a table profiler.",
   "license": "MIT",
   "components": {

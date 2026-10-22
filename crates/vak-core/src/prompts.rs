@@ -871,7 +871,10 @@ mod tests {
     #[test]
     fn the_seed_carries_no_card_payload_examples() {
         let seed = seed("test");
-        assert!(seed.presentation_contract.contains("Choose prose or card"));
+        assert!(
+            seed.presentation_contract
+                .contains("available structured forms")
+        );
         assert!(
             seed.presentation_contract
                 .contains("cards are context, not new work")
