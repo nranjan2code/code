@@ -1827,14 +1827,13 @@ impl Agent {
                 };
             }
         }
-        // Turn-close hook (docs/design/68-context-engine.md §10): builds and
-        // appends the TurnCard once the turn has actually closed. A turn
-        // that never got a final assistant text (most `Failed`/aborted
-        // exits) stays open and this is a no-op — there is nothing to card
-        // yet, and the next call to `run_message` will pick it up once it
-        // does close.
-        // The ending is recorded first: a turn that ended on its cards is
-        // closed by that record (docs/design/87-composed-answers.md §2a).
+        // Derive display receipts after the answer, then close and index the
+        // turn. A failed card write cannot become a successful delivery.
+        if let Err(error) = self.write_derived_presentations().await {
+            outcome = TurnOutcome::Failed {
+                error: LlmError::Network(format!("runtime card recording failed: {error}")),
+            };
+        }
         if let Err(error) = self.record_ending(&outcome).await {
             if matches!(&outcome, TurnOutcome::Completed { .. }) {
                 outcome = TurnOutcome::Failed {
@@ -3763,15 +3762,6 @@ impl Agent {
             else {
                 continue;
             };
-            // A fence shows a command's output only from the call that ran
-            // it, as a card call does.
-            let fence_json = match cards::owner(semantic_type, &self.config.tools) {
-                Some(owner) => match self.with_command_output(owner.as_ref(), &fence_json).await {
-                    Ok(filled) => filled,
-                    Err(_) => continue,
-                },
-                None => fence_json.clone(),
-            };
             // A fence has no tool name; its `semantic_type` names the block
             // that owns it, which the host resolves.
             let Some(info) = rebuild(semantic_type, &fence_json) else {
@@ -3843,6 +3833,100 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .labels()
+    }
+
+    async fn write_derived_presentations(&self) -> Result<(), String> {
+        let Some(rebuild) = &self.config.presentation_rebuild else {
+            return Ok(());
+        };
+        let (turn_id, evidence) = {
+            let session = self.session.lock().await;
+            let index = session.current_turn_index();
+            let Some(turn) = index.turns.last().filter(|turn| turn.card.is_none()) else {
+                return Ok(());
+            };
+            let evidence = turn
+                .evidence
+                .iter()
+                .filter_map(|id| turn.evidence_for(id).map(|evidence| (id.clone(), evidence)))
+                .collect::<Vec<_>>();
+            (turn.id.clone(), evidence)
+        };
+        let mut sources = Vec::new();
+        let mut fetched = Vec::new();
+        let mut written = Vec::new();
+        for (id, evidence) in evidence {
+            let Some(tool) = self.tool_named(&evidence.tool) else {
+                continue;
+            };
+            if tool
+                .file_access(&evidence.input)
+                .is_some_and(|(access, _)| access == vak_tools::FileAccess::Write)
+            {
+                written.push(id.clone());
+            }
+            if !evidence.is_error
+                && let Some(url) = tool.fetched(&evidence.input)
+            {
+                fetched.push(id);
+                if !sources.iter().any(|source: &Value| source["url"] == url) {
+                    sources.push(serde_json::json!({
+                        "title": url,
+                        "url": url,
+                        "finding": "Retrieved in this turn."
+                    }));
+                }
+            }
+        }
+        let mut cards = Vec::new();
+        if !sources.is_empty() {
+            cards.push((
+                "sources",
+                serde_json::json!({"title": "Sources", "sources": sources}),
+                fetched,
+            ));
+        }
+        if !written.is_empty()
+            && let Ok(input) = self
+                .with_changes_made(
+                    vak_tools::ChangesMade {
+                        paths: "paths",
+                        files: "files",
+                    },
+                    serde_json::json!({}),
+                )
+                .await
+        {
+            cards.push(("diff", input, written));
+        }
+        for (form, input, from) in cards {
+            let info = rebuild(form, &input)
+                .ok_or_else(|| format!("runtime {form} card failed validation"))?;
+            let digest = vak_session::types::payload_digest(&info.payload);
+            let mut session = self.session.lock().await;
+            if session.has_presentation(&turn_id, &digest) {
+                continue;
+            }
+            session
+                .append_presentation(vak_session::types::PresentationRecord {
+                    placement: Default::default(),
+                    turn_id: turn_id.clone(),
+                    source: vak_session::types::PresentationSource::Derived { from: from.clone() },
+                    semantic_type: info.semantic_type,
+                    skill_id: info.skill_id,
+                    skill_version: info.skill_version,
+                    schema_version: info.schema_version,
+                    payload: info.payload,
+                    payload_digest: digest,
+                    derived_from: from,
+                    title: info.title,
+                    identity_digest: info.identity_digest,
+                    block: info.block,
+                    data_call_id: info.data_call_id,
+                })
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     async fn close_turn(&mut self, outcome: &TurnOutcome) {
@@ -6832,11 +6916,12 @@ impl Agent {
     /// with each file's hunks and counts filled from the file as it was
     /// before the run first wrote it and as it is now, never from lines the
     /// model wrote; refused with the files that did change when it names
-    /// one that did not, or when none did. Any other card as it came.
-    async fn with_changes_made(&self, tool: &dyn Tool, mut input: Value) -> Result<Value, String> {
-        let Some(spec) = tool.changes_made() else {
-            return Ok(input);
-        };
+    /// one that did not, or when none did.
+    async fn with_changes_made(
+        &self,
+        spec: vak_tools::ChangesMade,
+        mut input: Value,
+    ) -> Result<Value, String> {
         let asked: Vec<String> = input
             .get(spec.paths)
             .and_then(Value::as_array)
@@ -6940,131 +7025,6 @@ impl Agent {
         Ok(input)
     }
 
-    /// Shows one card: the call is checked against its tool's schema, the
-    /// plan, the sources this conversation retrieved and the tool's own
-    /// rules, then recorded as a presentation of the call with the plan
-    /// deliverable its `deliverable` names (docs/design/87-composed-answers.md
-    /// §2). A card identical to one already shown this turn is not shown
-    /// twice.
-    /// A card that shows what a command printed (`Tool::output_of_command`)
-    /// with its output taken from the latest call that ran the command,
-    /// never from words the model wrote for it; refused with what to fix
-    /// when no call ran it. Any other card as it came.
-    async fn with_command_output(&self, tool: &dyn Tool, input: &Value) -> Result<Value, String> {
-        let mut input = input.clone();
-        let Some(spec) = tool.output_of_command() else {
-            return Ok(input);
-        };
-        let command = input
-            .get(spec.command)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let command_argument = |name: &str| match self.tool_named(name)?.permission().subject {
-            vak_permission::Subject::Command(argument) => Some(argument),
-            _ => None,
-        };
-        let session = self.session.lock().await;
-        let Some(ran) = session.command_result(command_argument, &command) else {
-            let ran = session.commands_ran_this_turn(command_argument);
-            return Err(vak_control::card_command_not_run(&command, &ran));
-        };
-        drop(session);
-        if let Some(fields) = input.as_object_mut() {
-            // What the call printed, without the notes the runtime added
-            // for the model, and how the process ended.
-            if let Some(output) = spec.output {
-                fields.insert(
-                    output.to_string(),
-                    Value::String(vak_intent::control::clean_scaffolding(&ran.output)),
-                );
-            }
-            match ran.exit_code {
-                Some(code) => fields.insert(spec.exit_code.to_string(), Value::from(code)),
-                None => fields.remove(spec.exit_code),
-            };
-            fields.insert(spec.duration_ms.to_string(), Value::from(ran.duration_ms));
-        }
-        Ok(input)
-    }
-
-    /// A card that shows what an ability answered (`Tool::data_of_call`,
-    /// docs/design/93 R5) with its rows or points filled from that
-    /// exact recorded ability call, never from values the
-    /// model copied; refused with what to fix when no call to it answered
-    /// or its answer holds no list where the card said. Any other card as
-    /// it came.
-    async fn with_call_data(&self, tool: &dyn Tool, mut input: Value) -> Result<Value, String> {
-        let Some(spec) = tool.data_of_call() else {
-            return Ok(input);
-        };
-        let argument = |name: &str| {
-            input
-                .get(name)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .unwrap_or_default()
-                .to_string()
-        };
-        let ability = argument(spec.from);
-        let call_id = argument(spec.call_id);
-        let list = argument(spec.list);
-        if call_id.is_empty() {
-            return Err(format!(
-                "name the recorded call ID in `{}`; this card uses one exact ability result",
-                spec.call_id
-            ));
-        }
-        let answers_data = |name: &str| {
-            self.tool_named(name)
-                .is_some_and(|tool| tool.answers_data())
-        };
-        let session = self.session.lock().await;
-        let Some(evidence) = session.evidence(&call_id) else {
-            return Err(format!(
-                "call ID `{call_id}` has no completed result in this conversation; run the ability and make a new card with its recorded call ID"
-            ));
-        };
-        if evidence.tool != ability {
-            return Err(format!(
-                "call ID `{call_id}` belongs to `{}`, but this card names `{ability}`; use the matching ability name or its call ID",
-                evidence.tool
-            ));
-        }
-        if !answers_data(&evidence.tool) {
-            return Err(format!(
-                "call ID `{call_id}` is not an ability that provides card data"
-            ));
-        }
-        if evidence.is_error {
-            return Err(format!(
-                "the selected call `{call_id}` to `{ability}` failed; run the ability again and make a new card with the new call ID"
-            ));
-        }
-        drop(session);
-        let keys_of = |value: &Value| -> Vec<String> {
-            value
-                .as_object()
-                .map(|object| object.keys().cloned().collect())
-                .unwrap_or_default()
-        };
-        let answer: Value =
-            serde_json::from_str(vak_intent::control::clean_scaffolding(&evidence.content).trim())
-                .map_err(|_| vak_control::card_data_not_found(&ability, &list, &[]))?;
-        let mut at = &answer;
-        for key in list.split('.').filter(|key| !key.is_empty()) {
-            at = at
-                .get(key)
-                .ok_or_else(|| vak_control::card_data_not_found(&ability, &list, &keys_of(at)))?;
-        }
-        let records = at
-            .as_array()
-            .ok_or_else(|| vak_control::card_data_not_found(&ability, &list, &keys_of(at)))?
-            .clone();
-        tool.fill_from_data(&mut input, &records)?;
-        Ok(input)
-    }
-
     async fn show_card(&self, call: &PendingToolCall) -> (ToolRunOutput, vak_control::CallVerdict) {
         use vak_control::{CallVerdict, Refusal};
         let Some(tool) = self.tool_named(&call.name).cloned() else {
@@ -7096,34 +7056,7 @@ impl Agent {
                 CallVerdict::Refused(Refusal::Schema),
             );
         }
-        let input = match self.with_command_output(tool.as_ref(), &call.input).await {
-            Ok(input) => input,
-            Err(message) => {
-                return (
-                    ToolRunOutput::Err(Fault::Target, message),
-                    CallVerdict::Refused(Refusal::Tool),
-                );
-            }
-        };
-        let input = match self.with_call_data(tool.as_ref(), input).await {
-            Ok(input) => input,
-            Err(message) => {
-                return (
-                    ToolRunOutput::Err(Fault::Target, message),
-                    CallVerdict::Refused(Refusal::Tool),
-                );
-            }
-        };
-        let input = match self.with_changes_made(tool.as_ref(), input).await {
-            Ok(input) => input,
-            Err(message) => {
-                return (
-                    ToolRunOutput::Err(Fault::Target, message),
-                    CallVerdict::Refused(Refusal::Tool),
-                );
-            }
-        };
-        let input = &input;
+        let input = &call.input;
         // A card that previews a file this run delivered for review is not
         // shown: the draft is in front of the person with its change list,
         // and an imitation is not.

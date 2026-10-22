@@ -64,7 +64,7 @@ Read before changing behaviour in these areas:
   `57-adaptive-presentation-runtime.md` (packs),
   `67-presentation-renderer-guide.md` (start here when adding a renderer).
 - **Decision and capability layers** — `86-model-plans-runtime-checks.md`
-  (the model's plan and the runtime's receipt check; read first),
+  (superseded; the historical model-plan contract),
   `87-composed-answers.md` (answer blocks), `88-control-plane.md` (decision
   points, step contracts, the correction ladder; `vak-control`,
   `vak-judge`), `41-capability-registry.md`, `42-managed-work-contracts.md`,
@@ -1000,22 +1000,19 @@ commit (invariant 30).
     and a card is refused only for a fact, such as a source URL nothing in
     the conversation retrieved, a file a preview names that is neither
     in the workspace nor among the Agent's drafts, or a command no call
-    ran: a card that shows what a command printed or how it ended (the
-    terminal card, the test report; `Tool::output_of_command`) takes it,
-    its exit code and its duration
-    from the call that ran it, never from words the model wrote, and a
-    call refused before anything ran is not one: a tool says a process ran
-    (`ToolOutput::ran`), recorded as `CallEffect::Ran`, failed or not. A
-    card that shows what files changed (the diff card;
-    `Tool::changes_made`) takes each file's hunks and counts from the file
-    as it was before the turn first wrote it and as it is now, never from
-    lines the model wrote. Every correction goes through the one ladder
+    ran. At turn close the runtime records a sources card from successful
+    calls whose tool declares `fetched()`, and a diff card from the files
+    captured before this turn first wrote them and their current bytes.
+    These use `PresentationSource::Derived { from }`, naming the recorded
+    calls, with no model call. The projection draws each at its ledger
+    position after the answer; historical dialogue does not repeat its
+    payload as a missing model-authored presentation. Command output stays
+    in the recorded tool result and Activity; the model does not recopy it
+    into terminal or test-report tools. Every correction goes through the one ladder
     (`vak_control::Ladder`: told once with the evidence, then the frame
     changes or the answer stands);
     a thinking-only step is one `[empty-step]` redo unless a card
-    already answered; an answer that repeats a prior turn's answer verbatim
-    is nudged once and redone, and one that repeats again stands as the
-    model's own with a diagnostic. A tool whose
+    already answered. A tool whose
     calls keep failing is shown its schema and then withdrawn for the turn;
     the turn itself goes on (docs/design/15-reliability.md).
     Vendor and topic names (a search provider, a weather API) are never
@@ -1266,8 +1263,8 @@ commit (invariant 30).
   Every card carries its form as `StructuredOutput.block`, and the client
   draws by block in one shared card shell; a kind only selects a pack on
   the host. A form's own kind is its name; a pack adds kinds to a form
-  (doc 91); nothing else does. An answer uses as many cards as it has
-  parts, shown in the order they were made. A model authors no layout:
+  (doc 91); nothing else does. Cards follow their ledger order.
+  A model authors no layout:
   there is no plan to declare, no deliverable to name, no placement and
   no end flag (removed 8.28.0; docs 86 and 97 are superseded). After a
   step of cards the model gets the next step and ends the turn by
@@ -1373,27 +1370,15 @@ commit (invariant 30).
   recall calls before attributing a cross-turn card to UI projection. Channel
   narration must inspect cards in the latest turn only; an older card must not
   suppress a current prose answer.
-  **Presentation schema access is independent of request vocabulary.** The
-  shared tool surface loads every admitted `presents_cards` schema from the
-  first call on every provider, except a card that shows only what a call
-  produced (`Tool::grounded_in`: a command ran, a file was written, a source
-  was retrieved, an ability answered). That one loads once the conversation
-  holds such a call, read from the ledger's own records
-  (`vak_tools::grounds_held`), and is promoted in place at the step one
-  appears, the way a tool called by name is; a card required by the plan
-  check is promoted too. Before then it could only be refused, so it waits
-  under "More tools". Schemas carry no historical card content and
-  do not make ordinary conversation require structured output. Recipes and
-  request predictions inform output demand and composition, not access to
-  alternative shapes. Nothing holds a finished answer for bookkeeping:
-  the plan check, the forced card call and the Topics placement hold are
-  removed (8.28.0); a Topics placement is the model's own call. No reading of the request
-  or the answer sends a turn back: the request-vocabulary presentation check
-  and the card-completeness self-audit are removed, and the stop gate holds
-  a turn only on observed facts (an unclosed fence, an unreported tool
-  failure, code changed after its check). Never add a check that guesses
-  from words or a threshold. The registry and live-run coverage checkpoint
-  is `docs/audits/presentation-registry-and-live-coverage-2026-10-10.md`.
+  **Presentation schema access is independent of request vocabulary.** All
+  five admitted card tools are loaded from the first step on every provider.
+  Other shapes have builders for history, inline fences and runtime cards,
+  but no offered tool. Markdown is the normal answer contract. Runtime source
+  cards report retrieval receipts, not invented findings; diff cards use the
+  captured file changes. No plan, forced card call or Topics placement hold
+  remains; Topics placement is the model's own call. Nothing holds a finished
+  answer for bookkeeping. The stop gate uses observed facts, never request
+  vocabulary, title words or a picked threshold.
   Runtime-authored traffic is **typed, never sniffed**: every user-role
   message the agent loop appends (repair nudges, stop guards) is created with
   `MessageRecord::control(kind, body)`, which sets `MessageMeta::control` to a

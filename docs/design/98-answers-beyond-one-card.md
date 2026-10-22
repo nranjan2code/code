@@ -1,9 +1,24 @@
 # 98 — Answers beyond one card
 
-Status: in progress (2026-10-22): the model authors no layout. Only chart,
-stats, map, calendar and controls are offered tools; other forms remain
-drawable from history, fences and runtime records. Markdown is the normal
-answer contract. Runtime source and diff cards are the remaining redesign step.
+Status: implemented (2026-10-22): retained controls, bindings and saved-page
+resources; model-authored layout and ability table/chart tools are retired.
+Runtime cards and Markdown replace the removed tool surface. Remaining
+interactive acceptance work stays in docs/plans/open-items.md.
+
+## Runtime composition, 2026-10-22
+
+The model authors Markdown and uses the five precise interactive card tools
+when useful. All other form builders remain for stored history, inline
+`vak` fences and runtime cards. At turn close, successful calls whose tools
+declare `fetched()` supply a sources card of retrieval receipts, without
+synthesized findings. Files captured before the turn wrote them supply the
+diff card's actual hunks and counts through `with_changes_made` with no paths.
+
+These are append-only `PresentationSource::Derived { from }` records naming
+their source calls. The second projection pass draws them at the entry's
+position after the answer. They are excluded from historical dialogue's
+missing-presentations supplement: the recorded tool results already carry
+the underlying evidence. No extra model call or layout plan is involved.
 
 > **Historical record** — the earlier design and implementation follow.
 

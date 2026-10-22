@@ -29,7 +29,7 @@
   controls as card tools (`SHAPES` keeps the other builders, unoffered, for
   history, fences and runtime cards); rewrite the prompt's presentation
   contract around Markdown (tables, lists, quotes, code are already drawn).
-- [ ] Card redesign step 3: the runtime builds a sources card (successful
+- [x] Card redesign step 3: the runtime builds a sources card (successful
   `fetched` calls) and a diff card (files the turn changed, reusing
   `with_changes_made`) at turn close, as a new
   `PresentationSource::Derived { from }` projected at its ledger position;

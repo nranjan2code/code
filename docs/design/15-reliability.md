@@ -28,7 +28,7 @@ user-controlled completion. Live outcome revisions are recorded before the
 runtime publishes their changed contract; an append failure preserves the
 previous runtime contract. Abort preserves partial output even when its
 append fails and adds a visible persistence-failure marker. Failed fence-card
-appends refuse successful delivery. A failed child terminal record returns an
+and runtime-derived card appends refuse successful delivery. A failed child terminal record returns an
 error with partial output and withholds its cards. Call effects must also be recorded before the next model request or delegated
 card import; a failure stops the turn. Account attribution is registered before
 effect queues are drained so both result windows and complete evidence bodies

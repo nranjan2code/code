@@ -932,7 +932,8 @@ fn snapshot_inner(
             vak_session::types::PresentationSource::ToolCall { tool_use_id } => {
                 Some((tool_use_id.clone(), (entry_id, record)))
             }
-            vak_session::types::PresentationSource::Fence { .. }
+            vak_session::types::PresentationSource::Derived { .. }
+            | vak_session::types::PresentationSource::Fence { .. }
             | vak_session::types::PresentationSource::Delegated { .. }
             | vak_session::types::PresentationSource::Answer { .. }
             | vak_session::types::PresentationSource::Scheduled { .. } => None,
@@ -1741,6 +1742,46 @@ fn snapshot_inner(
                         _ => {}
                     }
                 }
+            }
+            EntryPayload::Presentation(card)
+                if matches!(
+                    card.source,
+                    vak_session::types::PresentationSource::Derived { .. }
+                ) =>
+            {
+                let output = vak_delivery::StructuredOutput {
+                    semantic_type: card.semantic_type.clone(),
+                    block: card
+                        .block
+                        .clone()
+                        .unwrap_or_else(|| card.semantic_type.clone()),
+                    schema_version: u16::try_from(card.schema_version).unwrap_or(u16::MAX),
+                    skill_id: card.skill_id.clone(),
+                    skill_version: card.skill_version.clone(),
+                    payload: card.payload.clone(),
+                };
+                let number = turn_numbers.get(&card.turn_id).copied().unwrap_or(turn);
+                timeline.items.push(OutputItem {
+                    placement: Default::default(),
+                    card_state: None,
+                    id: entry.id.clone(),
+                    timestamp: entry.ts.to_rfc3339(),
+                    turn_id: format!("turn-{number}"),
+                    role: OutputRole::Assistant,
+                    kind: OutputKind::Card,
+                    status: OutputStatus::Succeeded,
+                    outcome: None,
+                    fallback_text: structured_markdown(&output),
+                    content: OutputContent::Structured { output },
+                    provenance: Some(OutputProvenance {
+                        session_id: Some(session_id.into()),
+                        entry_id: Some(entry.id.clone()),
+                        tool_call_id: None,
+                        source: Some("derived".into()),
+                        presentation_id: Some(entry.id.clone()),
+                    }),
+                    actions: Vec::new(),
+                });
             }
             EntryPayload::Activity(activity) if is_user_facing_activity(activity) => {
                 let number = entry
@@ -3191,6 +3232,59 @@ mod tests {
         );
         assert_eq!(timeline.items[0].fallback_text, text);
         assert!(wire_bytes < baseline_bytes / 10);
+    }
+
+    #[test]
+    fn runtime_cards_project_at_their_ledger_position_after_the_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = channel_log(&dir, "runtime-cards");
+        log.append_message(MessageRecord {
+            message: Message::user_text("Look up the report"),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("Here is the answer.")]),
+            meta: None,
+        })
+        .unwrap();
+        append_presentation(
+            &mut log,
+            "sources",
+            vak_session::types::PresentationSource::Derived {
+                from: vec!["fetch-1".into()],
+            },
+            &serde_json::json!({
+                "sources": [{"title": "Report", "url": "https://example.com/report", "finding": "Retrieved in this turn."}]
+            }),
+        );
+        let entry = log.presentations().last().unwrap().0.clone();
+        let view = snapshot("runtime", &log);
+        let items = &view.items;
+        let answer = items
+            .iter()
+            .position(|item| item.fallback_text == "Here is the answer.")
+            .unwrap();
+        let card = items
+            .iter()
+            .position(|item| {
+                item.provenance
+                    .as_ref()
+                    .and_then(|p| p.presentation_id.as_ref())
+                    == Some(&entry)
+            })
+            .unwrap();
+        assert!(card > answer);
+        assert_eq!(items[card].kind, OutputKind::Card);
+        assert_eq!(items[card].turn_id, items[answer].turn_id);
+        assert!(
+            items[card]
+                .provenance
+                .as_ref()
+                .unwrap()
+                .tool_call_id
+                .is_none()
+        );
     }
 
     /// The handle's live timeline is what `/presentation` serves while a run
@@ -5150,7 +5244,7 @@ mod tests {
         .is_some()
     }
 
-    /// Not per-type and not per-size: every type the emit tools support, at a
+    /// Every retained form projects from history, including unoffered builders, at a
     /// normal size and padded (one of its own text fields) far past the tool framework's result line
     /// limit, must come out of the real `snapshot()` as exactly one card of
     /// that type — from the call arguments alone, with only an ack as result.

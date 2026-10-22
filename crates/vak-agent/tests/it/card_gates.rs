@@ -82,81 +82,17 @@ impl Tool for FailingFetch {
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({"type": "object"})
     }
-    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+    fn fetched(&self, args: &serde_json::Value) -> Option<String> {
+        args["url"].as_str().map(str::to_string)
+    }
+    async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        if args["succeed"] == true {
+            return ToolOutput::ok("Retrieved body");
+        }
         ToolOutput::error(
             Fault::Tool,
             "[webfetch] GET https://example.com -> 403 Forbidden",
         )
-    }
-}
-
-/// A shell that ran a command and stopped at its limit, as a dev server
-/// does. Named `shell`, it is called as itself: no name stands for another
-/// tool.
-struct FakeShell;
-
-#[async_trait::async_trait]
-impl Tool for FakeShell {
-    fn name(&self) -> &str {
-        "shell"
-    }
-    fn description(&self) -> &str {
-        "run a command"
-    }
-    fn schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object"})
-    }
-    fn permission(&self) -> vak_permission::Declared {
-        vak_permission::Declared::new(
-            vak_permission::Reach::Command,
-            vak_permission::Subject::Command("command"),
-        )
-    }
-    async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
-        // One refused before anything ran, as a missing folder is.
-        if args["command"] == "ls missing" {
-            return ToolOutput::error(Fault::Target, "working directory does not exist");
-        }
-        ToolOutput::error(
-            Fault::Limit,
-            "starting\n[command stopped at its time limit of 1000ms]\n[limit]: a note for the model",
-        )
-        .ran(None, 1000)
-    }
-}
-
-/// A card that shows what a command printed, as the terminal card does.
-struct FakeTerminalCard;
-
-#[async_trait::async_trait]
-impl Tool for FakeTerminalCard {
-    fn name(&self) -> &str {
-        "emit_terminal_card"
-    }
-    fn description(&self) -> &str {
-        "show a command's output"
-    }
-    fn schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object"})
-    }
-    fn presents_cards(&self) -> bool {
-        true
-    }
-    fn output_of_command(&self) -> Option<vak_tools::CommandOutput> {
-        Some(vak_tools::CommandOutput {
-            command: "command",
-            output: Some("output"),
-            exit_code: "exit_code",
-            duration_ms: "duration_ms",
-        })
-    }
-    async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
-        ToolOutput::ok(format!(
-            "shown: {} exit={} ms={}",
-            args["output"].as_str().unwrap_or(""),
-            args["exit_code"],
-            args["duration_ms"]
-        ))
     }
 }
 
@@ -187,34 +123,6 @@ impl Tool for FakeWriter {
     }
 }
 
-/// Shows the files this turn changed; what it is handed is echoed back.
-struct FakeDiffCard;
-
-#[async_trait::async_trait]
-impl Tool for FakeDiffCard {
-    fn name(&self) -> &str {
-        "emit_diff_card"
-    }
-    fn description(&self) -> &str {
-        "show the changes"
-    }
-    fn schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object"})
-    }
-    fn presents_cards(&self) -> bool {
-        true
-    }
-    fn changes_made(&self) -> Option<vak_tools::ChangesMade> {
-        Some(vak_tools::ChangesMade {
-            paths: "paths",
-            files: "files",
-        })
-    }
-    async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
-        ToolOutput::ok(format!("shown: {}", args["files"]))
-    }
-}
-
 /// An ability whose program answers 300 records.
 struct FakeAbility;
 
@@ -240,45 +148,6 @@ impl Tool for FakeAbility {
             .map(|at| serde_json::json!({"city": format!("City {at}"), "people": at * 7}))
             .collect();
         ToolOutput::ok(serde_json::json!({"rows": rows}).to_string())
-    }
-}
-
-/// A table card filled from an ability's answer: it reports the rows the
-/// loop gave it.
-struct FakeAbilityTable;
-
-#[async_trait::async_trait]
-impl Tool for FakeAbilityTable {
-    fn name(&self) -> &str {
-        "emit_ability_table_card"
-    }
-    fn description(&self) -> &str {
-        "a table of an ability's answer"
-    }
-    fn schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object"})
-    }
-    fn presents_cards(&self) -> bool {
-        true
-    }
-    fn data_of_call(&self) -> Option<vak_tools::CallData> {
-        Some(vak_tools::CallData {
-            from: "from",
-            call_id: "call_id",
-            list: "list",
-            filled: &["rows"],
-        })
-    }
-    fn fill_from_data(
-        &self,
-        args: &mut serde_json::Value,
-        records: &[serde_json::Value],
-    ) -> Result<(), String> {
-        args["rows"] = serde_json::Value::Array(records.to_vec());
-        Ok(())
-    }
-    async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
-        ToolOutput::ok(args["rows"].to_string())
     }
 }
 
@@ -415,6 +284,23 @@ async fn build_agent(
         log,
         {
             let mut cfg = AgentConfig::new("sys");
+            cfg.presentation_rebuild = Some(Arc::new(|form, input| {
+                if !matches!(form, "sources" | "diff") {
+                    return None;
+                }
+                Some(vak_tools::PresentationCard {
+                    presentation_id: None,
+                    semantic_type: form.into(),
+                    skill_id: "test".into(),
+                    skill_version: "1".into(),
+                    schema_version: 1,
+                    payload: input.clone(),
+                    title: form.into(),
+                    identity_digest: form.into(),
+                    block: Some(form.into()),
+                    data_call_id: None,
+                })
+            }));
             cfg.model = "test-model".into();
             cfg.mode = vak_permission::Mode::FullAccess;
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
@@ -422,12 +308,8 @@ async fn build_agent(
                 Arc::new(FakeEmitChartCard),
                 Arc::new(FakeEmitTableCard),
                 Arc::new(FailingFetch),
-                Arc::new(FakeShell),
-                Arc::new(FakeTerminalCard),
                 Arc::new(FakeWriter),
-                Arc::new(FakeDiffCard),
                 Arc::new(FakeAbility),
-                Arc::new(FakeAbilityTable),
             ];
             // As in production: a card tool the request did not predict is
             // deferred, so it is not declared until something loads it.
@@ -450,32 +332,12 @@ async fn build_agent(
                     serde_json::json!({"type": "object"}),
                 ),
                 vak_llm::ToolDefinition::new(
-                    "shell",
-                    "test stand-in",
-                    serde_json::json!({"type": "object"}),
-                ),
-                vak_llm::ToolDefinition::new(
-                    "emit_terminal_card",
-                    "test stand-in",
-                    serde_json::json!({"type": "object"}),
-                ),
-                vak_llm::ToolDefinition::new(
                     "put",
                     "test stand-in",
                     serde_json::json!({"type": "object"}),
                 ),
                 vak_llm::ToolDefinition::new(
-                    "emit_diff_card",
-                    "test stand-in",
-                    serde_json::json!({"type": "object"}),
-                ),
-                vak_llm::ToolDefinition::new(
                     "census",
-                    "test stand-in",
-                    serde_json::json!({"type": "object"}),
-                ),
-                vak_llm::ToolDefinition::new(
-                    "emit_ability_table_card",
                     "test stand-in",
                     serde_json::json!({"type": "object"}),
                 ),
@@ -566,176 +428,6 @@ async fn a_url_only_in_call_arguments_is_not_citable() {
     assert!(refused, "the card is refused, naming the URL");
 }
 
-/// A card showing what a command printed shows what the call that ran it
-/// returned, whatever the model wrote; one naming a command no call ran is
-/// refused with the command named.
-#[tokio::test]
-async fn a_terminal_card_shows_what_its_command_really_printed() {
-    let dir = tempdir().unwrap();
-    let (mut agent, _) = build_agent(
-        &dir,
-        "pc-terminal",
-        vec![
-            tool_call_msg("s1", "shell", serde_json::json!({"command": "npm start"})),
-            tool_call_msg(
-                "t2",
-                "emit_terminal_card",
-                serde_json::json!({"command": "npm run dev"}),
-            ),
-            tool_call_msg("s2", "shell", serde_json::json!({"command": "ls missing"})),
-            tool_call_msg(
-                "t3",
-                "emit_terminal_card",
-                serde_json::json!({"command": "ls missing"}),
-            ),
-            tool_call_msg(
-                "t1",
-                "emit_terminal_card",
-                serde_json::json!({"command": "npm start", "output": "ready"}),
-            ),
-            text_msg(""),
-        ],
-    )
-    .await;
-    let outcome = run(&mut agent).await;
-    assert!(
-        matches!(outcome, TurnOutcome::Completed { .. }),
-        "{outcome:?}"
-    );
-    let session = agent.session.lock().await;
-    let result = |id: &str| {
-        session
-            .message_chain()
-            .iter()
-            .flat_map(|(_, message)| message.content.iter())
-            .find_map(|block| match block {
-                ContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                    is_error,
-                } if tool_use_id == id => Some((content.clone(), *is_error)),
-                _ => None,
-            })
-            .unwrap()
-    };
-    let (shown, failed) = result("t1");
-    assert!(!failed, "{shown}");
-    assert!(shown.contains("stopped at its time limit"), "{shown}");
-    assert!(!shown.contains("ready"), "{shown}");
-    assert!(
-        !shown.contains("[limit]"),
-        "the runtime's note is not output: {shown}"
-    );
-    assert!(
-        shown.contains("exit=null ms=1000"),
-        "stopped, not exited: {shown}"
-    );
-    let (refused, failed) = result("t2");
-    assert!(failed, "{refused}");
-    assert!(
-        refused.contains("no call in this conversation ran `npm run dev`"),
-        "{refused}"
-    );
-    assert!(
-        refused.contains("The commands that ran in this turn are `npm start`"),
-        "the refusal names what did run: {refused}"
-    );
-    // A call refused before anything ran printed nothing.
-    let (refused, failed) = result("t3");
-    assert!(failed, "{refused}");
-    assert!(refused.contains("ran `ls missing`"), "{refused}");
-}
-
-/// A diff card shows what the turn's writes really changed, taken from the
-/// files before and after, never hunks or counts the model wrote; one
-/// before any write, or naming a file nothing changed, is refused with the
-/// files that did change (found live 2026-10-19: a model wrote prose as
-/// a hunk).
-#[tokio::test]
-async fn a_diff_card_shows_what_the_turn_s_writes_really_changed() {
-    let dir = tempdir().unwrap();
-    std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
-    let (mut agent, _) = build_agent(
-        &dir,
-        "pc-diff",
-        vec![
-            tool_call_msg("d0", "emit_diff_card", serde_json::json!({})),
-            tool_call_msg(
-                "w1",
-                "put",
-                serde_json::json!({"path": "a.txt", "content": "one\nTWO\n"}),
-            ),
-            tool_call_msg(
-                "w2",
-                "put",
-                serde_json::json!({"path": "new.txt", "content": "x\n"}),
-            ),
-            tool_call_msg(
-                "d1",
-                "emit_diff_card",
-                serde_json::json!({"paths": ["nope.txt"]}),
-            ),
-            tool_call_msg(
-                "d2",
-                "emit_diff_card",
-                serde_json::json!({
-                    "paths": ["./a.txt"],
-                    "files": [{"filename": "a.txt", "hunks": "made up", "additions": 9, "deletions": 9}]
-                }),
-            ),
-            text_msg(""),
-        ],
-    )
-    .await;
-    let outcome = run(&mut agent).await;
-    assert!(
-        matches!(outcome, TurnOutcome::Completed { .. }),
-        "{outcome:?}"
-    );
-    let session = agent.session.lock().await;
-    let result = |id: &str| {
-        session
-            .message_chain()
-            .iter()
-            .flat_map(|(_, message)| message.content.iter())
-            .find_map(|block| match block {
-                ContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                    is_error,
-                } if tool_use_id == id => Some((content.clone(), *is_error)),
-                _ => None,
-            })
-            .unwrap()
-    };
-    let (refused, failed) = result("d0");
-    assert!(
-        failed && refused.contains("no call in this turn changed"),
-        "{refused}"
-    );
-    let (refused, failed) = result("d1");
-    assert!(failed, "{refused}");
-    assert!(
-        refused.contains("`nope.txt`") && refused.contains("`a.txt`, `new.txt`"),
-        "{refused}"
-    );
-    let (shown, failed) = result("d2");
-    assert!(!failed, "{shown}");
-    assert!(!shown.contains("made up"), "{shown}");
-    assert!(
-        shown.contains("-two") && shown.contains("+TWO"),
-        "the real hunk: {shown}"
-    );
-    assert!(
-        shown.contains("\"additions\":1") && shown.contains("\"deletions\":1"),
-        "{shown}"
-    );
-    assert!(
-        !shown.contains("new.txt"),
-        "only the file it named: {shown}"
-    );
-}
-
 /// A call by a name Vak retired reaches no other tool: it is told what
 /// replaced it and which tools exist, and the turn goes on.
 #[tokio::test]
@@ -778,41 +470,36 @@ async fn a_retired_name_is_told_what_replaced_it() {
     assert!(told.contains(r#""available_tools""#), "{told}");
 }
 
-/// A card pins an exact ability invocation. A later failure does not fall
-/// back to earlier success; an explicitly selected earlier success is stable.
 #[tokio::test]
-async fn ability_card_uses_only_its_selected_call_snapshot() {
+async fn runtime_cards_use_this_turns_receipts_without_card_calls() {
     let dir = tempdir().unwrap();
-    let (mut agent, _) = build_agent(
+    std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
+    let (mut agent, requests) = build_agent(
         &dir,
-        "pc-ability-card",
+        "runtime-cards",
         vec![
-            tool_call_msg("a1", "census", serde_json::json!({})),
-            tool_call_msg("a3", "census", serde_json::json!({})),
-            tool_call_msg("a2", "census", serde_json::json!({"fail": true})),
-            tool_call_msg("u0", "emit_ability_table_card", serde_json::json!({"from": "census", "call_id": "a2", "list": "rows"})),
-            // One step with a refused card beside the accepted one: a step
-            // of accepted cards alone is the answer and ends the turn.
-            {
-                let mut step = tool_call_msg(
-                    "u1",
-                    "emit_ability_table_card",
-                    serde_json::json!({"from": "census", "call_id": "a1", "list": "rows", "rows": [{"city": "Made up", "people": 1}]}),
-                );
-                step.content.push(ContentBlock::ToolUse {
-                    id: "u2".into(),
-                    name: "emit_ability_table_card".into(),
-                    input: serde_json::json!({"from": "weather", "call_id": "a1", "list": "rows"}),
-                });
-                step.content.push(ContentBlock::ToolUse {
-                    id: "u4".into(),
-                    name: "emit_ability_table_card".into(),
-                    input: serde_json::json!({"from": "census", "call_id": "a3", "list": "rows"}),
-                });
-                step
-            },
-            tool_call_msg("u3", "emit_ability_table_card", serde_json::json!({"from": "census", "call_id": "pending", "list": "rows"})),
-            text_msg("Here are the cities."),
+            tool_call_msg(
+                "failed",
+                "fetch",
+                serde_json::json!({"url": "https://failed.example"}),
+            ),
+            tool_call_msg(
+                "fetched",
+                "fetch",
+                serde_json::json!({"url": "https://read.example", "succeed": true}),
+            ),
+            tool_call_msg(
+                "w1",
+                "put",
+                serde_json::json!({"path": "a.txt", "content": "one\nTWO\n"}),
+            ),
+            tool_call_msg(
+                "w2",
+                "put",
+                serde_json::json!({"path": "new.txt", "content": "new\n"}),
+            ),
+            text_msg("Updated the files. The other source could not be retrieved."),
+            text_msg("A fresh answer."),
         ],
     )
     .await;
@@ -821,42 +508,58 @@ async fn ability_card_uses_only_its_selected_call_snapshot() {
         matches!(outcome, TurnOutcome::Completed { .. }),
         "{outcome:?}"
     );
-    let session = agent.session.lock().await;
-    let result = |id: &str| {
-        session
-            .message_chain()
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        5,
+        "no model call for runtime cards"
+    );
+    {
+        let session = agent.session.lock().await;
+        let cards = session.presentations();
+        assert_eq!(cards.len(), 2);
+        let sources = cards
             .iter()
-            .flat_map(|(_, message)| message.content.iter())
-            .find_map(|block| match block {
-                ContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                    is_error,
-                } if tool_use_id == id => Some((content.clone(), *is_error)),
-                _ => None,
-            })
+            .find(|(_, card)| card.semantic_type == "sources")
             .unwrap()
-    };
-    let (refused, failed) = result("u0");
-    assert!(
-        failed && refused.contains("selected call `a2`") && refused.contains("failed"),
-        "{refused}"
-    );
-    let (shown, failed) = result("u1");
-    assert!(!failed, "{shown}");
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&shown).unwrap();
-    assert_eq!(rows.len(), 300);
-    assert_eq!(rows[0]["city"], "City 0");
-    assert_eq!(rows[299]["people"], 299 * 7);
-    let (refused, failed) = result("u2");
-    assert!(failed, "{refused}");
-    assert!(
-        refused.contains("`weather`") && refused.contains("`census`"),
-        "{refused}"
-    );
-    let (refused, failed) = result("u3");
-    assert!(
-        failed && refused.contains("call ID `pending`") && refused.contains("no completed result"),
-        "{refused}"
+            .1;
+        assert_eq!(
+            sources.source,
+            vak_session::types::PresentationSource::Derived {
+                from: vec!["fetched".into()]
+            }
+        );
+        assert_eq!(sources.payload["sources"].as_array().unwrap().len(), 1);
+        assert_eq!(sources.payload["sources"][0]["url"], "https://read.example");
+        let diff = cards
+            .iter()
+            .find(|(_, card)| card.semantic_type == "diff")
+            .unwrap()
+            .1;
+        assert_eq!(diff.derived_from, ["w1", "w2"]);
+        let files = diff.payload["files"].as_array().unwrap();
+        assert_eq!(files.len(), 2);
+        let changed = files
+            .iter()
+            .find(|file| file["filename"] == "a.txt")
+            .unwrap();
+        assert!(changed["hunks"].as_str().unwrap().contains("-two"));
+        assert!(changed["hunks"].as_str().unwrap().contains("+TWO"));
+        assert_eq!(changed["additions"], 1);
+        assert_eq!(changed["deletions"], 1);
+        let chain = session.chain_to_root();
+        let answer = chain.iter().position(|entry| matches!(&entry.payload, vak_session::EntryPayload::Message(record) if record.message.text_content().starts_with("Updated the files."))).unwrap();
+        for (id, _) in cards {
+            assert!(chain.iter().position(|entry| entry.id == id).unwrap() > answer);
+        }
+    }
+    assert!(matches!(
+        run(&mut agent).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let session = agent.session.lock().await;
+    assert_eq!(
+        session.presentations().len(),
+        2,
+        "no sources or diffs carried into the next turn"
     );
 }

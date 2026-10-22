@@ -1,5 +1,10 @@
 ## Unreleased
 
+- The runtime adds source receipts and actual file diffs after the answer,
+  directly from this turn's calls and file bytes. No model card call is
+  required, failed fetches supply no source, and later turns do not recopy
+  these cards into their historical dialogue.
+
 - Answers use Markdown's existing interactive tables, lists, quotes, Mermaid
   and diff code. Only chart, stats, map, calendar and controls remain offered
   card tools; all other forms remain drawable. Shipped answer skills follow

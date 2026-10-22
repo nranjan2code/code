@@ -8,7 +8,9 @@
   and `then` fields are removed (docs 86 and 97 superseded). The remaining
   work is tracked in docs/plans/open-items.md. Step 2 offers only the five
   interactive tools; Markdown replaces the other model-authored card calls,
-  while every form remains drawable.
+  while every form remains drawable. Step 3 records runtime sources and actual
+  file diffs at turn close as Derived presentations after the answer, with no
+  model call. Live acceptance and release remain in the tracker.
 
 - 2026-10-22: The maintainer asked for one design run on conversation context
   instead of more one-slot fixes, and to fold the paused parallel continuity work

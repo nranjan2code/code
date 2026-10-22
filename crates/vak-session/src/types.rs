@@ -892,6 +892,8 @@ pub enum ActivityKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PresentationSource {
+    /// Built by the runtime from recorded calls at turn close, without a model call.
+    Derived { from: Vec<String> },
     /// Emitted through an `emit_*_card` tool call.
     ToolCall { tool_use_id: String },
     /// Emitted as an inline ```` ```vak ```` fence in assistant text (models
@@ -924,7 +926,7 @@ pub struct CardPlacement {
     pub replaces: Option<String>,
 }
 
-/// A validated `emit_*_card` (or fence) presentation, written once at the
+/// A validated tool, fence or runtime-derived presentation, written once at the
 /// moment it validates. Never model-visible raw (`derive_messages` skips it,
 /// like `Receipt`): the current turn already sees the card through the
 /// `tool_use` input it wrote; later turns see it through a `TurnCard` or a

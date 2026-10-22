@@ -917,7 +917,8 @@ impl Turn {
             .filter_map(|record| match &record.source {
                 PresentationSource::ToolCall { tool_use_id }
                 | PresentationSource::Answer { tool_use_id, .. } => Some(tool_use_id.as_str()),
-                PresentationSource::Fence { .. }
+                PresentationSource::Derived { .. }
+                | PresentationSource::Fence { .. }
                 | PresentationSource::Delegated { .. }
                 | PresentationSource::Scheduled { .. } => None,
             })
@@ -985,6 +986,9 @@ impl Turn {
             .zip(&self.presentation_records)
             .enumerate()
             .filter_map(|(position, (id, presentation))| {
+                if matches!(presentation.source, PresentationSource::Derived { .. }) {
+                    return None;
+                }
                 let represented = match &presentation.source {
                     PresentationSource::ToolCall { tool_use_id }
                     | PresentationSource::Answer { tool_use_id, .. } => {
@@ -1037,7 +1041,8 @@ impl Turn {
                 | PresentationSource::Answer { tool_use_id, .. } => {
                     Some((tool_use_id.as_str(), id.as_str()))
                 }
-                PresentationSource::Fence { .. }
+                PresentationSource::Derived { .. }
+                | PresentationSource::Fence { .. }
                 | PresentationSource::Delegated { .. }
                 | PresentationSource::Scheduled { .. } => None,
             })
@@ -2206,6 +2211,28 @@ mod tests {
             assert!(restored.contains("\"position\":1"));
             assert!(!restored.contains("obsolete fence text"));
         }
+    }
+
+    #[test]
+    fn derived_presentations_are_not_missing_model_authored_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, _, id, _) = two_closed_one_open(dir.path());
+        let index = TurnIndex::from_log(&log);
+        let mut turn = index.turn_by_id(&id).unwrap().clone();
+        turn.steps.clear();
+        turn.presentation_records[0].source = PresentationSource::Derived {
+            from: vec!["source".into()],
+        };
+        let encoded = serde_json::to_value(&turn.presentation_records[0].source).unwrap();
+        assert_eq!(
+            serde_json::from_value::<PresentationSource>(encoded).unwrap(),
+            turn.presentation_records[0].source
+        );
+        assert!(!turn.dialogue_record().iter().any(|message| {
+            message
+                .text_content()
+                .contains("<historical_presentations>")
+        }));
     }
 
     #[test]

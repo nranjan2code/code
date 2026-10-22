@@ -70,7 +70,7 @@ checks channel coverage:
 
 | Place | What it holds for each form |
 |---|---|
-| `crates/vak-core/src/presentation_tools.rs` `SHAPES` | the card tool `emit_<form>_card`: flat arguments and the builder that stores them |
+| `crates/vak-core/src/presentation_tools.rs` `SHAPES` | flat arguments and builders for every form; only chart, stats, map, calendar and controls have offered tools |
 | `crates/vak-delivery/src/channel/` | shared form projection and native channel compilers; doc 102 |
 | `crates/vak-delivery/src/skills.rs` | `validate_form` (the stored shape) and `structured_markdown` (its text form for exports, explicitly textual surfaces and the model) |
 | `crates/vak-presentation/src/lib.rs` `Primitive` | the form as a primitive a pack can place, beside layout (`stack`, `row`, `group`, `section`, `text`, `metric`) |
