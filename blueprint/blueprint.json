@@ -1,10 +1,10 @@
 {
  "meta": {
-  "version": "8.20.0",
-  "revision": "344a8466a",
+  "version": "8.21.0",
+  "revision": "ec27c6e5b",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
-  "prose_reviewed": "8.20.0 · 2026-10-22"
+  "prose_reviewed": "8.21.0 · 2026-10-22"
  },
  "summary": {
   "text": "Vakyartha (`vak`) is a local-first agent harness for one owner: agents that work on code, documents, research and everyday tasks, reached from a desktop app, the browser, a terminal and chat apps, with every model input and tool result kept in an append-only record. Its thesis is strong safety, transparent operation, extensible integrations and a simple core.\n\nThe lower layers (storage, permission, the pure deciders, the document engines) are well shaped and change rarely. Above them, three large crates (`vak-core`, `vak-agent`, `vak-server`) hold the turn and most features, and that is where most of the work and most of the risk sit.",
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2445,
+   "total_commits": 2447,
    "days": 63,
    "peak_day": 174,
    "design_docs": 97,
@@ -389,7 +389,7 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 502,
+  "commits": 504,
   "areas": [
    [
     "docs",
@@ -397,7 +397,7 @@
    ],
    [
     "(root)",
-    286
+    288
    ],
    [
     "vak-core",
@@ -494,7 +494,7 @@
    [
     "engineering",
     "Build, gate and release",
-    44
+    45
    ],
    [
     "library",
@@ -754,6 +754,23 @@
   ],
   "recent": [
    {
+    "hash": "ec27c6e5b",
+    "date": "2026-10-22",
+    "subject": "Prepare 8.21.0 release notes",
+    "areas": [
+     "(root)",
+     "blueprint"
+    ]
+   },
+   {
+    "hash": "0ca645ad4",
+    "date": "2026-10-22",
+    "subject": "Bump version to 8.21.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "344a8466a",
     "date": "2026-10-22",
     "subject": "Complete Canvas workspace extensibility",
@@ -893,46 +910,9 @@
     "areas": [
      "(root)"
     ]
-   },
-   {
-    "hash": "cba157ff1",
-    "date": "2026-10-21",
-    "subject": "Resolve historical dependencies per outcome and stabilize answer composition",
-    "areas": [
-     "(root)",
-     "docs",
-     "packages",
-     "vak-agent",
-     "vak-catalog",
-     "vak-client-ui",
-     "vak-config",
-     "vak-context",
-     "vak-control",
-     "vak-core",
-     "vak-delivery",
-     "vak-eval",
-     "vak-intent",
-     "vak-server",
-     "vak-session",
-     "vak-tools"
-    ]
-   },
-   {
-    "hash": "848648d69",
-    "date": "2026-10-21",
-    "subject": "Release 8.17.1",
-    "areas": [
-     "(root)"
-    ]
    }
   ],
-  "unreleased": [
-   "Closing Canvas returns focus to its external opener even after switching conversations or replacing its view.",
-   "Enabled packages can contribute Canvas workspaces with typed fields and domain commands.",
-   "Canvas workspaces can share selected saved fields with the Agent through a logged context entry.",
-   "Canvas preserves workspace edits across tab switches, protects them from automatic eviction, and asks before discarding them.",
-   "Shared Canvas workspace registration, viewport metrics and drawing scheduling support owned interactive renderers across web and desktop."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -21961,9 +21941,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 131,
+   "commits": 132,
    "fixes": 21,
-   "recent": 44,
+   "recent": 45,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -30827,6 +30807,20 @@
   }
  ],
  "replay": [
+  {
+   "hash": "ec27c6e5b",
+   "date": "2026-10-22",
+   "subject": "Prepare 8.21.0 release notes",
+   "subsystems": [
+    "engineering"
+   ]
+  },
+  {
+   "hash": "0ca645ad4",
+   "date": "2026-10-22",
+   "subject": "Bump version to 8.21.0",
+   "subsystems": []
+  },
   {
    "hash": "344a8466a",
    "date": "2026-10-22",
