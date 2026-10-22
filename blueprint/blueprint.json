@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.27.0",
-  "revision": "9037a9c4d",
+  "revision": "7b12f3ad3",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2478,
+   "total_commits": 2479,
    "days": 63,
    "peak_day": 174,
    "design_docs": 99,
@@ -115,11 +115,12 @@
   "open_items": [
    {
     "section": "Conversation continuity: the filled window (2026-10-22)",
-    "open": 3,
+    "open": 4,
     "items": [
      "The live summary path has run only in scripted tests:",
      "`TurnCard::line` still cuts a turn's answer at twelve words and its request at sixty, a picked number.",
-     "Then:"
+     "Release and install 8.28.0.",
+     "Follow up the live answer-quality observations:"
     ]
    },
    {
@@ -418,17 +419,17 @@
     ]
    }
   ],
-  "open_total": 118,
+  "open_total": 119,
   "measures_revision": "cd39bd9b9"
  },
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 535,
+  "commits": 536,
   "areas": [
    [
     "docs",
-    432
+    433
    ],
    [
     "(root)",
@@ -789,6 +790,14 @@
   ],
   "recent": [
    {
+    "hash": "7b12f3ad3",
+    "date": "2026-10-22",
+    "subject": "Record all thirty live card-redesign acceptance outputs",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
     "hash": "9037a9c4d",
     "date": "2026-10-22",
     "subject": "Derive source and file-change cards at turn close",
@@ -935,14 +944,6 @@
     "subject": "Record 8.25.0 release and local install",
     "areas": [
      "docs"
-    ]
-   },
-   {
-    "hash": "e63ab93b7",
-    "date": "2026-10-22",
-    "subject": "Prepare 8.25.0 changelog",
-    "areas": [
-     "(root)"
     ]
    }
   ],
@@ -30812,6 +30813,12 @@
  ],
  "replay": [
   {
+   "hash": "7b12f3ad3",
+   "date": "2026-10-22",
+   "subject": "Record all thirty live card-redesign acceptance outputs",
+   "subsystems": []
+  },
+  {
    "hash": "9037a9c4d",
    "date": "2026-10-22",
    "subject": "Derive source and file-change cards at turn close",
@@ -37820,7 +37827,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1419,
+  "docs_commits": 1420,
   "hot": 656
  },
  "findings": [
