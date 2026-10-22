@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.26.0",
-  "revision": "5752d0181",
+  "revision": "cd39bd9b9",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2468,
+   "total_commits": 2469,
    "days": 63,
    "peak_day": 174,
    "design_docs": 99,
@@ -428,20 +428,20 @@
    }
   ],
   "open_total": 115,
-  "measures_revision": "e63ab93b7"
+  "measures_revision": "cd39bd9b9"
  },
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 525,
+  "commits": 526,
   "areas": [
    [
     "docs",
-    423
+    424
    ],
    [
     "(root)",
-    305
+    306
    ],
    [
     "vak-core",
@@ -798,6 +798,15 @@
   ],
   "recent": [
    {
+    "hash": "cd39bd9b9",
+    "date": "2026-10-22",
+    "subject": "Record 8.26.0 release and local install",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "5752d0181",
     "date": "2026-10-22",
     "subject": "Prepare 8.26.0 release",
@@ -925,14 +934,6 @@
      "docs",
      "vak-delivery",
      "vak-server"
-    ]
-   },
-   {
-    "hash": "872ddb97c",
-    "date": "2026-10-22",
-    "subject": "Open changelog for the next release",
-    "areas": [
-     "(root)"
     ]
    }
   ],
@@ -30925,6 +30926,12 @@
  ],
  "replay": [
   {
+   "hash": "cd39bd9b9",
+   "date": "2026-10-22",
+   "subject": "Record 8.26.0 release and local install",
+   "subsystems": []
+  },
+  {
    "hash": "5752d0181",
    "date": "2026-10-22",
    "subject": "Prepare 8.26.0 release",
@@ -37770,7 +37777,7 @@
   ],
   "complexity": [
    {
-    "score": 201,
+    "score": 203,
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
     "line": 1885
@@ -37815,19 +37822,19 @@
     "score": 61,
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5763
+    "line": 5767
    },
    {
     "score": 46,
     "name": "execute_one",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 9139
+    "line": 9169
    },
    {
     "score": 43,
     "name": "execute_batch_calls",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 7974
+    "line": 8004
    },
    {
     "score": 42,
@@ -37844,7 +37851,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1410,
+  "docs_commits": 1411,
   "hot": 656
  },
  "findings": [
@@ -37853,7 +37860,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 201 (rank 1 of 4,553 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 25. 157 commits changed the first (6% of all) and 216 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.2 per thousand lines, against a median of 4.1 over 421 files; file size alone does not predict the rate (ρ = -0.11).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 203 (rank 1 of 4,554 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 25. 157 commits changed the first (6% of all) and 216 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.2 per thousand lines, against a median of 4.1 over 421 files; file size alone does not predict the rate (ρ = -0.11).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own. The 2026-10-22 answer investigation found another lossy decision input: plan receipts retained a deliverable name but discarded the actual form. The correction keeps active typed receipts and applies the same pure plan check in the loop and settlement, preserving exact replacement addresses. Broader state consolidation remains open.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`; [answer design investigation](../docs/audits/answer-design-contract-2026-10-22.md)."
