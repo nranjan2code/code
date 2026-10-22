@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.24.0",
-  "revision": "060a67b9b",
+  "version": "8.25.0",
+  "revision": "e63ab93b7",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.23.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2461,
+   "total_commits": 2464,
    "days": 63,
    "peak_day": 174,
    "design_docs": 99,
@@ -425,15 +425,15 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 518,
+  "commits": 521,
   "areas": [
    [
     "docs",
-    419
+    420
    ],
    [
     "(root)",
-    299
+    302
    ],
    [
     "vak-core",
@@ -445,7 +445,7 @@
    ],
    [
     "vak-client-ui",
-    119
+    120
    ],
    [
     "vak-agent",
@@ -485,7 +485,7 @@
    [
     "client",
     "Workspace client",
-    100
+    101
    ],
    [
     "turn",
@@ -495,7 +495,7 @@
    [
     "cards",
     "Cards and presentation",
-    94
+    95
    ],
    [
     "loop",
@@ -535,7 +535,7 @@
    [
     "library",
     "Library and file state",
-    42
+    43
    ],
    [
     "state",
@@ -585,7 +585,7 @@
    [
     "canvas",
     "Canvas and previews",
-    22
+    23
    ],
    [
     "llm",
@@ -643,19 +643,19 @@
     14
    ],
    [
+    "agents",
+    "Agents",
+    14
+   ],
+   [
     "recall",
     "Recall and history",
     13
    ],
    [
-    "agents",
-    "Agents",
-    13
-   ],
-   [
     "inbox",
     "Inbox and digest",
-    12
+    13
    ],
    [
     "plugins",
@@ -790,6 +790,32 @@
   ],
   "recent": [
    {
+    "hash": "e63ab93b7",
+    "date": "2026-10-22",
+    "subject": "Prepare 8.25.0 changelog",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "87664596a",
+    "date": "2026-10-22",
+    "subject": "Bump version to 8.25.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "b269b36c8",
+    "date": "2026-10-22",
+    "subject": "Improve shared chat answer composition",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-client-ui"
+    ]
+   },
+   {
     "hash": "060a67b9b",
     "date": "2026-10-22",
     "subject": "Put release heading first in changelog",
@@ -898,37 +924,9 @@
      "vak-server",
      "vak-tools"
     ]
-   },
-   {
-    "hash": "390711dbe",
-    "date": "2026-10-22",
-    "subject": "Track Canvas context in record dictionary",
-    "areas": [
-     "docs",
-     "vak-server"
-    ]
-   },
-   {
-    "hash": "bebdc3be1",
-    "date": "2026-10-22",
-    "subject": "Cover workspace context in receipt test",
-    "areas": [
-     "vak-agent"
-    ]
-   },
-   {
-    "hash": "ec27c6e5b",
-    "date": "2026-10-22",
-    "subject": "Prepare 8.21.0 release notes",
-    "areas": [
-     "(root)",
-     "blueprint"
-    ]
    }
   ],
-  "unreleased": [
-   "Shared web and desktop UI:"
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1617,9 +1615,9 @@
     "crates/vak-client-ui/src/voice.ts",
     "crates/vak-client-ui/src/wordDiff.ts"
    ],
-   "commits": 517,
+   "commits": 518,
    "fixes": 74,
-   "recent": 100,
+   "recent": 101,
    "fix_density": 3.9,
    "out": [
     {
@@ -14914,9 +14912,9 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 309,
+   "commits": 310,
    "fixes": 53,
-   "recent": 94,
+   "recent": 95,
    "fix_density": 2.7,
    "out": [
     {
@@ -15665,9 +15663,9 @@
     "crates/vak-server/src/preview.rs",
     "crates/vak-session/src/workspaces.rs"
    ],
-   "commits": 71,
+   "commits": 72,
    "fixes": 5,
-   "recent": 22,
+   "recent": 23,
    "fix_density": 0.7,
    "out": [
     {
@@ -15995,9 +15993,9 @@
     "crates/vak-server/src/library.rs",
     "crates/vak-tools/src/artifact.rs"
    ],
-   "commits": 52,
+   "commits": 53,
    "fixes": 4,
-   "recent": 42,
+   "recent": 43,
    "fix_density": 0.5,
    "out": [
     {
@@ -18374,9 +18372,9 @@
     "crates/vak/src/digest.rs",
     "crates/vak/src/inbox.rs"
    ],
-   "commits": 47,
+   "commits": 48,
    "fixes": 4,
-   "recent": 12,
+   "recent": 13,
    "fix_density": 1.2,
    "out": [
     {
@@ -18676,9 +18674,9 @@
     "crates/vak/src/agents_cli.rs",
     "crates/vak/src/topics.rs"
    ],
-   "commits": 81,
+   "commits": 82,
    "fixes": 16,
-   "recent": 13,
+   "recent": 14,
    "fix_density": 2.7,
    "out": [
     {
@@ -30875,6 +30873,31 @@
  ],
  "replay": [
   {
+   "hash": "e63ab93b7",
+   "date": "2026-10-22",
+   "subject": "Prepare 8.25.0 changelog",
+   "subsystems": []
+  },
+  {
+   "hash": "87664596a",
+   "date": "2026-10-22",
+   "subject": "Bump version to 8.25.0",
+   "subsystems": []
+  },
+  {
+   "hash": "b269b36c8",
+   "date": "2026-10-22",
+   "subject": "Improve shared chat answer composition",
+   "subsystems": [
+    "agents",
+    "canvas",
+    "cards",
+    "client",
+    "inbox",
+    "library"
+   ]
+  },
+  {
    "hash": "060a67b9b",
    "date": "2026-10-22",
    "subject": "Put release heading first in changelog",
@@ -36115,7 +36138,7 @@
    "src": 39916,
    "tests": 324,
    "files": 207,
-   "commits": 655,
+   "commits": 656,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -37736,8 +37759,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1406,
-  "hot": 655
+  "docs_commits": 1407,
+  "hot": 656
  },
  "findings": [
   {
