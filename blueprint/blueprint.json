@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.21.0",
-  "revision": "bebdc3be1",
+  "revision": "390711dbe",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.21.0 · 2026-10-22"
@@ -11,7 +11,7 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 347765,
+   "rust_src": 347777,
    "rust_tests": 87620,
    "ts_src": 64915,
    "routes": 404,
@@ -19,13 +19,13 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2448,
+   "total_commits": 2449,
    "days": 63,
    "peak_day": 174,
    "design_docs": 97,
    "agents_words": 20576,
    "subsystems": 64,
-   "connections": 835,
+   "connections": 836,
    "flows": 11
   },
   "tools": [
@@ -384,16 +384,16 @@
    }
   ],
   "open_total": 100,
-  "measures_revision": "bebdc3be1"
+  "measures_revision": "390711dbe"
  },
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 505,
+  "commits": 506,
   "areas": [
    [
     "docs",
-    412
+    413
    ],
    [
     "(root)",
@@ -405,7 +405,7 @@
    ],
    [
     "vak-server",
-    162
+    163
    ],
    [
     "vak-client-ui",
@@ -444,7 +444,7 @@
    [
     "server",
     "HTTP service",
-    105
+    106
    ],
    [
     "client",
@@ -754,6 +754,15 @@
   ],
   "recent": [
    {
+    "hash": "390711dbe",
+    "date": "2026-10-22",
+    "subject": "Track Canvas context in record dictionary",
+    "areas": [
+     "docs",
+     "vak-server"
+    ]
+   },
+   {
     "hash": "bebdc3be1",
     "date": "2026-10-22",
     "subject": "Cover workspace context in receipt test",
@@ -901,14 +910,6 @@
      "vak-server",
      "vak-session",
      "vak-tools"
-    ]
-   },
-   {
-    "hash": "850900957",
-    "date": "2026-10-21",
-    "subject": "Record 8.17.2 release notes",
-    "areas": [
-     "(root)"
     ]
    }
   ],
@@ -1403,7 +1404,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 81721,
+   "lines": 81733,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -15874,6 +15875,16 @@
       "crates/vak-client-ui/src/components/LibraryPreview.tsx",
       "crates/vak-client-ui/src/components/HtmlPreview.tsx"
      ]
+    },
+    {
+     "from": "server",
+     "to": "canvas",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-server/src/traced_rows_tests.rs",
+      "crates/vak-session/src/workspaces.rs"
+     ]
     }
    ],
    "layer": "L7"
@@ -19146,7 +19157,7 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 32950,
+   "lines": 32962,
    "largest": [
     29116,
     "crates/vak-server/src/lib.rs"
@@ -19186,9 +19197,9 @@
     "crates/vak-server/src/web.rs",
     "crates/vak-session/src/turn_marks.rs"
    ],
-   "commits": 556,
+   "commits": 557,
    "fixes": 85,
-   "recent": 105,
+   "recent": 106,
    "fix_density": 2.6,
    "out": [
     {
@@ -19579,6 +19590,16 @@
      "example": [
       "crates/vak-server/src/lib.rs",
       "crates/vak-core/src/backup.rs"
+     ]
+    },
+    {
+     "from": "server",
+     "to": "canvas",
+     "kind": "code",
+     "weight": 1,
+     "example": [
+      "crates/vak-server/src/traced_rows_tests.rs",
+      "crates/vak-session/src/workspaces.rs"
      ]
     },
     {
@@ -29734,6 +29755,16 @@
   },
   {
    "from": "server",
+   "to": "canvas",
+   "kind": "code",
+   "weight": 1,
+   "example": [
+    "crates/vak-server/src/traced_rows_tests.rs",
+    "crates/vak-session/src/workspaces.rs"
+   ]
+  },
+  {
+   "from": "server",
    "to": "control",
    "kind": "code",
    "weight": 1,
@@ -30807,6 +30838,14 @@
   }
  ],
  "replay": [
+  {
+   "hash": "390711dbe",
+   "date": "2026-10-22",
+   "subject": "Track Canvas context in record dictionary",
+   "subsystems": [
+    "server"
+   ]
+  },
   {
    "hash": "bebdc3be1",
    "date": "2026-10-22",
@@ -37003,10 +37042,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 77552,
+   "src": 77564,
    "tests": 24505,
    "files": 55,
-   "commits": 849,
+   "commits": 850,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -37577,7 +37616,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1399,
+  "docs_commits": 1400,
   "hot": 655
  },
  "findings": [
