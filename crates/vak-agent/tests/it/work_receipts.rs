@@ -333,6 +333,7 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::TurnRestored(_) => "turn-restored",
             EntryPayload::TurnRetried(_) => "turn-retried",
             EntryPayload::ContextSelection(_) => "context-selection",
+            EntryPayload::WorkspaceContext(_) => "workspace-context",
         })
         .filter(|kind| *kind != "decision")
         .collect();
