@@ -2,8 +2,8 @@
 
 Status: historical: source implementation and local acceptance of
 [the native channel design](../design/102-channel-cards.md). Real provider/client
-visual qualification remains open. No installed service was replaced and no
-message was posted to a real chat account.
+visual qualification remains open. The source acceptance below preceded installation; release/install evidence
+follows separately. No message was posted to a real chat account.
 
 ## Implemented
 
@@ -80,5 +80,31 @@ unwind-table warning when linking these large test/CLI executables.
 Qualify provider acceptance and appearance in the running Telegram, Slack and
 Discord clients on desktop and phone, including source disclosure and overflow.
 Local fixtures establish method/body construction and failure behavior, not a
-provider's implementation or a client's visual rendering. Release/install and
-real outbound probes were not part of this source change.
+provider's implementation or a client's visual rendering. Real outbound probes remain separate from source and installation acceptance.
+
+## Local release and installation
+
+The maintainer subsequently requested the version bump, release and local
+installation. Version **8.23.0**, local tag `v8.23.0`, is built from
+`9a6fb63fc`. `scripts/release.sh` passed the complete clean-room release gate:
+3,949 tests passed, zero failed, 25 explicitly ignored, across 144 suites;
+workspace Clippy and formatting passed, rebuilt frontends matched committed
+sources, and version/record/advisory checks passed. The optimized native
+`macos/aarch64` CLI, desktop and delivery worker are in `dist/8.23.0/`; all
+three SHA256SUMS entries verify. Log: `/tmp/vak-8.23.0-release.log`. This is
+a local release; no GitHub binary release was published.
+
+The produced CLI installed all components and the desktop frontend through
+`self install --force` into `/Applications/Vakyartha.app`, using `~/vak-home`.
+`self verify` reports every component clean. The running gateway `/version`
+reports `8.23.0 (9a6fb63fc)` and `/health` reports healthy with zero failures.
+Service reconciliation restarted the gateway, desktop and Telegram bridge.
+Telegram initially stood by while the stopped poller's 60-second cursor
+liveness lease remained valid; no cursor or data file was changed by hand.
+Provider/client appearance remains unqualified by this installation check.
+
+After the lease elapsed, the Telegram launchd registration was unloaded and
+loaded from its unchanged managed plist to clear the prior failed-launch
+status. Final `self status` exits successfully: gateway, desktop and Telegram
+are running with current managed binaries. `self verify` remains clean.
+The displayed recent network warnings predate this final check.
