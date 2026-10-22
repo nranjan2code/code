@@ -384,7 +384,7 @@
    }
   ],
   "open_total": 100,
-  "measures_revision": "390711dbe"
+  "measures_revision": "d1662688e"
  },
  "activity": {
   "since": "2026-10-08",
@@ -37556,7 +37556,7 @@
   ],
   "complexity": [
    {
-    "score": 192,
+    "score": 201,
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
     "line": 1885
@@ -37601,19 +37601,19 @@
     "score": 61,
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5680
+    "line": 5763
    },
    {
     "score": 46,
     "name": "execute_one",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 9056
+    "line": 9139
    },
    {
     "score": 43,
     "name": "execute_batch_calls",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 7891
+    "line": 7974
    },
    {
     "score": 42,
@@ -37639,7 +37639,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 192 (rank 1 of 4,524 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 24. 156 commits changed the first (6% of all) and 215 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.1 per thousand lines, against a median of 4.2 over 413 files; file size alone does not predict the rate (ρ = -0.13).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 201 (rank 1 of 4,525 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 24. 156 commits changed the first (6% of all) and 215 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.1 per thousand lines, against a median of 4.2 over 413 files; file size alone does not predict the rate (ρ = -0.13).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`."

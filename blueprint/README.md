@@ -47,7 +47,7 @@ Only findings with a cost today; the evidence for each is under [Findings](#find
 | records | ok |
 | doc paths | ok |
 | versions | ok |
-| advisories | 0 known vulnerabilities not excepted, 10 warnings (measured at `390711dbe`) |
+| advisories | 0 known vulnerabilities not excepted, 10 warnings (measured at `d1662688e`) |
 | record drift | 247 cited code names missing in 48 living documents (`run.py names`) |
 
 ### Open work (100 items)
@@ -748,16 +748,16 @@ Outside the repository (declared in `subsystems.EXTERNAL`): You ← Workspace cl
 
 | Most complex functions | Where | Cognitive complexity |
 |---|---|---|
-| `run_message_inner` | `crates/vak-agent/src/lib.rs:1885` | 192 |
+| `run_message_inner` | `crates/vak-agent/src/lib.rs:1885` | 201 |
 | `merge_into` | `crates/vak-config/src/lib.rs:4181` | 137 |
 | `run_turn_recorded` | `crates/vak-core/src/lib.rs:6674` | 115 |
 | `unknown_key_warnings` | `crates/vak-config/src/lib.rs:3829` | 96 |
 | `snapshot_inner` | `crates/vak-server/src/projection.rs:910` | 85 |
 | `load_with_trust` | `crates/vak-config/src/lib.rs:3021` | 75 |
 | `tick` | `crates/vak-server/src/surfaces/telegram.rs:234` | 68 |
-| `complete_with_reliability` | `crates/vak-agent/src/lib.rs:5680` | 61 |
-| `execute_one` | `crates/vak-agent/src/lib.rs:9056` | 46 |
-| `execute_batch_calls` | `crates/vak-agent/src/lib.rs:7891` | 43 |
+| `complete_with_reliability` | `crates/vak-agent/src/lib.rs:5763` | 61 |
+| `execute_one` | `crates/vak-agent/src/lib.rs:9139` | 46 |
+| `execute_batch_calls` | `crates/vak-agent/src/lib.rs:7974` | 43 |
 | `structured_markdown` | `crates/vak-delivery/src/skills.rs:1103` | 42 |
 | `gateway_inbound` | `crates/vak-server/src/gateway.rs:2680` | 39 |
 
@@ -782,7 +782,7 @@ Outside the repository (declared in `subsystems.EXTERNAL`): You ← Workspace cl
 
 *Structure · Caused defects*
 
-**Evidence.** Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 192 (rank 1 of 4,524 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 24. 156 commits changed the first (6% of all) and 215 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.1 per thousand lines, against a median of 4.2 over 413 files; file size alone does not predict the rate (ρ = -0.13).
+**Evidence.** Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 201 (rank 1 of 4,525 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 24. 156 commits changed the first (6% of all) and 215 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.1 per thousand lines, against a median of 4.2 over 413 files; file size alone does not predict the rate (ρ = -0.13).
 
 **Why it matters.** The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own.
 
