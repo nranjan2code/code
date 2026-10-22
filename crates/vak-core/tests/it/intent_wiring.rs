@@ -646,18 +646,6 @@ async fn research_requirements_survive_the_real_turn_and_do_not_self_certify() {
         }
     }
     let cases = [
-        (
-            vec![
-                call(
-                    "plan-a",
-                    "plan",
-                    serde_json::json!({"deliverables": [{"name": "analysis", "form": "text", "questions": ["What changed within the requested period?"]}]}),
-                ),
-                text("There is insufficient evidence to answer."),
-            ],
-            false,
-            "plan-evidence-1-1",
-        ),
         // A successful local read is evidence of retrieval, not relevance.
         (
             vec![

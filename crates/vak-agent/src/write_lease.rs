@@ -264,10 +264,6 @@ impl Tool for ScopedWriteTool {
         self.inner.retrieves_evidence(args)
     }
 
-    fn planned(&self, args: &Value) -> Option<Vec<vak_intent::Deliverable>> {
-        self.inner.planned(args)
-    }
-
     fn delivered_file(&self, args: &Value) -> Option<String> {
         self.inner.delivered_file(args)
     }

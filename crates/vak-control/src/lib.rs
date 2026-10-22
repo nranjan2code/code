@@ -20,8 +20,7 @@ pub const DEFAULT_UNMEASURED_CONTEXT_TOKENS: u64 = 65_536;
 pub use correct::{
     Finding, Ladder, RECOVERY_NOTE, ShownTool, card_ability_not_answered, card_command_not_run,
     card_data_not_found, card_file_missing, card_files_unchanged, card_kind_elsewhere,
-    card_replaces_unknown, card_unnamed, card_unplanned, card_without_plan, limit_reached,
-    regenerate_arguments, render, skill_not_tool, uncited_source, unknown_tool,
+    limit_reached, regenerate_arguments, render, skill_not_tool, uncited_source, unknown_tool,
 };
 
 /// Who made a decision.
@@ -751,6 +750,7 @@ pub enum Cause {
     SteeringDrift,
     TopicMismatch,
     Repair,
+    /// Recorded history: the plan check, removed in 8.28.0.
     Plan,
     ToolCallRepair,
     /// The answer ends inside an unclosed block.
@@ -763,7 +763,7 @@ pub enum Cause {
     UnresolvedFailure,
     /// Workers the turn started are still running.
     WorkersRunning,
-    /// Automatic Topics has no recorded placement decision for this turn.
+    /// Recorded history: the Topics placement hold, removed in 8.28.0.
     TopicsPlacement,
 }
 

@@ -1,17 +1,11 @@
-//! `plan` — the model declares what this answer will deliver, as data
-//! (docs/design/86-model-plans-runtime-checks.md §2.1).
-//!
-//! Like `recall`, it is answered by the agent loop, which holds the turn's
-//! state; reaching `execute` is a wiring fault. The runtime checks each
-//! declared deliverable against what the turn actually produced; the model
-//! never marks one done (invariant 33).
+//! Reading a `plan` call a conversation recorded before 8.28.0, when a
+//! model declared its deliverables with a `plan` tool
+//! (docs/design/86-model-plans-runtime-checks.md, superseded). No tool by
+//! that name is offered any more; a projection of an older answer still
+//! lays it out by the plan it recorded.
 
-use crate::Fault;
-use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::Value;
 use vak_intent::{Deliverable, DeliverableForm};
-
-use crate::{Tool, ToolContext, ToolOutput};
 
 /// Reads a `plan` call's arguments. Every entry needs a name and a form;
 /// the error names the entry and the field.
@@ -87,132 +81,11 @@ pub fn parse_plan_args(args: &Value) -> Result<Vec<Deliverable>, String> {
     Ok(plan)
 }
 
-/// The `plan` tool. `forms` are the card forms an entry's `form` may name
-/// besides the five delivery words (docs/design/86 §2.1: a form that names
-/// a kind of card is a card of that kind); the host passes its form
-/// vocabulary, so a wire that enforces the schema accepts them.
-#[derive(Debug, Clone, Default)]
-pub struct PlanTool {
-    forms: Vec<String>,
-}
-
-impl PlanTool {
-    pub fn with_forms(forms: &[&str]) -> Self {
-        Self {
-            forms: forms.iter().map(|form| (*form).to_string()).collect(),
-        }
-    }
-}
-
-#[async_trait]
-impl Tool for PlanTool {
-    fn name(&self) -> &str {
-        "plan"
-    }
-
-    fn always_loaded(&self) -> bool {
-        true
-    }
-
-    fn looks_up(&self) -> bool {
-        false
-    }
-
-    fn planned(&self, args: &Value) -> Option<Vec<Deliverable>> {
-        parse_plan_args(args).ok()
-    }
-
-    fn description(&self) -> &str {
-        "Say what your answer will deliver before you produce it: one entry for each part \
-         of the answer, in reading order, named in a few words, with how it reaches the \
-         person. Plan the requested outcomes, not optional enrichment or every available card. \
-         Refine the plan as evidence makes useful parts and their forms clear; name a \
-         specific card form when promising that form, or card for a composition of forms. \
-         Vakyartha checks each entry against what you actually produce and tells you if one \
-         is missing. For parts that need evidence, declare the questions the sources must \
-         settle, including the date or scope that matters. Output receipts do not prove \
-         these questions answered. Skip it for a reply that is one direct answer."
-    }
-
-    fn schema(&self) -> Value {
-        let forms: Vec<&str> = DeliverableForm::ALL
-            .map(DeliverableForm::as_str)
-            .into_iter()
-            .chain(self.forms.iter().map(String::as_str))
-            .collect();
-        let card_forms = if self.forms.is_empty() {
-            String::new()
-        } else {
-            format!(
-                " A card form ({}) when it is shown as cards of that form.",
-                self.forms.join(", ")
-            )
-        };
-        json!({
-            "type": "object",
-            "properties": {
-                "deliverables": {
-                    "type": "array",
-                    "description": "Each part of the answer, in reading order.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "The part in a few words, such as the thing the person asked for."
-                            },
-                            "questions": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Questions this part needs evidence to settle, including material scope/date. Empty for a part needing no external evidence. These are requirements, never self-reported completion."
-                            },
-                            "form": {
-                                "type": "string",
-                                "enum": forms,
-                                "description": format!("How it reaches the person. card: shown as one or more cards; text: written in your reply; file: a file saved for review; change: a change you make; check: something you run to prove a result.{card_forms}")
-                            }
-                        },
-                        "required": ["name", "form"]
-                    }
-                }
-            },
-            "required": ["deliverables"]
-        })
-    }
-
-    async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
-        match parse_plan_args(args) {
-            Ok(_) => ToolOutput::error(
-                Fault::Tool,
-                r#"{"type":"internal","message":"plan must be answered by the agent loop, not dispatched directly"}"#,
-            ),
-            Err(message) => ToolOutput::error(
-                Fault::Shape,
-                format!(r#"{{"type":"invalid_arguments","message":"{message}"}}"#),
-            ),
-        }
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
-    #[test]
-    fn the_plan_tool_declares_its_plan_and_that_it_looks_nothing_up() {
-        use crate::Tool;
-        let tool = super::PlanTool::default();
-        assert!(!tool.looks_up());
-        let plan = tool
-            .planned(&serde_json::json!({
-                "deliverables": [{ "name": "the totals", "form": "file" }]
-            }))
-            .unwrap();
-        assert_eq!(plan.len(), 1);
-        assert_eq!(plan[0].form, vak_intent::DeliverableForm::File);
-        assert!(tool.planned(&serde_json::json!({})).is_none());
-    }
-
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn reads_each_deliverable_with_its_form() {
@@ -225,26 +98,6 @@ mod tests {
         assert_eq!(plan.len(), 3);
         assert_eq!(plan[1].form, DeliverableForm::Card);
         assert_eq!(plan[2].form, DeliverableForm::Text);
-    }
-
-    /// A wire that enforces the schema accepts a card form only when the
-    /// schema lists it (docs/design/86 §2.1).
-    #[test]
-    fn the_form_lists_the_card_forms_it_is_given() {
-        use crate::Tool;
-        let schema = PlanTool::with_forms(&["table", "details"]).schema();
-        let forms = &schema["properties"]["deliverables"]["items"]["properties"]["form"]["enum"];
-        assert_eq!(
-            forms,
-            &json!([
-                "card", "text", "file", "change", "check", "table", "details"
-            ])
-        );
-        let bare = PlanTool::default().schema();
-        assert_eq!(
-            bare["properties"]["deliverables"]["items"]["properties"]["form"]["enum"],
-            json!(["card", "text", "file", "change", "check"])
-        );
     }
 
     #[test]

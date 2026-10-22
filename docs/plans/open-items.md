@@ -22,11 +22,21 @@
 - [ ] `TurnCard::line` still cuts a turn's answer at twelve words and its
   request at sixty, a picked number. The window and the summaries no longer
   depend on it; recall hits and the card fallback still do.
-- [ ] The answer side still asks the model to author layout (the `plan` tool,
-  per-card `deliverable`, `replaces`, `beside_previous`, `then`, the forced
-  card and `topics` calls at turn end). Measured: one news answer took 17
-  dispatches and 220 s (docs/audits/turn-relations-and-sizing-2026-10-21.md).
-  A design for cards built from tool results and markdown is the next run.
+- [x] Card redesign step 1 (2026-10-22): the model authors no layout. The
+  `plan` tool, plan check, forced card and Topics calls, and the
+  `deliverable`, `replaces`, `beside_previous` and `then` fields are removed.
+- [ ] Card redesign step 2: offer only chart, stats, map, calendar and
+  controls as card tools (`SHAPES` keeps the other builders, unoffered, for
+  history, fences and runtime cards); rewrite the prompt's presentation
+  contract around Markdown (tables, lists, quotes, code are already drawn).
+- [ ] Card redesign step 3: the runtime builds a sources card (successful
+  `fetched` calls) and a diff card (files the turn changed, reusing
+  `with_changes_made`) at turn close, as a new
+  `PresentationSource::Derived { from }` projected at its ledger position;
+  remove `with_command_output`/`with_call_data` with their tools; keep
+  derived payloads out of `dialogue_record`'s missing-presentations list.
+- [ ] Then: skills in packages/answer-layouts naming removed tools, docs 87,
+  92, 98 statuses, live corpus run, one release.
 
 ## Answer design contract (2026-10-22)
 

@@ -1485,25 +1485,8 @@ pub struct Agent {
     declined: std::sync::Mutex<Vec<String>>,
     /// This run's correction ladder (docs/design/88-control-plane.md §5).
     ladder: vak_control::Ladder,
-    /// Each card a call of this step showed, with the plan deliverable
-    /// its `deliverable` named, until the loop adds them to the plan's receipts.
-    shown_cards: std::sync::Mutex<Vec<cards::Accepted>>,
-    /// The tool the next step must call: the frame change a correction
-    /// asked for (`OutputForm::Tool`). Taken when that step is framed.
-    must_call: Option<String>,
-    /// The planned cards a step of this run was already framed to show:
-    /// each is required once, never asked for again.
-    cards_required: HashSet<String>,
     /// Whether this run has already announced its first workspace change.
     effect_announced: std::sync::atomic::AtomicBool,
-    /// The latest plan the model declared this run (docs/design/
-    /// 86-model-plans-runtime-checks.md), checked when the turn ends.
-    declared_plan: std::sync::Mutex<Option<Vec<vak_intent::Deliverable>>>,
-    /// The plan deliverables this run's shown cards named in `deliverable`.
-    named_cards: std::sync::Mutex<Vec<String>>,
-    /// What the latest plan check found missing; the turn's card records
-    /// what was still missing when it ended (docs/design/99 §4 B).
-    plan_unmet: Vec<String>,
     deliveries: std::sync::Mutex<RunDeliveries>,
     /// What each call in flight produced beyond its result text, drained
     /// when the batch's results are recorded (`CallYield`).
@@ -1545,13 +1528,7 @@ impl Agent {
             held: std::sync::Mutex::new(vak_control::Held::starting_with(inherited)),
             declined: std::sync::Mutex::new(Vec::new()),
             ladder: vak_control::Ladder::default(),
-            shown_cards: std::sync::Mutex::new(Vec::new()),
-            must_call: None,
-            cards_required: HashSet::new(),
             effect_announced: std::sync::atomic::AtomicBool::new(false),
-            declared_plan: std::sync::Mutex::new(None),
-            named_cards: std::sync::Mutex::new(Vec::new()),
-            plan_unmet: Vec::new(),
             deliveries: std::sync::Mutex::new(RunDeliveries::default()),
             call_yields: CallYields::default(),
             active_goal: None,
@@ -1755,9 +1732,6 @@ impl Agent {
             .filter(|tool| tool.defer)
             .map(|tool| tool.name.clone())
             .collect();
-        if let Some(name) = &request.must_call {
-            asked.output = vak_control::OutputForm::Tool { name: name.clone() };
-        }
         self.record_decision(vak_control::Decision::by_runtime(
             vak_control::Choice::FrameStep(vak_control::Framing {
                 step: u32::try_from(step).unwrap_or(u32::MAX),
@@ -1924,17 +1898,6 @@ impl Agent {
         self.effect_announced
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.ladder = vak_control::Ladder::default();
-        self.must_call = None;
-        self.cards_required.clear();
-        self.plan_unmet.clear();
-        *self
-            .declared_plan
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        self.named_cards
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
         *self
             .deliveries
             .lock()
@@ -2100,15 +2063,6 @@ impl Agent {
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             vak_control::Held::starting_with(self.config.inherited_provenance);
         self.note_held("request", vak_control::Provenance::PRIVATE);
-        self.plan_unmet.clear();
-        *self
-            .declared_plan
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        self.named_cards
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
         *self
             .deliveries
             .lock()
@@ -2136,7 +2090,6 @@ impl Agent {
         let mut call_succeeded_this_run = false;
         // Active typed receipts for this run, updated at acceptance rather
         // than inferred from card counts or replayed history.
-        let mut card_answers = cards::Receipts::default();
         // The deliverables the last plan check named, so the same gap is
         // named once.
         // Append-only requests within a turn (docs/design/68-context-
@@ -2160,9 +2113,7 @@ impl Agent {
         let mut turn_plan: Option<vak_session::WorkingSetPlan> = None;
         let mut compaction_failed = false;
         let mut turn_tool_base: Option<Vec<vak_llm::ToolDefinition>> = None;
-        let mut answered_by_cards: Option<AssistantMessage> = None;
         'turn: loop {
-            let mut steered = false;
             self.step_span = tracing::info_span!("step", step = turn as u64);
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
@@ -2170,7 +2121,7 @@ impl Agent {
             if !steering.wait_if_paused(&cancel).await {
                 return TurnOutcome::Aborted { partial: None };
             }
-            if turn >= self.config.max_turns && answered_by_cards.is_none() {
+            if turn >= self.config.max_turns {
                 return TurnOutcome::MaxTurnsReached;
             }
             if self
@@ -2197,7 +2148,6 @@ impl Agent {
                     }
                 }
                 for message in steering.drain(DrainMode::OneAtATime) {
-                    steered = true;
                     let (message, steering_meta) = match self.normalize_recorded(message, None) {
                         Ok(normalized) => normalized,
                         Err(error) => {
@@ -2231,15 +2181,7 @@ impl Agent {
                 }
             }
 
-            // A step whose calls were all accepted cards showed the answer:
-            // the turn ends there, through the same checks as a step that
-            // made no call, rather than opening another step after it
-            // (docs/design/87-composed-answers.md §2a). A message the
-            // person sent meanwhile gets a step of its own.
-            let shown = answered_by_cards.take().filter(|_| !steered);
-            let (response, calls, response_entry_id) = if let Some(shown) = shown {
-                (shown, Vec::new(), None)
-            } else {
+            let (response, calls, response_entry_id) = {
                 let _ = events.send(AgentEvent::TurnStart { turn }).await;
 
                 // config.model is set by run_turn_inner from effective_model() on
@@ -2533,11 +2475,7 @@ impl Agent {
                         };
                     }
                 }
-                let must_call = self.must_call.take();
-                let purpose = match must_call {
-                    Some(_) => vak_control::Purpose::Answer,
-                    None => self.step_purpose().await,
-                };
+                let purpose = self.step_purpose().await;
                 let base_request = {
                     let session = self.session.lock().await;
                     // `messages` is the explicit projection from the plan
@@ -2571,7 +2509,7 @@ impl Agent {
                     });
                     ChatRequest {
                         output_schema: None,
-                        must_call,
+                        must_call: None,
                         model,
                         system: Some(self.config.system_prefix.clone()),
                         messages,
@@ -3028,99 +2966,6 @@ impl Agent {
                         continue;
                     }
                 }
-                // The model's own plan, checked against what this turn
-                // produced (docs/design/86-model-plans-runtime-checks.md
-                // §2.2). Nothing is discarded: the model is told once what the
-                // plan lists and what the turn produced. Whatever is still
-                // missing after that, the turn ends as it stands.
-                // The plan's receipts (docs/design/86 §2.2): what is still
-                // missing, and whether a step can be framed to show a
-                // missing card with the tool of the kind the plan named.
-                let (plan_gap, requirable, unmet) = {
-                    let plan = self
-                        .declared_plan
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    match plan.as_deref() {
-                        None => (None, None, Vec::new()),
-                        Some(plan) => {
-                            let final_text = response.text_content();
-                            let produced = vak_judge::plan::Produced {
-                                cards: &card_answers.active(),
-                                final_text: &final_text,
-                                files_delivered: files_delivered_this_run.len(),
-                                changed: receipts.has_execution_receipt(),
-                                checked: receipts.commands_run > 0 && !verification_stale,
-                                cards_withdrawn: !self.cards_available(),
-                            };
-                            let gap = vak_judge::plan::gap(plan, &produced);
-                            // A step can be required to show a missing card
-                            // when the plan named its kind and the tool that
-                            // owns it is still offered; each card once.
-                            let requirable = gap.cards_unnamed.iter().find_map(|deliverable| {
-                                let kind = deliverable.kind.as_deref()?;
-                                let tool = cards::owner(kind, &self.config.tools)?;
-                                (!self.cards_required.contains(&deliverable.name))
-                                    .then(|| (deliverable.name.clone(), tool.name().to_string()))
-                            });
-                            let finding = (!gap.is_empty()).then(|| Finding::Plan {
-                                cards_unnamed: gap
-                                    .cards_unnamed
-                                    .iter()
-                                    .map(|deliverable| deliverable.name.clone())
-                                    .collect(),
-                                cards_unattributed: gap.cards_unattributed,
-                                cards_short: gap.cards_short(),
-                                others: gap
-                                    .others
-                                    .iter()
-                                    .map(|deliverable| {
-                                        (
-                                            deliverable.name.clone(),
-                                            deliverable.form.as_str().to_string(),
-                                        )
-                                    })
-                                    .collect(),
-                            });
-                            let unmet = gap
-                                .cards_unnamed
-                                .iter()
-                                .chain(&gap.others)
-                                .map(|deliverable| deliverable.name.clone())
-                                .collect();
-                            (finding, requirable, unmet)
-                        }
-                    }
-                };
-                self.plan_unmet = unmet;
-                // Told once, keeping everything produced. Still short after
-                // that, the frame changes where it can: one step is required
-                // to call the missing card's tool, once. What is left then
-                // stands as the model's answer, and the decision trail says
-                // so.
-                if let Some(finding) = plan_gap
-                    && turn + 1 < self.config.max_turns
-                {
-                    let rung = self.ladder.step(Cause::Plan, requirable.is_some());
-                    let finding = match (rung, requirable) {
-                        (Rung::Reframe, Some((name, tool))) => {
-                            self.cards_required.insert(name.clone());
-                            if let Some(base) = &turn_tool_base {
-                                self.promote(base, std::slice::from_ref(&tool));
-                            }
-                            self.must_call = Some(tool.clone());
-                            Finding::CardRequired { name, tool }
-                        }
-                        _ => finding,
-                    };
-                    if let Err(error) = self.correct(finding, rung).await {
-                        return nudge_write_failed(error);
-                    }
-                    if rung != Rung::End {
-                        turn += 1;
-                        continue;
-                    }
-                }
                 if let Some(hooks) = &self.config.hooks {
                     let session_id = self
                         .session
@@ -3259,56 +3104,6 @@ impl Agent {
                         Err(error) => return nudge_write_failed(error),
                     }
                 }
-                // Organisation is a recorded main-model choice, not an inferred
-                // classification of the request. Check it even for card-only answers.
-                if self.topics_placement_missing(&receipts).await {
-                    let cause = Cause::TopicsPlacement;
-                    let no_next_step = turn + 1 >= self.config.max_turns
-                        || self
-                            .config
-                            .outcome
-                            .as_ref()
-                            .and_then(|outcome| outcome.max_turns)
-                            .is_some_and(|max| outcome_turns >= max)
-                        || self
-                            .config
-                            .model_call_budget
-                            .as_ref()
-                            .is_some_and(|budget| budget.exhausted());
-                    let rung = if no_next_step {
-                        Rung::End
-                    } else {
-                        self.ladder.step(cause, !self.ladder.reframed(cause))
-                    };
-                    if rung == Rung::Reframe {
-                        if let Some(base) = &turn_tool_base {
-                            self.promote(base, &["topics".to_string()]);
-                        }
-                        self.must_call = Some("topics".into());
-                    }
-                    if let Err(error) = self
-                        .record_decision(vak_control::Decision::by_runtime(
-                            vak_control::Choice::AcceptAnswer(vak_control::AnswerVerdict::Held(
-                                cause,
-                            )),
-                        ))
-                        .await
-                    {
-                        return nudge_write_failed(error);
-                    }
-                    match self
-                        .hold(Finding::TopicsPlacement, rung, &events, turn)
-                        .await
-                    {
-                        Ok(Held::Redo) => {
-                            turn += 1;
-                            continue;
-                        }
-                        Ok(Held::Stands) => {}
-                        Ok(Held::OutOfSteps) => return TurnOutcome::MaxTurnsReached,
-                        Err(error) => return nudge_write_failed(error),
-                    }
-                }
                 // Fence-path presentations (docs/design/68-context-engine.md
                 // §10): only for the answer actually being accepted — every
                 // gate above has already passed, so this text will not be
@@ -3422,15 +3217,11 @@ impl Agent {
                         };
                     }
                 };
-            let shown_only = results.iter().any(|(id, _)| {
-                call_names
-                    .get(id)
-                    .is_some_and(|name| self.tool_presents_cards(name))
-            }) && results.iter().all(|(id, out)| {
+            let cards_shown = results.iter().any(|(id, out)| {
                 matches!(out, ToolRunOutput::Ok(_))
                     && call_names
                         .get(id)
-                        .is_some_and(|name| self.tool_presents_cards(name) || name == "plan")
+                        .is_some_and(|name| self.tool_presents_cards(name))
             });
             self.record_worker_work(&task_assignments, &results).await;
             for (id, output) in &results {
@@ -3529,20 +3320,7 @@ impl Agent {
             let imported_cards = self
                 .record_delegated_cards(&call_issue_order, &mut yields, &mut results)
                 .await;
-            cards_emitted_this_run |= !imported_cards.is_empty();
-            for id in imported_cards {
-                card_answers.observe_unattributed(id);
-            }
-            let shown = std::mem::take(
-                &mut *self
-                    .shown_cards
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-            );
-            cards_emitted_this_run |= !shown.is_empty();
-            for card in shown {
-                card_answers.accept(card);
-            }
+            cards_emitted_this_run |= !imported_cards.is_empty() || cards_shown;
             for (id, out) in &results {
                 match out {
                     ToolRunOutput::Ok(_) => {
@@ -3733,51 +3511,6 @@ impl Agent {
                 && let Err(error) = withdraw_tools(self, &declined, Withdrawal::Declined).await
             {
                 return nudge_write_failed(error);
-            }
-            // The answer was shown when the step's cards were accepted, its
-            // last card said the answer is done, and the model's plan, if it
-            // made one, has nothing left to deliver
-            // (docs/design/97-cards-end-the-answer.md §4).
-            let last_card_done = call_issue_order
-                .iter()
-                .rev()
-                .find(|id| {
-                    call_names
-                        .get(*id)
-                        .is_some_and(|name| self.tool_presents_cards(name))
-                })
-                .and_then(|id| call_inputs.get(id))
-                .is_some_and(|input| input["then"] == "done");
-            let plan_delivered = || {
-                let plan = self
-                    .declared_plan
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                plan.as_deref().is_none_or(|plan| {
-                    let final_text = response.text_content();
-                    vak_judge::plan::gap(
-                        plan,
-                        &vak_judge::plan::Produced {
-                            cards: &card_answers.active(),
-                            final_text: &final_text,
-                            files_delivered: files_delivered_this_run.len(),
-                            changed: receipts.has_execution_receipt(),
-                            checked: receipts.commands_run > 0 && !verification_stale,
-                            cards_withdrawn: !self.cards_available(),
-                        },
-                    )
-                    .is_empty()
-                })
-            };
-            answered_by_cards = (shown_only
-                && last_card_done
-                && !self.config.reports_to_parent
-                && plan_delivered())
-            .then(|| response.clone());
-            if answered_by_cards.is_some() {
-                // The plan is delivered: nothing an earlier check found is
-                // missing any more.
-                self.plan_unmet.clear();
             }
             turn += 1;
         }
@@ -4160,8 +3893,7 @@ impl Agent {
             if turn.card.is_some() {
                 return; // written concurrently between the two locks above
             }
-            let mut card = turn.build_card(outcome_label, narration, &estimate);
-            card.unmet = self.plan_unmet.clone();
+            let card = turn.build_card(outcome_label, narration, &estimate);
             // The reserve stands in for the turn while it is OPEN, so it is
             // sized by what that turn carried verbatim, not by the digested
             // record a later turn sees.
@@ -5138,33 +4870,6 @@ impl Agent {
     /// Read the current sealed projection, so human corrections and a live
     /// automatic-off change take precedence. Empty memberships are explicit
     /// ungrouped decisions; listing Topics alone is not a placement receipt.
-    async fn topics_placement_missing(&self, receipts: &stop_policy::ReceiptSummary) -> bool {
-        if self.config.trace.is_none()
-            || self.tool_named("topics").is_none()
-            || receipts.topics_failed
-        {
-            return false;
-        }
-        let Some(store) = &self.config.topic_store else {
-            return false;
-        };
-        let Some(turn) = self.session.lock().await.current_turn().map(str::to_owned) else {
-            return false;
-        };
-        match store.snapshot() {
-            Ok(snapshot) => {
-                snapshot.automatic
-                    && !snapshot
-                        .placements
-                        .iter()
-                        .any(|placement| placement.turn_id == turn)
-            }
-            // Let the ordinary tool path report the unavailable/corrupt state;
-            // never manufacture a successful organisation receipt from it.
-            Err(_) => true,
-        }
-    }
-
     /// Internal premature-completion gate. Returns a continuation reason and
     /// whether the recovery budget has been exhausted.
     async fn stop_gate(
@@ -5353,12 +5058,6 @@ impl Agent {
             .iter()
             .find(|tool| tool.name() == name)
             .and_then(|tool| tool.delivered_file(input))
-    }
-
-    /// Whether this turn still offers a card tool: none withdrawn by
-    /// repair takes them all.
-    fn cards_available(&self) -> bool {
-        self.config.tools.iter().any(|tool| tool.presents_cards())
     }
 
     /// This agent's tool of that name.
@@ -6254,11 +5953,6 @@ impl Agent {
         let (recall_calls, calls): (Vec<_>, Vec<_>) =
             calls.into_iter().partition(|call| call.name == "recall");
         self.note_files_before(&calls).await;
-        // `plan` is the model's declaration of what this turn delivers; the
-        // loop keeps it to check against what the turn produced
-        // (docs/design/86-model-plans-runtime-checks.md §2).
-        let (plan_calls, calls): (Vec<_>, Vec<_>) =
-            calls.into_iter().partition(|call| call.name == "plan");
         // Topics is answered by the loop against the TopicStore Core opened
         // for this admitted session. It never crosses the worker broker
         // boundary (invariant 14); placements are references only and do not
@@ -6271,64 +5965,14 @@ impl Agent {
         let (card_calls, calls): (Vec<_>, Vec<_>) = calls
             .into_iter()
             .partition(|call| self.tool_presents_cards(&call.name));
-        let mut results = Vec::with_capacity(
-            recall_calls.len() + plan_calls.len() + topic_calls.len() + card_calls.len(),
-        );
-        for call in plan_calls {
-            loop_call_started(events, &call).await;
-            let output = match vak_tools::parse_plan_args(&call.input) {
-                Ok(plan) => {
-                    let listed = plan
-                        .iter()
-                        .map(|deliverable| {
-                            if deliverable.questions.is_empty() {
-                                format!("{} ({})", deliverable.name, deliverable.form.as_str())
-                            } else {
-                                format!(
-                                    "{} ({}); evidence questions: {}",
-                                    deliverable.name,
-                                    deliverable.form.as_str(),
-                                    deliverable.questions.join("; ")
-                                )
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    // Found live 2026-10-14: told only in the prompt, an
-                    // answer's cards still came one per model step. The plan's
-                    // result is read right before the cards are written.
-                    let together = if plan
-                        .iter()
-                        .any(|deliverable| deliverable.form == vak_intent::DeliverableForm::Card)
-                    {
-                        " Send the cards you have the content for together in one step, in \
-                         the plan's order."
-                    } else {
-                        ""
-                    };
-                    *self
-                        .declared_plan
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(plan);
-                    ToolRunOutput::Ok(format!("Plan recorded: {listed}.{together}"))
-                }
-                Err(message) => ToolRunOutput::Err(
-                    Fault::Shape,
-                    serde_json::json!({"type": "invalid_arguments", "message": message})
-                        .to_string(),
-                ),
-            };
-            loop_call_ended(events, &call, &output).await;
-            results.push((call.id, output));
-        }
+        let mut results =
+            Vec::with_capacity(recall_calls.len() + topic_calls.len() + card_calls.len());
         for call in topic_calls {
             loop_call_started(events, &call).await;
             let output = self.resolve_topics(&call.input).await;
             loop_call_ended(events, &call, &output).await;
             results.push((call.id, output));
         }
-        // After the plan: a card in the same step as its plan is checked
-        // against that plan.
         for call in card_calls {
             loop_call_started(events, &call).await;
             let (output, verdict) = self.show_card(&call).await;
@@ -7480,78 +7124,6 @@ impl Agent {
             }
         };
         let input = &input;
-        let answers = input
-            .get("deliverable")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(str::to_string);
-        // A card names only an entry the plan has; one that names none is
-        // shown after the plan's sections, and covers no planned card in the
-        // plan check (docs/audits/cards-in-answers-2026-10-11.md, F4). A
-        // plan with no card, and no plan at all, still check the name: a
-        // model that filled the field with its own description was shown
-        // (found live 2026-10-17).
-        let plan = self
-            .declared_plan
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let planned: Vec<String> = plan
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .filter(|deliverable| deliverable.form == vak_intent::DeliverableForm::Card)
-            .map(|deliverable| deliverable.name.trim().to_string())
-            .collect();
-        let named = self
-            .named_cards
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let (shown, open): (Vec<String>, Vec<String>) = planned
-            .iter()
-            .cloned()
-            .partition(|planned| named.iter().any(|name| name.eq_ignore_ascii_case(planned)));
-        if let Some(name) = answers.as_deref()
-            && plan.is_none()
-        {
-            return (
-                ToolRunOutput::Err(Fault::Shape, vak_control::card_without_plan(name)),
-                CallVerdict::Refused(Refusal::Tool),
-            );
-        }
-        // A card may be part of any entry of the plan: a card delivers what
-        // the plan listed as text (docs/design/99-turns-that-do-not-poison.md
-        // §4 D), and shows a change or a check the plan listed (a diff of the
-        // change, the report of the check), which still needs its own
-        // receipt in the plan check. Refusing it hid a real diff behind a
-        // name the plan did have (found live 2026-10-19).
-        let entries: Vec<String> = plan
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .map(|deliverable| deliverable.name.trim().to_string())
-            .collect();
-        if let Some(name) = answers.as_deref()
-            && !entries
-                .iter()
-                .any(|entry| entry.eq_ignore_ascii_case(name.trim()))
-        {
-            return (
-                ToolRunOutput::Err(
-                    Fault::Shape,
-                    vak_control::card_unplanned(name, &entries, &open, &shown),
-                ),
-                CallVerdict::Refused(Refusal::Tool),
-            );
-        }
-        if answers.is_none() && !open.is_empty() {
-            return (
-                ToolRunOutput::Err(Fault::Shape, vak_control::card_unnamed(&open)),
-                CallVerdict::Refused(Refusal::Tool),
-            );
-        }
         // A card that previews a file this run delivered for review is not
         // shown: the draft is in front of the person with its change list,
         // and an imitation is not.
@@ -7630,32 +7202,6 @@ impl Agent {
             );
         }
         let Some(rebuild) = self.config.presentation_rebuild.clone() else {
-            if let Some(name) = &answers {
-                self.named_cards
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(name.clone());
-            }
-            self.shown_cards
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(cards::Accepted {
-                    id: call.id.clone(),
-                    replaces: input
-                        .get("replaces")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    receipt: vak_judge::plan::CardReceipt {
-                        deliverable: answers,
-                        semantic_type: input
-                            .get("semantic_type")
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                            .or_else(|| tool.card_kinds().first().cloned())
-                            .unwrap_or_default(),
-                        block: tool.card_kinds().first().cloned(),
-                    },
-                });
             return (ToolRunOutput::Ok(checked.content), CallVerdict::Accepted);
         };
         // The tool accepted the call, so a card that cannot be rebuilt from
@@ -7675,70 +7221,13 @@ impl Agent {
             return (ToolRunOutput::Ok(checked.content), CallVerdict::Accepted);
         };
         let active = session.active_presentations();
-        let replaced = input
-            .get("replaces")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|id| !id.is_empty());
-        if let Some(replaced) = replaced {
-            let shown: Vec<String> = active
-                .iter()
-                .filter(|(_, record)| record.turn_id == turn_id)
-                .map(|(id, _)| id.clone())
-                .collect();
-            if !shown.iter().any(|id| id == replaced) {
-                return (
-                    ToolRunOutput::Err(
-                        Fault::Shape,
-                        vak_control::card_replaces_unknown(replaced, &shown),
-                    ),
-                    CallVerdict::Refused(Refusal::Tool),
-                );
-            }
-            let dependents: Vec<&str> = active
-                .iter()
-                .filter(|(_, record)| record.turn_id == turn_id)
-                .filter(|(_, record)| {
-                    record
-                        .payload
-                        .get("bound")
-                        .and_then(Value::as_array)
-                        .is_some_and(|bindings| {
-                            bindings.iter().any(|binding| {
-                                binding.get("from").and_then(Value::as_array).is_some_and(
-                                    |sources| {
-                                        sources
-                                            .iter()
-                                            .any(|source| source.as_str() == Some(replaced))
-                                    },
-                                )
-                            })
-                        })
-                })
-                .map(|(id, _)| id.as_str())
-                .collect();
-            if !dependents.is_empty() {
-                return (
-                    ToolRunOutput::Err(Fault::Shape, serde_json::json!({
-                        "type": "card_source_in_use",
-                        "message": "This card supplies live values to other cards. Replace or remove those dependencies before replacing this source.",
-                        "presentation_id": replaced,
-                        "dependent_presentation_ids": dependents,
-                    }).to_string()),
-                    CallVerdict::Refused(Refusal::Tool),
-                );
-            }
-        }
         // Values the answer's controls cards published before this card
         // (docs/design/98 §2): its `= expression` fields are computed from
         // them, and a controls card publishes no name already taken.
         let mut scope = std::collections::BTreeMap::new();
         let mut series_scope = std::collections::BTreeMap::new();
         for (entry_id, record) in &active {
-            if record.turn_id != turn_id
-                || record.block.as_deref() != Some("controls")
-                || replaced == Some(entry_id.as_str())
-            {
+            if record.turn_id != turn_id || record.block.as_deref() != Some("controls") {
                 continue;
             }
             for (name, value) in
@@ -7792,9 +7281,8 @@ impl Agent {
             );
         }
         let digest = vak_session::types::payload_digest(&info.payload);
-        if active.iter().any(|(id, record)| {
+        if active.iter().any(|(_, record)| {
             record.turn_id == turn_id
-                && replaced != Some(id.as_str())
                 && record.payload_digest == digest
                 && record.data_call_id == info.data_call_id
         }) {
@@ -7807,14 +7295,8 @@ impl Agent {
         }
         let derived_from =
             session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
-        let placement = session.card_placement(
-            &turn_id,
-            answers.clone(),
-            input.get("beside_previous") == Some(&Value::Bool(true)),
-            replaced.map(str::to_string),
-        );
         let record = vak_session::types::PresentationRecord {
-            placement,
+            placement: vak_session::types::CardPlacement::default(),
             turn_id,
             source: vak_session::types::PresentationSource::ToolCall {
                 tool_use_id: call.id.clone(),
@@ -7831,33 +7313,11 @@ impl Agent {
             block: info.block,
             data_call_id: info.data_call_id,
         };
-        let receipt = vak_judge::plan::CardReceipt {
-            deliverable: answers.clone(),
-            semantic_type: record.semantic_type.clone(),
-            block: record.block.clone(),
-        };
-        let replaces = record.placement.replaces.clone();
         match session.append_presentation(record) {
-            Ok(entry) => {
-                if let Some(name) = &answers {
-                    self.named_cards
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .push(name.clone());
-                }
-                self.shown_cards
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(cards::Accepted {
-                        id: entry.id.clone(),
-                        replaces,
-                        receipt,
-                    });
-                (
-                    ToolRunOutput::Ok(format!("{} (presentation {})", checked.content, entry.id)),
-                    CallVerdict::Accepted,
-                )
-            }
+            Ok(entry) => (
+                ToolRunOutput::Ok(format!("{} (presentation {})", checked.content, entry.id)),
+                CallVerdict::Accepted,
+            ),
             Err(error) => (
                 ToolRunOutput::Err(Fault::Tool, format!("the card was not recorded: {error}")),
                 CallVerdict::Refused(Refusal::Tool),
@@ -7918,7 +7378,6 @@ impl Agent {
             .into_iter()
             .map(|call| normalize_mcp_call(call, &index))
             .map(|call| normalize_schema_wrapper(call, &self.config.tools))
-            .map(|call| cards::plan_forms(call, &self.config.tools))
             .collect::<Vec<_>>();
         self.load_called_deferred(&calls);
         let n = calls.len();
@@ -10317,17 +9776,14 @@ fn normalize_response_tool_uses(
         let ContentBlock::ToolUse { id, name, input } = block else {
             continue;
         };
-        let call = cards::plan_forms(
-            normalize_schema_wrapper(
-                normalize_mcp_call(
-                    PendingToolCall {
-                        id: id.clone(),
-                        name: name.clone(),
-                        input: input.clone(),
-                    },
-                    mcp_index,
-                ),
-                tools,
+        let call = normalize_schema_wrapper(
+            normalize_mcp_call(
+                PendingToolCall {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input: input.clone(),
+                },
+                mcp_index,
             ),
             tools,
         );

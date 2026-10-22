@@ -79,23 +79,19 @@ impl Provider for Carding {
             *step += 1;
             *step
         };
-        // The narration comes with the card that completes the answer: a
-        // card that says `done` ends the turn (docs/design/97).
+        // The card first; the narration ends the turn in the next step.
         let (content, stop) = if step == 1 {
             (
-                vec![
-                    ContentBlock::text("Here it is."),
-                    ContentBlock::ToolUse {
-                        id: "c1".into(),
-                        name: "emit_callout_card".into(),
-                        input: serde_json::json!({"semantic_type": "callout", "label": "Quote of the day", "text": "Small steps make big change.", "tone": "note", "then": "done"}),
-                    },
-                ],
+                vec![ContentBlock::ToolUse {
+                    id: "c1".into(),
+                    name: "emit_callout_card".into(),
+                    input: serde_json::json!({"semantic_type": "callout", "label": "Quote of the day", "text": "Small steps make big change.", "tone": "note"}),
+                }],
                 vak_llm::types::StopReason::ToolUse,
             )
         } else {
             (
-                vec![ContentBlock::text("never asked")],
+                vec![ContentBlock::text("Here it is.")],
                 vak_llm::types::StopReason::EndTurn,
             )
         };

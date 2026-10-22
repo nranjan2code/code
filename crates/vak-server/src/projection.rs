@@ -3278,7 +3278,15 @@ mod tests {
         args: &serde_json::Value,
     ) {
         let skills = vak_delivery::built_in_skill_registry();
-        let info = vak_core::presentation_tools::presentation_info(tool, args, &skills)
+        // Placement fields were the model's to write before 8.28.0; history
+        // keeps them on the record, never in the card.
+        let mut card_args = args.clone();
+        if let Some(fields) = card_args.as_object_mut() {
+            for key in ["deliverable", "beside_previous", "replaces", "then"] {
+                fields.remove(key);
+            }
+        }
+        let info = vak_core::presentation_tools::presentation_info(tool, &card_args, &skills)
             .unwrap_or_else(|| panic!("fixture call must validate: {tool} {args:.600}"));
         let turn_id = log.latest_directive_entry_id().unwrap_or_default();
         let payload_digest = vak_session::types::payload_digest(&info.payload);

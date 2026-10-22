@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 4 proposal, 21 in progress, 58 implemented, 2 reference, 9 superseded, 5 historical.
+Counts: 4 proposal, 19 in progress, 58 implemented, 2 reference, 11 superseded, 5 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -94,7 +94,7 @@ Counts: 4 proposal, 21 in progress, 58 implemented, 2 reference, 9 superseded, 5
 | [83-prompt-system.md](83-prompt-system.md) | 83 — The prompt system, end to end | historical | Described the prompt system as shipped at 5.3.2 (2026-10-01) |
 | [84-worker-questions-and-control.md](84-worker-questions-and-control.md) | 84 — Worker questions, live worker control, and pause-now | in progress | Built: M3 (pause and stop now, §7), M1 (a worker's question: the board, `ask_parent`, the HTTP list and answer endpoints and the events, §4) and M2 (background tasks, read-only or leased writers, the `workers` tool and the stop-gate join, §5) |
 | [85-turn-graph.md](85-turn-graph.md) | 85 — The turn graph: linked context across turns, sessions and years | in progress | Addressed in-session turn/provenance records and scoped recall are built |
-| [86-model-plans-runtime-checks.md](86-model-plans-runtime-checks.md) | 86 — The model plans, the runtime checks | in progress | direction approved by the maintainer on 2026-10-11 |
+| [86-model-plans-runtime-checks.md](86-model-plans-runtime-checks.md) | 86 — The model plans, the runtime checks | superseded | on 2026-10-22: the `plan` tool, the plan check and the forced card call are removed |
 | [87-composed-answers.md](87-composed-answers.md) | 87 — Composed answers | in progress | direction approved by the maintainer on 2026-10-11 |
 | [88-control-plane.md](88-control-plane.md) | 88 — The control plane | implemented | requested by the maintainer on 2026-10-11 |
 | [89-constrained-tool-arguments.md](89-constrained-tool-arguments.md) | 89 — Constrained tool arguments | in progress | stages 1 to 4 built 2026-10-12 (the capability, strict tools, schema-bound output on every wire, regeneration of unreadable calls, the ladder by fault class) |
@@ -105,6 +105,6 @@ Counts: 4 proposal, 21 in progress, 58 implemented, 2 reference, 9 superseded, 5
 | [94-scheduled-work-you-can-see.md](94-scheduled-work-you-can-see.md) | 94-scheduled-work-you-can-see.md | implemented | 2026-10-15: S0 to S5 built (the owner's time zone, delivery into the conversation, plain words and the picker, the tool's change, pause, resume and run_now by name, the card in chat, the Automations page) |
 | [95-one-capability-index.md](95-one-capability-index.md) | 95-one-capability-index.md | proposal | (2026-10-16): written from the tool catalogue audit (docs/audits/tool-catalogue-2026-10-16.md, O8) |
 | [96-answer-projection-gaps.md](96-answer-projection-gaps.md) | 96 — Answer projection gaps | in progress | (2026-10-16): Q1, Q2 and Q3 are built, Q2's card shell superseded by live cards and the plan wheel |
-| [97-cards-end-the-answer.md](97-cards-end-the-answer.md) | 97 — Cards end the answer, on every provider | in progress | (2026-10-16): stages A to C built and verified live on the dev route |
+| [97-cards-end-the-answer.md](97-cards-end-the-answer.md) | 97 — Cards end the answer, on every provider | superseded | on 2026-10-22: `then` is removed |
 | [98-answers-beyond-one-card.md](98-answers-beyond-one-card.md) | 98 — Answers beyond one card | implemented | (2026-10-17): accepted by the maintainer |
 | [99-turns-that-do-not-poison.md](99-turns-that-do-not-poison.md) | 99 — Turns that do not poison later turns | in progress | (2026-10-17): stages A to F and A2 to A4 built, with retry from a turn |

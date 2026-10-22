@@ -4091,9 +4091,6 @@ impl Core {
             .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
         let mut tools = vak_tools::brokered_tools(worker, &self.new_documents);
         tools.push(Arc::new(vak_tools::RecallTool));
-        tools.push(Arc::new(vak_tools::PlanTool::with_forms(
-            vak_delivery::FORMS,
-        )));
         tools.push(Arc::new(vak_tools::TopicsTool));
         for edit in [false, true] {
             tools.push(Arc::new(tools_workspaces::WorkspaceTool {
@@ -8044,11 +8041,9 @@ impl Core {
             let mut tool_calls = std::collections::HashMap::<String, bool>::new();
             let mut successful_receipts = std::collections::HashSet::new();
             let mut delivered = false;
-            let mut planned_file = false;
-            let mut planned_cards = 0usize;
-            let mut proposed_plans = std::collections::HashMap::new();
-            let mut accepted_plan = Vec::new();
             let mut source_calls = std::collections::HashSet::new();
+            let mut outside_calls = std::collections::HashSet::new();
+            let mut retrieved_outside = false;
             let mut retrieved_at = None;
             let mut failures = vak_judge::call::Failures::default();
             let chain = session.chain_to_root();
@@ -8078,11 +8073,9 @@ impl Core {
                         tool_calls.clear();
                         successful_receipts.clear();
                         delivered = false;
-                        planned_file = false;
-                        planned_cards = 0;
-                        proposed_plans.clear();
-                        accepted_plan.clear();
                         source_calls.clear();
+                        outside_calls.clear();
+                        retrieved_outside = false;
                         retrieved_at = None;
                         failures.clear();
                     }
@@ -8095,16 +8088,20 @@ impl Core {
                                         || tool.artifact(input).is_some()
                                         || tool.changes_workspace(input)
                                 });
-                                if let Some(plan) =
-                                    delivering.get(called).and_then(|tool| tool.planned(input))
-                                {
-                                    proposed_plans.insert(id.clone(), plan);
-                                }
-                                if delivering
+                                if let Some(tool) = delivering
                                     .get(called)
-                                    .is_some_and(|tool| tool.retrieves_evidence(input))
+                                    .filter(|tool| tool.retrieves_evidence(input))
                                 {
                                     source_calls.insert(id.clone());
+                                    // Material from outside the workspace is
+                                    // what an answer's claims may rest on; the
+                                    // person's own files are the work.
+                                    if !matches!(
+                                        tool.file_access(input),
+                                        Some((vak_tools::FileAccess::Read, _))
+                                    ) {
+                                        outside_calls.insert(id.clone());
+                                    }
                                 }
                                 tool_calls.insert(id.clone(), delivers);
                                 // A card that was not shown changed nothing
@@ -8134,21 +8131,10 @@ impl Core {
                                 ..
                             } if tool_calls.contains_key(tool_use_id) => {
                                 successful_receipts.insert(tool_use_id.clone());
-                                if let Some(plan) = proposed_plans.remove(tool_use_id) {
-                                    planned_file = plan
-                                        .iter()
-                                        .any(|part| part.form == vak_intent::DeliverableForm::File);
-                                    planned_cards = plan
-                                        .iter()
-                                        .filter(|part| {
-                                            part.form == vak_intent::DeliverableForm::Card
-                                        })
-                                        .count();
-                                    accepted_plan = plan;
-                                }
                                 if source_calls.contains(tool_use_id) {
                                     retrieved_at = Some(entry.ts);
                                 }
+                                retrieved_outside |= outside_calls.contains(tool_use_id);
                                 failures.succeeded(tool_use_id);
                                 delivered |= tool_calls.get(tool_use_id).copied().unwrap_or(false);
                             }
@@ -8172,16 +8158,11 @@ impl Core {
             }
             outcome_spec
                 .requirements
-                .extend(vak_judge::plan::evidence_requirements(
-                    &accepted_plan,
-                    retrieved_at.is_some()
-                        && vak_judge::plan::makes_claims(&accepted_plan, |kind| {
-                            delivering.values().any(|tool| {
-                                tool.card_kinds().iter().any(|own| own == kind)
-                                    && (tool.output_of_command().is_some()
-                                        || tool.changes_made().is_some())
-                            })
-                        }),
+                // Outside material always needs its support judged; a read of
+                // the person's own files does when the turn changed nothing
+                // and so answers from what it read.
+                .extend(vak_judge::outcome::source_support(
+                    retrieved_outside || (retrieved_at.is_some() && !delivered),
                 ));
             let evidence_state =
                 retrieved_at.map_or(vak_intent::EvidenceState::None, |recorded_at| {
@@ -8195,17 +8176,18 @@ impl Core {
                 });
             let unresolved_failure = failures.has_unrecovered();
             let turn_id = session.latest_directive_entry_id();
-            let card_receipts: Vec<_> = session
+            let card_blocks: Vec<String> = session
                 .active_presentations()
                 .into_iter()
                 .filter(|(_, record)| Some(record.turn_id.as_str()) == turn_id.as_deref())
-                .map(|(_, record)| vak_judge::plan::CardReceipt {
-                    deliverable: record.placement.part.clone(),
-                    semantic_type: record.semantic_type.clone(),
-                    block: record.block.clone(),
+                .map(|(_, record)| {
+                    record
+                        .block
+                        .clone()
+                        .unwrap_or_else(|| record.semantic_type.clone())
                 })
                 .collect();
-            let cards_recorded = card_receipts.len();
+            let cards_recorded = card_blocks.len();
             let mut status = vak_judge::outcome::evaluate_response_with_failures(
                 response_text.as_deref(),
                 cards_recorded,
@@ -8216,37 +8198,17 @@ impl Core {
                 matches!(outcome, TurnOutcome::Aborted { .. }),
                 unresolved_failure,
             );
-            // A file the model's own plan lists needs a call that delivered
+            // A deliverable the request declared needs a call that delivered
             // one. A sentence saying it wrote the file is not a deliverable.
-            // A card the plan lists needs a card that was recorded: an
-            // answer that says it showed one is not a card (seen live
-            // 2026-10-11, after every `answer` call had been refused).
-            let deliverable_observed = vak_judge::outcome::PlannedReceipts {
-                planned_file,
-                delivered,
-                planned_cards,
-                cards_shown: cards_recorded,
-            }
-            .observed()
-                && vak_judge::plan::gap(
-                    &accepted_plan,
-                    &vak_judge::plan::Produced {
-                        cards: &card_receipts,
-                        final_text: response_text.as_deref().unwrap_or_default(),
-                        files_delivered: usize::from(delivered),
-                        changed: false,
-                        checked: false,
-                        cards_withdrawn: false,
-                    },
-                )
-                .cards_short()
-                    == 0;
+            let deliverable_observed = delivered
+                || !outcome_spec.requirements.iter().any(|requirement| {
+                    requirement.kind == vak_intent::RequirementKind::Deliverable
+                        && requirement.origin == vak_intent::RequirementOrigin::Declared
+                });
             if status == vak_intent::OutcomeStatus::Produced && !deliverable_observed {
                 status = vak_intent::OutcomeStatus::Unknown;
             }
-            let evidence_card = card_receipts.iter().any(|receipt| {
-                receipt.block.as_deref().unwrap_or(&receipt.semantic_type) == "sources"
-            });
+            let evidence_card = card_blocks.iter().any(|block| block == "sources");
             let requirement_evaluations = vak_judge::outcome::evaluate_requirements(
                 &outcome_spec,
                 &vak_judge::outcome::TurnFacts {

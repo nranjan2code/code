@@ -1267,14 +1267,11 @@ commit (invariant 30).
   draws by block in one shared card shell; a kind only selects a pack on
   the host. A form's own kind is its name; a pack adds kinds to a form
   (doc 91); nothing else does. An answer uses as many cards as it has
-  parts, laid out by doc 87; the model alone places a card: `replaces`
-  (a presentation id of this answer) puts it in that card's place, and
-  `beside_previous` beside the card before it. Every card says whether
-  the answer goes on after it (`then`: `more` or `done`); a step of
-  accepted cards whose last card said `done` ends the turn when the plan,
-  if any, has nothing left, and no further step is asked for
-  (docs/design/97-cards-end-the-answer.md). Nothing relies on the model
-  choosing to say nothing. Nothing decides a card by words or counts:
+  parts, shown in the order they were made. A model authors no layout:
+  there is no plan to declare, no deliverable to name, no placement and
+  no end flag (removed 8.28.0; docs 86 and 97 are superseded). After a
+  step of cards the model gets the next step and ends the turn by
+  answering or stopping, as after any call. Nothing decides a card by words or counts:
   no signals read from text, no title word lists, no row thresholds. The
   contributor guide is `docs/design/67-presentation-renderer-guide.md`. A model shows
   each card by calling the card tool that owns its kind, by its own name
@@ -1285,18 +1282,11 @@ commit (invariant 30).
   came back as broken JSON on 7 of 16 captured steps against none for
   separate calls (docs/audits/cards-in-answers-2026-10-11.md). A card call
   is the loop's own display channel (`show_card` in `vak-agent`), in every
-  permission mode: checked against its schema, the plan, the sources the
+  permission mode: checked against its schema, the sources the
   conversation retrieved and its tool's rules, then recorded as a
-  `PresentationSource::ToolCall` presentation with the plan deliverable its
-  `deliverable` names, and the runtime lays the answer out from those names
-  (docs/design/87-composed-answers.md §2). One
+  `PresentationSource::ToolCall` presentation. One
   argument name is one shape on every block
-  (`one_argument_name_is_one_shape_on_every_block`). A card that names in
-  `deliverable` a deliverable the plan does not have is refused with the plan's
-  names, and one that names none while planned cards are still unnamed is
-  refused with those names; a planned card counts as shown only when a card
-  names it. Text written in reply to a plan check that followed an answer
-  is addressed to the runtime and is not projected (doc 86 §2.2). A table
+  (`one_argument_name_is_one_shape_on_every_block`). A table
   card whose rows are one cell each is refused as a list. `PresentationSource::Answer` is recorded
   history only; nothing writes it. A card that fails is refused with
   what to fix, and goes through the repair stages like any tool. The fence path, an inline
@@ -1391,17 +1381,9 @@ commit (invariant 30).
   under "More tools". Schemas carry no historical card content and
   do not make ordinary conversation require structured output. Recipes and
   request predictions inform output demand and composition, not access to
-  alternative shapes. **The model plans, the runtime checks**
-  (docs/design/86-model-plans-runtime-checks.md): the model declares its
-  deliverables with the loop-owned `plan` tool (each a name and a form:
-  card, text, file, change or check) and names the one a card delivers in
-  its `deliverable` field; when the turn ends, `vak_judge::plan` compares the plan
-  with receipts (cards recorded, final text, files delivered, commands and
-  changes) and a `[plan-check]` control names only what is missing, once,
-  without discarding anything already produced; a planned card still
-  missing after that is required of one step as a call of the card tool
-  owning the kind the plan named for it (`Deliverable::kind`,
-  `ChatRequest::must_call`), once, and what is left then stands. No reading of the request
+  alternative shapes. Nothing holds a finished answer for bookkeeping:
+  the plan check, the forced card call and the Topics placement hold are
+  removed (8.28.0); a Topics placement is the model's own call. No reading of the request
   or the answer sends a turn back: the request-vocabulary presentation check
   and the card-completeness self-audit are removed, and the stop gate holds
   a turn only on observed facts (an unclosed fence, an unreported tool
@@ -1440,8 +1422,7 @@ commit (invariant 30).
   `docs/design/30-output-engineering.md`. A tool declares that it
   presents cards with `Tool::presents_cards`. A tool names the file a
   successful call delivers for review with `Tool::delivered_file`
-  (`office_apply`'s draft): the file is a receipt for the plan check,
-  an identical call gets the first call's result instead of a second draft,
+  (`office_apply`'s draft): an identical call gets the first call's result instead of a second draft,
   and a card whose `artifact_path` previews that file is not shown.
 - The shipped prompt seed stays under 1800 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
@@ -1613,7 +1594,7 @@ crates/vak-judge     receipts to verdicts (docs/design/88-control-plane.md
                      §7), pure, over vak-control and vak-intent only: the
                      verdict on a proposed call from gathered facts and
                      where a refusal's fault lies (call.rs), a turn's
-                     unrecovered failures, the plan check (plan.rs) and the
+                     unrecovered failures and the
                      outcome, requirement and completion evaluation
                      (outcome.rs), and what real turns measure by model
                      and the patterns `Promote` offers for review
@@ -2219,7 +2200,7 @@ either: a tool declares what it is (`permission`, `provenance`,
 `file_access`, `delivered_file`, `presents_cards`, `output_of_command`,
 `changes_made`, `fill_defaults` for a
 name it accepts for an argument), and a wrapper forwards every
-declaration. Only the loop's own tools (`plan`, `recall`, `task`, `work`,
+declaration. Only the loop's own tools (`recall`, `task`, `work`,
 the card calls) are recognised by name, because the loop defines them.
 
 A tool error says where its fault lies as a typed value at its source

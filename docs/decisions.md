@@ -1,5 +1,13 @@
 # Decisions
 
+- 2026-10-22: The maintainer asked for the card-side redesign: the runtime
+  builds cards from tool results and markdown, strict tools stay only for
+  chart, stats, map, calendar and controls, and the model authors no
+  layout. Step 1 is done: the `plan` tool and plan check, the forced card
+  and Topics calls, and the `deliverable`, `replaces`, `beside_previous`
+  and `then` fields are removed (docs 86 and 97 superseded). The remaining
+  steps are in docs/plans/open-items.md.
+
 - 2026-10-22: The maintainer asked for one design run on conversation context
   instead of more one-slot fixes, and to fold the paused parallel continuity work
   into one change. Decided: a request carries the newest exchanges whole while

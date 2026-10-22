@@ -103,6 +103,28 @@ impl Tool for TableCard {
     }
 }
 
+/// Any other tool a step can call.
+struct Note;
+
+#[async_trait]
+impl Tool for Note {
+    fn name(&self) -> &str {
+        "note"
+    }
+    fn description(&self) -> &str {
+        "Keeps a note."
+    }
+    fn schema(&self) -> Value {
+        json!({"type": "object"})
+    }
+    fn always_loaded(&self) -> bool {
+        true
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("Noted.")
+    }
+}
+
 fn message(content: Vec<ContentBlock>, stop_reason: StopReason) -> AssistantMessage {
     AssistantMessage {
         content,
@@ -177,25 +199,19 @@ async fn a_card_that_keeps_failing_is_located_shown_its_schema_then_withdrawn() 
     let ledger = SessionPath::new_session_file(&home, dir.path(), "card-repair");
     let log = SessionLog::create(ledger.clone(), header).unwrap();
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
-    let plan = |id: &str| {
-        call(
-            id,
-            "plan",
-            json!({"deliverables": [{"name": "comparison", "form": "table"}]}),
-        )
-    };
+    let note = |id: &str| call(id, "note", json!({}));
     let mut agent = Agent::new(
         Arc::new(Scripted {
             capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(VecDeque::from(vec![
-                plan("p1"),
+                note("p1"),
                 broken_card("a1"),
                 // Each unreadable call is first written again under its
                 // schema; here that fails too, so the ladder goes on.
                 text("not json"),
                 // A step that calls something else does not start the
                 // ladder again.
-                plan("p2"),
+                note("p2"),
                 broken_card("a2"),
                 text("not json"),
                 broken_card("a3"),
@@ -213,10 +229,7 @@ async fn a_card_that_keeps_failing_is_located_shown_its_schema_then_withdrawn() 
         {
             let mut cfg = AgentConfig::new("sys");
             cfg.model = "test-model".into();
-            cfg.tools = vec![
-                Arc::new(vak_tools::PlanTool::default()),
-                Arc::new(TableCard),
-            ];
+            cfg.tools = vec![Arc::new(Note), Arc::new(TableCard)];
             cfg.mode = vak_permission::Mode::FullAccess;
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
             cfg.stop_policy = None;
@@ -262,7 +275,7 @@ async fn a_card_that_keeps_failing_is_located_shown_its_schema_then_withdrawn() 
     );
     assert!(
         !steps[5].0.iter().any(|name| name == "emit_table_card")
-            && steps[5].0.iter().any(|name| name == "plan"),
+            && steps[5].0.iter().any(|name| name == "note"),
         "after the withdrawal the card tool is not offered: {seen:?}"
     );
     assert!(
@@ -339,6 +352,8 @@ async fn an_unreadable_call_is_regenerated_under_its_schema_and_runs() {
             responses: Mutex::new(VecDeque::from(vec![
                 broken_card("a1"),
                 text(&rewritten.to_string()),
+                // The card shown, the model finishes its answer.
+                text(""),
             ])),
             seen: seen.clone(),
         }),
@@ -367,8 +382,8 @@ async fn an_unreadable_call_is_regenerated_under_its_schema_and_runs() {
     );
     {
         let seen = seen.lock().unwrap();
-        // The accepted card is the answer: no step is asked after it.
-        assert_eq!(seen.len(), 2, "{seen:?}");
+        // The step, the rewrite, and the step that finishes the answer.
+        assert_eq!(seen.len(), 3, "{seen:?}");
         assert!(seen[1].0.is_empty(), "the rewrite offers no tool: {seen:?}");
         assert_eq!(seen[1].2.as_deref(), Some("emit_table_card"));
     }
@@ -447,6 +462,8 @@ async fn a_call_of_the_wrong_shape_is_regenerated_under_its_schema_at_once() {
                     json!({"semantic_type": "table", "rows": ["A | B"]}),
                 ),
                 text(&rewritten.to_string()),
+                // The card shown, the model finishes its answer.
+                text(""),
             ])),
             seen: seen.clone(),
         }),
@@ -475,8 +492,8 @@ async fn a_call_of_the_wrong_shape_is_regenerated_under_its_schema_at_once() {
     );
     {
         let seen = seen.lock().unwrap();
-        // The accepted card is the answer: no step is asked after it.
-        assert_eq!(seen.len(), 2, "{seen:?}");
+        // The step, the rewrite, and the step that finishes the answer.
+        assert_eq!(seen.len(), 3, "{seen:?}");
         assert_eq!(seen[1].2.as_deref(), Some("emit_table_card"), "{seen:?}");
     }
     let session = agent.session.lock().await;
@@ -549,6 +566,8 @@ async fn a_blind_call_to_a_deferred_tool_is_regenerated_at_once() {
                     json!({"semantic_type": "table", "rows": ["A | B"]}),
                 ),
                 text(&rewritten.to_string()),
+                // The card shown, the model finishes its answer.
+                text(""),
             ])),
             seen: seen.clone(),
         }),
@@ -583,8 +602,8 @@ async fn a_blind_call_to_a_deferred_tool_is_regenerated_at_once() {
     );
     {
         let seen = seen.lock().unwrap();
-        // The accepted card is the answer: no step is asked after it.
-        assert_eq!(seen.len(), 2, "{seen:?}");
+        // The step, the rewrite, and the step that finishes the answer.
+        assert_eq!(seen.len(), 3, "{seen:?}");
         assert_eq!(
             seen[1].2.as_deref(),
             Some("emit_table_card"),

@@ -10,4 +10,3 @@ pub mod ability;
 pub mod call;
 pub mod measure;
 pub mod outcome;
-pub mod plan;

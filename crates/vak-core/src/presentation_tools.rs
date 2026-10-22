@@ -2459,33 +2459,7 @@ impl Tool for EmitCardTool {
             "label".into(),
             string("Optional. A few words naming this part, shown above it."),
         );
-        properties.insert(
-            "deliverable".into(),
-            string("The plan entry this card is part of, written as the plan wrote it; an entry may take several cards. Leave it out when your plan has no entry for it."),
-        );
-        properties.insert(
-            "replaces".into(),
-            string(
-                "Optional. The presentation id of an active card of this answer that this card replaces. A source still supplying live values to other cards cannot be replaced until those dependencies are replaced.",
-            ),
-        );
-        properties.insert(
-            "beside_previous".into(),
-            serde_json::json!({
-                "type": "boolean",
-                "description": "Optional. true to place it beside the card before it."
-            }),
-        );
-        properties.insert(
-            "then".into(),
-            serde_json::json!({
-                "type": "string",
-                "enum": ["more", "done"],
-                "description": "more if another card or text follows this card; done if it completes your answer."
-            }),
-        );
-        let mut required = own["required"].as_array().cloned().unwrap_or_default();
-        required.push(Value::from("then"));
+        let required = own["required"].as_array().cloned().unwrap_or_default();
         serde_json::json!({"type": "object", "properties": properties, "required": required})
     }
 
@@ -2635,17 +2609,8 @@ fn validate_call(
     };
     let mut own = args.clone();
     own.remove("semantic_type");
-    // Every card takes these beside its own fields: `deliverable` names the
-    // plan deliverable it delivers, `replaces` the card it takes the place
-    // of and `beside_previous` its placement (all three read from the call
-    // by the loop and the projection, never stored in the card), and
-    // `label` is the model's own words for it, shown above it.
-    own.remove("deliverable");
-    own.remove("replaces");
-    own.remove("beside_previous");
-    // `then` says whether the answer goes on after this card; the loop
-    // reads it to end the turn (docs/design/97-cards-end-the-answer.md).
-    own.remove("then");
+    // Every card takes `label` beside its own fields: the model's own
+    // words for it, shown above it.
     let label = own
         .remove("label")
         .and_then(|label| label.as_str().map(str::trim).map(str::to_string))
@@ -3058,7 +3023,6 @@ mod tests {
         for (name, form, mut args) in conformance_cases() {
             let tool = tool(name);
             sent(&tool, &mut args);
-            args["then"] = serde_json::json!("done");
             vak_tools::validate_input(&tool.schema(), &args)
                 .unwrap_or_else(|error| panic!("{form}: {error}"));
             // What the model sends, before the runtime fills in what the
@@ -3155,7 +3119,6 @@ mod tests {
     fn a_field_the_card_does_not_name_is_refused_not_dropped() {
         let steps = tool("emit_steps_card");
         let mut args = json!({
-            "then": "done",
             "steps": [
                 {"label": "Boil water"},
                 {"label": "Brew", "choices": [{"step": "Brew", "fact": "4 min"}]}
@@ -3217,14 +3180,7 @@ mod tests {
                 .unwrap()
                 .keys()
                 .cloned()
-                .chain([
-                    "semantic_type".to_string(),
-                    "deliverable".to_string(),
-                    "label".to_string(),
-                    "replaces".to_string(),
-                    "beside_previous".to_string(),
-                    "then".to_string(),
-                ])
+                .chain(["semantic_type".to_string(), "label".to_string()])
                 .collect();
             let mut calls = vec![json!({}), fixture.clone()];
             for key in &keys {
@@ -3324,10 +3280,7 @@ mod tests {
                         "{tool}.{name} is required but described as optional"
                     ));
                 }
-                if !needed
-                    && !description.starts_with("Optional")
-                    && !["deliverable"].contains(&name.as_str())
-                {
+                if !needed && !description.starts_with("Optional") {
                     problems.push(format!("{tool}.{name} is optional but not described so"));
                 }
                 if property["items"]["type"] == "object" {

@@ -1,5 +1,13 @@
 ## Unreleased
 
+- The model no longer has to lay out its answer: the `plan` tool, the plan
+  check, the card it was then forced to show, and the `deliverable`,
+  `replaces`, `beside_previous` and `then` fields on every card are gone.
+  An answer is no longer held back for a Topics placement either. Cards
+  show in the order the model made them, and an answer that rests on
+  material retrieved from outside your workspace still asks for its
+  sources to be checked.
+
 ## 8.27.0 — 2026-10-22
 
 - A conversation keeps its thread: each request now carries the newest

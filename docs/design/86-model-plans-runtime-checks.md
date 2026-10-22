@@ -1,6 +1,6 @@
 # 86 — The model plans, the runtime checks
 
-Status: in progress: direction approved by the maintainer on 2026-10-11.
+Status: superseded on 2026-10-22: the `plan` tool, the plan check and the forced card call are removed; a model authors no layout.
 Phases 1 (plan and check) and 2 (a commitment opens only from an explicit
 ask; `a_request_with_no_explicit_ask_opens_no_commitment`) are built;
 phase 3 (the card surface) has not been checked against the code

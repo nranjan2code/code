@@ -88,25 +88,22 @@ pub fn evaluate_response(response: Option<&str>, failed: bool, cancelled: bool) 
     evaluate_response_with_failures(response, 0, failed, cancelled, false)
 }
 
-/// What the turn's receipts show of the deliverables the model's own plan
-/// lists by form.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct PlannedReceipts {
-    /// The plan lists a file.
-    pub planned_file: bool,
-    /// A call delivered a file or changed the workspace.
-    pub delivered: bool,
-    /// Cards the plan lists, and cards recorded this turn.
-    pub planned_cards: usize,
-    pub cards_shown: usize,
-}
-
-impl PlannedReceipts {
-    /// Whether every planned file and card has a receipt. A sentence that
-    /// says a file was written or a card was shown is not one.
-    pub fn observed(&self) -> bool {
-        (!self.planned_file || self.delivered) && self.cards_shown >= self.planned_cards
-    }
+/// The requirement an answer that rests on retrieved material carries:
+/// a retrieval receipt cannot establish that the material supports the
+/// claims, so relevance, support and freshness stay to be judged. `retrieved`
+/// says a call this turn retrieved material from outside the workspace.
+pub fn source_support(retrieved: bool) -> Option<vak_intent::OutcomeRequirement> {
+    retrieved.then(|| vak_intent::OutcomeRequirement {
+        id: "retrieved-source-support".into(),
+        kind: vak_intent::RequirementKind::Evidence,
+        description:
+            "Establish relevance, claim support and source freshness for the retrieved material"
+                .into(),
+        origin: vak_intent::RequirementOrigin::Inferred,
+        importance: vak_intent::RequirementImportance::Must,
+        target: Some("primary".into()),
+        form: None,
+    })
 }
 
 /// As `evaluate_response`, but downgraded to `Unknown` when a tool call
@@ -460,18 +457,10 @@ mod tests {
     use vak_intent::{Evidence, Reading};
 
     #[test]
-    fn a_planned_card_or_file_needs_its_receipt() {
-        let mut receipts = PlannedReceipts::default();
-        assert!(receipts.observed());
-        receipts.planned_cards = 2;
-        receipts.cards_shown = 1;
-        assert!(!receipts.observed(), "one planned card was never shown");
-        receipts.cards_shown = 2;
-        assert!(receipts.observed());
-        receipts.planned_file = true;
-        assert!(!receipts.observed());
-        receipts.delivered = true;
-        assert!(receipts.observed());
+    fn retrieved_material_needs_its_support_judged() {
+        assert!(source_support(false).is_none());
+        let requirement = source_support(true).unwrap();
+        assert_eq!(requirement.kind, vak_intent::RequirementKind::Evidence);
     }
 
     #[test]

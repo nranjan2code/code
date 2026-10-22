@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Regression: automatic Topics cannot silently be skipped at answer completion.
+//! Topics placement is the model's own call: an answer is never held for
+//! one, and a placement it makes is kept as made.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -177,16 +178,6 @@ async fn run(agent: &mut Agent) -> TurnOutcome {
     result
 }
 
-fn create() -> AssistantMessage {
-    call(
-        "place",
-        "topics",
-        serde_json::json!({
-            "action":"create", "title":"Market research", "outcomes":["Market summary", "Sources"]
-        }),
-    )
-}
-
 async fn rungs(agent: &Agent) -> Vec<vak_control::Rung> {
     agent
         .session
@@ -209,76 +200,16 @@ async fn rungs(agent: &Agent) -> Vec<vak_control::Rung> {
 }
 
 #[tokio::test]
-async fn skipped_organisation_is_corrected_and_places_multiple_outcomes() {
+async fn an_answer_with_no_placement_stands_without_a_correction() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut agent, store, _, required) = agent(
-        &dir,
-        vec![text("The summary."), create(), text("The summary.")],
-    );
-    assert!(matches!(
-        run(&mut agent).await,
-        TurnOutcome::Completed { .. }
-    ));
-    let snapshot = store.snapshot().unwrap();
-    assert_eq!(snapshot.topics.len(), 1);
-    assert_eq!(snapshot.placements.len(), 2);
-    assert_eq!(rungs(&agent).await, vec![vak_control::Rung::Tell]);
-    assert_eq!(required.lock().unwrap().len(), 3);
-    // Corrections and tool exchanges survive ordinary message derivation.
-    let messages = agent.session.lock().await.derive_transcript();
-    assert!(messages.iter().any(|m| {
-        m.as_typed()
-            .text_content()
-            .contains("no recorded organisation")
-    }));
-}
-
-#[tokio::test]
-async fn list_alone_does_not_satisfy_placement_and_the_frame_changes() {
-    let dir = tempfile::tempdir().unwrap();
-    let (mut agent, store, _, required) = agent(
-        &dir,
-        vec![
-            call("list", "topics", serde_json::json!({"action":"list"})),
-            text("The summary."),
-            text("Still skipped."),
-            create(),
-            text("The summary."),
-        ],
-    );
-    assert!(matches!(
-        run(&mut agent).await,
-        TurnOutcome::Completed { .. }
-    ));
-    assert_eq!(store.snapshot().unwrap().placements.len(), 2);
-    assert_eq!(required.lock().unwrap()[3], Some("topics".into()));
-    assert_eq!(
-        rungs(&agent).await,
-        vec![vak_control::Rung::Tell, vak_control::Rung::Reframe]
-    );
-}
-
-#[tokio::test]
-async fn noncompliant_model_ends_with_its_answer_without_an_organisation_loop() {
-    let dir = tempfile::tempdir().unwrap();
-    let (mut agent, _, _, required) =
-        agent(&dir, vec![text("First."), text("Second."), text("Final.")]);
+    let (mut agent, store, _, required) = agent(&dir, vec![text("The summary.")]);
     let outcome = run(&mut agent).await;
     assert!(
-        matches!(outcome, TurnOutcome::Completed { response } if response.text_content() == "Final.")
+        matches!(outcome, TurnOutcome::Completed { response } if response.text_content() == "The summary.")
     );
-    assert_eq!(
-        *required.lock().unwrap(),
-        vec![None, None, Some("topics".into())]
-    );
-    assert_eq!(
-        rungs(&agent).await,
-        vec![
-            vak_control::Rung::Tell,
-            vak_control::Rung::Reframe,
-            vak_control::Rung::End
-        ]
-    );
+    assert_eq!(*required.lock().unwrap(), vec![None]);
+    assert!(rungs(&agent).await.is_empty());
+    assert!(store.snapshot().unwrap().placements.is_empty());
 }
 
 #[tokio::test]
@@ -365,96 +296,6 @@ async fn organisation_never_spends_the_last_step_or_requires_a_child_store() {
         ));
         assert_eq!(required.lock().unwrap().len(), 1);
     }
-}
-
-#[tokio::test]
-async fn an_older_turns_placement_does_not_hide_the_current_gap() {
-    let dir = tempfile::tempdir().unwrap();
-    let (mut agent, store, trace, _) =
-        agent(&dir, vec![text("Summary."), create(), text("Summary.")]);
-    store
-        .assign_model(
-            &uuid::Uuid::now_v7().to_string(),
-            "Earlier answer",
-            vec![],
-            &trace,
-        )
-        .unwrap();
-    assert!(matches!(
-        run(&mut agent).await,
-        TurnOutcome::Completed { .. }
-    ));
-    assert_eq!(store.snapshot().unwrap().placements.len(), 3);
-    assert_eq!(rungs(&agent).await, vec![vak_control::Rung::Tell]);
-}
-
-struct StepsBlock;
-
-#[async_trait]
-impl vak_tools::Tool for StepsBlock {
-    fn name(&self) -> &str {
-        "steps_block"
-    }
-    fn description(&self) -> &str {
-        "Steps in order."
-    }
-    fn schema(&self) -> Value {
-        serde_json::json!({"type":"object"})
-    }
-    fn presents_cards(&self) -> bool {
-        true
-    }
-    fn card_kinds(&self) -> Vec<String> {
-        vec!["steps".into()]
-    }
-    async fn execute(
-        &self,
-        _: &Value,
-        _: &vak_tools::context::ToolContext,
-    ) -> vak_tools::ToolOutput {
-        vak_tools::ToolOutput::ok("Shown to the user.")
-    }
-}
-
-#[tokio::test]
-async fn card_only_answer_still_gets_organised_without_duplicating_the_card() {
-    let dir = tempfile::tempdir().unwrap();
-    let (mut agent, store, _, required) = agent(
-        &dir,
-        vec![
-            call(
-                "card",
-                "steps_block",
-                serde_json::json!({"steps":["Inspect the market data"],"then":"done"}),
-            ),
-            create(),
-            text(""),
-        ],
-    );
-    agent.config.tools.push(Arc::new(StepsBlock));
-    agent.config.presentation_rebuild = Some(Arc::new(|_, input| {
-        Some(vak_tools::PresentationCard {
-            presentation_id: None,
-            semantic_type: "steps".into(),
-            skill_id: "test".into(),
-            skill_version: "1".into(),
-            schema_version: 1,
-            payload: input.clone(),
-            title: "Market summary".into(),
-            identity_digest: "summary".into(),
-            block: Some("steps".into()),
-            data_call_id: None,
-        })
-    }));
-    let outcome = run(&mut agent).await;
-    assert!(
-        matches!(outcome, TurnOutcome::Completed { .. }),
-        "{outcome:?}"
-    );
-    assert_eq!(store.snapshot().unwrap().placements.len(), 2);
-    assert_eq!(agent.session.lock().await.presentations().len(), 1);
-    assert_eq!(required.lock().unwrap().len(), 3);
-    assert_eq!(rungs(&agent).await, vec![vak_control::Rung::Tell]);
 }
 
 #[tokio::test]

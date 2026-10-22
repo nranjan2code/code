@@ -42,7 +42,7 @@ use serde_json::Value;
 pub use arguments::{JsonFault, json_fault, read_arguments, unreadable};
 pub use context::ToolContext;
 pub use contract::validate_input;
-pub use plan::{PlanTool, parse_plan_args};
+pub use plan::parse_plan_args;
 pub use recall::{RecallRequest, RecallTool, apply_chars, apply_range, parse_recall_args};
 pub use sandbox_events::{SandboxEvent, SandboxEventSink};
 pub use topics::{TopicRequest, TopicsTool, parse_topics_args};
@@ -575,8 +575,8 @@ pub trait Tool: Send + Sync {
 
     /// Whether a successful call looks something up for the request. Every
     /// tool does unless it says otherwise: one that shows a card is the
-    /// answer, and one that only finds other tools or records a plan has
-    /// looked at nothing yet.
+    /// answer, and one that only finds other tools has looked at nothing
+    /// yet.
     fn looks_up(&self) -> bool {
         !self.presents_cards()
     }
@@ -590,13 +590,6 @@ pub trait Tool: Send + Sync {
                 || matches!(self.file_access(args), Some((FileAccess::Read, _)))
                 || self.serves().contains(&"source-discovery")
                 || self.permission().reach == vak_permission::Reach::Integration)
-    }
-
-    /// The deliverables a call with these arguments declares, for the tool
-    /// a model plans its answer with
-    /// (docs/design/86-model-plans-runtime-checks.md §2.1).
-    fn planned(&self, _args: &Value) -> Option<Vec<vak_intent::Deliverable>> {
-        None
     }
 
     /// The argument, in milliseconds, that bounds how long one call may

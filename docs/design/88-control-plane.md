@@ -386,7 +386,7 @@ set at `vak-core/src/lib.rs` (`cfg.effort`) from the engagement.
 
 - `crates/vak-agent/src/lib.rs` (9,787 lines): the loop's gates and its 12
   control-message sites.
-- `crates/vak-agent/src/stop_policy.rs`; the plan check is `crates/vak-judge/src/plan.rs`.
+- `crates/vak-agent/src/stop_policy.rs`; the plan check (removed 2026-10-22) lived in vak-judge.
 - `crates/vak-core/src/lib.rs`: the outcome evaluation and the per-turn
   effort setting; `crates/vak-core/src/intent.rs`.
 - `crates/vak-intent`: the reader and `control.rs` (the runtime control

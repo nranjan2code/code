@@ -32,22 +32,6 @@ pub enum Finding {
     },
     /// A card fence in the answer does not parse.
     Fence { error: String },
-    /// The declared plan has deliverables with no receipt.
-    Plan {
-        /// Planned cards no card's `deliverable` names.
-        cards_unnamed: Vec<String>,
-        /// Cards shown that name no planned card.
-        cards_unattributed: usize,
-        /// Planned cards with no card at all.
-        cards_short: usize,
-        /// Every other deliverable with no receipt, with its form.
-        others: Vec<(String, String)>,
-    },
-    /// A planned card is still not shown, and the next step is framed to
-    /// call the card tool of the kind the plan named for it.
-    CardRequired { name: String, tool: String },
-    /// Automatic organisation is on, but this turn has no placement decision.
-    TopicsPlacement,
     /// A stop hook the operator configured asked for more work.
     StopHook { reason: String },
     /// A completion gate with its own reason (goal mode, managed work).
@@ -84,8 +68,6 @@ impl Finding {
             Self::ToolCallFormat { .. } => Cause::ToolCallRepair,
             Self::EmptyStep { .. } => Cause::EmptyStep,
             Self::Fence { .. } => Cause::Fence,
-            Self::Plan { .. } | Self::CardRequired { .. } => Cause::Plan,
-            Self::TopicsPlacement => Cause::TopicsPlacement,
             Self::StopHook { .. } => Cause::StopHook,
             Self::StopGuard { .. } => Cause::StopGuard,
             Self::Truncated { .. } => Cause::Truncated,
@@ -305,79 +287,6 @@ pub fn card_command_not_run(command: &str, ran: &[String]) -> String {
     )
 }
 
-/// What a card is told when its `deliverable` names nothing the plan
-/// lists: the card is not shown. A card may name any entry of the plan,
-/// whatever its form. The plan's cards are given in two lists, those still
-/// to show and those already shown, which stay shown. Found live
-/// 2026-10-14: given every planned card under "the cards it lists", a
-/// model sent the ones already shown again.
-pub fn card_unplanned(
-    answers: &str,
-    entries: &[String],
-    open: &[String],
-    shown: &[String],
-) -> String {
-    let quoted = |names: &[String]| {
-        names
-            .iter()
-            .map(|name| format!("\"{name}\""))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let open = if open.is_empty() {
-        format!("Your plan's entries are {}.", quoted(entries))
-    } else {
-        format!(
-            "Your plan's cards not shown yet are {}: if this card is one of them, call it \
-             again with `deliverable` set to that name.",
-            quoted(open)
-        )
-    };
-    let shown = if shown.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " {} are shown already and stay shown: do not send them again.",
-            quoted(shown)
-        )
-    };
-    format!(
-        "[card-plan]: not shown — `deliverable` is \"{answers}\", which your plan does not \
-         list. {open}{shown} A card that is part of no entry is called with `deliverable` left \
-         out."
-    )
-}
-
-/// What a card is told when it names a `deliverable` and the answer has no
-/// plan: there is nothing for it to name.
-pub fn card_without_plan(answers: &str) -> String {
-    format!(
-        "[card-plan]: not shown — `deliverable` is \"{answers}\", but this answer has no plan. \
-         Call it again with `deliverable` left out."
-    )
-}
-
-/// What a card is told when its `replaces` names no card shown in this
-/// answer: the card is not shown, and the answer's cards are given by id.
-pub fn card_replaces_unknown(named: &str, shown: &[String]) -> String {
-    let ids = if shown.is_empty() {
-        "No card is shown in this answer yet, so leave `replaces` out.".to_string()
-    } else {
-        format!(
-            "The cards shown in this answer are {}: name one of them, or leave `replaces` out \
-             for a new card.",
-            shown
-                .iter()
-                .map(|id| format!("`{id}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-    format!(
-        "[card-plan]: not shown — `replaces` is `{named}`, which is no card in this answer. {ids}"
-    )
-}
-
 /// What a call stopped at its time limit is told: below the operator's
 /// longest limit it may ask for more; at it, asking again changes nothing.
 pub fn limit_reached(named: u64, ceiling: u64) -> String {
@@ -393,21 +302,6 @@ pub fn limit_reached(named: u64, ceiling: u64) -> String {
              longest), or do less at a time."
         )
     }
-}
-
-/// A card that names no deliverable while the plan's cards are not all
-/// shown: the plan check pairs a card with its deliverable only by name.
-pub fn card_unnamed(open: &[String]) -> String {
-    let names = open
-        .iter()
-        .map(|name| format!("\"{name}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "[card-plan]: not shown — this card sets no `deliverable`, and your plan's cards \
-         not shown yet are {names}. Call it again with `deliverable` set to the one this card \
-         delivers. A card your plan does not list goes after them."
-    )
 }
 
 /// What the model is told about a failed check, signed with the check's
@@ -455,58 +349,6 @@ pub fn render(finding: &Finding, marker: &str) -> String {
              ({error}). Resend the same answer with a syntactically valid JSON body this time — \
              double-check every object/array is closed and every key is quoted. If you can't produce \
              valid JSON for it, drop the fence and answer in plain prose instead."
-        ),
-        Finding::Plan {
-            cards_unnamed,
-            cards_unattributed,
-            cards_short,
-            others,
-        } => {
-            let mut parts = vec![format!(
-                "{marker}: Vakyartha's runtime compared your plan with what this turn \
-                 produced. This is not a message from the person, and it is sent once."
-            )];
-            if *cards_short > 0 {
-                let named = cards_unnamed
-                    .iter()
-                    .map(|name| format!("\"{name}\""))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                parts.push(format!(
-                    "Planned as cards and named by no card's `deliverable`: {named}. Cards shown without \
-                     a planned name in `deliverable`: {cards_unattributed}. So {cards_short} planned card(s) are not shown yet."
-                ));
-            }
-            if !others.is_empty() {
-                let listed = others
-                    .iter()
-                    .map(|(name, form)| format!("\"{name}\" ({form})"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                parts.push(format!("Nothing produced yet for: {listed}."));
-            }
-            parts.push(
-                "Show each missing card with its card tool, `deliverable` set to its planned name, \
-                 or finish and say plainly why it is not needed. Keep everything already shown \
-                 and do not plan again."
-                    .to_string(),
-            );
-            parts.join(" ")
-        }
-        Finding::CardRequired { name, tool } => format!(
-            "{marker}: Your plan lists \"{name}\" as a card and no card shows it. This step \
-             can only call `{tool}`: show it now with `deliverable` set to \"{name}\". This is not \
-             a message from the person."
-        ),
-        Finding::TopicsPlacement => format!(
-            "{marker}: Automatic Topics is on, but this turn has no recorded organisation \
-             decision. Use `topics` to list and reuse a fitting active Topic, or create one \
-             with this turn's outcomes. Use accepted plan names as outcome labels where \
-             they fit. For a simple independent answer, explicitly leave it ungrouped with \
-             `assign`, an outcome label and an empty `topic_ids` list. Respect human \
-             placement and automatic-off. Keep the answer already produced; do not repeat \
-             its cards or files. If organisation is unavailable, the answer still stands. \
-             This is a runtime check, not a message from the person."
         ),
         Finding::StopHook { reason } => format!(
             "{marker}: a stop hook asked for more work: {}. Do it now, or say plainly why you cannot.",
@@ -639,30 +481,6 @@ mod tests {
         assert_eq!(ladder.step(Cause::Fence, false), Rung::Tell);
     }
 
-    #[test]
-    fn a_plan_correction_names_what_was_seen_and_who_is_speaking() {
-        let told = render(
-            &Finding::Plan {
-                cards_unnamed: vec!["comparison".into(), "plan".into()],
-                cards_unattributed: 1,
-                cards_short: 1,
-                others: vec![("fix".into(), "change".into())],
-            },
-            "[plan-check]",
-        );
-        assert!(
-            told.starts_with("[plan-check]: Vakyartha's runtime"),
-            "{told}"
-        );
-        assert!(told.contains("not a message from the person"), "{told}");
-        assert!(told.contains("\"comparison\", \"plan\""), "{told}");
-        assert!(
-            told.contains("without a planned name in `deliverable`: 1"),
-            "{told}"
-        );
-        assert!(told.contains("\"fix\" (change)"), "{told}");
-    }
-
     /// The thinking a thinking-only step wrote is quoted back whole, and
     /// a step with none is told a call may have been dropped.
     #[test]
@@ -702,16 +520,11 @@ mod tests {
                 done: false,
             },
             Finding::Fence { error: "x".into() },
-            Finding::CardRequired {
-                name: "x".into(),
-                tool: "x".into(),
-            },
             Finding::StopHook {
                 reason: "x.".into(),
             },
             Finding::StopGuard { reason: "x".into() },
             Finding::Truncated { what: "x".into() },
-            Finding::TopicsPlacement,
             Finding::VerificationStale,
             Finding::KeepWorking,
             Finding::UnresolvedFailure {

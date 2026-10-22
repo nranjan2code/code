@@ -1,13 +1,7 @@
 # 97 — Cards end the answer, on every provider
 
-Status: in progress (2026-10-16): stages A to C built and verified live
-on the dev route; the OpenAI route not yet measured with `then`; §6 is
-open. Supersedes the interim rule in docs/design/87-composed-answers.md
-§2a. Builds on docs/design/86-model-plans-runtime-checks.md (the plan),
-docs/design/87-composed-answers.md (composition),
-docs/design/89-constrained-tool-arguments.md (schemas the wire enforces),
-docs/design/92-card-forms.md (the forms) and
-docs/design/68-context-engine.md §5 (the tool surface).
+Status: superseded on 2026-10-22: `then` is removed; after a step of cards
+the model ends the turn by answering or stopping, as after any call.
 
 ## 1. What is wrong
 

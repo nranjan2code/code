@@ -576,8 +576,6 @@ async fn a_terminal_card_shows_what_its_command_really_printed() {
         &dir,
         "pc-terminal",
         vec![
-            // Refused cards first: an accepted card is the answer and ends
-            // the turn, so it comes last.
             tool_call_msg("s1", "shell", serde_json::json!({"command": "npm start"})),
             tool_call_msg(
                 "t2",
@@ -593,8 +591,9 @@ async fn a_terminal_card_shows_what_its_command_really_printed() {
             tool_call_msg(
                 "t1",
                 "emit_terminal_card",
-                serde_json::json!({"command": "npm start", "output": "ready", "then": "done"}),
+                serde_json::json!({"command": "npm start", "output": "ready"}),
             ),
+            text_msg(""),
         ],
     )
     .await;
@@ -681,10 +680,10 @@ async fn a_diff_card_shows_what_the_turn_s_writes_really_changed() {
                 "emit_diff_card",
                 serde_json::json!({
                     "paths": ["./a.txt"],
-                    "files": [{"filename": "a.txt", "hunks": "made up", "additions": 9, "deletions": 9}],
-                    "then": "done"
+                    "files": [{"filename": "a.txt", "hunks": "made up", "additions": 9, "deletions": 9}]
                 }),
             ),
+            text_msg(""),
         ],
     )
     .await;
