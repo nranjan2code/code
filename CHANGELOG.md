@@ -1,4 +1,4 @@
-## Unreleased
+## 8.22.0 — 2026-10-22
 
 - Automatic Topics now checks for a recorded organization decision before an
   answer finishes, including answers delivered entirely as cards. If the Agent
