@@ -1,5 +1,3 @@
-## Unreleased
-
 ## 8.24.0 — 2026-10-22
 
 - Proposed a general lifecycle for saved interactive work, with edits creating
