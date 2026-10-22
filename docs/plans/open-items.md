@@ -768,13 +768,14 @@ unless it says so.
 
 ## Before the next release
 
-- [ ] macOS bundle resource signing: reconfirmed with local `8.16.1` on
-  2026-10-20. The managed install and both services verify, but
+- [ ] macOS bundle resource signing: reconfirmed with local `8.22.0` on
+  2026-10-22. The managed install and both services verify, but
   `scripts/verify-macos-release.sh` rejects `/Applications/Vakyartha.app`
   with "code has no resources but signature indicates they must be present".
-  Deep ad-hoc signing fixes the bundle check while changing `vak-desktop`'
-  component digest, so `vak self verify` then reports drift. Repair signing
-  in the managed packaging/install owner, accounting for its mutable install
+  Deep ad-hoc signing fixes the bundle check while changing component digests;
+  signing only the outer bundle changes `vak-desktop`'s digest. Restore through
+  the managed installer to recover a clean manifest. Repair signing in the
+  managed packaging/install owner, accounting for its mutable install
   manifest; preserve digest verification. No signing/notarization success is
   claimed.
 
