@@ -40,7 +40,8 @@
 - [x] Finish runtime-card record and read the complete live corpus: all thirty
   outputs, including two runtime source cards with exact successful receipts
   (docs/audits/card-redesign-2026-10-22.md).
-- [ ] Release and install 8.28.0.
+- [x] Release and install 8.28.0 (`8ebb95b46`, tag `v8.28.0`); services
+  reconciled and install verified clean.
 - [ ] Follow up the live answer-quality observations: repeated findings across
   prose/cards and overly broad initial web-access claims; fix capability and
   answer contracts, never word lists or card quotas (same audit).

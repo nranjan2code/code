@@ -1,7 +1,7 @@
 # Markdown answers and runtime cards
 
 Status: historical. Implementation and live acceptance on 2026-10-22,
-before the 8.28.0 release. These results cover this corpus and route.
+with the 8.28.0 release and local install. These results cover this corpus and route.
 
 ## Change and verification
 
@@ -74,3 +74,29 @@ server test exercises ledger-position ordering through the real projection.
 No new form renderer or frontend bundle changed. This run does not qualify
 all viewport/theme/native combinations, arbitrary answer quality, interactive
 artifact revision, or the unfilled live summary path.
+
+## Release and installation
+
+Vakyartha 8.28.0, **Markdown answers and runtime cards**, built from
+`8ebb95b46`, passed `scripts/release.sh` without skipped checks. Its clean
+room rebuilt and compared all embedded bundles, passed formatting, Clippy
+and the whole workspace suite, checked records/versions/advisories and
+verified the collected binary's version and commit. All three artifact
+checksums passed. Local artifacts are in `dist/8.28.0/`; the previous
+8.27.0 artifacts were preserved outside the clean room and restored beside it.
+Binary publication is not configured; the generated update feed uses localhost.
+
+Main and annotated tag `v8.28.0` were pushed. The remote accepted main while
+reporting bypasses for verified-signature and PR-only rules; no PR was opened.
+The release is the native macOS/aarch64 build; no other platform was built here.
+
+`dist/8.28.0/vak self install` installed the release in
+`/Applications/Vakyartha.app`. `vak self services-sync` updated the gateway
+and desktop services. `vak self verify` passed every binary and the desktop
+frontend digest, and `vak self status` reported both services running at the
+installed build. Startup logged a model-discovery network retry. The Telegram
+log reports its token was removed earlier and its bridge stopped; no channel
+credential or installed route was changed for this task.
+
+The acceptance server on 8941 was stopped. No live diff, new renderer visual
+qualification or independent market-data certification is claimed above.
