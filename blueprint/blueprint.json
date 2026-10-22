@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.25.0",
-  "revision": "16cbd38b4",
+  "version": "8.26.0",
+  "revision": "5752d0181",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2466,
+   "total_commits": 2468,
    "days": 63,
    "peak_day": 174,
    "design_docs": 99,
@@ -433,19 +433,19 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 523,
+  "commits": 525,
   "areas": [
    [
     "docs",
-    421
+    423
    ],
    [
     "(root)",
-    303
+    305
    ],
    [
     "vak-core",
-    211
+    212
    ],
    [
     "vak-server",
@@ -457,11 +457,11 @@
    ],
    [
     "vak-agent",
-    104
+    105
    ],
    [
     "vak-tools",
-    84
+    85
    ],
    [
     "vak-session",
@@ -498,17 +498,17 @@
    [
     "turn",
     "Turn admission",
-    96
+    97
    ],
    [
     "cards",
     "Cards and presentation",
-    95
+    96
    ],
    [
     "loop",
     "Agent loop",
-    90
+    91
    ],
    [
     "ledger",
@@ -523,7 +523,7 @@
    [
     "control",
     "Control plane and judges",
-    53
+    54
    ],
    [
     "admin",
@@ -538,7 +538,7 @@
    [
     "engineering",
     "Build, gate and release",
-    47
+    48
    ],
    [
     "library",
@@ -583,7 +583,7 @@
    [
     "capabilities",
     "Capability registry",
-    24
+    25
    ],
    [
     "delivery",
@@ -668,7 +668,7 @@
    [
     "plugins",
     "Plugins and packages",
-    11
+    12
    ],
    [
     "flows",
@@ -691,14 +691,14 @@
     9
    ],
    [
-    "commitments",
-    "Commitments",
+    "prompt",
+    "Prompt layers",
     8
    ],
    [
-    "prompt",
-    "Prompt layers",
-    7
+    "commitments",
+    "Commitments",
+    8
    ],
    [
     "backup",
@@ -797,6 +797,30 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "5752d0181",
+    "date": "2026-10-22",
+    "subject": "Prepare 8.26.0 release",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
+    "hash": "d147add78",
+    "date": "2026-10-22",
+    "subject": "Fix answer form guidance and receipt checks",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs",
+     "packages",
+     "vak-agent",
+     "vak-core",
+     "vak-judge",
+     "vak-tools"
+    ]
+   },
    {
     "hash": "16cbd38b4",
     "date": "2026-10-22",
@@ -910,27 +934,9 @@
     "areas": [
      "(root)"
     ]
-   },
-   {
-    "hash": "2e1c0e35d",
-    "date": "2026-10-22",
-    "subject": "Record 8.22.0 release and local install",
-    "areas": [
-     "docs"
-    ]
-   },
-   {
-    "hash": "d1662688e",
-    "date": "2026-10-22",
-    "subject": "Prepare 8.22.0 release notes",
-    "areas": [
-     "(root)"
-    ]
    }
   ],
-  "unreleased": [
-   "Answer design:"
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -4475,10 +4481,10 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 388,
-   "fixes": 59,
-   "recent": 96,
-   "fix_density": 4.1,
+   "commits": 389,
+   "fixes": 60,
+   "recent": 97,
+   "fix_density": 4.2,
    "out": [
     {
      "from": "turn",
@@ -5296,10 +5302,10 @@
     "crates/vak-agent/src/stop_policy.rs",
     "crates/vak-agent/src/workspace.rs"
    ],
-   "commits": 303,
-   "fixes": 56,
-   "recent": 90,
-   "fix_density": 4.2,
+   "commits": 304,
+   "fixes": 57,
+   "recent": 91,
+   "fix_density": 4.3,
    "out": [
     {
      "from": "loop",
@@ -6311,10 +6317,10 @@
     "crates/vak-core/src/prompts.rs",
     "crates/vak/src/prompts.rs"
    ],
-   "commits": 31,
-   "fixes": 2,
-   "recent": 7,
-   "fix_density": 1.1,
+   "commits": 32,
+   "fixes": 3,
+   "recent": 8,
+   "fix_density": 1.7,
    "out": [
     {
      "from": "prompt",
@@ -6862,10 +6868,10 @@
     "crates/vak-judge/src/plan.rs",
     "crates/vak-tools/src/plan.rs"
    ],
-   "commits": 53,
-   "fixes": 5,
-   "recent": 53,
-   "fix_density": 1.2,
+   "commits": 54,
+   "fixes": 6,
+   "recent": 54,
+   "fix_density": 1.5,
    "out": [
     {
      "from": "control",
@@ -8353,10 +8359,10 @@
     "crates/vak-core/src/packages.rs",
     "crates/vak-core/src/skills.rs"
    ],
-   "commits": 78,
-   "fixes": 16,
-   "recent": 24,
-   "fix_density": 3.6,
+   "commits": 79,
+   "fixes": 17,
+   "recent": 25,
+   "fix_density": 3.9,
    "out": [
     {
      "from": "capabilities",
@@ -9209,10 +9215,10 @@
     "packages/social-x",
     "packages/social-youtube"
    ],
-   "commits": 40,
-   "fixes": 4,
-   "recent": 11,
-   "fix_density": 1.1,
+   "commits": 41,
+   "fixes": 5,
+   "recent": 12,
+   "fix_density": 1.4,
    "out": [
     {
      "from": "plugins",
@@ -14938,10 +14944,10 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 310,
-   "fixes": 53,
-   "recent": 95,
-   "fix_density": 2.7,
+   "commits": 311,
+   "fixes": 54,
+   "recent": 96,
+   "fix_density": 2.8,
    "out": [
     {
      "from": "cards",
@@ -22031,9 +22037,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 134,
-   "fixes": 21,
-   "recent": 47,
+   "commits": 135,
+   "fixes": 22,
+   "recent": 48,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -30919,6 +30925,27 @@
  ],
  "replay": [
   {
+   "hash": "5752d0181",
+   "date": "2026-10-22",
+   "subject": "Prepare 8.26.0 release",
+   "subsystems": []
+  },
+  {
+   "hash": "d147add78",
+   "date": "2026-10-22",
+   "subject": "Fix answer form guidance and receipt checks",
+   "subsystems": [
+    "capabilities",
+    "cards",
+    "control",
+    "engineering",
+    "loop",
+    "plugins",
+    "prompt",
+    "turn"
+   ]
+  },
+  {
    "hash": "16cbd38b4",
    "date": "2026-10-22",
    "subject": "Open next unreleased changelog section",
@@ -36062,7 +36089,7 @@
    "src": 17397,
    "tests": 20523,
    "files": 13,
-   "commits": 359,
+   "commits": 360,
    "deps": [
     "vak-config",
     "vak-context",
@@ -36407,7 +36434,7 @@
    "src": 62755,
    "tests": 10639,
    "files": 76,
-   "commits": 662,
+   "commits": 663,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -36798,7 +36825,7 @@
    "src": 2051,
    "tests": 159,
    "files": 6,
-   "commits": 15,
+   "commits": 16,
    "deps": [
     "vak-control",
     "vak-intent"
@@ -37517,7 +37544,7 @@
    "src": 16869,
    "tests": 1217,
    "files": 30,
-   "commits": 214,
+   "commits": 215,
    "deps": [
     "vak-config",
     "vak-control",
@@ -37817,7 +37844,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1408,
+  "docs_commits": 1410,
   "hot": 656
  },
  "findings": [
@@ -37826,7 +37853,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 201 (rank 1 of 4,553 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 25. 156 commits changed the first (6% of all) and 215 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.2 and `vak-agent/src/lib.rs` at 8.1 per thousand lines, against a median of 4.1 over 421 files; file size alone does not predict the rate (ρ = -0.11).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 201 (rank 1 of 4,553 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 25. 157 commits changed the first (6% of all) and 216 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.3 and `vak-agent/src/lib.rs` at 8.2 per thousand lines, against a median of 4.1 over 421 files; file size alone does not predict the rate (ρ = -0.11).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own. The 2026-10-22 answer investigation found another lossy decision input: plan receipts retained a deliverable name but discarded the actual form. The correction keeps active typed receipts and applies the same pure plan check in the loop and settlement, preserving exact replacement addresses. Broader state consolidation remains open.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`; [answer design investigation](../docs/audits/answer-design-contract-2026-10-22.md)."
