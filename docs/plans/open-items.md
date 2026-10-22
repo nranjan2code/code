@@ -37,7 +37,13 @@
   derived payloads out of `dialogue_record`'s missing-presentations list.
 - [x] Update packages/answer-layouts skills naming removed tools and docs 87,
   92, 98 statuses for step 2.
-- [ ] Then: finish runtime-card record, live corpus run, one release.
+- [x] Finish runtime-card record and read the complete live corpus: all thirty
+  outputs, including two runtime source cards with exact successful receipts
+  (docs/audits/card-redesign-2026-10-22.md).
+- [ ] Release and install 8.28.0.
+- [ ] Follow up the live answer-quality observations: repeated findings across
+  prose/cards and overly broad initial web-access claims; fix capability and
+  answer contracts, never word lists or card quotas (same audit).
 
 ## Answer design contract (2026-10-22)
 
