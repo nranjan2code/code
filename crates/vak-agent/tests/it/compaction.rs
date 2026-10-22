@@ -1,8 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! The standard request path leaves unrelated turns in the ledger for on-demand
-//! recall. A small model window must not cause the agent to compact or send
-//! unrelated history merely because the transcript has grown.
+//! A small window carries the newest exchanges whole and one summary of the
+//! rest, written once each time the window fills, never once per turn.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -123,7 +122,7 @@ fn header(session_id: &str, dir: &std::path::Path) -> SessionHeader {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_tiny_horizon_does_not_compact_unrelated_closed_turns() {
+async fn a_small_window_summarises_once_per_fill_and_keeps_the_newest_whole() {
     let dir = tempdir().unwrap();
     let log =
         SessionLog::create(dir.path().join("s.jsonl"), header("compact", dir.path())).unwrap();
@@ -164,22 +163,32 @@ async fn a_tiny_horizon_does_not_compact_unrelated_closed_turns() {
             "turn {i} did not complete: {outcome:?}"
         );
     }
+    let summaries = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|s| s.contains("context compactor"))
+        .count();
+    assert!(summaries >= 1, "a full window is summarised");
     assert!(
-        !seen
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|s| s.contains("context compactor")),
-        "unrelated history is left for recall, not summarized into every new request"
+        summaries < 19,
+        "a summary is reused until the window fills again, not rewritten every turn ({summaries})"
     );
 
     let session = agent.session.lock().await;
+    let first_turn = session.turn_cards().first().unwrap().0.clone();
+    let packets: Vec<_> = session
+        .chain_to_root()
+        .into_iter()
+        .filter_map(|e| match &e.payload {
+            EntryPayload::Compaction(c) if !c.reset_all => Some(c.first_turn_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(packets.len(), summaries);
     assert!(
-        !session.chain_to_root().iter().any(|e| matches!(
-            &e.payload,
-            EntryPayload::Compaction(c) if !c.reset_all
-        )),
-        "fresh requests do not create a packet from unrelated history"
+        packets.iter().all(|first| *first == first_turn),
+        "every summary starts at the conversation's first turn"
     );
     let last_request = requests.lock().unwrap().last().cloned().unwrap();
     let current_projection: String = last_request
@@ -190,8 +199,10 @@ async fn a_tiny_horizon_does_not_compact_unrelated_closed_turns() {
         .join("\n");
     assert!(
         current_projection.contains("padded question number 19")
-            && !current_projection.contains("padded question number 0"),
-        "the final request contains its directive without unrelated prior turns: {current_projection}"
+            && current_projection.contains("padded question number 18")
+            && current_projection.contains("<context_summary>")
+            && !current_projection.contains("padded question number 0 "),
+        "the newest exchanges ride whole beside one summary: {current_projection}"
     );
 }
 

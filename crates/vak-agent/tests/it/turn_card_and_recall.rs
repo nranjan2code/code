@@ -1270,6 +1270,94 @@ async fn mixed_intents_can_reopen_several_sources_across_one_thousand_turns() {
 }
 
 #[tokio::test]
+async fn a_subject_before_an_interlude_reaches_the_next_request_without_recall() {
+    struct Capture {
+        inner: Arc<Scripted>,
+        requests: Arc<Mutex<Vec<ChatRequest>>>,
+    }
+    #[async_trait]
+    impl Provider for Capture {
+        fn name(&self) -> &str {
+            "captured-scripted"
+        }
+        fn rate_limit_key(&self) -> String {
+            self.inner.rate_limit_key()
+        }
+        async fn stream(
+            &self,
+            request: ChatRequest,
+            cancel: CancellationToken,
+        ) -> Result<EventStream, LlmError> {
+            self.requests.lock().unwrap().push(request.clone());
+            self.inner.stream(request, cancel).await
+        }
+    }
+    let dir = tempdir().unwrap();
+    let provider = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
+        responses: Mutex::new(VecDeque::from([
+            text_msg("The supplied observations are ready for analysis."),
+            text_msg("Yes, the available tools can help."),
+            text_msg("The requested analysis concerns project Aster."),
+        ])),
+    });
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut agent = build_agent_with_provider(
+        &dir,
+        "window-continuity",
+        vec![],
+        false,
+        Arc::new(Capture {
+            inner: provider.clone(),
+            requests: requests.clone(),
+        }),
+    );
+    for prompt in [
+        "Analyze the supplied observations for project Aster",
+        "Do you have tools?",
+        "Be creative and continue",
+    ] {
+        assert!(matches!(
+            agent
+                .run(
+                    prompt,
+                    &Default::default(),
+                    CancellationToken::new(),
+                    mpsc::channel(64).0
+                )
+                .await,
+            TurnOutcome::Completed { .. }
+        ));
+    }
+    let dispatched = requests.lock().unwrap();
+    let last: Vec<String> = dispatched
+        .last()
+        .unwrap()
+        .messages
+        .iter()
+        .map(|message| message.text_content())
+        .collect();
+    let position = |needle: &str| last.iter().position(|text| text.contains(needle));
+    let subject = position("project Aster").expect("the subject is carried");
+    let interlude = position("Do you have tools?").expect("the interlude is carried");
+    let current = position("Be creative and continue").expect("the current request");
+    assert!(subject < interlude && interlude < current, "{last:?}");
+    assert_eq!(
+        last.iter()
+            .filter(|text| text.contains("<historical_exchange>"))
+            .count(),
+        2
+    );
+    assert!(!dispatched.iter().any(|request| {
+        request
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .any(|block| matches!(block, ContentBlock::ToolUse { name, .. } if name == "recall"))
+    }));
+}
+
+#[tokio::test]
 async fn independent_directives_can_have_identical_correct_answers() {
     let dir = tempdir().unwrap();
     let mut agent = build_agent(

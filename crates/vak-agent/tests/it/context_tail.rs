@@ -268,10 +268,10 @@ async fn later_requests_in_a_turn_are_byte_identical_prefixes_of_earlier_ones() 
     }
 }
 
-/// An unrelated fresh request omits the closed prior turn, so cache
-/// breakpoints cover the stable prefix and current request only.
+/// Cache boundaries follow the measured adjacent exchange, independently
+/// of topic words, and the current request.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn cache_breakpoints_mark_prefix_preceding_card_and_current_step() {
+async fn cache_breakpoints_mark_prefix_preceding_exchange_and_current_step() {
     let dir = tempdir().unwrap();
     let provider = Arc::new(Recording::new(vec![text_msg("first answer")]));
     let mut agent = build_agent(provider.clone(), dir.path());
@@ -305,8 +305,21 @@ async fn cache_breakpoints_mark_prefix_preceding_card_and_current_step() {
 
     let all_requests = provider.requests();
     let second_turn_request = all_requests.last().expect("second turn request");
-    // The preceding turn's compact card, then the current user turn.
-    assert_eq!(second_turn_request.messages.len(), 2);
+    // Historical header, complete prior dialogue, then the current user turn.
+    assert_eq!(second_turn_request.messages.len(), 4);
+    assert!(
+        second_turn_request.messages[0]
+            .text_content()
+            .contains("<historical_exchange>")
+    );
+    assert_eq!(
+        second_turn_request.messages[1].text_content(),
+        "first question"
+    );
+    assert_eq!(
+        second_turn_request.messages[2].text_content(),
+        "first answer"
+    );
     let hints = second_turn_request
         .cache
         .as_ref()
@@ -318,8 +331,8 @@ async fn cache_breakpoints_mark_prefix_preceding_card_and_current_step() {
             .iter()
             .map(|b| b.after_message)
             .collect::<Vec<_>>(),
-        vec![None, Some(0), Some(1)],
-        "prefix, the preceding turn's card and the current step's last message"
+        vec![None, Some(2), Some(3)],
+        "prefix, the preceding exchange's end and the current step's last message"
     );
 }
 

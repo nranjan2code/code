@@ -348,7 +348,7 @@ async fn a_declared_check_is_held_until_something_runs_it() {
 /// remains available in the ledger while the run reads and summarizes its
 /// current source files.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn long_unrelated_research_history_does_not_trigger_compaction() {
+async fn long_research_history_in_a_narrow_window_is_summarised_once() {
     let big_a = "Research note on climate data points.\n".repeat(6);
     let big_b = "Research note on energy market shifts.\n".repeat(6);
 
@@ -386,9 +386,8 @@ async fn long_unrelated_research_history_does_not_trigger_compaction() {
         header,
     )
     .unwrap();
-    // These carded turns are deliberately large. The current request is
-    // self-contained and does not depend on them, so spare context capacity
-    // must not make them part of the request or trigger compaction.
+    // These carded turns are deliberately large: the narrow window cannot
+    // hold them whole, so the request carries one summary of them.
     let seed_filler = "prior research finding ".repeat(220);
     for i in 0..30 {
         let turn_id = log
@@ -418,6 +417,7 @@ async fn long_unrelated_research_history_does_not_trigger_compaction() {
     let provider = Arc::new(Scripted {
         capacity_key: crate::support::capacity_key(),
         responses: std::sync::Mutex::new(VecDeque::from(vec![
+            text_msg("Summary: thirty earlier climate and energy research rounds."),
             tool_call("r1", "read", serde_json::json!({"path": "big-a.txt"})),
             tool_call("r2", "read", serde_json::json!({"path": "big-b.txt"})),
             tool_call(
@@ -438,8 +438,7 @@ async fn long_unrelated_research_history_does_not_trigger_compaction() {
     cfg.mode = Mode::FullAccess;
     cfg.permission = Some(Arc::new(PermissionEngine::default()));
     cfg.approver = Some(Arc::new(vak_agent::AutoApprove));
-    // Keep a narrow discovered horizon to ensure irrelevant old turns do
-    // not provoke compaction just because they exceed available capacity.
+    // A narrow discovered horizon: the old turns cannot ride whole.
     cfg.declared_window = Some(1700);
     cfg.max_output = 100;
     // Handoff reset is independent; this test isolates request projection.
@@ -474,22 +473,22 @@ async fn long_unrelated_research_history_does_not_trigger_compaction() {
         .filter(|e| matches!(e, AgentEvent::ContextCompacting { .. }))
         .count();
     assert_eq!(
-        continuations, 0,
-        "unrelated history does not trigger compaction"
-    );
-    assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::ContextCompacted { .. }))
+        continuations, 1,
+        "one summary, written before the first step and reused by the rest"
     );
 
-    // The model receives the current task trajectory and at most the
-    // preceding turn's compact card: no compaction call and no seeded
-    // research turn's record.
+    // The summary request, then the current task's steps, none of which
+    // repeats a seeded research turn's record whole.
     {
         let reqs = provider.requests.lock().unwrap();
-        assert_eq!(reqs.len(), 4, "two reads + write + final");
-        assert!(reqs.iter().all(|request| {
+        assert_eq!(reqs.len(), 5, "summary + two reads + write + final");
+        assert!(reqs[1..].iter().all(|request| {
+            request
+                .messages
+                .iter()
+                .any(|message| message.text_content().contains("<context_summary>"))
+        }));
+        assert!(reqs[1..].iter().all(|request| {
             !request
                 .messages
                 .iter()
@@ -497,8 +496,8 @@ async fn long_unrelated_research_history_does_not_trigger_compaction() {
         }));
     }
 
-    // History remains append-only and recallable in the source ledger; no
-    // compaction entry was needed for this unrelated request.
+    // History remains append-only and recallable in the source ledger
+    // beside the one compaction entry.
     let session_file =
         SessionPath::new_session_file(&dir.path().join(".vak-home"), dir.path(), "general-flow");
     let raw = vak_session::SessionLog::text(&session_file);
@@ -506,25 +505,14 @@ async fn long_unrelated_research_history_does_not_trigger_compaction() {
         .lines()
         .filter(|l| l.contains("\"kind\":\"compaction\""))
         .count();
-    assert_eq!(compaction_lines, 0, "no compaction entry expected");
+    assert_eq!(compaction_lines, 1, "one compaction entry expected");
     assert!(
         raw.contains("prior research finding"),
         "original history must never be deleted from the ledger"
     );
 
-    // No packet is introduced into any request, while the plan-free ledger
-    // projection still makes the old turns available to explicit recall.
-    {
-        let reqs = provider.requests.lock().unwrap();
-        for req in reqs.iter() {
-            assert!(
-                !req.messages
-                    .iter()
-                    .any(|message| { message.text_content().contains("<context_summary>") }),
-                "unrelated history must not be summarized into the request"
-            );
-        }
-    }
+    // The plan-free ledger projection still holds the old turns whole for
+    // explicit recall.
     let projected = agent.session.lock().await.derive_messages();
     assert!(
         projected

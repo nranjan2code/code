@@ -1,5 +1,12 @@
 ## Unreleased
 
+- A conversation keeps its thread: each request now carries the newest
+  exchanges whole, as far as the model's measured context allows, so a
+  follow-up still finds its subject after clarifying or side questions.
+  What no longer fits becomes one summary of the earlier conversation,
+  written once when the window fills and reused after that; summaries now
+  keep each request and answer whole. Earlier requests and approvals stay
+  marked as history.
 - Repeating an earlier answer word for word, when that is the right answer,
   is no longer treated as drifting off topic and sent back for a redo.
 - Working in another Agent's workspace keeps the surface you are using, so

@@ -2371,9 +2371,10 @@ impl Agent {
 
                 // Incremental compaction (docs/design/68-context-engine.md §4):
                 // the plan collapsed some turns into a packet that no existing
-                // `Compaction` entry covers yet. Summarize their CARDS (never
-                // raw history) and append one, then re-plan — the packet
-                // disappears from the new plan once it is covered.
+                // `Compaction` entry covers yet. Summarize those turns (their
+                // requests, cards and answers, never raw tool exchanges) and
+                // append one, then re-plan: the new plan carries the stored
+                // packet as its summary.
                 if let Some((first_turn_id, last_turn_id)) = plan.packet_range.clone()
                     && !compaction_failed
                 {
@@ -2485,6 +2486,20 @@ impl Agent {
                         // reflect it for the rest of this turn too.
                         turn_plan = Some(plan.clone());
                     }
+                }
+                // A summary that could not be written is left out of this
+                // request rather than sent unwritten; the turns it would
+                // cover stay reachable through recall, and a later turn
+                // tries again.
+                if let Some((first_turn_id, last_turn_id)) = plan.packet_range.clone()
+                    && self
+                        .session
+                        .lock()
+                        .await
+                        .packet_needs_compaction(&first_turn_id, &last_turn_id)
+                {
+                    plan.packet_range = None;
+                    turn_plan = Some(plan.clone());
                 }
 
                 // One model step = connect + stream + collect, wrapped with the

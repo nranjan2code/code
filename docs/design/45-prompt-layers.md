@@ -45,6 +45,14 @@ contract. A pool default must not replace a rich client with an HTTP API label;
 API, channel and background callers retain their own surface as well. This is
 transport-independent propagation, with no Agent-name or tool-name routing.
 
+The code-owned history contract distinguishes old authority from conversational
+meaning. A current follow-up can qualify earlier work through intermediate
+questions, which the request now carries whole (docs/design/68-context-engine.md).
+The main model resolves the referent across them, preserves its established
+scope, and asks when verified evidence remains ambiguous. User identity, operating-rule overlays
+and skill bodies do not replace this contract. Presentation choice still follows
+the content and admitted form declarations, never a domain recipe.
+
 ## Problem
 
 Before this design shipped, the prompt was the one piece of agent

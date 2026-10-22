@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! The agent loop's use of the context engine (docs/design/68-context-engine.md
-//! §4, §10): old history stays omitted unless selected, unrelated history does
-//! not trigger compaction, the plan behind each request is replayable, and an
-//! early-ended turn still receives its durable card.
+//! §4, §10): the newest exchanges ride whole while they fit, what no longer
+//! fits is summarised once and then reused, the plan behind each request is
+//! replayable, and an early-ended turn still receives its durable card.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -204,8 +204,36 @@ fn carrying(request: &ChatRequest, needle: &str) -> usize {
         .count()
 }
 
+fn compactions(path: &std::path::Path) -> Vec<(String, String, String)> {
+    SessionLog::open_read_only(path.to_path_buf())
+        .unwrap()
+        .chain_to_root()
+        .into_iter()
+        .filter_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Compaction(record) if !record.reset_all => Some((
+                record.first_turn_id.clone(),
+                record.last_turn_id.clone(),
+                record.summary.clone(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+fn recorded_plans(path: &std::path::Path) -> Vec<vak_session::WorkingSetPlan> {
+    SessionLog::open_read_only(path.to_path_buf())
+        .unwrap()
+        .chain_to_root()
+        .into_iter()
+        .filter_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::ContextSelection(record) => Some(record.plan.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 #[tokio::test]
-async fn open_turn_growth_does_not_pull_unselected_history_into_the_request() {
+async fn open_turn_growth_makes_older_history_give_way_to_a_summary() {
     let dir = tempdir().unwrap();
     let mut log = open(dir.path());
     for n in 1..=3 {
@@ -215,12 +243,17 @@ async fn open_turn_growth_does_not_pull_unselected_history_into_the_request() {
             &"a".repeat(4_000),
         );
     }
+    let ids: Vec<String> = log
+        .visible_turn_cards_rev()
+        .map(|(_, card)| card.turn_id.clone())
+        .collect();
     let r = run(
         log,
         6_000,
         "alpha budget review again",
         vec![
             bash("t1", "head -c 16000 /dev/zero | tr '\\0' x"),
+            say("Reviews 1 and 2 covered the alpha budget."),
             say("done"),
         ],
         false,
@@ -232,17 +265,29 @@ async fn open_turn_growth_does_not_pull_unselected_history_into_the_request() {
         r.outcome
     );
     let marker = "a".repeat(100);
-    let (first, second) = (
-        carrying(&r.requests[0], &marker),
-        carrying(&r.requests[1], &marker),
-    );
-    assert_eq!(first, 0, "history stays omitted until explicitly recalled");
+    assert_eq!(r.requests.len(), 3, "a step, the summary, the next step");
     assert_eq!(
-        second, 0,
-        "open-turn growth does not change history selection"
+        carrying(&r.requests[0], &marker),
+        3,
+        "every exchange fits whole at first"
+    );
+    assert_eq!(
+        compactions(&r.path),
+        vec![(
+            ids[2].clone(),
+            ids[1].clone(),
+            "Reviews 1 and 2 covered the alpha budget.".to_string()
+        )]
+    );
+    let next = &r.requests[2];
+    assert_eq!(carrying(next, "<context_summary>"), 1);
+    assert_eq!(
+        carrying(next, &marker),
+        1,
+        "the newest exchange stays whole"
     );
     assert!(
-        r.requests[1].messages.iter().any(|m| m.content.iter().any(
+        next.messages.iter().any(|m| m.content.iter().any(
             |b| matches!(b, ContentBlock::ToolResult { content, .. } if content.len() >= 16_000)
         )),
         "the open turn stays verbatim"
@@ -250,17 +295,24 @@ async fn open_turn_growth_does_not_pull_unselected_history_into_the_request() {
 }
 
 #[tokio::test]
-async fn unrelated_history_does_not_trigger_compaction_just_to_fill_space() {
+async fn a_long_conversation_is_summarised_once_and_its_newest_exchange_rides_whole() {
     let dir = tempdir().unwrap();
     let mut log = open(dir.path());
     for n in 0..40 {
         past_turn(&mut log, &format!("unrelated filler number {n}"), "ok");
     }
+    let ids: Vec<String> = log
+        .visible_turn_cards_rev()
+        .map(|(_, card)| card.turn_id.clone())
+        .collect();
     let r = run(
         log,
         600,
         "something else entirely",
-        vec![say("answer")],
+        vec![
+            say("Forty filler questions were answered ok."),
+            say("answer"),
+        ],
         false,
     )
     .await;
@@ -269,28 +321,20 @@ async fn unrelated_history_does_not_trigger_compaction_just_to_fill_space() {
         "{:?}",
         r.outcome
     );
-    let log = SessionLog::open_read_only(r.path).unwrap();
-    assert!(
-        log.activities()
-            .iter()
-            .all(|(_, _, activity)| activity.label != "compaction-failed"),
-        "omitted unrelated history does not need compaction"
+    let summaries = compactions(&r.path);
+    assert_eq!(summaries.len(), 1, "{summaries:?}");
+    assert_eq!((&summaries[0].0, &summaries[0].1), (&ids[39], &ids[1]));
+    let plans = recorded_plans(&r.path);
+    let last = plans.last().unwrap();
+    assert_eq!(last.packet_range, Some((ids[39].clone(), ids[1].clone())));
+    assert_eq!(
+        last.per_turn,
+        vec![(ids[0].clone(), vak_session::Fidelity::Full)]
     );
-    let plans: Vec<_> = log
-        .chain_to_root()
-        .into_iter()
-        .filter_map(|entry| match &entry.payload {
-            vak_session::EntryPayload::ContextSelection(record) => Some(record.plan.clone()),
-            _ => None,
-        })
-        .collect();
-    assert!(plans.iter().all(|plan| {
-        plan.per_turn.len() <= 1
-            && plan
-                .per_turn
-                .iter()
-                .all(|(_, fidelity)| *fidelity == vak_session::Fidelity::Card)
-    }));
+    let request = r.requests.last().unwrap();
+    assert_eq!(carrying(request, "<context_summary>"), 1);
+    assert_eq!(carrying(request, "unrelated filler number 39"), 1);
+    assert_eq!(carrying(request, "unrelated filler number 5"), 0);
 }
 
 #[tokio::test]

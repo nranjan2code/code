@@ -1,5 +1,17 @@
 # Decisions
 
+- 2026-10-22: The maintainer asked for one design run on conversation context
+  instead of more one-slot fixes, and to fold the paused parallel continuity work
+  into one change. Decided: a request carries the newest exchanges whole while
+  they fit the measured budget, with one stored summary of everything older,
+  written once per window fill and reused (invariant 36 rewritten). This
+  replaces one-turn admission and the unshipped chronological `recall`
+  browsing. Kept from that work: the surface fix, the equal-answer drift
+  removal, historical dialogue rendering, the visibility iterator, and the
+  scenario corpus, runner and audit. See
+  [doc 68](design/68-context-engine.md) and
+  [the audit](audits/conversation-continuity-2026-10-22.md).
+
 - 2026-10-22: The maintainer approved implementing the shared chat/projection
   UX review and selected Continuous answer. Fragmentation in code work is one
   example across arbitrary subjects: use open composed sections, compact exact

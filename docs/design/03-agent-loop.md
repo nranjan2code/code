@@ -18,12 +18,12 @@ run_message_inner(prompt, steering, cancel, events) -> TurnOutcome
   append user message
   loop turn in 0..max_turns:
     drain steering queue → user messages
-    index = TurnIndex::from_log(session); index.ensure_cards(estimator)
-    plan  = planner::plan(PlanInput{ profile, index, directive, reading,
-                           prefix_tokens, tail_tokens, current_turn_tokens })
-                           // carries the card of the turn the request
-                           // follows; the directive's words only annotate
-                           // its links (invariant 36)
+    plan  = planner::plan_for_session(session, profile, prefix_tokens,
+                           tail_tokens)
+                           // the newest exchanges whole while they fit,
+                           // then one stored summary; no words choose
+                           // (invariant 36)
+    if plan names a summary not stored yet: summarise it, re-plan
     messages = session.derive_with_plan(plan)   // Full/Card/Packet per turn
     tail  = compose_tail(temporal, stance, intent, work_contract, thread)
     attach_tail(messages, tail, directive_index)  // one block, before the

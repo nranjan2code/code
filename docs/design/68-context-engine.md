@@ -1,22 +1,52 @@
 # 68 — Context engine: measured capacity, turn working set, recallable evidence
 Status: implemented. Crate: `vak-context` (`capacity`, `planner`,
-`assemble`) over the ledger in `vak-session`. Addressed candidate selection,
-structured replay, model-directed batched recall and candidate pagination
-replace lexical lineage admission (2026-10-21). Session opening still loads
+`assemble`) over the ledger in `vak-session`. The filled window with live
+incremental summaries replaces one-turn admission (2026-10-22); structured
+replay, model-directed batched recall and candidate pagination replace lexical
+lineage admission (2026-10-21). Session opening still loads
 retained records; this is not a claim of lifetime-scale lazy session handles.
 Native provider compaction
 (§12) is not implemented; the hosted probe ladder is opt-in via
 `[probe] hosted`.
 
-## Current request contract, 2026-10-21
+## Current request contract, 2026-10-22
 
-A request carries the current turn and, if it fits, one **recent historical
-candidate**: the newest visible settled TurnCard, skipping empty stopped and
-set-aside turns and respecting handoff resets. The label explicitly says it
-is not a declared dependency, outstanding instruction or current approval.
-No words, inferred thread, file-name match or graph score choose another turn.
-The model resolves an immediate follow-up by meaning and calls `recall` when
-it needs the candidate's exact answer or anything farther back.
+A request carries the open turn verbatim and, newest first, every visible
+settled exchange **whole** while it fits the measured budget. Visible means
+this branch, the newest set-aside or restore mark deciding each turn, no empty
+stopped exchange, and nothing behind a reset-with-handoff; one iterator
+(`SessionLog::visible_turn_cards_rev`) applies that rule. Each carried exchange
+is its historical dialogue: a `<historical_exchange>` header with its stable
+address, outcome and unmet state, then its directive, real tool pairs with
+reversible result digests, and final narration, with any card payload a tool
+pair does not carry. It is never a declared dependency, outstanding instruction
+or current approval.
+
+What no longer fits is one **stored summary** (a packet) that starts at the
+oldest visible exchange. The planner (`vak_context::fill_window`) reuses the
+stored summary that leaves the most exchanges whole while everything newer
+fits beside it. When none does, it asks for a summary of everything but the
+newest exchange, which rides whole when it fits, else as its compact card, else
+not at all; the loop writes that summary before the step and re-plans. The
+request between two summaries therefore only grows at its end, which keeps the
+provider's prefix cache, and a summariser call happens once per window fill,
+never once per turn. A summary reads each turn's request and final answer
+whole beside its card line, seeded from the previous summary of the same start,
+so a subject past a card line's opening words survives. If writing it fails the
+range is left out of that request, never sent unwritten, and a later turn tries
+again. Recency and measured size choose; no word, inferred thread, file-name
+match, graph score or picked number does.
+
+The model resolves a follow-up by meaning across the carried exchanges and
+calls `recall` for digested evidence or anything older than the window, at any
+distance.
+
+Measured before this contract (docs/audits/conversation-continuity-2026-10-22.md):
+a request carrying only the adjacent exchange, with chronological browsing in
+`recall` for anything older, failed live acceptance. After a clarification and
+a capability question the model asked the person to pick a topic instead of
+browsing, and the subject sat past the compact card's opening words. Browsing
+was withdrawn unshipped; the filled window replaces it.
 
 `recall` queries all eligible indexed history regardless of age, returning
 candidate records with exact `open` addresses and an optional `next` query
@@ -31,12 +61,16 @@ make a choice. A revision needs a grounded target and change, without invented
 dates, values or scope. Historical results are logged current-turn tool
 results. A direct independent answer needs no search.
 
-The production planner uses the active turn and the recent closing record;
-it does not construct or cost every older Full projection or perform a graph
-walk. `ContextSelection` records the exact addressed source set and leaf before
-each dispatch. Recall results and the bound interface provide the remainder of
-replay. Selected multi-source allocation covers compact records before Full
-upgrades; it never fills spare capacity with unrelated history.
+The production planner measures exchanges newest first only until the window
+is full and performs no graph walk, so its work is bounded by what the request
+carries. `ContextSelection` records the exact addressed source set, the stored
+summary's range and the leaf before each dispatch; replay renders the summary
+from the packet stored on that chain by then, and a plan naming a summary not
+written yet is never recorded. Recall results and the bound interface provide
+the remainder of replay. Policy 8 lists every carried exchange in
+`recent_dialogue`; policy 7 (one adjacent exchange, written only by an
+unreleased build) reads as a list of one, and policy 6 replays with its original
+Full bytes.
 
 A turn is **multi-intent**: it has no single related/unrelated classification.
 Each requested outcome may use zero, one or several earlier sources, and one
@@ -253,7 +287,8 @@ inference work. A completed inconclusive probe is not retried on every turn.
 ### 2. TurnIndex
 
 Used by explicit whole-history readers; ordinary request planning reads
-only the active turn and addressed closing record. A `Turn` is:
+the active turn and the visible exchanges it carries, newest first, until
+the window is full. A `Turn` is:
 
 ```rust
 pub struct Turn {
@@ -317,8 +352,8 @@ the model.
 
 ### 4. WorkingSetPlanner
 
-Inputs: `CapacityProfile`, `TurnIndex`, the incoming directive, the assembled
-prefix size (measured, see §6), the tail size.
+Inputs: `CapacityProfile`, the session ledger, the assembled prefix size
+(measured, see §6), the tail size. The directive's words are not an input.
 
 ```
 ceiling       = min(horizon.tokens, declared_window − output_reserve)
@@ -326,10 +361,15 @@ ceiling       = min(horizon.tokens, declared_window − output_reserve)
 budget        = ceiling − prefix_tokens − tail_tokens − current_turn_reserve
                 # reserve is model-specific and learned from observed turns
 # never split a turn
-carried     = the newest visible settled turn's addressed candidate card,
-              within budget; no inferred lineage or topical promotion
+whole       = the newest visible settled exchanges, as historical dialogue,
+              newest first while they fit
+summary     = if some do not fit: the stored packet from the oldest visible
+              exchange that leaves the most exchanges whole beside it; else
+              a new packet over all but the newest, which rides whole, else
+              as its card, else not at all (written by the loop, then reused
+              until the window fills again)
 older turns = query/open by the main model, at any distance; several may
-              be reopened together; unused budget stays unused
+              be reopened together
 ```
 
 An older reference may point back hundreds or thousands of turns. The model
@@ -356,16 +396,15 @@ Properties:
   older evidence on demand. The summariser's transcript is sized from the
   model's prompt ceiling rather than a constant, drops only whole messages,
   and says how many it dropped.
-- The standard request path does not fill spare capacity with historical
-  cards or full records. Every request carries the preceding turn's
-  compact card, and no reading of its words decides that; a topic match or available capacity alone does not admit
-  history. When older detail is needed, `recall` searches and reopens only the
+- The standard request path carries the newest exchanges whole while they
+  fit, and no reading of their words adds or removes one. When detail older
+  than the window is needed, `recall` searches and reopens only the
   requested record. Its result remains in the current turn as ordinary tool
   evidence. The complete N-turn ledger stays intact and searchable.
-- This policy is independent of model horizon: a larger model does not receive
-  more historical content just because it can fit. Current-turn content,
-  system/tool prefix, and output reserve continue to use the measured
-  `CapacityProfile`.
+- The window follows the measured horizon: a larger model carries more of
+  the conversation whole because it can use it, a smaller one fewer, with
+  the same rule. Current-turn content, system/tool prefix, and output
+  reserve come out of the same measured `CapacityProfile` first.
 - **A packet is a cache, never a boundary.** A `Compaction` entry is keyed
   by the inclusive turn range it summarises (`first_turn_id..=last_turn_id`)
   and records the model whose plan asked for it. The projection renders a
@@ -378,7 +417,8 @@ Properties:
   bound, and re-projects the stored packet — with no second summariser
   call — when the small model is bound again. Growing a packet (the same
   first turn, a later last turn) seeds the summariser with the longest
-  stored packet over that first turn and adds only the newly covered cards.
+  stored packet over that first turn and adds only the newly covered turns
+  (each turn's card line, request and final answer).
   The one true boundary is the reset-with-handoff entry (`reset_all`,
   docs/design/42), the rescue for a profile with no usable horizon: turns
   behind it are marked `behind_reset` in the `TurnIndex`, never planned and
@@ -554,13 +594,11 @@ is acknowledged as a no-op; a step that only repeats shown cards again,
 straight after that acknowledgement, closes the turn on that card as its
 answer. No count of repeats decides it.
 
-**Historical cards are context only.** The standard planner includes only the
-compact card of the turn the request follows, whatever its words. Topic similarity and spare
-capacity do not preload historical turns. The model can search and reopen
-history through `recall`; its returned evidence is scoped to the current turn.
-This avoids paying prompt and latency costs for details the request may not
-need while keeping the complete ledger available. See docs 07 and
-30-render-architecture §30.1.
+**Historical exchanges are context only.** The standard planner carries the
+newest exchanges whole while they fit, whatever their words, each under a
+header saying it is history and how it ended. The model can search and reopen
+anything older through `recall`; its returned evidence is scoped to the
+current turn. See docs 07 and 30-render-architecture §30.1.
 
 **Empty steps.** A response with neither text nor a tool call (a
 thinking-only completion — the model planned an action in its reasoning
@@ -854,14 +892,14 @@ emitted by tool is a duplicate and is dropped from the ledger's
 model-visible projection (the "no repeats" rule already governs display;
 this applies it to what the model sees of its own history too).
 
-The standard request path keeps the full ledger and uses a recall-first
-working set:
+The standard request path keeps the full ledger and carries a filled
+window:
 
 | Fidelity | Shape | When |
 |---|---|---|
-| **Full record** | two messages — `user: directive` / `assistant: trace lines + final answer` | only a targeted `recall` result or an explicitly scoped projection |
-| **Card** | one line in a `<turns>` block: `#17 asked: … → did: search×2 → research.synthesis "Sensex 15 Sep" (4 takeaways) [pres:a1; ev:9f2,9f3]` | one immediate anaphoric referent; otherwise no historical card |
-| **Packet** | a compaction summary over a *range* of cards | explicit compaction or a plan that requests that exact stored range; never to fill spare prompt space |
+| **Full record** | real directive/tool pairs/final narration, thinking dropped and results digested; as historical dialogue it adds an address/outcome/unmet header | every newest exchange that fits the measured budget |
+| **Card** | one line in a `<turns>` block: `#17 asked: … → did: search×2 → research.synthesis "Sensex 15 Sep" (4 takeaways) [pres:a1; ev:9f2,9f3]` | the newest exchange when even it does not fit whole beside the summary |
+| **Packet** | a compaction summary over a *range* of turns, from each turn's card line, request and final answer | everything older than the whole exchanges, from the oldest visible one; written once per window fill and reused |
 
 Topic overlap is a reason to search, not a reason to preload a full record.
 Recall search filters FTS-ranked hits before exposing them: a one- or two-term
@@ -870,19 +908,20 @@ half its subject terms and at least two terms. BM25 ranks the remaining
 candidates; it is not a probability or a relevance guarantee. Weak lexical
 matches stay out of model context, while an exact turn id can still reopen any
 retained turn directly.
-Every request carries the preceding turn's compact card (so "do that
-again" has its referent without a word list deciding it). A request about older work uses indexed `recall` regardless of
-turn distance; the model reopens only the candidate it needs. Unselected turns
-stay durable and searchable in the N-turn ledger.
+Every request carries the newest exchanges whole while they fit; no word
+list chooses them. A request about work older than the window uses indexed
+`recall` regardless of turn distance; the model reopens only the candidate it
+needs. Every turn stays durable and searchable in the N-turn ledger.
 
 Any turn at card or packet fidelity can be reopened by the model with
 `recall({ turn: 17 })`, which returns its full record; the model sees the
 evidence ids on every card so it can go one level deeper with
 `recall({ id })`. Nothing is unreachable; the default is just small.
 
-Typical shape under the recall-first request policy: a fresh request carries
-no older turn, regardless of how much prompt space remains. Every request may carry the one recent historical candidate card within budget. A direct request about
-older history searches and reopens only the selected record through `recall`.
+Typical shape: a short conversation rides whole; a long one carries one
+summary from its start, then its newest exchanges whole. A direct request
+about older history searches and reopens only the selected record through
+`recall`.
 
 The full record, when used, is the turn as recorded with thinking dropped,
 every evidence result replaced by its digest and every card result by the
@@ -1059,6 +1098,9 @@ contract. Live model behavior and million-turn scaling remain unproven; see
 ### Live review, 2026-10-10
 
 > **Historical record**: a dated review, kept as found.
+
+> **Historical record** — the following records the earlier compact-only policy;
+> the filled-window contract at the top of this document supersedes it.
 
 A local Ollama run showed a self-contained request continuing an older task
 because inferred thread lineage linked it through broad shared nouns. The

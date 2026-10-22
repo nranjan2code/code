@@ -2618,26 +2618,88 @@ impl SessionLog {
     /// no reconstruction of historical tool payloads. Marks are resolved newest
     /// first on this branch; a handoff is a boundary, not another candidate.
     pub fn recent_turn_card(&self) -> Option<(&str, &TurnCard)> {
+        self.visible_turn_cards_rev().next()
+    }
+
+    /// Reconstruct only the addressed immediate exchange. The same renderer
+    /// is used for measured planning and the captured request's replay.
+    pub fn turn_dialogue(&self, turn_id: &str, closing_id: &str) -> Option<Vec<Message>> {
+        let index = self.current_turn_index_at(Some(closing_id));
+        let turn = index.turn_by_id(turn_id).filter(|turn| turn.closed)?;
+        Some(turn.dialogue_record())
+    }
+
+    /// The one visibility rule for history a request may carry, newest
+    /// first: this branch's settled turns, the newest set-aside or restore
+    /// mark deciding each, no empty stopped exchange, and nothing behind a
+    /// reset-with-handoff. Each item is a turn's closing record id and card.
+    /// Walks canonical closing records, never historical Full turns.
+    pub fn visible_turn_cards_rev(&self) -> impl Iterator<Item = (&str, &TurnCard)> {
         let mut marks = HashMap::new();
-        for entry in self.active_entries_rev() {
-            match &entry.payload {
+        let mut seen = std::collections::HashSet::new();
+        self.active_entries_rev()
+            .take_while(|entry| {
+                !matches!(&entry.payload,
+                EntryPayload::Compaction(record) if record.reset_all)
+            })
+            .filter_map(move |entry| match &entry.payload {
                 EntryPayload::TurnSetAside(mark) => {
                     marks.entry(mark.turn.as_str()).or_insert(true);
+                    None
                 }
                 EntryPayload::TurnRestored(mark) => {
                     marks.entry(mark.turn.as_str()).or_insert(false);
+                    None
                 }
-                EntryPayload::Compaction(record) if record.reset_all => return None,
                 EntryPayload::TurnCard(record)
-                    if !marks.get(record.turn_id.as_str()).copied().unwrap_or(false)
+                    if seen.insert(record.turn_id.as_str())
+                        && !marks.get(record.turn_id.as_str()).copied().unwrap_or(false)
                         && !record.card.stopped_empty() =>
                 {
-                    return Some((&entry.id, &record.card));
+                    Some((entry.id.as_str(), &record.card))
                 }
-                _ => {}
-            }
+                _ => None,
+            })
+    }
+
+    /// The stored packets on this branch after its last reset-with-handoff,
+    /// newest first, read from their compaction entries alone.
+    pub fn stored_packets_rev(&self) -> Vec<Packet> {
+        Self::packets_from(self.active_entries_rev())
+    }
+
+    /// The stored packet for exactly `first..=last` on the chain ending at
+    /// `leaf`, so a recorded selection replays against what existed then.
+    fn stored_packet_at(&self, leaf: Option<&str>, first: &str, last: &str) -> Option<Packet> {
+        let mut chain = Vec::new();
+        let mut cursor = leaf;
+        while let Some(entry) = cursor
+            .and_then(|id| self.by_id.get(id))
+            .and_then(|index| self.entries.get(*index))
+        {
+            chain.push(entry);
+            cursor = entry.parent_id.as_deref();
         }
-        None
+        Self::packets_from(chain.into_iter())
+            .into_iter()
+            .find(|packet| packet.first_turn_id == first && packet.last_turn_id == last)
+    }
+
+    fn packets_from<'a>(newest_first: impl Iterator<Item = &'a Entry>) -> Vec<Packet> {
+        newest_first
+            .take_while(|entry| {
+                !matches!(&entry.payload, EntryPayload::Compaction(record) if record.reset_all)
+            })
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::Compaction(record) => Some(Packet {
+                    first_turn_id: record.first_turn_id.clone(),
+                    last_turn_id: record.last_turn_id.clone(),
+                    model: record.model.clone(),
+                    summary: record.summary.clone(),
+                }),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Reconstruct the active turn only. Work is proportional to this turn,
@@ -2863,17 +2925,12 @@ impl SessionLog {
         }
     }
 
-    /// Every stored packet (non-reset compaction entry) in ledger order.
-    fn packets(&self) -> Vec<Packet> {
-        TurnIndex::from_log(self).packets
-    }
-
     /// The stored packet whose range is exactly `first_turn_id..=last_turn_id`,
     /// newest such entry first (docs/design/68 §4: a packet is reused only
     /// for the exact range the plan asks for). `None` when no packet
     /// covers that range, whatever other packets exist.
     pub fn packet_for(&self, first_turn_id: &str, last_turn_id: &str) -> Option<Packet> {
-        self.packets().into_iter().rev().find(|packet| {
+        self.stored_packets_rev().into_iter().find(|packet| {
             packet.first_turn_id == first_turn_id && packet.last_turn_id == last_turn_id
         })
     }
@@ -2889,7 +2946,8 @@ impl SessionLog {
     /// the longest stored packet that starts at the same turn and ends at or
     /// before `last_turn_id` (so work already folded in is reused, never
     /// re-read from raw history), followed by one `TurnCard` line per turn
-    /// after it up to `last_turn_id` — cards, never raw history (§4). Also
+    /// after it up to `last_turn_id`, each with the person's request and the
+    /// final answer whole, never the raw tool exchange (§4). Also
     /// returns a char-count estimate for the caller's `tokens_before`.
     pub fn packet_transcript(&self, first_turn_id: &str, last_turn_id: &str) -> (String, u64) {
         let (_, position, _) = self.reset_boundary();
@@ -2902,7 +2960,7 @@ impl SessionLog {
         // Seed: the stored packet with this `first` and the greatest `last`
         // not past our target.
         let seed = self
-            .packets()
+            .stored_packets_rev()
             .into_iter()
             .filter(|packet| packet.first_turn_id == first_turn_id)
             .filter_map(|packet| {
@@ -2926,6 +2984,21 @@ impl SessionLog {
                 Some(card) => {
                     out.push_str(&card.line(turn_number + 1));
                     out.push('\n');
+                    // The line keeps the turn's addresses; the summary needs
+                    // what was said whole, or a subject past the line's
+                    // opening words is lost to every later request.
+                    let directive = turn.directive.text_content();
+                    if !directive.trim().is_empty() {
+                        out.push_str("request: ");
+                        out.push_str(directive.trim());
+                        out.push('\n');
+                    }
+                    let narration = card.answered.narration.trim();
+                    if !narration.is_empty() {
+                        out.push_str("answer: ");
+                        out.push_str(narration);
+                        out.push('\n');
+                    }
                 }
                 None => {
                     for message in turn.full_record() {
@@ -3067,7 +3140,12 @@ impl SessionLog {
             };
             match selected {
                 Some(Fidelity::Full) => {
-                    for message in turn.full_record() {
+                    let messages = if plan.is_some_and(|p| p.renders_dialogue(&turn.id)) {
+                        turn.dialogue_record()
+                    } else {
+                        turn.full_record()
+                    };
+                    for message in messages {
                         out.push((turn.id.clone(), message, false, false));
                     }
                 }
@@ -3109,6 +3187,19 @@ impl SessionLog {
         leaf: Option<&str>,
     ) -> Vec<(String, Message, bool, bool)> {
         let mut out = Vec::new();
+        if let Some((first, last)) = &plan.packet_range
+            && let Some(packet) = self.stored_packet_at(leaf, first, last)
+        {
+            out.push((
+                String::new(),
+                Message::user_text(format!(
+                    "<context_summary>\nSummary of turns turn:{first} to turn:{last}; recall opens any of them.\n{}\n</context_summary>",
+                    packet.summary
+                )),
+                true,
+                false,
+            ));
+        }
         for (turn_id, closing_id) in plan.selected_records.iter().flatten() {
             let Some(fidelity) = plan
                 .per_turn
@@ -3164,9 +3255,13 @@ impl SessionLog {
             };
             match fidelity {
                 Fidelity::Full => out.extend(
-                    turn.full_record()
-                        .into_iter()
-                        .map(|message| (turn_id.clone(), message, false, false)),
+                    if plan.renders_dialogue(turn_id) {
+                        turn.dialogue_record()
+                    } else {
+                        turn.full_record()
+                    }
+                    .into_iter()
+                    .map(|message| (turn_id.clone(), message, false, false)),
                 ),
                 Fidelity::Card => {
                     if let Some(card) = &turn.card {
@@ -3239,7 +3334,20 @@ impl SessionLog {
     ) -> Result<Vec<Message>, SessionError> {
         let invalid = || SessionError::InvalidSelection;
         let sources = plan.selected_records.as_ref().ok_or_else(invalid)?;
-        if plan.packet_range.is_some() || sources.len() != plan.per_turn.len() {
+        // A summary is replayed only from a packet stored on this chain by
+        // then; a plan naming one not written yet is never recorded.
+        if plan
+            .packet_range
+            .as_ref()
+            .is_some_and(|(first, last)| self.stored_packet_at(leaf, first, last).is_none())
+            || sources.len() != plan.per_turn.len()
+            || plan.recent_dialogue.iter().any(|id| {
+                !plan
+                    .per_turn
+                    .iter()
+                    .any(|(turn, fidelity)| turn == id && *fidelity == Fidelity::Full)
+            })
+        {
             return Err(invalid());
         }
         let mut seen = std::collections::HashSet::new();
@@ -3328,7 +3436,9 @@ impl SessionLog {
         let EntryPayload::ContextSelection(record) = &entry.payload else {
             return Err(SessionError::InvalidSelection);
         };
-        if record.policy_version != crate::turns::CONTEXT_PLAN_POLICY_VERSION
+        if !(crate::turns::CONTEXT_PLAN_OLDEST_REPLAY_VERSION
+            ..=crate::turns::CONTEXT_PLAN_POLICY_VERSION)
+            .contains(&record.policy_version)
             || entry.parent_id.as_deref() != Some(record.leaf_id.as_str())
         {
             return Err(SessionError::InvalidSelection);
@@ -3371,7 +3481,8 @@ impl SessionLog {
 
     /// Appends the packet a `WorkingSetPlan` asked for (its `packet_range`,
     /// `first_turn_id..=last_turn_id`), produced by INCREMENTAL compaction
-    /// (§4): summarizing the turns' CARDS (never raw history). `model` is
+    /// (§4): summarizing each turn's request, card and final answer, never
+    /// its raw tool exchange (`packet_transcript`). `model` is
     /// the model whose plan asked for it. The packet is keyed by its range
     /// and is reused by any later plan — under any model — that asks for
     /// exactly that range; it hides nothing from a plan that does not.

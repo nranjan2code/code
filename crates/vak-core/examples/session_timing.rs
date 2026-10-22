@@ -10,7 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let id = args.next().ok_or("session required")?;
     let core = vak_core::Core::new(cwd.into())?;
     let log = core.open_session_read_only(&id).await?;
-    let mut index = vak_session::TurnIndex::from_log(&log);
+    let index = vak_session::TurnIndex::from_log(&log);
     for (number, turn) in index.turns.iter().enumerate() {
         println!(
             "turn {} closed={} card={} chars={} costs={:?}",
@@ -23,31 +23,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|card| (card.tokens_full, card.tokens_card))
         );
     }
-    if let Some(query) = args.next() {
+    if args.next().is_some() {
         let profile = vak_context::capacity::CapacityProfile::from_metadata_only(
             None,
             0,
             "diagnostic".into(),
             std::time::SystemTime::now(),
         );
-        index.ensure_cards(&|text| profile.estimate_tokens(text.len() as u64));
-        for (number, turn) in index.turns.iter_mut().enumerate() {
-            let full_cost =
-                profile.estimate_tokens(vak_context::assemble::messages_chars(&turn.full_record()));
-            if let Some(card) = &mut turn.card {
-                card.tokens_full = full_cost;
-                card.tokens_card = profile.estimate_tokens(card.line(number + 1).len() as u64);
-            }
-        }
-        let plan = vak_context::planner::plan(vak_context::planner::PlanInput {
-            profile: &profile,
-            index: &index,
-            directive: &query,
-            reading: None,
-            prefix_tokens: 0,
-            tail_tokens: 0,
-            current_turn_tokens: 0,
-        });
+        let plan = vak_context::plan_for_session(&log, &profile, 0, 0);
         println!("plan {plan:?}");
         println!(
             "projected_chars={}",

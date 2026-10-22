@@ -944,10 +944,17 @@ commit (invariant 30).
     schema-driven digest and cards by their short ack — never a
     prose-narrated trace, which a small model imitates as prose), `Card`
     (one `TurnCard` line) or `Packet` fidelity as its plan says. The
-    `WorkingSetPlanner` carries only the most recent visible settled card as
-    an explicitly labelled historical candidate, within the request budget;
-    neither lexical lineage nor a graph score may redirect or expand it.
-    The model resolves dependencies by meaning through `recall` query/open,
+    `WorkingSetPlanner` fills the window newest first: every visible settled
+    exchange rides as `Full` historical dialogue (a header with its stable
+    address, outcome and unmet state, then the exchange whole) while it fits
+    the measured budget; what no longer fits is one stored packet that
+    starts at the oldest visible exchange, reused while everything newer
+    fits beside it, and otherwise asked for again over all but the newest
+    exchange, which then rides whole, else as its `Card`, else not at all.
+    Recency and measured size choose; no word, lexical lineage, thread,
+    file name or graph score selects or expands it, and no number is
+    picked for it. Full costing and replay use the same renderer.
+    The model resolves anything older by meaning through `recall` query/open,
     including several sources and sources thousands of turns back. Candidate
     pagination bounds work, never eligible history age. A multi-intent turn has
     per-outcome dependencies (zero, one or several sources), never one global
@@ -958,17 +965,20 @@ commit (invariant 30).
     targets or changes require clarification, not repeated search or invented
     dates, values or scope.
     Structured `ContextSelection` records capture addressed source sets and
-    the pre-request leaf for replay. Ordinary planning reads the current turn
-    and the recent closing record, never all historical Full projections.
+    the pre-request leaf for replay. Planning measures exchanges newest
+    first only until the window is full, so its work is bounded by what the
+    request carries, never by the conversation's length.
     Capacity not yet known is explicit: `[control] unmeasured_context_tokens`
     is a provisional resource envelope (shipped 65,536 tokens), recorded as
     `resource_ceiling`, never presented as a discovered window or infinity.
     A compaction packet is a cache keyed by the turn range it summarises,
     never a boundary: the projection renders it only when the current plan
     asks for exactly that range, so a packet written under a small model
-    hides nothing from a larger model bound later and every request is a
-    function of (ledger, bound model's profile) alone; the reset-with-
-    handoff entry is the one true boundary. Every
+    hides nothing from a larger model bound later (whose window may hold
+    every exchange whole) and every request is a function of (ledger, bound
+    model's profile) alone; the reset-with-handoff entry is the one true
+    boundary. A packet summarises each turn's request and final answer
+    whole, never only its card line. Every
     tool result stays reachable through `recall` by evidence id,
     presentation id or turn number. No character-count truncation anywhere.
     The system prefix (identity, contract, card catalogue, tool index) is
@@ -1359,10 +1369,12 @@ commit (invariant 30).
   prompt. These boundaries and the conformance gaps are documented in
   `docs/design/30-render-architecture.md` §30.1 and
   `docs/design/68-context-engine.md` §10.
-  The standard request planner carries only the compact card of the turn
-  the request follows, whatever its words. A request gets no older turn just
-  because topic words match or prompt space remains; the model uses indexed
-  `recall` when an older result is needed, even if it is many turns back. Full
+  The standard request planner carries the newest exchanges whole while
+  they fit the measured budget, whatever their words, and one stored summary
+  for what no longer fits (invariant 36). Historical status and address stay
+  explicit on every carried exchange. Topic words never add or remove an
+  exchange; the model uses indexed `recall` when something older than the
+  window is needed, even if it is many turns back. Full
   session history remains in the ledger. Inspect the recorded context plan and
   recall calls before attributing a cross-turn card to UI projection. Channel
   narration must inspect cards in the latest turn only; an older card must not
@@ -1828,9 +1840,9 @@ crates/vak-context   the context engine, pure functions over the ledger
                      feedback -- Core drives the probe and records it, this
                      crate owns the math. `planner.rs`: the pure
                      `WorkingSetPlan` -- the open turn verbatim plus the
-                     compact card of the turn it follows, within the
-                     measured budget; older turns are reached through
-                     `recall`, never preloaded; `plan_for_session`
+                     newest exchanges whole while they fit the measured
+                     budget, and one stored summary of everything older
+                     (`fill_window`); `plan_for_session`
                      is the one entry point the loop, `/compact` and the
                      eval gate all plan through. `assemble.rs`: the
                      byte-stable prefix and its digest, the per-turn tail
@@ -2181,8 +2193,8 @@ to a builder, or a threshold or cap to a loop; when one is found it is
 removed, and the change is verified with real turns.
 
 - Whether a request refers back, needs a tool or asks for a card is not read
-  from its vocabulary. The planner carries the card of the turn a request
-  follows and nothing older; the model plans its own deliverables and the
+  from its vocabulary. The planner carries the newest exchanges whole while
+  they fit, by recency and measured size alone; the model plans its own deliverables and the
   runtime checks receipts (docs/design/86-model-plans-runtime-checks.md).
 - A loop that must end does so by a sequence of observed states, never a
   count: a failing tool is hinted, then shown its schema, then withdrawn for

@@ -932,7 +932,7 @@ mod tests {
         assert!(
             contract.contains("called\n  by its name") || contract.contains("called by its name")
         );
-        assert!(contract.contains("its presence does not mean this request continues it"));
+        assert!(contract.contains("Their presence does not mean this"));
         assert!(
             sandbox.contains("sandbox"),
             "sandbox_contract block missing"
@@ -1128,7 +1128,9 @@ mod tests {
         );
         assert!(out.text.contains("Respond concisely."));
         for required in [
-            "`<turns>` holds a recent historical candidate",
+            "Earlier exchanges ride as `<historical_exchange>` records",
+            "resolve its referent before",
+            "`<context_summary>`",
             "`recall`",
             "at any distance",
             "Reopen an exact `open` reference to verify",

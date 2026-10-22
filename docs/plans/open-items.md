@@ -1,3 +1,33 @@
+## Conversation continuity: the filled window (2026-10-22)
+
+- [x] Trace clarification chains against static and dynamic prompts. One
+  carried exchange can omit the original subject, and subject-only search
+  cannot find a subject the model no longer has.
+- [x] Interim attempt, withdrawn unshipped: one adjacent exchange at Full
+  fidelity plus chronological `recall` browsing. Browse-only live acceptance
+  failed (the model asked the person to pick a topic) and blocked release.
+- [x] Replace it with the filled window: the newest exchanges whole while they
+  fit the measured budget, one stored summary of everything older, written
+  live by incremental compaction and reused until the window fills again.
+  Summaries read each turn's request and answer whole. `recall` keeps
+  query/open only.
+- [x] Remove the equal-answer drift correction (string equality is not
+  evidence of serving another directive).
+- [x] Preserve the caller's declared output surface across pooled Agent and
+  workspace resolution.
+- [x] Live corpus acceptance on the installed route, every case read
+  (docs/audits/conversation-continuity-2026-10-22.md).
+- [ ] The live summary path has run only in scripted tests: no corpus case
+  filled the window. Check it on a long real conversation.
+- [ ] `TurnCard::line` still cuts a turn's answer at twelve words and its
+  request at sixty, a picked number. The window and the summaries no longer
+  depend on it; recall hits and the card fallback still do.
+- [ ] The answer side still asks the model to author layout (the `plan` tool,
+  per-card `deliverable`, `replaces`, `beside_previous`, `then`, the forced
+  card and `topics` calls at turn end). Measured: one news answer took 17
+  dispatches and 220 s (docs/audits/turn-relations-and-sizing-2026-10-21.md).
+  A design for cards built from tool results and markdown is the next run.
+
 ## Answer design contract (2026-10-22)
 
 The maintainer requested a general design correction, preserving the recent

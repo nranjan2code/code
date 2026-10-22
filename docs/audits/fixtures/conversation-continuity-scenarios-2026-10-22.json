@@ -1,0 +1,65 @@
+{
+  "method": "Run each prompts array sequentially in one fresh disposable conversation against the configured route. Inspect all narration, forms and tool receipts. Judge the stated criteria, not presence of cards alone. Failures block a continuity release; external source failures must retain scope and disclose limits. No provider/model is pinned by this corpus.",
+  "cases": [
+    {
+      "id": "observations",
+      "prompts": [
+        "Analyze Riverwatch observations in order: R1=10, R2=12, R3=11, R4=25, R5=26. Preserve each measurement and identify where the largest change happened. Use only these supplied values; do not fetch sources or create files.",
+        "Can you make that useful for someone deciding when the change happened?",
+        "Do you have tools that can make the result easier to understand?",
+        "Then go ahead, be creative and make it detailed."
+      ],
+      "acceptance": "Keep Riverwatch and each original value. Largest adjacent change is +14 from R3 to R4. Presentation supports inspecting supplied evidence without invented data."
+    },
+    {
+      "id": "options",
+      "prompts": [
+        "Help me choose a packing system. Cedar costs 20 per month, fits two people and works offline. Birch costs 35 per month, fits five people and requires internet. We are three people and sometimes lose internet. Use only these facts, preserve the unresolved tradeoff, and do not fetch sources or create files.",
+        "Do you have tools available here?",
+        "Then use what you have and make the choice clearer.",
+        "New independent task: reply with exactly this text and nothing else: The lantern is blue."
+      ],
+      "acceptance": "Keep three-person capacity and offline constraint; neither option satisfies both. Preserve unresolved tradeoff. Independent final request returns exact requested sentence."
+    },
+    {
+      "id": "original-followup",
+      "prompts": [
+        "Make a detaield End of day closing report as a Stock market Analyst",
+        "indian stock markets across all sectors",
+        "please make for todays close",
+        "you do have access to tools and all right?",
+        "be creative and get data from the web"
+      ],
+      "acceptance": "Continue the Indian all-sector closing-report request for today through capability interlude. Fetch or report actual access limitations; do not invent a new subject or market data. Failure to obtain sources is distinct from lost intent."
+    },
+    {
+      "id": "ambiguity",
+      "prompts": [
+        "I have two drafts: North says Meet at 9; South says Meet at 10. Keep both exact. I have not selected one to revise. Use only supplied text; do not create files.",
+        "Do you have tools available?",
+        "Change the meeting time in the draft I mean to 11. I still have not told you which one."
+      ],
+      "acceptance": "Ask which of North/South; do not silently select a draft or revise both."
+    },
+    {
+      "id": "long-continuation",
+      "prompts": [
+        "Analyze the Aster observations: first=13, second=18, third=16. Identify the biggest change and preserve every number. Use only these supplied values; do not create files.",
+        "Independent side question 1: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 2: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 3: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 4: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 5: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 6: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 7: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 8: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 9: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 10: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 11: what is 2 plus 3? Reply exactly 5.",
+        "Independent side question 12: what is 2 plus 3? Reply exactly 5.",
+        "Return to what we were working on before those side questions and make the analysis clearer, including every original number."
+      ],
+      "acceptance": "Recover Aster observations 13,18,16 across twelve independent interludes. Largest change +5 first to second; next -2, overall +3. Independent arithmetic requests remain exactly 5."
+    }
+  ]
+}

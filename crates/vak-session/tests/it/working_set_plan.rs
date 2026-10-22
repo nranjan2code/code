@@ -88,6 +88,7 @@ fn full_fidelity_projects_the_two_message_record() {
 
     let plan = WorkingSetPlan {
         selected_records: None,
+        recent_dialogue: Vec::new(),
         per_turn: ids.iter().map(|id| (id.clone(), Fidelity::Full)).collect(),
         packet_range: None,
         retrieved: Vec::new(),
@@ -117,6 +118,7 @@ fn card_fidelity_collapses_into_one_turns_block() {
     // Newest turn stays Full; the first two are cards.
     let plan = WorkingSetPlan {
         selected_records: None,
+        recent_dialogue: Vec::new(),
         per_turn: vec![
             (ids[0].clone(), Fidelity::Card),
             (ids[1].clone(), Fidelity::Card),
@@ -171,6 +173,7 @@ fn a_packet_range_with_no_stored_packet_renders_as_cards_never_as_nothing() {
     // card lines, never as their raw records and never as nothing.
     let plan = WorkingSetPlan {
         selected_records: None,
+        recent_dialogue: Vec::new(),
         per_turn: vec![(ids[2].clone(), Fidelity::Full)],
         packet_range: Some((ids[0].clone(), ids[1].clone())),
         retrieved: Vec::new(),
@@ -236,6 +239,7 @@ fn incremental_compaction_writes_a_packet_that_survives_reopen_and_hides_nothing
 
     let plan = WorkingSetPlan {
         selected_records: None,
+        recent_dialogue: Vec::new(),
         per_turn: vec![(ids[2].clone(), Fidelity::Full)],
         packet_range: Some((ids[0].clone(), ids[1].clone())),
         retrieved: Vec::new(),
@@ -442,5 +446,185 @@ fn selection_manifest_replays_at_its_leaf_after_future_turns_and_reopen() {
     assert_eq!(
         reopened.replay_context_selection(&manifest.id).unwrap(),
         expected
+    );
+}
+
+#[test]
+fn a_stored_summary_rides_ahead_of_the_window_and_replays_exactly() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("summary.jsonl");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    let ids = three_closed_turns(&mut log);
+    let closing = TurnIndex::from_log(&log)
+        .turn_by_id(&ids[2])
+        .unwrap()
+        .closing_entry_id
+        .clone()
+        .unwrap();
+    log.append_message(user_msg("continue")).unwrap();
+    let plan = WorkingSetPlan {
+        selected_records: Some(vec![(ids[2].clone(), closing)]),
+        per_turn: vec![(ids[2].clone(), Fidelity::Full)],
+        recent_dialogue: vec![ids[2].clone()],
+        packet_range: Some((ids[0].clone(), ids[1].clone())),
+        ..Default::default()
+    };
+    // A summary not written yet is never recorded as sent.
+    assert!(log.derive_selected_checked(&plan).is_err());
+    assert!(log.append_context_selection(plan.clone()).is_err());
+
+    log.append_incremental_compaction(
+        &ids[0],
+        &ids[1],
+        "m",
+        "turns one and two asked about firsts and seconds".into(),
+        10,
+    )
+    .unwrap();
+    let expected = log.derive_selected_checked(&plan).unwrap();
+    let text: Vec<String> = expected.iter().map(Message::text_content).collect();
+    assert!(text[0].contains("<context_summary>"));
+    assert!(text[0].contains("turns one and two asked about firsts and seconds"));
+    assert!(text[0].contains(&format!("turn:{}", ids[0])));
+    assert!(!text.iter().any(|t| t.contains("first question")));
+    assert!(text[1].contains("<historical_exchange>"));
+    assert!(text.iter().any(|t| t.contains("third answer")));
+    assert_eq!(text.last().unwrap(), "continue");
+
+    let manifest = log.append_context_selection(plan).unwrap();
+    log.append_message(assistant_msg("later")).unwrap();
+    log.append_incremental_compaction(&ids[0], &ids[2], "m", "wider".into(), 10)
+        .unwrap();
+    drop(log);
+    let reopened = SessionLog::open(path).unwrap();
+    assert_eq!(
+        reopened.replay_context_selection(&manifest.id).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn packets_behind_a_reset_are_not_offered() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("reset.jsonl"), header()).unwrap();
+    let old = three_closed_turns(&mut log);
+    log.append_incremental_compaction(&old[0], &old[1], "m", "old".into(), 1)
+        .unwrap();
+    assert_eq!(log.stored_packets_rev().len(), 1);
+    log.append(vak_session::Entry::new(
+        log.tail_id().cloned(),
+        vak_session::EntryPayload::Compaction(vak_session::types::CompactionEntry {
+            summary: "handoff".into(),
+            first_turn_id: String::new(),
+            last_turn_id: String::new(),
+            model: "test".into(),
+            tokens_before: 0,
+            reset_all: true,
+            keeps_open_turn: false,
+        }),
+    ))
+    .unwrap();
+    assert!(log.stored_packets_rev().is_empty());
+    assert!(log.visible_turn_cards_rev().next().is_none());
+}
+
+#[test]
+fn adjacent_dialogue_header_and_complete_answer_replay_exactly() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("dialogue");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    let id = log
+        .append_message(user_msg("Can you use tools?"))
+        .unwrap()
+        .id;
+    let answer = "Yes, I can use the available capabilities. After this introduction, the subject remains the Aster observations and the constraint is supplied values only.";
+    log.append_message(assistant_msg(answer)).unwrap();
+    let card = TurnIndex::from_log(&log)
+        .turn_by_id(&id)
+        .unwrap()
+        .build_card("partial", answer.into(), &|s| s.len() as u64 / 4);
+    let closing = log
+        .append_turn_card(TurnCardRecord {
+            turn_id: id.clone(),
+            card,
+        })
+        .unwrap()
+        .id;
+    log.append_message(user_msg("Then go ahead")).unwrap();
+    let plan = WorkingSetPlan {
+        per_turn: vec![(id.clone(), Fidelity::Full)],
+        selected_records: Some(vec![(id.clone(), closing.clone())]),
+        recent_dialogue: vec![id.clone()],
+        ..Default::default()
+    };
+    let expected = log.derive_selected_checked(&plan).unwrap();
+    let text = expected
+        .iter()
+        .map(Message::text_content)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains(answer));
+    assert!(text.contains("Outcome: partial"));
+    assert!(text.contains(&format!("Reference: turn:{id}")));
+    assert_eq!(
+        log.turn_dialogue(&id, &closing).unwrap(),
+        expected[..expected.len() - 1]
+    );
+    let manifest = log.append_context_selection(plan).unwrap();
+    log.append_message(assistant_msg("future answer")).unwrap();
+    drop(log);
+    let log = SessionLog::open(path).unwrap();
+    assert_eq!(
+        log.replay_context_selection(&manifest.id).unwrap(),
+        expected
+    );
+    // Plans without the optional marker retain the legacy Full projection.
+    let legacy = WorkingSetPlan {
+        per_turn: vec![(id.clone(), Fidelity::Full)],
+        selected_records: Some(vec![(id, closing)]),
+        ..Default::default()
+    };
+    assert!(
+        !log.derive_selected_checked(&legacy)
+            .unwrap()
+            .iter()
+            .any(|m| m.text_content().contains("<historical_exchange>"))
+    );
+}
+
+#[test]
+fn version_six_context_selection_keeps_its_original_projection() {
+    use vak_session::types::{ContextSelectionRecord, Entry, EntryPayload};
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("legacy"), header()).unwrap();
+    let ids = three_closed_turns(&mut log);
+    let closing = TurnIndex::from_log(&log)
+        .turn_by_id(&ids[2])
+        .unwrap()
+        .closing_entry_id
+        .clone()
+        .unwrap();
+    let leaf = log.append_message(user_msg("continue")).unwrap().id;
+    let plan = WorkingSetPlan {
+        per_turn: vec![(ids[2].clone(), Fidelity::Full)],
+        selected_records: Some(vec![(ids[2].clone(), closing)]),
+        ..Default::default()
+    };
+    let expected = log.derive_selected_checked(&plan).unwrap();
+    let entry = log
+        .append(Entry::new(
+            Some(leaf.clone()),
+            EntryPayload::ContextSelection(ContextSelectionRecord {
+                policy_version: 6,
+                leaf_id: leaf,
+                plan,
+            }),
+        ))
+        .unwrap();
+    assert_eq!(log.replay_context_selection(&entry.id).unwrap(), expected);
+    assert!(
+        !expected
+            .iter()
+            .any(|m| m.text_content().contains("<historical_exchange>"))
     );
 }

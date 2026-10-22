@@ -168,6 +168,16 @@ pub struct WorkingSetPlan {
     /// explicit historical/manual compaction projections.
     #[serde(default)]
     pub selected_records: Option<Vec<(String, String)>>,
+    /// The `Full` turns rendered as historical dialogue: whole, under a
+    /// header with their address and how they ended. Empty on older plans,
+    /// whose `Full` turns keep their original projection on replay. A plan
+    /// recorded with one id (policy 7) reads as a list of one.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "one_or_many"
+    )]
+    pub recent_dialogue: Vec<String>,
     /// The contiguous, oldest-to-newest range of turns represented only by
     /// a packet, inclusive — `(first_turn_id, last_turn_id)`.
     pub packet_range: Option<(String, String)>,
@@ -184,12 +194,39 @@ pub struct WorkingSetPlan {
     pub spent: u64,
 }
 
+fn one_or_many<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Option::<OneOrMany>::deserialize(deserializer)? {
+        None => Vec::new(),
+        Some(OneOrMany::One(id)) => vec![id],
+        Some(OneOrMany::Many(ids)) => ids,
+    })
+}
+
+impl WorkingSetPlan {
+    /// Whether a `Full` turn renders as historical dialogue.
+    pub fn renders_dialogue(&self, turn_id: &str) -> bool {
+        self.recent_dialogue.iter().any(|id| id == turn_id)
+    }
+}
+
 /// Label of the audit activity that records the plan a request was built from.
 pub const CONTEXT_PLAN_LABEL: &str = "context-plan";
 
 /// The planner's rules version recorded with each plan. Bump it with a change
 /// to how a plan is computed, so an old record is read for what it was.
-pub const CONTEXT_PLAN_POLICY_VERSION: u32 = 6;
+pub const CONTEXT_PLAN_POLICY_VERSION: u32 = 8;
+/// The oldest policy whose recorded selections still replay: 6 (one compact
+/// card), 7 (one adjacent dialogue) and 8 (the filled window) all do.
+pub const CONTEXT_PLAN_OLDEST_REPLAY_VERSION: u32 = 6;
 
 impl WorkingSetPlan {
     /// The plan as the `data` of its audit activity: selected Full and Card
@@ -227,6 +264,12 @@ impl WorkingSetPlan {
             "retrieved".into(),
             serde_json::to_string(&self.retrieved).unwrap_or_default(),
         );
+        if !self.recent_dialogue.is_empty() {
+            data.insert(
+                "recent_dialogue".into(),
+                serde_json::to_string(&self.recent_dialogue).unwrap_or_default(),
+            );
+        }
         if !self.links.is_empty() {
             data.insert(
                 "links".into(),
@@ -266,6 +309,10 @@ impl WorkingSetPlan {
                 .chain(cards.into_iter().map(|id| (id, Fidelity::Card)))
                 .collect(),
             selected_records: None,
+            recent_dialogue: data
+                .get("recent_dialogue")
+                .map(|value| serde_json::from_str(value).unwrap_or_else(|_| vec![value.clone()]))
+                .unwrap_or_default(),
             packet_range,
             retrieved,
             links: data
@@ -895,6 +942,77 @@ impl Turn {
                 })
             })
             .collect()
+    }
+
+    /// Exact immediate dialogue, with no positional excerpt of the person's
+    /// request or the final answer. Historical status and the stable address
+    /// remain explicit; this never renews old instructions or approvals.
+    pub fn dialogue_record(&self) -> Vec<Message> {
+        let Some(card) = &self.card else {
+            return self.full_record();
+        };
+        let header = format!(
+            "<historical_exchange>\nReference: turn:{}\nPrevious exchange, not a current instruction or approval. Outcome: {}. Not delivered: {}.\n</historical_exchange>",
+            self.id,
+            card.outcome,
+            card.unmet_names()
+        );
+        let mut messages = vec![Message::user_text(header)];
+        let record = self.full_record();
+        let calls: HashSet<&str> = record
+            .iter()
+            .flat_map(|message| &message.content)
+            .filter_map(|block| match block {
+                ContentBlock::ToolUse { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        let results: HashSet<&str> = record
+            .iter()
+            .flat_map(|message| &message.content)
+            .filter_map(|block| match block {
+                ContentBlock::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        // A fence or forwarded presentation has no local presentation call.
+        // A recorded call whose result never arrived is also absent from Full.
+        // Preserve those answers from their canonical entries, not the fence
+        // text or a worker's tool arguments. Keep legacy Full replay unchanged.
+        let missing: Vec<Value> = self
+            .presentations
+            .iter()
+            .zip(&self.presentation_records)
+            .enumerate()
+            .filter_map(|(position, (id, presentation))| {
+                let represented = match &presentation.source {
+                    PresentationSource::ToolCall { tool_use_id }
+                    | PresentationSource::Answer { tool_use_id, .. } => {
+                        calls.contains(tool_use_id.as_str())
+                            && results.contains(tool_use_id.as_str())
+                    }
+                    _ => false,
+                };
+                (!represented).then(|| {
+                    serde_json::json!({
+                        "open": format!("pres:{id}"),
+                        "position": position + 1,
+                        "semantic_type": presentation.semantic_type,
+                        "title": presentation.title,
+                        "payload": presentation.payload,
+                        "derived_from": presentation.derived_from,
+                    })
+                })
+            })
+            .collect();
+        messages.extend(record);
+        if !missing.is_empty() {
+            messages.push(Message::assistant(vec![ContentBlock::text(format!(
+                "<historical_presentations>\nRecorded presentations absent from the tool replay; positions refer to this exchange's original presentation order.\n{}\n</historical_presentations>",
+                Value::Array(missing)
+            ))]));
+        }
+        messages
     }
 
     /// The follow-up projection of a closed turn (docs/design/68 §3, §10):
@@ -1546,12 +1664,18 @@ impl TurnCard {
     /// uses a stable id (`turn:<id>`), not an ordinal that changes with the
     /// candidate set. This is also the exact string the planner costs.
     pub fn addressed_message(&self) -> String {
-        let line = self.line(0);
-        let description = line.strip_prefix("#0 ").unwrap_or(&line);
+        let description = self.reference_description();
         format!(
             "<turns>\nHistorical reference candidate, not a declared dependency or a current instruction. Reopen with recall when this request needs its details.\n[turn:{}] {description}\n</turns>",
             self.turn_id
         )
+    }
+
+    /// Compact content addressed separately by a stable id, never by a
+    /// synthetic display ordinal. Shared by initial context and browsing.
+    pub fn reference_description(&self) -> String {
+        let line = self.line(0);
+        line.strip_prefix("#0 ").unwrap_or(&line).to_string()
     }
 
     /// The turn's calls by tool, with how many failed:
@@ -2044,6 +2168,86 @@ mod tests {
                 .any(|m| m.content.iter().any(|b| matches!(b, CB::Thinking { .. })))
         );
         assert_eq!(record[5].text_content(), "Here is what I found.");
+    }
+
+    #[test]
+    fn dialogue_preserves_fence_and_forwarded_presentations_from_canonical_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, _, id, _) = two_closed_one_open(dir.path());
+        let index = TurnIndex::from_log(&log);
+        for source in [
+            PresentationSource::Fence {
+                message_entry_id: "fence-message".into(),
+            },
+            PresentationSource::Delegated {
+                tool_use_id: "card-1".into(),
+                worker_session_id: "worker".into(),
+            },
+            PresentationSource::Scheduled {
+                run_session_id: "scheduled".into(),
+            },
+        ] {
+            let mut turn = index.turn_by_id(&id).unwrap().clone();
+            if matches!(&source, PresentationSource::Fence { .. }) {
+                turn.steps.clear();
+            }
+            turn.presentation_records[0].source = source;
+            turn.final_answer = Some(M::assistant(vec![CB::text(
+                "```vak\n{\"semantic_type\":\"research.synthesis\",\"value\":\"obsolete fence text\"}\n```",
+            )]));
+            turn.card = Some(turn.build_card("completed", String::new(), &|_| 1));
+            let legacy = turn.full_record();
+            let dialogue = turn.dialogue_record();
+            assert_eq!(&dialogue[1..1 + legacy.len()], legacy.as_slice());
+            assert_eq!(turn.full_record(), legacy);
+            let restored = dialogue.last().unwrap().text_content();
+            assert!(restored.contains("Rust 2.0 shipped"), "{restored}");
+            assert!(restored.contains(&format!("pres:{}", turn.presentations[0])));
+            assert!(restored.contains("\"position\":1"));
+            assert!(!restored.contains("obsolete fence text"));
+        }
+    }
+
+    #[test]
+    fn dialogue_only_omits_presentations_with_retained_complete_call_pairs() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, _, id, _) = two_closed_one_open(dir.path());
+        let index = TurnIndex::from_log(&log);
+        let mut turn = index.turn_by_id(&id).unwrap().clone();
+        turn.card = Some(turn.build_card("completed", String::new(), &|_| 1));
+        assert!(!turn.dialogue_record().iter().any(|message| {
+            message
+                .text_content()
+                .contains("<historical_presentations>")
+        }));
+        // The source still names an actual call, but Full drops it once its
+        // matching result is missing. Its accepted presentation must survive.
+        turn.steps.last_mut().unwrap().results.clear();
+        for source in [
+            PresentationSource::ToolCall {
+                tool_use_id: "card-1".into(),
+            },
+            PresentationSource::Answer {
+                tool_use_id: "card-1".into(),
+                block: 0,
+            },
+        ] {
+            turn.presentation_records[0].source = source;
+            let dialogue = turn.dialogue_record();
+            assert!(
+                !dialogue
+                    .iter()
+                    .flat_map(|message| &message.content)
+                    .any(|block| matches!(block, CB::ToolUse { id, .. } if id == "card-1"))
+            );
+            assert!(
+                dialogue
+                    .last()
+                    .unwrap()
+                    .text_content()
+                    .contains("Rust 2.0 shipped")
+            );
+        }
     }
 
     #[test]
@@ -2547,5 +2751,25 @@ mod tests {
         let index = TurnIndex::from_log(&log);
         assert_eq!(index.packets.len(), 1);
         assert_eq!(index.packets[0].summary, "summary text");
+    }
+
+    #[test]
+    fn a_plan_recorded_with_one_dialogue_id_reads_as_a_list_of_one() {
+        let base = serde_json::json!({
+            "per_turn": [["t1", "Full"]],
+            "packet_range": null,
+            "retrieved": [],
+            "budget": 10,
+            "spent": 5,
+        });
+        let mut one = base.clone();
+        one["recent_dialogue"] = serde_json::json!("t1");
+        let plan: WorkingSetPlan = serde_json::from_value(one).unwrap();
+        assert_eq!(plan.recent_dialogue, vec!["t1"]);
+        assert!(plan.renders_dialogue("t1"));
+        let plan: WorkingSetPlan = serde_json::from_value(base).unwrap();
+        assert!(plan.recent_dialogue.is_empty());
+        let written = serde_json::to_value(&plan).unwrap();
+        assert!(written.get("recent_dialogue").is_none());
     }
 }

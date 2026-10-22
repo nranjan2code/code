@@ -86,14 +86,22 @@ execution then validates the built payload against the semantic registry.
 For the full call-to-card sequence and fault-isolation guide, see
 `docs/design/30-render-architecture.md` §30.1.
 
-Historical results do not fill spare request space. The recent settled card
-is explicitly a historical candidate, independent of inferred lineage; older
-or multiple sources are reached through `recall` query/open/opens with candidate
-pagination. The main model resolves meaning, dates and uncertainty through
+The newest settled exchanges ride whole, each under a `<historical_exchange>`
+header, while they fit the measured budget, with one `<context_summary>` for
+what no longer fits (docs/design/68-context-engine.md). Their presence is
+context, never a dependency or a current instruction; anything older is
+reached through `recall` query/open/opens with candidate pagination. The main model resolves meaning, dates and uncertainty through
 those tools. Answer guidance favors the smallest complete result and distinct
 information per block rather than a mandatory summary/card sequence.
 
 ## Diff notes
+
+- 2026-10-22: the history bullet names what a request now carries (earlier
+  exchanges as `<historical_exchange>` records, newest last, and a
+  `<context_summary>` for older ones) and asks the model to resolve a
+  follow-up's referent through intervening exchanges, keep its scope and
+  constraints, and never invent a subject. The interim `recall` `before`
+  browsing sentence was never shipped.
 
 - 2026-10-21: distinguish recent candidates from dependencies and current
   instructions; describe arbitrary-age, paged, multi-source recall and implicit

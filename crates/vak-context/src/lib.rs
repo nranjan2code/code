@@ -29,5 +29,5 @@ pub mod planner;
 
 pub use assemble::TailInput;
 pub use capacity::{CapacityProfile, ProfileKey};
-pub use planner::{PlanInput, plan, plan_for_session};
+pub use planner::{Exchange, StoredSummary, fill_window, plan_for_session};
 pub use vak_session::{Fidelity, WorkingSetPlan};

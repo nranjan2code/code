@@ -542,14 +542,20 @@ fn packet_replay(dir: &Path) -> Result<ReplayVerdict, String> {
         return Err("the plan that asked for the packet must project it".into());
     }
 
-    // 2) The planner's own plan, under either model, never sees it.
-    let stored_packet_is_not_a_boundary = [&small, &large].into_iter().all(|profile| {
-        let plan = plan_now(&log, profile);
+    // 2) A model whose window holds the whole conversation carries every
+    //    turn whole and never the packet a smaller one wrote.
+    let stored_packet_is_not_a_boundary = {
+        let plan = plan_now(&log, &large);
         let joined = joined_text(&log.derive_with_plan(&plan));
         plan.packet_range.is_none()
+            && plan.per_turn.len() == carded.len()
+            && plan
+                .per_turn
+                .iter()
+                .all(|(_, fidelity)| *fidelity == Fidelity::Full)
             && !joined.contains("<context_summary>")
             && !joined.contains("SMALL-MODEL-PACKET")
-    });
+    };
 
     // 3) Another range is another packet.
     let packet_renders_only_for_its_range = log.packet_needs_compaction(&second.id, &last.id)
@@ -638,7 +644,7 @@ mod tests {
         let verdict = packet_replay(dir.path()).expect("replay harness");
         assert!(
             verdict.stored_packet_is_not_a_boundary,
-            "the planner's projection must not carry a packet its plan did not ask for"
+            "a model whose window holds every turn must carry them whole, never a smaller model's packet"
         );
         assert!(
             verdict.packet_renders_only_for_its_range,
