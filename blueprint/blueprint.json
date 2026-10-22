@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.24.0",
-  "revision": "01cc187ae",
+  "revision": "060a67b9b",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.23.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2460,
+   "total_commits": 2461,
    "days": 63,
    "peak_day": 174,
    "design_docs": 99,
@@ -417,7 +417,7 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 517,
+  "commits": 518,
   "areas": [
    [
     "docs",
@@ -425,7 +425,7 @@
    ],
    [
     "(root)",
-    298
+    299
    ],
    [
     "vak-core",
@@ -782,6 +782,14 @@
   ],
   "recent": [
    {
+    "hash": "060a67b9b",
+    "date": "2026-10-22",
+    "subject": "Put release heading first in changelog",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "01cc187ae",
     "date": "2026-10-22",
     "subject": "Prepare 8.24.0 changelog",
@@ -907,14 +915,6 @@
     "areas": [
      "(root)",
      "blueprint"
-    ]
-   },
-   {
-    "hash": "0ca645ad4",
-    "date": "2026-10-22",
-    "subject": "Bump version to 8.21.0",
-    "areas": [
-     "(root)"
     ]
    }
   ],
@@ -30864,6 +30864,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "060a67b9b",
+   "date": "2026-10-22",
+   "subject": "Put release heading first in changelog",
+   "subsystems": []
+  },
   {
    "hash": "01cc187ae",
    "date": "2026-10-22",
