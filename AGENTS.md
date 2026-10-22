@@ -1813,7 +1813,7 @@ crates/vak-agent     loop, steering queues (full user messages: text +
                      feedback back -- and owns the summariser call behind an
                      incremental compaction. Turn-close hook builds and
                      appends each turn's `TurnCard`; the empty-step and
-                     steering-drift gates live in the loop itself. Card
+                     structural delivery gates live in the loop itself. Card
                      calls are the loop's own (`show_card`, `cards.rs`):
                      each checked by its tool and recorded with the plan
                      deliverable it answers

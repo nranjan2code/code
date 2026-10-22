@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Repeating an earlier answer word for word, when that is the right answer,
+  is no longer treated as drifting off topic and sent back for a redo.
 - Working in another Agent's workspace keeps the surface you are using, so
   the desktop and web apps are no longer described to the model as a plain
   HTTP client.

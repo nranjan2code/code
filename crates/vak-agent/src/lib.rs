@@ -1520,7 +1520,6 @@ pub struct Agent {
     /// Whether the preceding step drifted and got the steering nudge
     /// (docs/design/68-context-engine.md §7): an answer that drifts again
     /// straight after it stands as the model's own.
-    drift_nudged: bool,
     /// The span of the step in progress (plan M5b): each provider attempt
     /// and tool call is its child.
     step_span: tracing::Span,
@@ -1559,7 +1558,6 @@ impl Agent {
             obligations: Vec::new(),
             handoff_used: false,
             repair: RepairState::default(),
-            drift_nudged: false,
             step_span: tracing::Span::none(),
         }
     }
@@ -2928,54 +2926,9 @@ impl Agent {
                     }
                 };
 
-                // Model drift (docs/design/68-context-engine.md §7): the step
-                // served a different directive than the current one. The
-                // steering nudge is appended once and the answer redone; an
-                // answer that drifts again straight after it stands as the
-                // model's own, with a diagnostic, and is never replaced.
-                let drift = self
-                    .detect_model_drift(&response, &calls, &prompt_owned)
-                    .await;
-                let nudged_before = std::mem::replace(&mut self.drift_nudged, drift.is_some());
-                if let Some(drift_reason) = drift.clone().filter(|_| nudged_before) {
-                    self.record_activity(
-                        vak_session::ActivityKind::Diagnostic,
-                        vak_session::ActivityStatus::Failed,
-                        "model-drift".into(),
-                        Some(format!(
-                            "the answer still served another directive after the steering \
-                             nudge and stands as given. {drift_reason}"
-                        )),
-                        std::collections::BTreeMap::new(),
-                    )
-                    .await;
-                } else if let Some(drift_reason) = drift.filter(|_| !nudged_before) {
-                    // A request near the horizon that also drifted is evidence
-                    // the horizon itself is optimistic (§1, §6).
-                    self.record_capacity_instruction_failure(response.usage.prompt_tokens())
-                        .await;
-                    // Never quotes the directive back: an echo after a tool result
-                    // reads as the user asking again (docs/design/68 §6).
-                    if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(
-                        vak_intent::control::ControlKind::SteeringDrift,
-                        format!(
-                            "[steering-drift]: {drift_reason}. Refocus your next step on the user's latest message."
-                        ),
-                    )) {
-     return nudge_write_failed(error);
-     }
-                    if calls.is_empty() {
-                        // A drifted final answer is not accepted as the turn's
-                        // answer: redo it, same as the other repair nudges.
-                        if turn + 1 >= self.config.max_turns {
-                            return TurnOutcome::MaxTurnsReached;
-                        }
-                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
-                        turn += 1;
-                        continue;
-                    }
-                }
-
+                // Identical narration is not proof of serving another directive:
+                // independent questions and explicit repeats can share an answer.
+                // Semantic relevance belongs to the model, not string equality.
                 (response, calls, Some(response_entry_id))
             };
             if calls.is_empty() {
@@ -5691,73 +5644,6 @@ impl Agent {
             data,
         )
         .await;
-    }
-
-    /// Model drift (docs/design/68-context-engine.md §7): the step's own
-    /// evidence, not a guess. The only trigger is a final answer that
-    /// exactly matches a prior turn's card narration — a verbatim repeat of
-    /// a past answer instead of addressing the current one. Returns the
-    /// drift reason for the nudge, or `None`.
-    ///
-    /// A tool's declared capability DOMAINS (e.g. `bash` → `code-exec`)
-    /// used to be compared against the current reading's open-vocabulary
-    /// SUBJECT domains (e.g. `engineering`) and flagged as drift whenever
-    /// they were disjoint — which they almost always were, since the two
-    /// vocabularies describe different things: a subject domain is never
-    /// supposed to gate control flow (docs/design/47-commitment-kernel.md).
-    /// Live: every `bash` call inside an ordinary engineering turn was
-    /// flagged ("serves none of the current directive's domains
-    /// (engineering)"), and three in a row ended the turn outright.
-    async fn detect_model_drift(
-        &self,
-        response: &AssistantMessage,
-        calls: &[PendingToolCall],
-        current_directive: &str,
-    ) -> Option<String> {
-        if !calls.is_empty() {
-            return None;
-        }
-        let turns = TurnIndex::from_log(&*self.session.lock().await).turns;
-        let text = response.text_content();
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        // Facts only: the answer is a past turn's answer word for word, and
-        // the person did not ask that same thing again.
-        let repeated_answer = turns.iter().any(|past| {
-            if past.out_of_view() {
-                return false;
-            }
-            let Some(card) = past.card.as_ref() else {
-                return false;
-            };
-            if card.answered.narration.trim() != trimmed {
-                return false;
-            }
-
-            !Self::same_normalized_directive(current_directive, &past.directive.text_content())
-        });
-        if repeated_answer {
-            return Some(
-                "repeated a previous turn's answer verbatim instead of addressing the current directive"
-                    .to_string(),
-            );
-        }
-        None
-    }
-
-    /// The person asked the same thing again: the same words once case,
-    /// spacing and punctuation are set aside.
-    fn same_normalized_directive(left: &str, right: &str) -> bool {
-        fn normalized(text: &str) -> String {
-            text.chars()
-                .filter(|ch| ch.is_alphanumeric())
-                .flat_map(char::to_lowercase)
-                .collect()
-        }
-        normalized(left) == normalized(right)
     }
 
     /// One provider completion with watchdog, retry/backoff (honoring
@@ -9872,30 +9758,6 @@ fn bounded_error_summary(error: &str) -> String {
     bounded
 }
 
-/// The check a control kind reports (docs/design/88-control-plane.md §6).
-fn cause_of(kind: vak_intent::control::ControlKind) -> vak_control::Cause {
-    use vak_control::Cause;
-    use vak_intent::control::ControlKind;
-    match kind {
-        ControlKind::StopHook => Cause::StopHook,
-        ControlKind::StopGuard => Cause::StopGuard,
-        ControlKind::KeepWorking => Cause::KeepWorking,
-        ControlKind::GroundingCheck => Cause::Grounding,
-        ControlKind::FenceCheck => Cause::Fence,
-        ControlKind::DuplicateCardCheck => Cause::DuplicateCard,
-        ControlKind::PresentationCheck => Cause::Presentation,
-        ControlKind::CardCompletionCheck => Cause::CardCompletion,
-        ControlKind::CardCompletenessCheck => Cause::CardCompleteness,
-        ControlKind::FreshnessCheck => Cause::Freshness,
-        ControlKind::EmptyStep => Cause::EmptyStep,
-        ControlKind::SteeringDrift => Cause::SteeringDrift,
-        ControlKind::TopicMismatchCheck => Cause::TopicMismatch,
-        ControlKind::RepairDirective => Cause::Repair,
-        ControlKind::PlanCheck => Cause::Plan,
-        ControlKind::ToolCallRepair => Cause::ToolCallRepair,
-    }
-}
-
 /// The message tag a check's correction is written under.
 fn kind_of(cause: Cause) -> vak_intent::control::ControlKind {
     use vak_intent::control::ControlKind;
@@ -9921,37 +9783,6 @@ fn kind_of(cause: Cause) -> vak_intent::control::ControlKind {
         Cause::Repair => ControlKind::RepairDirective,
         Cause::Plan => ControlKind::PlanCheck,
         Cause::ToolCallRepair => ControlKind::ToolCallRepair,
-    }
-}
-
-/// A runtime correction is its control message and the decision it was
-/// rendered from, written together.
-trait CorrectionLog {
-    fn append_correction(
-        &mut self,
-        record: MessageRecord,
-    ) -> Result<vak_session::Entry, vak_session::SessionError>;
-}
-
-impl CorrectionLog for SessionLog {
-    fn append_correction(
-        &mut self,
-        record: MessageRecord,
-    ) -> Result<vak_session::Entry, vak_session::SessionError> {
-        let cause = record.control_kind().map(cause_of);
-        let entry = self.append_message(record)?;
-        if let Some(cause) = cause {
-            self.append_decision(
-                vak_control::Decision::by_runtime(vak_control::Choice::Correct(
-                    vak_control::Correction {
-                        cause,
-                        rung: vak_control::Rung::Tell,
-                    },
-                ))
-                .with(vak_control::Evidence::Entry(entry.id.clone())),
-            )?;
-        }
-        Ok(entry)
     }
 }
 
@@ -11696,23 +11527,6 @@ mod checkpoint_dispatch_tests {
         }
         assert_eq!(executed.load(Ordering::SeqCst), 2);
         assert_eq!(checkpoint_attempts.load(Ordering::SeqCst), 1);
-    }
-}
-
-#[cfg(test)]
-mod drift_semantic_tests {
-    use super::Agent;
-
-    #[test]
-    fn the_same_request_asked_again_is_set_apart_by_its_words_alone() {
-        assert!(Agent::same_normalized_directive(
-            "What is 17 times 23?",
-            "what is 17 times 23"
-        ));
-        assert!(!Agent::same_normalized_directive(
-            "What is the capital of Japan?",
-            "Explain photosynthesis."
-        ));
     }
 }
 

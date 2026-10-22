@@ -1268,3 +1268,42 @@ async fn mixed_intents_can_reopen_several_sources_across_one_thousand_turns() {
     assert!(result["opened"][0].to_string().contains("amber"));
     assert!(result["opened"][1].to_string().contains("cobalt"));
 }
+
+#[tokio::test]
+async fn independent_directives_can_have_identical_correct_answers() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "equal-answers",
+        vec![text_msg("5"), text_msg("5")],
+        vec![],
+        false,
+    );
+    let (tx, mut rx) = mpsc::channel(256);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    for prompt in [
+        "What is 2 plus 3? Reply exactly 5.",
+        "Independent question: what is 10 divided by 2? Reply exactly 5.",
+    ] {
+        let outcome = agent
+            .run(
+                prompt,
+                &Default::default(),
+                CancellationToken::new(),
+                tx.clone(),
+            )
+            .await;
+        assert!(
+            matches!(outcome, TurnOutcome::Completed { .. }),
+            "{outcome:?}"
+        );
+    }
+    let messages = agent.session.lock().await.derive_messages();
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.text_content().contains("[steering-drift]"))
+    );
+    drop(tx);
+    drain.await.unwrap();
+}

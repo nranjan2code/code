@@ -584,14 +584,12 @@ tolerate topic changes:
   words in the request and ended a turn with a statement the model did not
   write; no check reads a request's words now
   (docs/design/88-control-plane.md §5).
-- **Model drift** (a step ends with no tool call and its final text is a
-  verbatim repeat of a prior turn's `TurnCard` narration — domain-mismatch
-  detection was tried and dropped: it also fired on a legitimately related
-  follow-up): the `[steering-drift]` nudge fires with the *specific*
-  directive it should serve, and the event lowers horizon confidence if the
-  request was near the horizon. The nudge is sent once; an answer that
-  drifts again straight after it stands as the model's own, with a
-  `model-drift` diagnostic.
+- **Repeated narration**: exact equality with a past answer does not prove
+  drift. Independent questions and explicit repeats may legitimately yield the
+  same answer. The string-equality steering nudge was removed on 2026-10-22
+  after live arithmetic interludes produced false corrections. It no longer
+  reduces the measured horizon or reconstructs all history for this check.
+  Semantic relevance remains the model's responsibility.
 - **Topic mismatch**: removed at control-plane C5, with its word overlap
   and stop-word list. A card is refused before execution only for a fact:
   it cites a source URL nothing in the conversation retrieved or was given

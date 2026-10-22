@@ -1,9 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Model drift (docs/design/68-context-engine.md §7b) and the over-length
-//! replan (§5): both are runtime-enforcement paths with no live model, so
-//! they are covered here the same way the other repair-nudge regressions
-//! are — a scripted provider driving `Agent::run` end to end.
+//! Equal-answer noninterference and provider over-length replanning.
+//! A scripted provider proves runtime behavior, never semantic relevance.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -146,13 +144,9 @@ fn header(session_id: &str, dir: &std::path::Path) -> SessionHeader {
     }
 }
 
-/// A verbatim repeat of a prior turn's answer (the one drift trigger,
-/// docs/design/68-context-engine.md §7) is nudged once and redone. A repeat
-/// straight after the nudge stands as the model's own answer, with a
-/// diagnostic: the turn is never ended with words the model did not write,
-/// and no count of events decides it.
+/// Repeating an answer on request does not justify a semantic correction.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_answer_that_drifts_again_after_the_nudge_stands_as_given() {
+async fn an_explicit_repeat_stands_without_a_steering_nudge() {
     let dir = tempdir().unwrap();
     let mut log =
         SessionLog::create(dir.path().join("s.jsonl"), header("drift3", dir.path())).unwrap();
@@ -190,7 +184,7 @@ async fn an_answer_that_drifts_again_after_the_nudge_stands_as_given() {
 
     let outcome = agent
         .run(
-            "how many people live in Tokyo",
+            "Repeat your previous answer exactly.",
             &Default::default(),
             CancellationToken::new(),
             mpsc::channel(64).0,
@@ -208,19 +202,19 @@ async fn an_answer_that_drifts_again_after_the_nudge_stands_as_given() {
     assert!(
         chain
             .iter()
-            .any(|e| matches!(&e.payload, EntryPayload::Activity(a) if a.label == "model-drift")),
-        "expected a model-drift diagnostic"
+            .all(|e| !matches!(&e.payload, EntryPayload::Activity(a) if a.label == "model-drift")),
+        "equality alone must not diagnose semantic drift"
     );
     let nudges = session
         .message_chain()
         .iter()
         .filter(|(_, message)| message.text_content().contains("[steering-drift]"))
         .count();
-    assert_eq!(nudges, 1, "one steering nudge, never a second");
+    assert_eq!(nudges, 0, "a valid repeated answer needs no correction");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_verbatim_repeat_of_a_past_answer_is_treated_as_drift_and_redone() {
+async fn a_paraphrased_question_can_have_the_same_correct_answer() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(
         dir.path().join("s.jsonl"),
@@ -229,7 +223,7 @@ async fn a_verbatim_repeat_of_a_past_answer_is_treated_as_drift_and_redone() {
     .unwrap();
 
     // A prior closed turn whose narration is the exact string the model
-    // will later repeat verbatim for an unrelated new directive.
+    // will later repeat for a differently worded question with the same answer.
     let t1 = log
         .append_message(MessageRecord {
             message: vak_llm::Message::user_text("what is the capital of France"),
@@ -263,7 +257,7 @@ async fn a_verbatim_repeat_of_a_past_answer_is_treated_as_drift_and_redone() {
 
     let outcome = agent
         .run(
-            "how many people live in Tokyo",
+            "Name the capital of France in one sentence.",
             &Default::default(),
             CancellationToken::new(),
             mpsc::channel(64).0,
@@ -271,12 +265,9 @@ async fn a_verbatim_repeat_of_a_past_answer_is_treated_as_drift_and_redone() {
         .await;
     match outcome {
         TurnOutcome::Completed { response } => {
-            assert_eq!(
-                response.text_content(),
-                "Tokyo has about 14 million people."
-            );
+            assert_eq!(response.text_content(), "Paris is the capital.");
         }
-        other => panic!("expected the redone answer to complete, got {other:?}"),
+        other => panic!("expected the first correct answer to complete, got {other:?}"),
     }
 }
 
