@@ -1,4 +1,4 @@
-## Unreleased
+## 8.28.0 — 2026-10-22 — Markdown answers and runtime cards
 
 - The runtime adds source receipts and actual file diffs after the answer,
   directly from this turn's calls and file bytes. No model card call is
