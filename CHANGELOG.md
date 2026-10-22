@@ -1,4 +1,4 @@
-## Unreleased
+## 8.21.0 — 2026-10-22
 
 - Closing Canvas returns focus to its external opener even after switching
   conversations or replacing its view.
@@ -47,8 +47,6 @@
 - File details read current Library state, evidence distinguishes links from
   verification, and unavailable checks are shown as unavailable. Followed
   sources, workspace promises and conversation workers state their scope.
-
-## Unreleased
 
 ## 8.19.0 — 2026-10-21
 
