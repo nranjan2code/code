@@ -120,6 +120,9 @@ pub enum OutputContent {
     Document {
         document: PresentationDocument,
     },
+    WorkProgress {
+        progress: vak_intent::progress::ProgressList,
+    },
     Information {
         label: String,
         detail: Option<String>,

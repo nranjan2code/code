@@ -5,3 +5,5 @@ mod practical_workflows;
 mod sandbox;
 mod sandbox_stress;
 mod strict_forms;
+
+mod progress;

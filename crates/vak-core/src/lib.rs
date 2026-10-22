@@ -4091,6 +4091,7 @@ impl Core {
             .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
         let mut tools = vak_tools::brokered_tools(worker, &self.new_documents);
         tools.push(Arc::new(vak_tools::RecallTool));
+        tools.push(Arc::new(vak_tools::ProgressTool));
         tools.push(Arc::new(vak_tools::TopicsTool));
         for edit in [false, true] {
             tools.push(Arc::new(tools_workspaces::WorkspaceTool {

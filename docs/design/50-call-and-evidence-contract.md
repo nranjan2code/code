@@ -44,8 +44,12 @@ are result contracts, not tool-name branches.
 
 Retrieval, delivery and sufficiency have distinct receipts. A source-fetching
 call establishes observation only; a card's acknowledgement says accepted for
-presentation, never that a client displayed it. Plan evidence questions remain
-unknown or unmet until support is assessed (docs/design/86-model-plans-runtime-checks.md).
+presentation, never that a client displayed it. Evidence questions remain
+unknown or unmet until support is assessed; the model-plan tool is removed.
+Optional progress acknowledgements are not retrieved material. Card citation
+checks and derived-from links read each tool’s existing `retrieves_evidence`
+declaration with its call arguments, and only successful retrievals count.
+Progress states never establish evidence or verified completion.
 A conversation snapshot binds transcript identity and output to one ledger
 revision (docs/design/87-composed-answers.md).
 

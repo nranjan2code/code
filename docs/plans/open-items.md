@@ -1,3 +1,18 @@
+## Optional progress — 2026-10-22
+
+- [x] Loop-owned whole-list progress, ledger/projection, top semicircle and right Details view,
+  separate from cards and layout; once-only typed reminder through the Ladder.
+- [x] Schema, replay, once-only/no-list/done/dropped, card-independence and
+  receipt-isolation tests; no list is ever evidence for a card.
+- [x] Browser sizes/themes and disposable live check: four list updates for
+  multi-step work, none for a direct question; Admin, Doctor and prompts checked
+  (docs/audits/progress-2026-10-22.md).
+- [x] Final full gate after receipt isolation passed on 2026-10-23; progress
+  implementation, audit and current record are complete.
+- [ ] Installed native WebKit qualification remains open; no release requested.
+- [ ] Open design question: whether independent completeness reasoning should
+  ever use strands or the intent reader. Neither is used by this implementation.
+
 ## Conversation continuity: the filled window (2026-10-22)
 
 - [x] Remove the old plan parser, outline wire/projection, plan-only reply

@@ -64,6 +64,7 @@ pub mod engage;
 pub mod goal;
 pub mod limits;
 pub mod outcome;
+pub mod progress;
 pub mod reading;
 pub mod resolve;
 pub mod signals;

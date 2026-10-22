@@ -1,5 +1,16 @@
 # Decisions
 
+- 2026-10-22: Progress belongs in the existing top semicircle and right
+  Details panel, not in the chat answer. Both surfaces read the same latest
+  accepted list, without inferring delivery from cards.
+
+- 2026-10-22: Restore only optional visible progress for multi-step work and
+  one reminder about explicitly open items. `progress` is loop-owned, uses
+  whole-list updates, and never gates cards, layout or the answer. Completeness
+  reads only its declared states; no intent reader or strands. The old plan
+  remains removed. No release is requested. See doc 88’s optional-progress
+  contract and docs/plans/open-items.md.
+
 - 2026-10-22: The maintainer explicitly rejected backward compatibility for
   the removed plan tool. Delete its parser, outline projection and wire fields,
   plan-only correction tags and reply filters; retain no old-plan label fallback.

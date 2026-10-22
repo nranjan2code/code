@@ -19,6 +19,7 @@ export function toolLabel(name: string, json: string, running: boolean): string 
   const args = argsOf(json);
   const file = fileName(args);
   switch (name) {
+    case "progress": return running ? "Updating progress" : "Updated progress";
     case "recall": return running ? "Looking back in the conversation" : "Opened conversation context";
     case "read": case "doc_read": case "office_read": return `${running ? "Reading" : "Read"} ${file || "a file"}`;
     case "write": return `${running ? "Writing" : "Wrote"} ${file || "a file"}`;
@@ -112,6 +113,7 @@ export function detailTurns(timeline: OutputTimeline | null, transcript: Item[],
   for (const turn of turns.values()) {
     const ids = new Set(turn.steps.filter(step => step.tool).map(step => step.id));
     for (const item of turn.items) {
+      if (item.content.type === "work_progress") continue;
       const call = item.provenance?.tool_call_id;
       if (call) ids.add(call);
       for (const action of item.actions) if (action.data.execution_id) ids.add(action.data.execution_id);

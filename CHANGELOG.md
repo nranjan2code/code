@@ -1,5 +1,10 @@
 ## Unreleased
 
+- For work with several steps, the agent can show and update progress in the top semicircle and Details panel.
+  If it leaves steps open, it gets one reminder to finish, explain what it
+  left out, or answer with what it has. Direct answers need no list. Progress
+  is separate from cards and never counts as retrieved evidence.
+
 - Turn navigator previews use the recorded answer heading or card title.
   Untitled turns show their turn number instead of the raw request; obsolete plan projection has been removed. Agent subtitles use the same answer titles.
 

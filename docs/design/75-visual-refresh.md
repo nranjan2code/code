@@ -57,6 +57,15 @@ navigable. Browser acceptance is recorded in
 [answer-title regression check](../audits/turn-navigator-labels-2026-10-22.md); native qualification
 remains open.
 
+## Optional work progress — 2026-10-22
+
+The top Agent presence semicircle and the right Details panel read the same
+latest accepted `progress` list. Waiting steps sit on the right, active steps
+in the middle, and done/dropped steps on the left; a dropped step retains its
+reason. Details shows the list for the selected request, including history.
+Progress never renders in the chat body, names a card, or controls layout.
+The old `livePlan` reader that inferred delivery from cards is removed.
+
 ## Request-focused Details — 2026-10-22
 
 The maintainer approved replacing the stacked activity and command histories

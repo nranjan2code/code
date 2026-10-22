@@ -390,7 +390,7 @@ fn latest_directive_entry_id_ignores_control_messages() {
 }
 
 #[test]
-fn non_card_evidence_since_collects_prior_non_card_tool_results_only() {
+fn retrieved_evidence_since_collects_only_declared_successful_retrievals() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("evidence.jsonl");
     let mut log = SessionLog::create(path, header()).unwrap();
@@ -440,8 +440,8 @@ fn non_card_evidence_since_collects_prior_non_card_tool_results_only() {
     })
     .unwrap();
 
-    let is_card_tool = |name: &str| name == "emit_chart_card";
-    let evidence = log.non_card_evidence_since(&user.id, is_card_tool);
+    let retrieves = |name: &str, _: &serde_json::Value| name == "web_search";
+    let evidence = log.retrieved_evidence_since(&user.id, retrieves);
     assert_eq!(evidence, vec!["search-1".to_string()]);
 }
 

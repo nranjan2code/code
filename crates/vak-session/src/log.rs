@@ -1545,13 +1545,12 @@ impl SessionLog {
     /// Ids of every non-card tool result already committed to the ledger
     /// strictly after `turn_id`, in chain order — the evidence a card built
     /// after them was derived from (`PresentationRecord::derived_from`).
-    /// `is_card_tool` is supplied by the caller so this crate never needs to
-    /// know what a "card" tool is (that knowledge lives in
-    /// `vak-core::presentation_tools`).
-    pub fn non_card_evidence_since(
+    /// `retrieves` reads the tool’s declaration at its call arguments; this
+    /// crate knows no tool names or display conventions.
+    pub fn retrieved_evidence_since(
         &self,
         turn_id: &str,
-        is_card_tool: impl Fn(&str) -> bool,
+        retrieves: impl Fn(&str, &serde_json::Value) -> bool,
     ) -> Vec<String> {
         let chain = self.chain_to_root();
         let start = chain
@@ -1559,7 +1558,7 @@ impl SessionLog {
             .position(|entry| entry.id == turn_id)
             .map(|idx| idx + 1)
             .unwrap_or(0);
-        let mut tool_names: HashMap<String, String> = HashMap::new();
+        let mut retrievals: HashMap<String, bool> = HashMap::new();
         let mut out = Vec::new();
         for entry in &chain[start..] {
             let EntryPayload::Message(record) = &entry.payload else {
@@ -1567,17 +1566,17 @@ impl SessionLog {
             };
             for block in &record.message.content {
                 match block {
-                    vak_llm::ContentBlock::ToolUse { id, name, .. } => {
-                        tool_names.insert(id.clone(), name.clone());
+                    vak_llm::ContentBlock::ToolUse { id, name, input } => {
+                        retrievals.insert(id.clone(), retrieves(name, input));
                     }
-                    vak_llm::ContentBlock::ToolResult { tool_use_id, .. } => {
-                        let is_card = tool_names
-                            .get(tool_use_id)
-                            .map(|name| is_card_tool(name))
-                            .unwrap_or(false);
-                        if !is_card && !out.iter().any(|seen| seen == tool_use_id) {
-                            out.push(tool_use_id.clone());
-                        }
+                    vak_llm::ContentBlock::ToolResult {
+                        tool_use_id,
+                        is_error: false,
+                        ..
+                    } if retrievals.get(tool_use_id) == Some(&true)
+                        && !out.iter().any(|seen| seen == tool_use_id) =>
+                    {
+                        out.push(tool_use_id.clone());
                     }
                     _ => {}
                 }
@@ -1792,7 +1791,7 @@ impl SessionLog {
     /// in it names a page nothing here retrieved and nobody gave
     /// (docs/design/30-render-architecture.md §30.1, "Citations";
     /// docs/design/99-turns-that-do-not-poison.md §4 A).
-    pub fn evidence_text(&self, retrieves: impl Fn(&str) -> bool) -> String {
+    pub fn evidence_text(&self, retrieves: impl Fn(&str, &serde_json::Value) -> bool) -> String {
         let chain = self.chain_to_root();
         // A failed call retrieved nothing: its error text (which names the
         // URL it could not fetch) is not evidence.
@@ -1834,7 +1833,9 @@ impl SessionLog {
                                 out.push_str(text);
                                 out.push('\n');
                             }
-                            vak_llm::ContentBlock::ToolUse { id, name, .. } if !retrieves(name) => {
+                            vak_llm::ContentBlock::ToolUse { id, name, input }
+                                if !retrieves(name, input) =>
+                            {
                                 excluded.insert(id.clone());
                             }
                             vak_llm::ContentBlock::ToolResult {

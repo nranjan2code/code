@@ -26,7 +26,7 @@ Every number is Vak's side, read from typed records: the call the first step
 made against the unit that produced the case, each call's ``accept_call``
 verdict and the ``Fault`` of each failed call, calls outside the case's path
 (detours), the share of a call's new tokens the answer carries, the
-corrections by ``Cause`` (``plan`` is a plan-check miss) and how the turn
+corrections by their declared ``Cause`` and how the turn
 ended. Nothing here reads the request's or the answer's words to decide
 anything, and nothing is a verdict on the model (AGENTS.md "Investigating a
 failure", "No word lists, no tuned limits").
@@ -611,18 +611,18 @@ def score_case(record, registry):
         for call in calls:
             call["verdict"] = verdict.get(call["id"], "unrecorded")
             call["fault"] = fault.get(call["id"])
-            # The loop answers its own tools (`recall`, `plan`) without an accept_call record.
+            # The loop answers its own tools (`recall`, `progress`) without an accept_call record.
             call["ok"] = call["verdict"] in ("accepted", "unrecorded") and not call["fault"] and \
                 not results.get(call["id"], ("", True))[1]
             call["serves"] = [u for u in path if matches(u, call, registry)]
             if call["ok"]:
                 reached_units.update(call["serves"])
         expected_first = path[0] if path else None
-        # `plan` declares the deliverables; the first call that does work is the one judged.
-        first = next((c for c in calls if c["name"] != "plan" or expected_first == "tool:plan"), None)
+        # Report the actual first call; no retired-tool name exemptions.
+        first = next(iter(calls), None)
         first_ok = (first is None and expected_first is None) or \
             (first is not None and expected_first is not None and matches(expected_first, first, registry))
-        detours = [c["name"] for c in calls if not c["serves"] and c["name"] != "plan"]
+        detours = [c["name"] for c in calls if not c["serves"]]
         # what the answer carries of the owner's result, as new tokens
         later_text = answer + " " + " ".join(json.dumps(c["input"]) for c in calls)
         request = tokens(spec.get("text", ""))
@@ -670,7 +670,7 @@ def cmd_replay(args):
         for _ in range(args.trials):
             msg = (mtf.chat(OLLAMA, body).get("message") or {})
             call = next((c for c in msg.get("tool_calls") or []
-                         if (c.get("function") or {}).get("name") != "plan" or expected == "tool:plan"), None)
+), None)
             if not call:
                 firsts.append((None, False))
                 continue
@@ -725,7 +725,7 @@ def cmd_report(args):
             faults = sorted({c[2] for s in mine for t in s["turns"] for c in t["calls"] if c[2]})
             detours = sum(len(t["detours"]) for s in mine for t in s["turns"])
             used = [t["used"] for s in mine for t in s["turns"] if t["used"] is not None]
-            plan = sum(t["corrections"].count("plan") for s in mine for t in s["turns"])
+            corrections = sorted({cause for sample in mine for turn in sample["turns"] for cause in turn["corrections"]})
             rep = [v for k, v in replay.items() if v["unit"] == uid]
             rep_hits = sum(1 for v in rep for _, ok in v["firsts"] if ok)
             rep_all = sum(len(v["firsts"]) for v in rep)
@@ -735,7 +735,7 @@ def cmd_report(args):
                     + (f" · {','.join(faults)}" if faults else "")
                     + (f" · detours {detours}" if detours else "")
                     + (f" · used {statistics.median(used):.2f}" if used else "")
-                    + (f" · plan {plan}" if plan else ""))
+                    + (f" · corrections {','.join(corrections)}" if corrections else ""))
             cells.append(cell)
             if reached:
                 failed_everywhere = False

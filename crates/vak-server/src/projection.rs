@@ -1201,6 +1201,40 @@ fn snapshot_inner(
                     }
                 }
                 for (index, block) in record.message.content.iter().enumerate() {
+                    if let ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error: false,
+                    } = block
+                        && tool_inputs
+                            .get(tool_use_id)
+                            .is_some_and(|(name, _)| name == "progress")
+                        && let Ok(progress) =
+                            serde_json::from_str::<vak_intent::progress::ProgressList>(content)
+                        && progress.validate().is_ok()
+                    {
+                        let mut item = progress_item(
+                            session_id,
+                            format!("progress-{current_turn}"),
+                            entry.ts.to_rfc3339(),
+                            tool_use_id.clone(),
+                            progress,
+                        );
+                        item.turn_id = turn_id.clone();
+                        if let Some(provenance) = &mut item.provenance {
+                            provenance.entry_id = Some(entry.id.clone());
+                            provenance.source = Some("session_ledger".into());
+                        }
+                        if let Some(existing) = timeline
+                            .items
+                            .iter_mut()
+                            .find(|existing| existing.id == item.id)
+                        {
+                            *existing = item;
+                        } else {
+                            timeline.items.push(item);
+                        }
+                    }
                     match block {
                         ContentBlock::Text { text } if !text.trim().is_empty() => {
                             if control.is_some() {
@@ -2376,6 +2410,18 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 },
             })
         }
+        AgentEvent::ProgressUpdated {
+            tool_use_id,
+            progress,
+        } => Some(OutputStreamEvent::ItemReplaced {
+            item: progress_item(
+                session_id,
+                "live-progress".into(),
+                now,
+                tool_use_id,
+                progress,
+            ),
+        }),
         AgentEvent::TurnStart { turn } => Some(OutputStreamEvent::ItemStarted {
             item: OutputItem {
                 placement: Default::default(),
@@ -2831,6 +2877,29 @@ pub(crate) fn apply_stream_event(timeline: &mut OutputTimeline, event: OutputStr
             }
         }
     }
+}
+
+fn progress_item(
+    session_id: &str,
+    id: String,
+    now: String,
+    tool_use_id: String,
+    progress: vak_intent::progress::ProgressList,
+) -> OutputItem {
+    let mut item = live_item(
+        session_id,
+        id,
+        now,
+        OutputRole::Tool,
+        OutputKind::Progress,
+        OutputStatus::Succeeded,
+        OutputContent::WorkProgress { progress },
+        String::new(),
+    );
+    if let Some(provenance) = &mut item.provenance {
+        provenance.tool_call_id = Some(tool_use_id);
+    }
+    item
 }
 
 #[allow(clippy::too_many_arguments)]

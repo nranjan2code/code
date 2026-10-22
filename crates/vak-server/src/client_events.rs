@@ -170,7 +170,7 @@ pub(crate) fn project(event: AgentEvent) -> Option<ClientEvent> {
         }),
         AgentEvent::CardDrafting { id, block } => Some(ClientEvent::CardDrafting { id, block }),
         // Recorded cards reach a client through the presentation stream.
-        AgentEvent::CardRecorded { .. } => None,
+        AgentEvent::CardRecorded { .. } | AgentEvent::ProgressUpdated { .. } => None,
         AgentEvent::ToolCallEnd {
             id,
             name,

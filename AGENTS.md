@@ -1265,7 +1265,7 @@ commit (invariant 30).
   the host. A form's own kind is its name; a pack adds kinds to a form
   (doc 91); nothing else does. Cards follow their ledger order.
   A model authors no layout:
-  there is no plan to declare, no deliverable to name, no placement and
+  there is no layout plan to declare, no deliverable to name, no placement and
   no end flag (removed 8.28.0; docs 86 and 97 are superseded). After a
   step of cards the model gets the next step and ends the turn by
   answering or stopping, as after any call. Nothing decides a card by words or counts:
@@ -1275,6 +1275,10 @@ commit (invariant 30).
   every other builder remains for history, inline fences and runtime cards.
   Markdown supplies interactive tables, lists, quotes, Mermaid and diff code.
   Offered tools are a subset of drawable forms, never their registry.
+  Optional `progress` appears in the top semicircle and right Details panel,
+  never the chat body. It is separate from cards: never require a call,
+  match a label to a card, refuse a card or change layout because of them.
+  The loop may remind once about explicitly open items; output always stands.
   A model calls an offered card tool by its own name
   and precise schema (`vak-core/src/presentation_tools.rs`;
   a shape
@@ -2162,10 +2166,14 @@ case pass. A failure is not fixed by adding a phrase to a list, a topic rule
 to a builder, or a threshold or cap to a loop; when one is found it is
 removed, and the change is verified with real turns.
 
+- Optional `progress` is model-declared, turn-local and unenforced: no word
+  list, intent reading or strands decides whether it is needed or complete.
+  Pending/in-progress states earn one typed reminder, never a refusal, forced
+  card or repeated completion gate. Done/dropped states and no list earn none.
 - Whether a request refers back, needs a tool or asks for a card is not read
   from its vocabulary. The planner carries the newest exchanges whole while
   they fit, by recency and measured size alone; the model writes the answer and the runtime checks receipts, without a
-  model-authored layout or plan.
+  model-authored layout or mandatory plan.
 - A loop that must end does so by a sequence of observed states, never a
   count: a failing tool is hinted, then shown its schema, then withdrawn for
   the turn; a tool the person declined is withdrawn for the turn at once;

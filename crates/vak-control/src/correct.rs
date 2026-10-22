@@ -46,6 +46,8 @@ pub enum Finding {
     UnresolvedFailure { tool: String, error: String },
     /// Background workers the turn started are still running.
     WorkersRunning { workers: Vec<String> },
+    /// Open states in the latest list explicitly declared this turn.
+    ProgressIncomplete { items: Vec<String> },
     /// Calls of these tools failed in two steps running: their schemas, and
     /// for a name that is no tool, the tools there are.
     SchemaShown {
@@ -75,6 +77,7 @@ impl Finding {
             Self::KeepWorking => Cause::KeepWorking,
             Self::UnresolvedFailure { .. } => Cause::UnresolvedFailure,
             Self::WorkersRunning { .. } => Cause::WorkersRunning,
+            Self::ProgressIncomplete { .. } => Cause::ProgressIncomplete,
             Self::SchemaShown { .. } | Self::Withdrawn { .. } | Self::Declined { .. } => {
                 Cause::Repair
             }
@@ -309,6 +312,10 @@ pub fn limit_reached(named: u64, ceiling: u64) -> String {
 /// reminder as the person's.
 pub fn render(finding: &Finding, marker: &str) -> String {
     match finding {
+        Finding::ProgressIncomplete { items } => format!(
+            "{marker}: Your latest progress list still has open work: {}. Finish it, update progress to drop anything intentionally left out with a reason, or answer with what you have. This is the only reminder; keep what you already produced.",
+            items.join("; ")
+        ),
         Finding::ToolCallFormat { reason } => format!(
             "{marker}: The inference provider could not parse the structured tool call it generated ({reason}). This was an output-format failure before any tool ran. Continue the same request from the admitted tool schemas and regenerate valid structured arguments. Do not repeat the malformed envelope. If the request needs several outputs, complete them with the admitted tools; if no tool call is needed, answer directly."
         ),

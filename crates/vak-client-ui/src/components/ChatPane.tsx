@@ -1166,7 +1166,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     if (!timeline) return null;
     const serverTurn = serverTurnFor(turns()[index]?.find((item) => item.kind === "user")?.entryId, timeline.items);
     if (!serverTurn) return null;
-    const items = timeline.items.filter((item) => item.turn_id === serverTurn);
+    const items = timeline.items.filter((item) => item.turn_id === serverTurn && item.content.type !== "work_progress");
     // A failed or capped run can still have a real file or card, plus its
     // failure receipt, without a final assistant message. Preserve that
     // partial work in conversation after the run settles.

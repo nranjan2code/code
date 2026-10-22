@@ -202,7 +202,7 @@ impl Tool for FakeEmitTableCard {
     }
 }
 
-fn text_msg(t: &str) -> AssistantMessage {
+pub(super) fn text_msg(t: &str) -> AssistantMessage {
     AssistantMessage {
         content: vec![ContentBlock::text(t)],
         stop_reason: StopReason::EndTurn,
@@ -217,7 +217,7 @@ fn text_msg(t: &str) -> AssistantMessage {
     }
 }
 
-fn tool_call_msg(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage {
+pub(super) fn tool_call_msg(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage {
     AssistantMessage {
         content: vec![ContentBlock::ToolUse {
             id: id.into(),
@@ -236,7 +236,7 @@ fn tool_call_msg(id: &str, name: &str, input: serde_json::Value) -> AssistantMes
     }
 }
 
-async fn build_agent(
+pub(super) async fn build_agent(
     dir: &tempfile::TempDir,
     session_id: &str,
     responses: Vec<AssistantMessage>,
@@ -285,7 +285,12 @@ async fn build_agent(
         {
             let mut cfg = AgentConfig::new("sys");
             cfg.presentation_rebuild = Some(Arc::new(|form, input| {
-                if !matches!(form, "sources" | "diff") {
+                let form = if form == "emit_chart_card" {
+                    "chart"
+                } else {
+                    form
+                };
+                if !matches!(form, "sources" | "diff" | "chart") {
                     return None;
                 }
                 Some(vak_tools::PresentationCard {
@@ -305,6 +310,7 @@ async fn build_agent(
             cfg.mode = vak_permission::Mode::FullAccess;
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
             cfg.tools = vec![
+                Arc::new(vak_tools::ProgressTool),
                 Arc::new(FakeEmitChartCard),
                 Arc::new(FakeEmitTableCard),
                 Arc::new(FailingFetch),
@@ -314,6 +320,11 @@ async fn build_agent(
             // As in production: a card tool the request did not predict is
             // deferred, so it is not declared until something loads it.
             cfg.tool_definitions = Some(vec![
+                vak_llm::ToolDefinition::new(
+                    "progress",
+                    vak_tools::ProgressTool.description(),
+                    vak_tools::ProgressTool.schema(),
+                ),
                 vak_llm::ToolDefinition::new(
                     "emit_chart_card",
                     "test stand-in",
@@ -348,7 +359,7 @@ async fn build_agent(
     (agent, requests)
 }
 
-async fn run(agent: &mut Agent) -> TurnOutcome {
+pub(super) async fn run(agent: &mut Agent) -> TurnOutcome {
     agent
         .run(
             "how did the market do",

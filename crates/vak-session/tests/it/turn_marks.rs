@@ -77,7 +77,7 @@ fn a_turn_set_aside_is_neither_cited_nor_sent_until_restored() {
     );
     append(&mut log, Message::user_text("try again"));
 
-    let cites = |log: &SessionLog| log.evidence_text(|_| true).contains("made-up");
+    let cites = |log: &SessionLog| log.evidence_text(|_, _| true).contains("made-up");
     // Even a plan that asks for the turn in full does not get it.
     let asks = WorkingSetPlan {
         per_turn: vec![(first.clone(), Fidelity::Full)],

@@ -5,6 +5,28 @@ C0 to C7 are built (§11 lists each, the last ending "with it C7 and doc 88's
 stages are done"). "Open in C6" (just below) lists what has not been checked
 against a hosted provider. The decisions the maintainer took at C0 are §12.
 
+## Optional progress reminder — 2026-10-22
+
+`progress` is an optional loop-owned tool. Each call replaces the whole list
+of labelled pending, in_progress, done or dropped items; dropped items carry
+a reason. Its successful result is ledgered like any tool result and replayed
+into the latest per-turn client view for the top Agent presence semicircle
+and right Details panel. It is not rendered in the conversation body. It never crosses a worker boundary.
+The loop keeps only this turn’s latest accepted list in memory for its decision;
+it does not replay a chain on the turn path.
+
+`Finding::ProgressIncomplete { items }` observes the explicitly pending or
+in-progress states at turn close, with `Cause::ProgressIncomplete` and the typed
+`ControlKind::ProgressReminder`. The existing Ladder tells once. Wording lives
+only in `vak_control::render`. The model may finish, drop work with a reason,
+or answer; after the reminder the answer stands even if the list stays open.
+The progress control never discards output, and no list produces no check. No intent reading,
+strands, request/answer word matching, card matching or layout rule participates.
+This is declared progress, not independent proof of completion or a source
+receipt. The tool declares that it does not look up material; citation checks
+and derived-from links use the existing `Tool::retrieves_evidence` contract,
+so a URL written in a progress label cannot ground a card.
+
 ### Open in C6 (found while building its first slice)
 
 - The hosted wires' named tool choice is written from each provider's

@@ -45,3 +45,5 @@ mod worker_cards_and_windows;
 mod worker_questions;
 mod worker_tail;
 mod workers;
+
+mod progress;

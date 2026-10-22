@@ -40,3 +40,8 @@ The maintainer then rejected retention of obsolete plan compatibility. The
 parser, answer outlines on timelines/pages, plan-only reply filters and
 correction tags are deleted. Stored ledgers are not rewritten. Generic card
 builders remain because inline fences and runtime cards still use them.
+
+Closeout: navigator and old-plan cleanup committed as `bc8d1f92b`, pushed to
+main. The full gate passed before that commit, and the subsequent combined
+progress/receipt-isolation full gate passed on 2026-10-23. The installed app
+remains the earlier 8.28.0 release; these follow-ups are unreleased.

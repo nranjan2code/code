@@ -93,7 +93,7 @@ SUBSYSTEMS = [
      ["/intent", "/config/intent"], ["intent"], ["47-commitment-kernel.md"]),
     ("control", "Control plane and judges",
      "Decision points, the correction ladder, receipts to verdicts",
-     ["crates/vak-control/src/**", "crates/vak-judge/src/**"],
+     ["crates/vak-control/src/**", "crates/vak-judge/src/**", "crates/vak-intent/src/progress.rs", "crates/vak-tools/src/progress.rs"],
      ["/config/control", "/sessions/{id}/decisions", "/runs/{id}/decisions"],
      [], ["88-control-plane.md", "86-model-plans-runtime-checks.md"]),
     ("commitments", "Commitments",

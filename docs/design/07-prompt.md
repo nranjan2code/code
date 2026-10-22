@@ -2,6 +2,13 @@
 Status: implemented in 2.0.0; current contract checked against the code on
 2026-10-14.
 
+## Seed diff — 2026-10-22: optional progress
+
+Added one sentence: “Use `progress` for work with several steps, update it as
+steps finish, and skip it for a direct answer.” The tool schema carries its
+contract; the seed adds no plan scaffold, examples, card linkage or completion
+word rules. The existing seed token-budget check remains authoritative.
+
 ## Historical reference ambiguity, 2026-10-21
 
 The code-owned capability contract separates finding earlier records from

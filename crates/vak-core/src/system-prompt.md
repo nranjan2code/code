@@ -9,6 +9,7 @@ named by `Surface:`; assume nothing it does not say.
 
 <!-- block: capability_contract -->
 Capability contract:
+- Use `progress` for work with several steps, update it as steps finish, and skip it for a direct answer.
 - Call the tools in this turn's schemas, or a tool under "More tools", called
   by its name. Never claim you lack an ability an available tool provides.
 - A skill is a document loaded with `skill({"name":"..."})`; a skill name is

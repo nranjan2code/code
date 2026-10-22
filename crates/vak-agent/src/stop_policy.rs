@@ -144,10 +144,9 @@ impl StopPolicy {
     /// Whether this turn may end, judged only from what the run observed:
     /// the explicit hold, an answer cut off inside a code fence, a tool
     /// failure the answer neither repaired nor reports, and code changed
-    /// after the last check ran. What the request asked for is the model's
-    /// declared plan, checked against receipts by `plan_check`
-    /// (docs/design/86-model-plans-runtime-checks.md); a guessed reading of
-    /// the request never holds a turn open.
+    /// after the last check ran. Optional progress is checked separately from
+    /// its declared states, with one reminder. A guessed reading of the
+    /// request never holds a turn open.
     pub fn evaluate_receipts(
         &self,
         prompt: &str,

@@ -361,6 +361,12 @@ pub enum AgentEvent {
         presentation_id: String,
         record: Box<vak_session::types::PresentationRecord>,
     },
+    /// A durable progress update: the whole replacement list is both the
+    /// change and its snapshot; surfaces never reconstruct it from text.
+    ProgressUpdated {
+        tool_use_id: String,
+        progress: vak_intent::progress::ProgressList,
+    },
     ToolCallEnd {
         id: String,
         name: String,
@@ -1325,7 +1331,7 @@ impl Approver for AutoDeny {
 
 /// Compact JSON preview of a tool input; capped so UI surfaces never
 /// absorb unbounded payloads.
-/// A call the loop answers itself (`plan`, a card, `recall`) is reported to
+/// A call the loop answers itself (`progress`, a card, `recall`) is reported to
 /// the surfaces like any tool's, so a run's steps show every call it made.
 async fn loop_call_started(events: &mpsc::Sender<AgentEvent>, call: &PendingToolCall) {
     let _ = events
@@ -1897,6 +1903,7 @@ impl Agent {
         self.effect_announced
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.ladder = vak_control::Ladder::default();
+        let mut progress: Option<vak_intent::progress::ProgressList> = None;
         *self
             .deliveries
             .lock()
@@ -3072,6 +3079,31 @@ impl Agent {
                         Err(error) => return nudge_write_failed(error),
                     }
                 }
+                if !self.ladder.told(Cause::ProgressIncomplete)
+                    && let Some(list) = &progress
+                    && !list.open_labels().is_empty()
+                {
+                    let rung = self.ladder.step(Cause::ProgressIncomplete, false);
+                    match self
+                        .hold(
+                            Finding::ProgressIncomplete {
+                                items: list.open_labels(),
+                            },
+                            rung,
+                            &events,
+                            turn,
+                        )
+                        .await
+                    {
+                        Ok(Held::Redo) => {
+                            turn += 1;
+                            continue;
+                        }
+                        Ok(Held::Stands) => {}
+                        Ok(Held::OutOfSteps) => return TurnOutcome::MaxTurnsReached,
+                        Err(error) => return nudge_write_failed(error),
+                    }
+                }
                 if let Some(finding) = self.workers_gate().await {
                     match self.hold(finding, Rung::Tell, &events, turn).await {
                         Ok(Held::Redo) => {
@@ -3441,6 +3473,22 @@ impl Agent {
                     ToolRunOutput::Ok(_) => None,
                 })
                 .collect();
+            let progress_updates: Vec<_> = call_issue_order
+                .iter()
+                .filter_map(|id| {
+                    let (name, input) = call_names.get(id).zip(call_inputs.get(id))?;
+                    if name != "progress"
+                        || !results
+                            .iter()
+                            .any(|(call, out)| call == id && matches!(out, ToolRunOutput::Ok(_)))
+                    {
+                        return None;
+                    }
+                    vak_tools::parse_progress_args(input)
+                        .ok()
+                        .map(|list| (id.clone(), list))
+                })
+                .collect();
             let blocks = results
                 .into_iter()
                 .map(|(id, out)| match out {
@@ -3489,6 +3537,16 @@ impl Agent {
                         error: LlmError::Network(format!("session write failed: {e}")),
                     };
                 }
+            }
+
+            for (tool_use_id, list) in progress_updates {
+                progress = Some(list.clone());
+                let _ = events
+                    .send(AgentEvent::ProgressUpdated {
+                        tool_use_id,
+                        progress: list,
+                    })
+                    .await;
             }
 
             if let Some(base) = &turn_tool_base {
@@ -3642,8 +3700,10 @@ impl Agent {
             if groups.is_empty() {
                 continue;
             }
-            let mut derived_from =
-                session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
+            let mut derived_from = session.retrieved_evidence_since(&turn_id, |name, input| {
+                self.tool_named(name)
+                    .is_some_and(|tool| tool.retrieves_evidence(input))
+            });
             derived_from.push(id.clone());
             let mut listed = Vec::new();
             let mut transfer_errors = Vec::new();
@@ -3777,8 +3837,10 @@ impl Agent {
                 // call or an earlier fence) — dropped from the projection.
                 continue;
             }
-            let derived_from =
-                session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
+            let derived_from = session.retrieved_evidence_since(&turn_id, |name, input| {
+                self.tool_named(name)
+                    .is_some_and(|tool| tool.retrieves_evidence(input))
+            });
             let record = vak_session::types::PresentationRecord {
                 placement: Default::default(),
                 turn_id,
@@ -6036,6 +6098,8 @@ impl Agent {
         // to use (AGENTS.md invariant 14).
         let (recall_calls, calls): (Vec<_>, Vec<_>) =
             calls.into_iter().partition(|call| call.name == "recall");
+        let (progress_calls, calls): (Vec<_>, Vec<_>) =
+            calls.into_iter().partition(|call| call.name == "progress");
         self.note_files_before(&calls).await;
         // Topics is answered by the loop against the TopicStore Core opened
         // for this admitted session. It never crosses the worker broker
@@ -6049,8 +6113,18 @@ impl Agent {
         let (card_calls, calls): (Vec<_>, Vec<_>) = calls
             .into_iter()
             .partition(|call| self.tool_presents_cards(&call.name));
-        let mut results =
-            Vec::with_capacity(recall_calls.len() + topic_calls.len() + card_calls.len());
+        let mut results = Vec::with_capacity(
+            recall_calls.len() + topic_calls.len() + card_calls.len() + progress_calls.len(),
+        );
+        for call in progress_calls {
+            loop_call_started(events, &call).await;
+            let output = match vak_tools::parse_progress_args(&call.input) {
+                Ok(_) => ToolRunOutput::Ok(call.input.to_string()),
+                Err(error) => ToolRunOutput::Err(Fault::Shape, error),
+            };
+            loop_call_ended(events, &call, &output).await;
+            results.push((call.id, output));
+        }
         for call in topic_calls {
             loop_call_started(events, &call).await;
             let output = self.resolve_topics(&call.input).await;
@@ -7108,11 +7182,10 @@ impl Agent {
         }
         // A card cites only pages something in this conversation retrieved
         // or was given.
-        let evidence = self
-            .session
-            .lock()
-            .await
-            .evidence_text(|name| !self.tool_presents_cards(name) && name != "recall");
+        let evidence = self.session.lock().await.evidence_text(|name, input| {
+            self.tool_named(name)
+                .is_some_and(|tool| tool.retrieves_evidence(input))
+        });
         let uncited = uncited_urls(input, &evidence);
         if !uncited.is_empty() {
             return (
@@ -7226,8 +7299,10 @@ impl Agent {
                 CallVerdict::Accepted,
             );
         }
-        let derived_from =
-            session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
+        let derived_from = session.retrieved_evidence_since(&turn_id, |name, input| {
+            self.tool_named(name)
+                .is_some_and(|tool| tool.retrieves_evidence(input))
+        });
         let record = vak_session::types::PresentationRecord {
             placement: vak_session::types::CardPlacement::default(),
             turn_id,
@@ -9188,6 +9263,7 @@ fn kind_of(cause: Cause) -> vak_intent::control::ControlKind {
         Cause::TopicMismatch => ControlKind::TopicMismatchCheck,
         Cause::Repair => ControlKind::RepairDirective,
         Cause::ToolCallRepair => ControlKind::ToolCallRepair,
+        Cause::ProgressIncomplete => ControlKind::ProgressReminder,
     }
 }
 

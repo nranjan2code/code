@@ -125,7 +125,14 @@ export interface PresentationDocument {
   diagnostics: string[];
 }
 
+export interface WorkProgressItem {
+  label: string;
+  state: "pending" | "in_progress" | "done" | "dropped";
+  reason: string | null;
+}
+
 export type OutputContent =
+  | { type: "work_progress"; progress: { items: WorkProgressItem[] } }
   | { type: "document"; document: PresentationDocument }
   | { type: "information"; label: string; detail?: string | null }
   | { type: "ability"; event: "used" | "failed" | "learned" | "improved" | "waiting" | "offered" | "turned_off"; skill: string; version?: number | null }

@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import { latestProgress } from '../src/workProgress.ts';
+import { detailTurns } from '../src/turnDetails.ts';
+const list=state=>({items:[{label:'Read the material',state,reason:state==='dropped'?'Unavailable':null}]});
+const progress=(id,turn,state)=>({id,turn_id:turn,role:'tool',kind:'progress',status:'succeeded',timestamp:'now',actions:[],fallback_text:'',content:{type:'work_progress',progress:list(state)}});
+assert.equal(latestProgress([]),undefined);
+assert.deepEqual(latestProgress([progress('p1','a','pending'),progress('p2','a','done')]),list('done').items);
+const user=id=>({id,turn_id:id,role:'user',kind:'message',content:{type:'document',document:{source_markdown:id}},provenance:{entry_id:id},actions:[],fallback_text:id,timestamp:'now'});
+const timeline={items:[user('a'),progress('p1','a','dropped'),user('b'),{...progress('live-progress','live-turn-1','in_progress'),provenance:{source:'live_event'}}]};
+const turns=detailTurns(timeline,[{kind:'user',text:'a',entryId:'a'},{kind:'user',text:'b',entryId:'b'}],true,[]);
+assert.deepEqual(latestProgress(turns.find(turn=>turn.id==='a').items),list('dropped').items);
+assert.deepEqual(latestProgress(turns.find(turn=>turn.id==='b').items),list('in_progress').items);
+assert.equal(turns.find(turn=>turn.id==='b').steps.length,0,'a declared list is not a blank activity step');
+console.log('progress list replacement and Details turn boundaries pass');

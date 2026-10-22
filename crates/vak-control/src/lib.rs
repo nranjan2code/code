@@ -751,6 +751,8 @@ pub enum Cause {
     TopicMismatch,
     Repair,
     ToolCallRepair,
+    /// The optional progress list still has open items at turn close.
+    ProgressIncomplete,
     /// The answer ends inside an unclosed block.
     Truncated,
     /// Files changed after the last check ran.

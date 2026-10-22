@@ -70,10 +70,12 @@ pub enum ControlKind {
     /// The provider rejected a generated structured tool call before it
     /// reached the tool broker; regenerate it against the admitted schema.
     ToolCallRepair,
+    /// Once-only reminder about explicitly declared, unfinished progress.
+    ProgressReminder,
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 15] = [
+    pub const ALL: [ControlKind; 16] = [
         ControlKind::StopHook,
         ControlKind::StopGuard,
         ControlKind::KeepWorking,
@@ -89,6 +91,7 @@ impl ControlKind {
         ControlKind::TopicMismatchCheck,
         ControlKind::RepairDirective,
         ControlKind::ToolCallRepair,
+        ControlKind::ProgressReminder,
     ];
 
     /// The literal the message body begins with, for the model's benefit.
@@ -109,6 +112,7 @@ impl ControlKind {
             ControlKind::SteeringDrift => "[steering-drift]",
             ControlKind::TopicMismatchCheck => "[topic-mismatch]",
             ControlKind::RepairDirective => "[repair-directive]",
+            ControlKind::ProgressReminder => "[progress-reminder]",
             ControlKind::ToolCallRepair => "[tool-call-repair]",
         }
     }
@@ -134,7 +138,10 @@ impl ControlKind {
     /// produced (docs/design/88-control-plane.md §3). The person's hold is
     /// no fault: the step after it goes on with the work.
     pub const fn repairs(self) -> bool {
-        !matches!(self, ControlKind::KeepWorking)
+        !matches!(
+            self,
+            ControlKind::KeepWorking | ControlKind::ProgressReminder
+        )
     }
 
     /// Whether the preceding assistant text is an internal draft that should

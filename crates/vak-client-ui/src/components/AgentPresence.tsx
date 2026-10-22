@@ -1,5 +1,7 @@
+import { latestProgress } from "../workProgress";
+import { serverTurnFor } from "../turnPairing";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { agentForSession, setAgentPickerOpen, setAgentPickerTab } from "../store";
+import { itemsOf, presentationOf, agentForSession, setAgentPickerOpen, setAgentPickerTab } from "../store";
 import * as api from "../api";
 import AgentMark from "./AgentMark";
 
@@ -13,6 +15,16 @@ export default function AgentPresence(props: { sessionId: string | null; working
     c.episodes.some((episode) => episode.session_id === props.sessionId && !episode.ended_at),
   ));
   const stages = createMemo(() => {
+    const timeline = presentationOf(props.sessionId);
+    const request = itemsOf(props.sessionId).findLast(item => item.kind === "user");
+    const turn = serverTurnFor(request?.kind === "user" ? request.entryId : undefined, timeline?.items ?? []);
+    const progress = props.working ? latestProgress((timeline?.items ?? []).filter(item =>
+      item.turn_id === turn || item.provenance?.source === "live_event")) : undefined;
+    if (progress?.length) return progress.map(item => ({
+      label: item.label,
+      state: item.state === "done" ? "done" as const : item.state === "dropped" ? "dropped" as const : item.state === "in_progress" ? "active" as const : "next" as const,
+      detail: item.state === "dropped" ? `Left out · ${item.reason}` : item.state === "done" ? "Done" : item.state === "in_progress" ? "In progress" : "Waiting",
+    }));
     const live = workProjection();
     if (live?.contract.items.length) {
       const done = live.contract.items.filter((item) => ["succeeded", "skipped"].includes(live.items[item.item_id]?.status ?? ""));
@@ -66,11 +78,13 @@ export default function AgentPresence(props: { sessionId: string | null; working
   };
   const point = (index: number, list = stages()) => {
     const stage = list[index];
-    const doneCount = list.filter((item) => item.state === "done").length;
+    const doneCount = list.filter((item) => item.state === "done" || item.state === "dropped").length;
     const nextCount = list.filter((item) => item.state === "next" || item.state === "blocked").length;
-    let angle = Math.PI / 2;
-    if (stage?.state === "done") {
-      const within = list.slice(0, index).filter((item) => item.state === "done").length;
+    const activeCount = list.filter(item => item.state === "active").length;
+    const activeIndex = list.slice(0, index).filter(item => item.state === "active").length;
+    let angle = Math.PI / 2 + ((activeIndex + 1) / (activeCount + 1) - 0.5) * Math.PI / 2;
+    if (stage?.state === "done" || stage?.state === "dropped") {
+      const within = list.slice(0, index).filter((item) => item.state === "done" || item.state === "dropped").length;
       angle = Math.PI - ((within + 1) / (doneCount + 1)) * Math.PI / 2;
     } else if (stage?.state === "next" || stage?.state === "blocked") {
       const within = list.slice(0, index).filter((item) => item.state === "next" || item.state === "blocked").length;
@@ -98,8 +112,8 @@ export default function AgentPresence(props: { sessionId: string | null; working
         <span class="agent-presence-chevron" aria-hidden="true">⌄</span>
       </button>
       <Show when={props.working && hovered() && stages().length > 0}>
-        <div class="commitment-wheel-popover" role="group" aria-label="Commitment progress">
-          <svg class="commitment-wheel" viewBox="0 0 148 82" aria-label="Upcoming commitments start on the right, active work is centered, and completed items move left along an arc below">
+        <div class="commitment-wheel-popover" role="group" aria-label="Work progress">
+          <svg class="commitment-wheel" viewBox="0 0 148 82" aria-label="Waiting steps are on the right, active work is centered, and finished or dropped steps move left">
             <path class="commitment-wheel-track" d="M 138 8 A 64 64 0 0 1 10 8" />
             <For each={stages()}>{(stage, index) => {
               const position = () => point(index());

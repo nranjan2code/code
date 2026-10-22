@@ -10,6 +10,14 @@ opened from a guessed horizon) and the card-completeness self-audit in doc
 30-render-architecture §30.1. Doc 47's safety floor (intent narrows, never
 widens; invariant 32) and its control plane stay as they are.
 
+## What returned — 2026-10-22
+
+Only optional visible progress and a once-only reminder for explicitly open
+items returned, through the separate `progress` tool and doc 88’s correction
+ladder. No mandatory plan, deliverable/card matching, layout, forced tool call
+or extra completeness-model call returned. This document remains superseded;
+the obsolete plan parser, outline wire and plan-only control tags are removed.
+
 ## Evidence questions and completion (2026-10-19)
 
 A plan entry may declare `questions`, an array of evidence questions in the
