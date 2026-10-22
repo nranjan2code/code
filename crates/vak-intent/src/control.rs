@@ -43,13 +43,13 @@ pub enum ControlKind {
     /// The answer restated a card that a tool call had already shown.
     DuplicateCardCheck,
     /// Recorded history only: no longer written. It asked for a card where
-    /// a request-vocabulary guess expected one (replaced by `PlanCheck`,
+    /// a request-vocabulary guess expected one (retired,
     /// docs/design/86-model-plans-runtime-checks.md).
     PresentationCheck,
     /// Recorded history only: no longer written.
     CardCompletionCheck,
     /// Recorded history only: no longer written. It asked the model to audit
-    /// its own cards against the request (replaced by `PlanCheck`).
+    /// its own cards against the request (retired).
     CardCompletenessCheck,
     /// Recorded history only: no longer written (control-plane C5). It read
     /// temporal words in the request.
@@ -67,16 +67,13 @@ pub enum ControlKind {
     /// Correctable tool failures went unrepaired across steps: the admitted
     /// schema of each failing tool, re-surfaced with the retries left.
     RepairDirective,
-    /// Deliverables the model's own plan named that the turn has not
-    /// produced (docs/design/86-model-plans-runtime-checks.md §2.2).
-    PlanCheck,
     /// The provider rejected a generated structured tool call before it
     /// reached the tool broker; regenerate it against the admitted schema.
     ToolCallRepair,
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 16] = [
+    pub const ALL: [ControlKind; 15] = [
         ControlKind::StopHook,
         ControlKind::StopGuard,
         ControlKind::KeepWorking,
@@ -91,7 +88,6 @@ impl ControlKind {
         ControlKind::SteeringDrift,
         ControlKind::TopicMismatchCheck,
         ControlKind::RepairDirective,
-        ControlKind::PlanCheck,
         ControlKind::ToolCallRepair,
     ];
 
@@ -113,7 +109,6 @@ impl ControlKind {
             ControlKind::SteeringDrift => "[steering-drift]",
             ControlKind::TopicMismatchCheck => "[topic-mismatch]",
             ControlKind::RepairDirective => "[repair-directive]",
-            ControlKind::PlanCheck => "[plan-check]",
             ControlKind::ToolCallRepair => "[tool-call-repair]",
         }
     }
@@ -143,8 +138,8 @@ impl ControlKind {
     }
 
     /// Whether the preceding assistant text is an internal draft that should
-    /// be hidden after this control. A plan check keeps what was produced:
-    /// it asks only for what is missing.
+    /// be hidden after this control. Controls that only request more work
+    /// keep what was already produced.
     pub const fn discards_assistant_draft(self) -> bool {
         self.retries_answer() || matches!(self, ControlKind::CardCompletenessCheck)
     }

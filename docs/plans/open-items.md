@@ -1,5 +1,16 @@
 ## Conversation continuity: the filled window (2026-10-22)
 
+- [x] Remove the old plan parser, outline wire/projection, plan-only reply
+  filters and correction tags; no backward compatibility is required
+  (maintainer decision, 2026-10-22).
+
+- [x] Replace plan-dependent turn navigator labels with recorded answer
+  headings/card titles and a turn-number fallback; remove the obsolete plan fallback.
+  Browser checked at desktop/mobile sizes in light/dark themes
+  (docs/audits/turn-navigator-labels-2026-10-22.md).
+- [ ] Qualify the answer-title navigator fix in installed native WebKit; it
+  is unreleased after 8.28.0.
+
 - [x] Trace clarification chains against static and dynamic prompts. One
   carried exchange can omit the original subject, and subject-only search
   cannot find a subject the model no longer has.

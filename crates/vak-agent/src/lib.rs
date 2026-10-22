@@ -9175,8 +9175,7 @@ fn kind_of(cause: Cause) -> vak_intent::control::ControlKind {
         | Cause::Truncated
         | Cause::VerificationStale
         | Cause::UnresolvedFailure
-        | Cause::WorkersRunning
-        | Cause::TopicsPlacement => ControlKind::StopGuard,
+        | Cause::WorkersRunning => ControlKind::StopGuard,
         Cause::Grounding => ControlKind::GroundingCheck,
         Cause::Fence => ControlKind::FenceCheck,
         Cause::DuplicateCard => ControlKind::DuplicateCardCheck,
@@ -9188,7 +9187,6 @@ fn kind_of(cause: Cause) -> vak_intent::control::ControlKind {
         Cause::SteeringDrift => ControlKind::SteeringDrift,
         Cause::TopicMismatch => ControlKind::TopicMismatchCheck,
         Cause::Repair => ControlKind::RepairDirective,
-        Cause::Plan => ControlKind::PlanCheck,
         Cause::ToolCallRepair => ControlKind::ToolCallRepair,
     }
 }

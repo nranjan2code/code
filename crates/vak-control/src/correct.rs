@@ -475,8 +475,8 @@ mod tests {
         assert!(ladder.reframed(Cause::Repair));
         ladder.passed(Cause::Repair);
         assert!(!ladder.reframed(Cause::Repair));
-        assert_eq!(ladder.step(Cause::Plan, false), Rung::Tell);
-        assert!(ladder.told(Cause::Plan) && !ladder.told(Cause::EmptyStep));
+        assert_eq!(ladder.step(Cause::Grounding, false), Rung::Tell);
+        assert!(ladder.told(Cause::Grounding) && !ladder.told(Cause::EmptyStep));
         ladder.passed(Cause::Fence);
         assert_eq!(ladder.step(Cause::Fence, false), Rung::Tell);
     }

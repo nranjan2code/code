@@ -8,8 +8,7 @@ export function mergeTurnSnapshot(current: OutputTimeline | null, incoming: Outp
   const turns = new Set(incoming.items.map(item => item.turn_id));
   const retained = current.items.filter(item => !turns.has(item.turn_id)
     && !item.turn_id.startsWith("live") && item.provenance?.source !== "live_event");
-  return { ...incoming, items: [...retained, ...incoming.items],
-    answers: [...(current.answers ?? []).filter(answer => !turns.has(answer.turn_id)), ...(incoming.answers ?? [])] };
+  return { ...incoming, items: [...retained, ...incoming.items] };
 }
 
 /**

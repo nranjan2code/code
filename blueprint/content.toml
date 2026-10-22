@@ -168,7 +168,7 @@ A small kernel behind a versioned API (ledger and objects, runs, effects, \
 triggers, cursors, grants, permission, provenance, sandbox and worker, \
 telemetry); runtime services over it (the model wire, context planner, tool \
 registry, MCP pool, catalog, config); the current agent loop as one \
-replaceable program, with cards, the plan check and the ladder as modules it \
+replaceable program, with cards and the ladder as modules it \
 opts into; the apps (Office and PDF, mail and calendar, intake, voice, the \
 Library, the gateway) on the kernel; and every surface a client of the same \
 API.

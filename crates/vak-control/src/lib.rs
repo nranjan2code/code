@@ -750,8 +750,6 @@ pub enum Cause {
     SteeringDrift,
     TopicMismatch,
     Repair,
-    /// Recorded history: the plan check, removed in 8.28.0.
-    Plan,
     ToolCallRepair,
     /// The answer ends inside an unclosed block.
     Truncated,
@@ -763,8 +761,6 @@ pub enum Cause {
     UnresolvedFailure,
     /// Workers the turn started are still running.
     WorkersRunning,
-    /// Recorded history: the Topics placement hold, removed in 8.28.0.
-    TopicsPlacement,
 }
 
 /// The rung of the correction ladder (doc 88 §5).
@@ -866,7 +862,7 @@ mod tests {
     fn every_point_serialises_inside_its_tag() {
         for choice in [
             Choice::AcceptAnswer(AnswerVerdict::Accepted),
-            Choice::AcceptAnswer(AnswerVerdict::Held(Cause::Plan)),
+            Choice::AcceptAnswer(AnswerVerdict::Held(Cause::EmptyStep)),
             Choice::Correct(Correction {
                 cause: Cause::EmptyStep,
                 rung: Rung::Tell,

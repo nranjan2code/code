@@ -8555,110 +8555,7 @@ fn rejected_draft_entry_ids(
             ids.insert(prev.entry_id.clone());
         }
     }
-    // Text written in reply to a plan check that followed an answer is
-    // addressed to the runtime: the person keeps the answer they were given
-    // (docs/design/86-model-plans-runtime-checks.md §2.2).
-    let mut answered = false;
-    let mut replying = false;
-    for message in transcript {
-        if message.message.role == vak_llm::Role::User && message.control.is_none() {
-            answered = false;
-            replying = false;
-        } else if message.control == Some(vak_intent::control::ControlKind::PlanCheck) {
-            replying = answered;
-        } else if message.message.role == vak_llm::Role::Assistant
-            && message.message.content.iter().any(
-                |block| matches!(block, vak_llm::ContentBlock::Text { text } if !text.trim().is_empty()),
-            )
-        {
-            let text_only = !message
-                .message
-                .content
-                .iter()
-                .any(|block| matches!(block, vak_llm::ContentBlock::ToolUse { .. }));
-            if replying && text_only {
-                ids.insert(message.entry_id.clone());
-                replying = false;
-            } else {
-                answered = true;
-            }
-        }
-    }
     ids
-}
-
-#[cfg(test)]
-mod transcript_reply_tests {
-    use super::rejected_draft_entry_ids;
-    use vak_intent::control::ControlKind;
-    use vak_llm::{ContentBlock, Message};
-
-    fn entry(
-        id: &str,
-        message: Message,
-        control: Option<ControlKind>,
-    ) -> vak_session::TranscriptMessage {
-        vak_session::TranscriptMessage {
-            entry_id: id.into(),
-            message,
-            control,
-            context: false,
-            author_id: None,
-            author_name: None,
-            attachments: Vec::new(),
-            artifacts: Vec::new(),
-            typed: None,
-            removed: false,
-            scheduled: None,
-            at: chrono::Utc::now(),
-        }
-    }
-
-    /// A text reply to a plan check that followed an answer is left out of
-    /// the transcript; the answer stays.
-    #[test]
-    fn a_reply_to_a_plan_check_after_an_answer_is_left_out() {
-        let transcript = vec![
-            entry("u", Message::user_text("plan a trip"), None),
-            entry(
-                "a",
-                Message::assistant(vec![ContentBlock::text("the answer")]),
-                None,
-            ),
-            entry(
-                "c",
-                Message::user_text("[plan-check]: missing"),
-                Some(ControlKind::PlanCheck),
-            ),
-            entry(
-                "r",
-                Message::assistant(vec![ContentBlock::text("all shown")]),
-                None,
-            ),
-        ];
-        let left_out = rejected_draft_entry_ids(&transcript);
-        assert!(left_out.contains("r"), "{left_out:?}");
-        assert!(!left_out.contains("a"), "{left_out:?}");
-    }
-
-    /// With no answer before the plan check, the reply is the answer.
-    #[test]
-    fn a_reply_to_a_plan_check_with_no_answer_before_it_stays() {
-        let transcript = vec![
-            entry("u", Message::user_text("plan a trip"), None),
-            entry(
-                "c",
-                Message::user_text("[plan-check]: missing"),
-                Some(ControlKind::PlanCheck),
-            ),
-            entry(
-                "r",
-                Message::assistant(vec![ContentBlock::text("the answer")]),
-                None,
-            ),
-        ];
-        assert!(rejected_draft_entry_ids(&transcript).is_empty());
-    }
 }
 
 /// The JSON transcript, built once for the live and the historical path.
@@ -29020,7 +28917,6 @@ mod saved_page_resource_authorization_tests {
                 card_state: None,
                 fallback_text: String::new(),
             }],
-            None,
             "Page".into(),
         );
         let page_id =

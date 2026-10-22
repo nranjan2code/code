@@ -16,5 +16,9 @@ for(let i=1;i<=100;i++){
 }
 store.setSessions([{session_id:sid,agent:{id:"vak",name:"Vakyartha",revision:1},title:"hi",updated_at:"2026-10-22T00:00:00Z"}]);
 store.setActiveId(sid);store.hydrateFromTranscript(sid,messages,entries,false);
-store.hydrateFromPresentation(sid,{schema_version:2,session_id:sid,items,diagnostics:[],answers:items.map((item,i)=>({turn_id:item.turn_id,sections:[{name:`Reading club result ${i+1}`,form:'text',items:[]}]}))});
+const answerItems = items.map((item, i) => ({
+ id: `answer-item-${i+1}`, turn_id: item.turn_id, role: 'assistant', kind: 'outcome',
+ content: {type:'document',document:{schema_version:2,source_markdown:`# Reading club result ${i+1}`,blocks:[{type:'heading',id:`heading-${i+1}`,level:1,content:[{type:'text',text:`Reading club result ${i+1}`}]}],coverage:[],metadata:{},diagnostics:[]}}
+} as OutputItem));
+store.hydrateFromPresentation(sid,{schema_version:2,session_id:sid,items:items.flatMap((item,i)=>[item,answerItems[i]]),diagnostics:[]});
 render(()=><div style={{height:'100vh',display:'flex'}}>{params.has('sidebar')&&<Sidebar/>}<div style={{flex:1,display:'flex',"flex-direction":'column',"min-width":0}}><ChatPane sessionId={sid}/></div></div>,document.getElementById('root')!);

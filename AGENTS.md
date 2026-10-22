@@ -1756,8 +1756,8 @@ crates/vak-intent    the decision layer (docs/design/47-commitment-kernel.md):
                      silence (docs/design/68-context-engine.md §7).
                      `control.rs` is the single `ControlKind` vocabulary for
                      every runtime-authored nudge, including
-                     `EmptyStep`/`SteeringDrift`; a kind no longer written
-                     stays as recorded history.
+                     `EmptyStep`/`SteeringDrift`. The removed plan has no
+                     parser, outline or correction-tag compatibility path.
 crates/vak-commit    durable commitments (docs/design/47): lifecycle, the
                      satisfaction lattice, the append-only ledger + projection,
                      and the deterministic portfolio scheduler. Reuses

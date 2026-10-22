@@ -27,12 +27,11 @@ pub use adaptive::markdown as adaptive_presentation_markdown;
 pub use adaptive::project as project_adaptive_presentation;
 pub use adaptive::project_preferred as project_preferred_adaptive_presentation;
 pub use presentation::{
-    AnswerOutline, AnswerSection, ArtifactRef, ArtifactStatus, CalloutTone, Citation,
-    DocumentBlock, DocumentCoverage, DocumentCoverageDisposition, InlineNode, OutputContent,
-    OutputItem, OutputKind, OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent,
-    OutputStreamFrame, OutputTimeline, PRESENTATION_SCHEMA_VERSION, PresentationDocument,
-    ResultOutcome, SurfaceCapabilities, TableAlignment, VersionFile, compile_markdown, inline_text,
-    safe_link,
+    ArtifactRef, ArtifactStatus, CalloutTone, Citation, DocumentBlock, DocumentCoverage,
+    DocumentCoverageDisposition, InlineNode, OutputContent, OutputItem, OutputKind,
+    OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputStreamFrame,
+    OutputTimeline, PRESENTATION_SCHEMA_VERSION, PresentationDocument, ResultOutcome,
+    SurfaceCapabilities, TableAlignment, VersionFile, compile_markdown, inline_text, safe_link,
 };
 pub use skills::{
     FORMS, PRESENTATION_SKILL_API, PresentationSkillManifest, SkillError, SkillRegistry,
@@ -626,7 +625,6 @@ impl DeliveryPacket {
             items: Vec::new(),
             diagnostics: Vec::new(),
             goal: None,
-            answers: Vec::new(),
         });
         for (index, output) in cards.into_iter().enumerate() {
             timeline.items.push(OutputItem {
@@ -866,7 +864,6 @@ fn presentation_for_job(job: &DeliveryJob) -> Option<OutputTimeline> {
         items,
         diagnostics,
         goal: None,
-        answers: Vec::new(),
     })
 }
 

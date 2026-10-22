@@ -16,7 +16,7 @@ export default function AnswerViewer(props: ViewerProps) {
     const timeline = answer ? presentationOf(answer.sessionId) : null;
     if (!answer || !timeline) return null;
     const items = answerGroupItems(timeline.items, answer.turnId, answer.itemIds);
-    return items.length > 0 ? { ...timeline, items, goal: null, answers: timeline.answers?.filter((outline) => outline.turn_id === answer.turnId) } : null;
+    return items.length > 0 ? { ...timeline, items, goal: null } : null;
   };
   return (
     <Show when={turn()} fallback={<p class="canvas-card-gone" role="status">This answer is no longer in the conversation.</p>}>

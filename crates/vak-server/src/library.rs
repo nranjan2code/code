@@ -2967,7 +2967,6 @@ mod tests {
                 card_state: None,
                 fallback_text: String::new(),
             }],
-            None,
             "Page".into(),
         );
         let refs = page_resource_refs(&state, &page, Some(&source_space), None).unwrap();

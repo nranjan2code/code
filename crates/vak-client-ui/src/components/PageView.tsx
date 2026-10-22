@@ -2,14 +2,13 @@ import { pageValuesKey } from "./AnswerValuesScope";
 import PresentationTimelineView, { InCanvasContext } from "./PresentationRenderer";
 import { PresentationPageResourceContext } from "./cards/shared";
 import * as api from "../api";
-import type { AnswerOutline, OutputItem } from "../types";
+import type { OutputItem } from "../types";
 
 /** A page: an answer kept out of its conversation (docs/design/98 §12). */
 export interface Page {
   format: "vak-page";
   title: string;
   items: OutputItem[];
-  outline?: AnswerOutline | null;
   text: string;
   resource_context?: { artifact: string; resources: Record<string, { artifact: string; version: string }> };
 }
@@ -35,7 +34,6 @@ export default function PageView(props: { page: Page; versionId: string; resourc
     session_id: "",
     items: props.page.items,
     diagnostics: [],
-    answers: props.page.outline ? [props.page.outline] : [],
   });
   return (
     <div class="answer-in-canvas">

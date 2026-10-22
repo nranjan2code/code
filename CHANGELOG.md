@@ -1,3 +1,8 @@
+## Unreleased
+
+- Turn navigator previews use the recorded answer heading or card title.
+  Untitled turns show their turn number instead of the raw request; obsolete plan projection has been removed. Agent subtitles use the same answer titles.
+
 ## 8.28.0 — 2026-10-22 — Markdown answers and runtime cards
 
 - The runtime adds source receipts and actual file diffs after the answer,

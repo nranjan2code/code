@@ -37,7 +37,6 @@ export class HistoryPages {
     if (!latest) return null;
     const messages = new Map<string, { message: Message; entry: TranscriptEntryMeta }>();
     const items = new Map<string, OutputTimeline["items"][number]>();
-    const answers = new Map<string, NonNullable<OutputTimeline["answers"]>[number]>();
     const aside = new Set<string>();
     for (const page of this.pages) {
       for (const [index, message] of page.transcript.messages.entries()) {
@@ -45,10 +44,9 @@ export class HistoryPages {
         if (entry) messages.set(entry.entry_id, { message, entry });
       }
       for (const item of page.presentation.items) items.set(item.id, item);
-      for (const answer of page.presentation.answers ?? []) answers.set(answer.turn_id, answer);
       for (const turn of page.transcript.set_aside ?? []) aside.add(turn);
     }
     return { messages: [...messages.values()].map(row => row.message), entries: [...messages.values()].map(row => row.entry),
-      presentation: { ...latest.presentation, items: [...items.values()], answers: [...answers.values()] }, setAside: [...aside] };
+      presentation: { ...latest.presentation, items: [...items.values()] }, setAside: [...aside] };
   }
 }

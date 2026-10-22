@@ -920,9 +920,8 @@ export function hydrateHistoryPage(id: string, page: LoadedHistory, direction: "
   hydrateSetAside(id, merged.setAside);
   const current = presentationBySession[id];
   const liveItems = isRunning(id) ? current?.items.filter(item => item.turn_id.startsWith("live") || item.provenance?.source === "live_event") ?? [] : [];
-  const liveTurns = new Set(liveItems.map(item => item.turn_id));
   const presentation = liveItems.length && current
-    ? mergePresentationSnapshot(merged.presentation, { ...current, cursor: "live:history-merge", items: liveItems, answers: current.answers?.filter(answer => liveTurns.has(answer.turn_id)) })
+    ? mergePresentationSnapshot(merged.presentation, { ...current, cursor: "live:history-merge", items: liveItems })
     : merged.presentation;
   setPresentationBySession(id, reconcile(presentation, { key: "id" }));
   presentationIndices.delete(id);
@@ -1082,7 +1081,7 @@ export function hydrateFromPresentation(id: string, timeline: OutputTimeline) {
     const loaded = window.itemIds();
     const items = current.items.filter(item => loaded.has(item.id));
     const turns = new Set(items.map(item => item.turn_id));
-    current = { ...current, items, answers: current.answers?.filter(answer => turns.has(answer.turn_id)) };
+    current = { ...current, items };
   }
   const merge = window ? mergeTurnSnapshot : mergePresentationSnapshot;
   setPresentationBySession(id, reconcile(merge(current, timeline), { key: "id" }));

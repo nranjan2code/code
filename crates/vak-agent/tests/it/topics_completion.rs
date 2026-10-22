@@ -178,27 +178,6 @@ async fn run(agent: &mut Agent) -> TurnOutcome {
     result
 }
 
-async fn rungs(agent: &Agent) -> Vec<vak_control::Rung> {
-    agent
-        .session
-        .lock()
-        .await
-        .explanation()
-        .into_iter()
-        .filter_map(|(_, step)| match step {
-            vak_session::log::TurnStep::Decision(decision) => match &decision.choice {
-                vak_control::Choice::Correct(c)
-                    if c.cause == vak_control::Cause::TopicsPlacement =>
-                {
-                    Some(c.rung)
-                }
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect()
-}
-
 #[tokio::test]
 async fn an_answer_with_no_placement_stands_without_a_correction() {
     let dir = tempfile::tempdir().unwrap();
@@ -208,7 +187,6 @@ async fn an_answer_with_no_placement_stands_without_a_correction() {
         matches!(outcome, TurnOutcome::Completed { response } if response.text_content() == "The summary.")
     );
     assert_eq!(*required.lock().unwrap(), vec![None]);
-    assert!(rungs(&agent).await.is_empty());
     assert!(store.snapshot().unwrap().placements.is_empty());
 }
 
@@ -234,7 +212,6 @@ async fn simple_answer_can_explicitly_remain_ungrouped() {
     assert!(snapshot.topics.is_empty());
     assert_eq!(snapshot.placements.len(), 1);
     assert!(snapshot.placements[0].topic_ids.is_empty());
-    assert!(rungs(&agent).await.is_empty());
 }
 
 #[tokio::test]
@@ -254,7 +231,6 @@ async fn automatic_off_and_human_unassignment_are_not_overridden() {
             TurnOutcome::Completed { .. }
         ));
         assert_eq!(required.lock().unwrap().len(), 1);
-        assert!(rungs(&agent).await.is_empty());
     }
 }
 
@@ -277,7 +253,6 @@ async fn failed_organisation_does_not_hold_the_requested_answer() {
         TurnOutcome::Completed { .. }
     ));
     assert_eq!(required.lock().unwrap().len(), 2);
-    assert!(rungs(&agent).await.is_empty());
 }
 
 #[tokio::test]

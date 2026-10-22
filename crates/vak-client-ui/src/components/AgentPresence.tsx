@@ -2,7 +2,6 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { agentForSession, setAgentPickerOpen, setAgentPickerTab } from "../store";
 import * as api from "../api";
 import AgentMark from "./AgentMark";
-import { livePlan } from "../livePlan";
 
 export default function AgentPresence(props: { sessionId: string | null; working: boolean }) {
   const [hovered, setHovered] = createSignal(false);
@@ -29,17 +28,6 @@ export default function AgentPresence(props: { sessionId: string | null; working
         ...waiting.map((item) => ({ label: item.title, state: "blocked" as const, detail: live.items[item.item_id]?.blocker || live.items[item.item_id]?.status.replaceAll("_", " ") || "Waiting" })),
         ...upcoming.map((item) => ({ label: item.title, state: "next" as const, detail: "Up next" })),
       ];
-    }
-    // The running turn's plan: parts its cards delivered move left, the
-    // next is centred, the rest wait on the right (docs/design/96).
-    const plan = props.working ? livePlan(props.sessionId) : undefined;
-    if (plan?.length) {
-      const next = plan.findIndex((part) => !part.delivered);
-      return plan.map((part, index) => ({
-        label: part.label,
-        state: part.delivered ? "done" as const : index === next ? "active" as const : "next" as const,
-        detail: part.delivered ? "Shown" : index === next ? "Preparing" : "Up next",
-      }));
     }
     const criteria = current()?.criteria ?? [];
     const done = criteria.filter((criterion) => criterion.result?.kind === "passed");

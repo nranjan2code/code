@@ -1247,18 +1247,13 @@ function blockOf(item: OutputItem): string {
   return item.content.type === "structured" ? item.content.output.block ?? "" : "";
 }
 
-/** Lays out an answer's blocks as one document (docs/design/87-composed-answers.md §2):
- *  the summary leads, then the plan's sections in the order the model declared them,
- *  then every block that named no section, in the order it was produced. Nothing is
- *  placed in a section it did not name. A block the model placed beside the one
- *  before it shares that block's row where the answer is wide enough. */
+/** Draw answer blocks in canonical source order. */
 function composeAnswer(
   entries: { item: OutputItem; node: JSX.Element }[],
-  outline: import("../types").AnswerOutline | undefined,
 ): JSX.Element {
   // The ledger's order is the reading order on every surface. Sections are
   // attribution, not permission to move a block across another block or prose.
-  return <For each={answerRows(entries, outline?.beside)}>{(row) =>
+  return <For each={answerRows(entries)}>{(row) =>
     <div class="answer-row">
       <For each={row}>{(entry) =>
         <div class="answer-block" data-block={blockOf(entry.item) || undefined}
@@ -1283,9 +1278,7 @@ function arrivalDelay(): number {
 }
 
 /** A running turn's answer as it forms (docs/design/96, live turn): each
- *  card as soon as it is recorded, coming in as it lands; the plan's
- *  progress is the presence wheel's (`AgentPresence`, `livePlan`). The
- *  settled turn replaces it. */
+ *  card as soon as it is recorded. The settled turn replaces it. */
 export function LiveAnswer(props: { sessionId: string }) {
   // A card already settled in the timeline belongs to its turn, not to this one.
   const cards = () => {
@@ -1310,7 +1303,7 @@ export function LiveAnswer(props: { sessionId: string }) {
                 <StructuredView output={output()} fallback={item.fallback_text} sessionId={props.sessionId} presentationId={item.provenance?.presentation_id ?? undefined} />}
               </Show>
             </div>,
-          })), presentationOf(props.sessionId)?.answers?.find((outline) => outline.turn_id === turn))}
+          })))}
           </AnswerValuesScope>
         }</For>
       </div>
@@ -1319,7 +1312,7 @@ export function LiveAnswer(props: { sessionId: string }) {
   </>;
 }
 
-function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allowContinuation: boolean; outline?: import("../types").AnswerOutline }) {
+function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allowContinuation: boolean }) {
   const continuationPrompt = () => {
     // The original request and completed tool receipts are already in the
     // append-only ledger. Repeating its imperative text here causes the intent
@@ -1470,7 +1463,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
             const document = answerDocument(entry.item);
             return document
               ? <div class="primary-result-answer"><PresentationDocumentView document={document} sessionId={props.sessionId} resultId={entry.item.outcome?.result_id ?? resultId ?? entry.item.id} presentationId={entry.item.provenance?.presentation_id ?? undefined} /></div>
-              : <div class="primary-result-material" aria-label="Result material">{composeAnswer(segment, props.outline)}</div>;
+              : <div class="primary-result-material" aria-label="Result material">{composeAnswer(segment)}</div>;
           })}
           <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={anchor} sessionId={props.sessionId} resultId={resultId} />
           <ResultActions turnId={props.id} answer={anchor} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={resultId} copyText={copyText} />
@@ -1566,10 +1559,9 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
       // changed. Reuse its item list so Turn does not rebuild every result.
       const items = createMemo(() => props.timeline.items.filter((item) =>
         item.turn_id === id && !(props.hideUser && item.role === "user")), undefined, { equals: sameItems });
-      const outline = createMemo(() => props.timeline.answers?.find((answer) => answer.turn_id === id));
       return <>
         <AnswerValuesScope scopeKey={props.valueScope ?? conversationValuesKey(props.sessionId, id)} items={items()}>
-          <Turn id={id} items={items()} outline={outline()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />
+          <Turn id={id} items={items()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />
         </AnswerValuesScope>
         <For each={props.includeTurnExtras === false ? [] : automationsOf(id)}>{(trigger) => <AutomationCard trigger={trigger} zone={ownerZone()} onChanged={() => void refetchAutomations()} />}</For>
       </>;

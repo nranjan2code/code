@@ -98,15 +98,12 @@ export function formReadingWidth(block: string): number {
 
 /** Semantic order is canonical. Only explicit adjacent pairs may share a row;
  * stale/missing anchors, prose boundaries and another result cannot rebind it. */
-export function answerRows<T extends { item: OutputItem }>(entries: readonly T[], pairs: readonly (readonly [string, string])[] = []): T[][] {
-  const beside = new Map(pairs.map(([anchor, item]) => [item, anchor]));
+export function answerRows<T extends { item: OutputItem }>(entries: readonly T[]): T[][] {
   const rows: T[][] = [];
   for (const entry of entries) {
     const previous = rows.at(-1);
     if (previous?.length === 1 && entry.item.kind === "card" && previous[0].item.kind === "card"
-        && (entry.item.placement?.beside
-          ? entry.item.placement.beside === previous[0].item.provenance?.presentation_id
-          : beside.get(entry.item.id) === previous[0].item.id)
+        && entry.item.placement?.beside === previous[0].item.provenance?.presentation_id && !!entry.item.placement?.beside
         && entry.item.turn_id === previous[0].item.turn_id
         && entry.item.outcome?.result_id === previous[0].item.outcome?.result_id) previous.push(entry);
     else rows.push([entry]);

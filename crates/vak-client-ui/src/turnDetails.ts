@@ -19,10 +19,6 @@ export function toolLabel(name: string, json: string, running: boolean): string 
   const args = argsOf(json);
   const file = fileName(args);
   switch (name) {
-    case "plan": {
-      const parts = Array.isArray(args.deliverables) ? args.deliverables.flatMap(p => p && typeof p.name === "string" ? [p.name] : []) : [];
-      return parts.length ? `${running ? "Planning" : "Planned"}: ${parts.join(", ")}` : running ? "Planning the answer" : "Planned the answer";
-    }
     case "recall": return running ? "Looking back in the conversation" : "Opened conversation context";
     case "read": case "doc_read": case "office_read": return `${running ? "Reading" : "Read"} ${file || "a file"}`;
     case "write": return `${running ? "Writing" : "Wrote"} ${file || "a file"}`;

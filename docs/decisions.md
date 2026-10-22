@@ -1,5 +1,19 @@
 # Decisions
 
+- 2026-10-22: The maintainer explicitly rejected backward compatibility for
+  the removed plan tool. Delete its parser, outline projection and wire fields,
+  plan-only correction tags and reply filters; retain no old-plan label fallback.
+  Stored ledger bytes are not rewritten. This supersedes the earlier decision
+  to retain `parse_plan_args`, `Cause::Plan`, `Cause::TopicsPlacement` and
+  `ControlKind::PlanCheck` solely for recorded history.
+
+- 2026-10-22: The maintainer reported that turn navigator hover exposed the
+  raw request after removal of the plan tool, and asked about the design
+  dependency. Navigation now reads recorded answer headings or authored card
+  titles, removes the old plan reader, and shows a turn number when
+  untitled. No model call, planning tool or subject-based rules are added. See
+  [the regression check](audits/turn-navigator-labels-2026-10-22.md).
+
 - 2026-10-22: The maintainer asked for the card-side redesign: the runtime
   builds cards from tool results and markdown, strict tools stay only for
   chart, stats, map, calendar and controls, and the model authors no

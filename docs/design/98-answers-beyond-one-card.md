@@ -5,6 +5,10 @@ resources; model-authored layout and ability table/chart tools are retired.
 Runtime cards and Markdown replace the removed tool surface. Remaining
 interactive acceptance work stays in docs/plans/open-items.md.
 
+The obsolete model-plan parser and answer-outline projection/wire types were
+removed on 2026-10-22 at the maintainer’s request. Current answers do not
+read old plans or retain a compatibility path for them.
+
 ## Runtime composition, 2026-10-22
 
 The model authors Markdown and uses the five precise interactive card tools

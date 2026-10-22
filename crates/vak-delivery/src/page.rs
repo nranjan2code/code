@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::presentation::{AnswerOutline, OutputItem};
+use crate::presentation::OutputItem;
 
 /// What a page's bytes say they are.
 pub const FORMAT: &str = "vak-page";
@@ -18,27 +18,17 @@ pub struct Page {
     pub title: String,
     /// The answer's turn as the conversation drew it, its request first.
     pub items: Vec<OutputItem>,
-    /// Its outline, when its model declared a plan: where each card stands
-    /// (docs/design/87-composed-answers.md §2).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outline: Option<AnswerOutline>,
     /// Its text form (the cards' text, then the reply): what search, an
     /// export and a reader that draws no cards get.
     pub text: String,
 }
 
 impl Page {
-    pub fn new(
-        title: String,
-        items: Vec<OutputItem>,
-        outline: Option<AnswerOutline>,
-        text: String,
-    ) -> Self {
+    pub fn new(title: String, items: Vec<OutputItem>, text: String) -> Self {
         Self {
             format: FORMAT.into(),
             title,
             items,
-            outline,
             text,
         }
     }

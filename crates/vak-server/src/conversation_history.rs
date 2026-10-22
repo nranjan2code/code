@@ -287,11 +287,6 @@ pub(crate) fn canonical_turns(timeline: &mut vak_delivery::OutputTimeline, sessi
             item.turn_id = (*turn).into();
         }
     }
-    for answer in &mut timeline.answers {
-        if let Some(turn) = turns.get(&answer.turn_id) {
-            answer.turn_id = turn.clone();
-        }
-    }
 }
 
 fn build(state: &AppState, id: &str, query: PageQuery) -> Result<serde_json::Value, StatusCode> {

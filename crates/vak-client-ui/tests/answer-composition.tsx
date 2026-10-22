@@ -13,10 +13,11 @@ const text = (id: string, text: string) => item(id, "assistant", "outcome", { ty
 const table = (id: string, title: string) => item(id, "tool", "card", { type: "structured", output: { semantic_type: "table", block: "table", schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: { title, columns: [{ label: "Item", numeric: false }, { label: "Amount", numeric: true }], rows: [["Value", "9007199254740993"]] } } }, title);
 const fragments = ["Leading context survives.", "Note: the second result uses a different scope.", "The closing explanation survives too."];
 const note = item("paired-note", "tool", "card", { type: "structured", output: { semantic_type: "callout", block: "callout", schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: { tone: "note", text: "A compact note beside a wide table." } } }, "Compact note");
+note.placement = { beside: "first-presentation" };
 const timeline = { schema_version: 2, session_id: sid, diagnostics: [], items: [
   item("user", "user", "message", { type: "document", document: doc("Compare both results.") }, "Compare both results."),
-  text("leading", fragments[0]), table("first", "First table"), note, text("middle", fragments[1]), table("second", "Second table"), text("closing", fragments[2]),
-], answers: [{ turn_id: "turn-1", sections: [], beside: [["first", "paired-note"]] }] } as OutputTimeline;
+  text("leading", fragments[0]), {...table("first", "First table"), provenance: {presentation_id:"first-presentation"}}, note, text("middle", fragments[1]), table("second", "Second table"), text("closing", fragments[2]),
+ ] } as OutputTimeline;
 window.fetch = async () => new Response("{}", { headers: { "Content-Type": "application/json" } });
 store.setActiveId(sid);
 store.setTechnicalDetails(false);
@@ -61,17 +62,17 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 80));
   const a = table('live-a','Live anchor');
   const b = {...note,id:'live-b', placement:{part:null,beside:'live-a',replaces:null}};
   const liveItem = (value: OutputItem) => ({...value,provenance:{...value.provenance,source:'live_event'}});
-  store.hydrateFromPresentation(liveId,{...timeline,session_id:liveId,items:[liveItem(a),liveItem(b)],answers:[]});
+  store.hydrateFromPresentation(liveId,{...timeline,session_id:liveId,items:[liveItem(a),liveItem(b)]});
   const dispose = render(()=><LiveAnswer sessionId={liveId}/>,host);
   try {
     await tick();
-    if (!Array.from(host.querySelectorAll('.answer-row')).some(row=>row.querySelectorAll('.answer-block').length===2)) throw new Error('Live accepted anchors did not pair without an outline');
+    if (!Array.from(host.querySelectorAll('.answer-row')).some(row=>row.querySelectorAll('.answer-block').length===2)) throw new Error('Live accepted anchors did not pair by presentation identity');
     const replacement=liveItem({...table('live-replacement','Replacement'),placement:{part:null,beside:null,replaces:'live-a'}});
     store.applyPresentationEvent(liveId,{sequence:1,snapshot:null,delta:{type:'item_started',item:replacement}});
     await tick();
     if (host.textContent?.includes('Live anchor') || !host.textContent?.includes('Replacement')) throw new Error('Live replacement did not remove its exact anchor');
     if (Array.from(host.querySelectorAll('.answer-row')).some(row=>row.querySelectorAll('.answer-block').length===2)) throw new Error('Live replacement rebound a missing anchor');
-    return ['Live accepted anchors pair before outlines arrive','Live store removes exact replacement target','Missing live anchor never rebinds'];
+    return ['Live accepted anchors pair by presentation identity','Live store removes exact replacement target','Missing live anchor never rebinds'];
   } finally { dispose(); host.remove(); }
 };
 

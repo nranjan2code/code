@@ -275,7 +275,7 @@ mod tests {
         a3.ending = Some(End::StepLimit);
         a3.calls = vec![refused("read", Refusal::Policy), accepted("read")];
         a3.failures = vec![("bash".into(), Fault::Target)];
-        a3.corrections = vec![correction(Cause::Plan)];
+        a3.corrections = vec![correction(Cause::Grounding)];
         let mut b1 = turn("b1", "m2");
         b1.steps = 2;
         b1.ending = Some(End::Aborted);
@@ -349,13 +349,13 @@ mod tests {
     #[test]
     fn promote_counts_a_correction_once_per_turn() {
         let mut t1 = turn("t1", "m1");
-        t1.corrections = vec![correction(Cause::Plan), correction(Cause::Plan)];
+        t1.corrections = vec![correction(Cause::Grounding), correction(Cause::Grounding)];
         let mut t2 = turn("t2", "m1");
-        t2.corrections = vec![correction(Cause::Plan)];
+        t2.corrections = vec![correction(Cause::Grounding)];
         let got = promote(&[t1, t2]);
         assert_eq!(got.len(), 1);
         let p = got.first().unwrap();
-        assert_eq!(p.key, "m1|corrected:plan");
+        assert_eq!(p.key, "m1|corrected:grounding");
         assert_eq!(p.count, 2);
         assert_eq!(p.of, 2);
         assert_eq!(p.turns.len(), 2);

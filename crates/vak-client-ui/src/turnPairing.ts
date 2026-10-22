@@ -1,20 +1,47 @@
-import type { OutputItem, OutputTimeline } from "./types";
+import type { InlineNode, OutputItem, OutputTimeline } from "./types";
 
-/** Use accepted plan names, joined by the directive's address, not page position. */
-export function turnPlanLabel(entryId: string | undefined, timeline: OutputTimeline | null | undefined): string {
+function inlineLabel(nodes: InlineNode[]): string {
+  return nodes.map(node => {
+    if (node.type === "text") return node.text;
+    if (node.type === "code") return node.code;
+    if (node.type === "link") return inlineLabel(node.label);
+    if ("content" in node) return inlineLabel(node.content);
+    if (node.type === "image") return node.alt;
+    if (node.type === "soft_break" || node.type === "hard_break") return " ";
+    return "";
+  }).join("");
+}
+
+/** Recorded answer titles, joined by directive identity, never inferred from request words. */
+export function turnDisplayLabel(entryId: string | undefined, timeline: OutputTimeline | null | undefined): string {
   if (!timeline) return "";
   const turn = serverTurnFor(entryId, timeline.items);
   if (!turn) return "";
-  return timeline.answers?.find(answer => answer.turn_id === turn)?.sections
-    .map(section => section.name.trim()).filter(Boolean).join(" · ") ?? "";
+  const items = timeline.items.filter(item => item.turn_id === turn);
+  for (const item of items) {
+    if (item.role !== "assistant" || item.content.type !== "document") continue;
+    for (const block of item.content.document.blocks) {
+      if (block.type === "heading") {
+        const label = inlineLabel(block.content).trim();
+        if (label) return label;
+      }
+    }
+  }
+  const titles = items.flatMap(item => {
+    if (item.kind !== "card" || item.provenance?.source === "derived" || item.content.type !== "structured") return [];
+    const payload = item.content.output.payload;
+    const title = payload.title || payload.label || payload.headline;
+    return typeof title === "string" && title.trim() ? [title.trim()] : [];
+  });
+  if (titles.length) return [...new Set(titles)].join(" · ");
+  return "";
 }
 
-/** A sidebar names the newest request, never an older plan or first-message title. */
+/** A sidebar names the newest turn, with its request as the untitled fallback. */
 export function latestWorkLabel(timeline: OutputTimeline | null | undefined): string {
   const request = timeline?.items.findLast(item => item.role === "user");
   if (!request || !timeline) return "";
-  const plan = timeline.answers?.find(answer => answer.turn_id === request.turn_id);
-  return plan?.sections.map(section => section.name.trim()).filter(Boolean).join(" · ")
+  return turnDisplayLabel(request.provenance?.entry_id ?? undefined, timeline)
     || request.fallback_text?.trim() || "";
 }
 

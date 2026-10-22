@@ -47,10 +47,6 @@ console.log("exact file previews consolidate; standalone, markup and ambiguous p
 
 const { answerRows, formReadingWidth } = await import('../src/answerComposition.ts');
 const pairA = card('pair-a'), pairB = card('pair-b'), pairC = card('pair-c');
-assert.deepEqual(answerRows([pairA, pairB], [['pair-a', 'pair-b']]).map(ids), [['pair-a', 'pair-b']]);
-assert.deepEqual(answerRows([pairC, pairB], [['pair-a', 'pair-b']]).map(ids), [['pair-c'], ['pair-b']]);
-assert.deepEqual(answerRows([pairA, prose('boundary'), pairB], [['pair-a', 'pair-b']]).map(ids), [['pair-a'], ['boundary'], ['pair-b']]);
-assert.deepEqual(answerRows([pairA, card('pair-b', 'another-result')], [['pair-a', 'pair-b']]).map(ids), [['pair-a'], ['pair-b']]);
 assert.ok(formReadingWidth('table') > formReadingWidth('callout'));
 console.log('addressed pairing preserves anchors, prose/result boundaries and form widths');
 

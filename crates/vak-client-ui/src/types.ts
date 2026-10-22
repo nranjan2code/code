@@ -239,25 +239,6 @@ export interface OutputTimeline {
   items: OutputItem[];
   diagnostics: string[];
   goal?: GoalState | null;
-  /** One outline for each turn whose model declared a plan. */
-  answers?: AnswerOutline[];
-}
-
-/** A turn's answer as a document: the plan's deliverables are its sections,
- *  and the model's own placement of its cards. */
-export interface AnswerOutline {
-  turn_id: string;
-  sections: AnswerSection[];
-  /** Stable anchor/item pairs, resolved by the host before layout. */
-  beside?: [string, string][];
-}
-
-/** A section and the ids of the items that deliver it. An item that named no
- *  section is in none and is shown after the sections. */
-export interface AnswerSection {
-  name: string;
-  form: string;
-  items: string[];
 }
 
 export interface GoalState {

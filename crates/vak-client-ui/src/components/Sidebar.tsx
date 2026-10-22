@@ -8,7 +8,7 @@ import { sortByRecent } from "../agentRecents";
 import Icon from "./Icon";
 import Skeleton from "./Skeleton";
 import { historyPages, itemsOf, presentationOf } from "../store";
-import { latestWorkLabel, turnPlanLabel } from "../turnPairing";
+import { latestWorkLabel, turnDisplayLabel } from "../turnPairing";
 import { stripControlScaffolding } from "../structured";
 
 function AgentTopicList(props: { agent: Pick<api.Agent, "id" | "name" | "revision" | "character" | "animation" | "voice"> }) {
@@ -121,7 +121,7 @@ export default function Sidebar() {
       if (!historyPages[session.session_id]?.newer) {
         const timeline = presentationOf(session.session_id);
         const request = itemsOf(session.session_id).findLast(item => item.kind === "user");
-        if (request?.kind === "user") return turnPlanLabel(request.entryId, timeline) || stripControlScaffolding(request.text);
+        if (request?.kind === "user") return turnDisplayLabel(request.entryId, timeline) || stripControlScaffolding(request.text);
         const title = latestWorkLabel(timeline);
         if (title) return title;
       }

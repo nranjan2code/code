@@ -13,7 +13,7 @@ import TopicTurnControl from "./TopicTurnControl";
 import PresentationTimelineView, { Artifact, LiveAnswer, ResultCard, ScheduledHead, StructuredView } from "./PresentationRenderer";
 import { attachFiles } from "../attachFiles";
 import type { OutputItem } from "../types";
-import { hasSettledProjection, serverTurnFor, turnPlanLabel } from "../turnPairing";
+import { hasSettledProjection, serverTurnFor, turnDisplayLabel } from "../turnPairing";
 import * as api from "../api";
 import "../focusTrap";
 import { assistantParts, cleanAssistantText, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
@@ -878,8 +878,8 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const navigableTurnCount = () => Math.max(0, turns().length - 1);
   const turnPreview = (index: number) => {
     const user = turns()[index]?.find((item) => item.kind === "user");
-    const text = user?.kind === "user" ? (turnPlanLabel(user.entryId, presentationOf(sid())) || stripControlScaffolding(user.text)).replace(/\s+/g, " ").trim() : "";
-    return text.length > 130 ? `${text.slice(0, 127)}…` : text || `Turn ${index}`;
+    const text = user?.kind === "user" ? turnDisplayLabel(user.entryId, presentationOf(sid())).replace(/\s+/g, " ").trim() : "";
+    return text || `Turn ${index}`;
   };
   const tickIndices = createMemo(() => {
     const count = navigableTurnCount();

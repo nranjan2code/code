@@ -53,7 +53,7 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       session_id: "fixture-session", cursor, revision: cursor, running: false,
       page: { older: "fixture-before", newer: "fixture-after", end: cursor, total_turns: 1000, first_turn: around ? 1000 : 960, request: around ?? undefined },
       transcript: { messages: [{ role: "user", content: [{ type: "text", text: `Sample request ${turnId}` }] }], entries: [{ entry_id: "fixture-user-entry" }], set_aside: [] },
-      presentation: { schema_version: 2, session_id: "fixture-session", cursor, items: [], diagnostics: [], answers: [] },
+      presentation: { schema_version: 2, session_id: "fixture-session", cursor, items: [], diagnostics: [] },
     });
   }
   const match = /^\/sessions\/fixture-session\/topics\/([^/]+)$/.exec(path);

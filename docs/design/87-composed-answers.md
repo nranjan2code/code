@@ -4,6 +4,10 @@ Status: superseded (2026-10-22): model-authored outlines and layout are
 replaced by Markdown answers and runtime composition. The retained rendering
 and ledger contracts are described below; the current form registry is doc 92.
 
+The obsolete model-plan parser and answer-outline projection/wire types were
+removed on 2026-10-22 at the maintainer’s request. Current answers do not
+read old plans or retain a compatibility path for them.
+
 ## Runtime composition, 2026-10-22
 
 The model authors Markdown and uses the five precise interactive card tools
