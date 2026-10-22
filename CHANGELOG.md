@@ -1,3 +1,5 @@
+## Unreleased
+
 ## 8.26.0 — 2026-10-22
 
 - Answer design: align the shared presentation guidance, surface descriptions
@@ -8,8 +10,6 @@
   continuous answer surface and compact file collections. Numeric-table
   feedback explains missing values and decimal syntax without silently
   dropping numerical semantics.
-
-## Unreleased
 
 ## 8.25.0 — 2026-10-22
 
