@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.23.0",
-  "revision": "c2c2ccb0a",
+  "revision": "f1cdd36cf",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.21.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2456,
+   "total_commits": 2457,
    "days": 63,
    "peak_day": 174,
    "design_docs": 98,
@@ -396,15 +396,15 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 513,
+  "commits": 514,
   "areas": [
    [
     "docs",
-    417
+    418
    ],
    [
     "(root)",
-    294
+    295
    ],
    [
     "vak-core",
@@ -761,6 +761,15 @@
   ],
   "recent": [
    {
+    "hash": "f1cdd36cf",
+    "date": "2026-10-22",
+    "subject": "Record 8.23.0 release and verified local installation",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "c2c2ccb0a",
     "date": "2026-10-22",
     "subject": "Prepare 8.23.0 native channel cards release",
@@ -893,14 +902,6 @@
     "hash": "a015c09f5",
     "date": "2026-10-22",
     "subject": "Finalize 8.20.0 changelog",
-    "areas": [
-     "(root)"
-    ]
-   },
-   {
-    "hash": "e151eeca4",
-    "date": "2026-10-22",
-    "subject": "Bump version to 8.20.0",
     "areas": [
      "(root)"
     ]
@@ -30840,6 +30841,12 @@
  ],
  "replay": [
   {
+   "hash": "f1cdd36cf",
+   "date": "2026-10-22",
+   "subject": "Record 8.23.0 release and verified local installation",
+   "subsystems": []
+  },
+  {
    "hash": "c2c2ccb0a",
    "date": "2026-10-22",
    "subject": "Prepare 8.23.0 native channel cards release",
@@ -37669,7 +37676,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1404,
+  "docs_commits": 1405,
   "hot": 655
  },
  "findings": [
