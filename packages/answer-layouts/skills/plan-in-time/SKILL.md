@@ -1,29 +1,16 @@
 ---
 name: plan-in-time
-description: Lay out a plan that happens over time (a day, a trip, a routine, an event, a project) as one answer built from cards.
+description: Explain a plan over time using Markdown, with calendar or stats when useful.
 ---
 
 # A plan in time
 
-Use only the blocks needed for this request; a summary is optional. Each block
-must add information or interaction rather than repeat another. The following
-order is a composition guide, not a requirement to emit every listed card.
+Explain the plan in Markdown, using ordered steps with times or durations
+when known, and checklists for preparation. Include details that help someone
+carry it out. Work out dates and weekdays with the date-calculator ability
+when available.
 
-1. `emit_summary_card`: the plan in one headline and one or two sentences,
-   with up to five key points (start, end, the one thing not to miss).
-2. When the plan has figures worth seeing at a glance (total time, cost,
-   distance, number of stops), `emit_stats_card` with
-   `semantic_type: "at_a_glance"`, one reading per figure.
-3. `emit_steps_card`: every step a short label, its `time` as the
-   person gave it or `duration_minutes`, and a detail only when it
-   helps. Work out dates and weekdays with the `date-calculator` tool
-   when it is available.
-4. `emit_list_card` with `checkable: true` for what to bring, buy or
-   prepare, when there is any.
-5. `emit_calendar_card` instead of steps when the plan is events on
-   several dates.
-6. `emit_callout_card` with tone `tip` or `warning` for the one thing a
-   card cannot carry, only when there is one.
-
-Write a sentence of text only where it joins two parts; never restate a
-card. Use only facts the person gave or a source you retrieved.
+Use `emit_calendar_card` when dates and times benefit from a calendar, and
+`emit_stats_card` when key figures benefit from that form. Use only facts
+supplied or retrieved and transparent calculations. State important risks
+where they matter. Give each fact one home; the runtime supplies layout.

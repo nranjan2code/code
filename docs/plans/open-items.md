@@ -25,7 +25,7 @@
 - [x] Card redesign step 1 (2026-10-22): the model authors no layout. The
   `plan` tool, plan check, forced card and Topics calls, and the
   `deliverable`, `replaces`, `beside_previous` and `then` fields are removed.
-- [ ] Card redesign step 2: offer only chart, stats, map, calendar and
+- [x] Card redesign step 2: offer only chart, stats, map, calendar and
   controls as card tools (`SHAPES` keeps the other builders, unoffered, for
   history, fences and runtime cards); rewrite the prompt's presentation
   contract around Markdown (tables, lists, quotes, code are already drawn).
@@ -35,8 +35,9 @@
   `PresentationSource::Derived { from }` projected at its ledger position;
   remove `with_command_output`/`with_call_data` with their tools; keep
   derived payloads out of `dialogue_record`'s missing-presentations list.
-- [ ] Then: skills in packages/answer-layouts naming removed tools, docs 87,
-  92, 98 statuses, live corpus run, one release.
+- [x] Update packages/answer-layouts skills naming removed tools and docs 87,
+  92, 98 statuses for step 2.
+- [ ] Then: finish runtime-card record, live corpus run, one release.
 
 ## Answer design contract (2026-10-22)
 

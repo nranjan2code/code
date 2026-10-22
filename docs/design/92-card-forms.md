@@ -1,6 +1,13 @@
 # 92 — Card forms
 
-Status: implemented: F1 to F6 built and checked live 2026-10-14; direction from the maintainer on 2026-10-14 ("rebuild
+Status: in progress (2026-10-22): the model authors no layout. Only chart,
+stats, map, calendar and controls are offered tools; other forms remain
+drawable from history, fences and runtime records. Markdown is the normal
+answer contract. Runtime source and diff cards are the remaining redesign step.
+
+> **Historical record** — the earlier design and implementation follow.
+
+Earlier status: implemented: F1 to F6 built and checked live 2026-10-14; direction from the maintainer on 2026-10-14 ("rebuild
 correctly to be maintainable but yet effective for anything … completely
 remove what's not wanted"; no users, so nothing is kept for compatibility).
 Builds on docs/design/87-composed-answers.md (cards in answers),

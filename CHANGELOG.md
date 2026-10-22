@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Answers use Markdown's existing interactive tables, lists, quotes, Mermaid
+  and diff code. Only chart, stats, map, calendar and controls remain offered
+  card tools; all other forms remain drawable. Shipped answer skills follow
+  the same contract, without model-authored layout.
+
 - The model no longer has to lay out its answer: the `plan` tool, the plan
   check, the card it was then forced to show, and the `deliverable`,
   `replaces`, `beside_previous` and `then` fields on every card are gone.

@@ -1,6 +1,6 @@
 //! The card tools of an answer (docs/design/92-card-forms.md).
 //!
-//! Each `CardShape` is one form and its card tool, `emit_<form>_card`: its
+//! Each `CardShape` keeps a form builder and its optional offered tool: its
 //! flat arguments and the stored card its builder makes from them. A form's
 //! own kind is its name; an active pack may add kinds to it
 //! (docs/design/91-presentation-capabilities.md). It is a `Tool` so a turn
@@ -29,6 +29,8 @@ use vak_tools::{Tool, ToolOutput};
 struct CardShape {
     /// The form, which is also its own kind (`vak_delivery::FORMS`).
     form: &'static str,
+    /// Offered to the model; unoffered forms still build history and runtime cards.
+    offered: bool,
     /// Tool name, `emit_<form>_card`.
     name: &'static str,
     description: &'static str,
@@ -1730,6 +1732,7 @@ const fn shape(
 ) -> CardShape {
     CardShape {
         form,
+        offered: false,
         name,
         description,
         fill,
@@ -2022,6 +2025,7 @@ const SHAPES: &[CardShape] = &[
         fill_comparison,
     ),
     CardShape {
+        offered: true,
         followable: &[&["readings", "*", "value"]],
         ..shape(
             "stats",
@@ -2032,14 +2036,17 @@ const SHAPES: &[CardShape] = &[
             fill_stats,
         )
     },
-    shape(
-        "chart",
-        "emit_chart_card",
-        "Numbers over time or across categories, as a line, area or bar chart. Give every point with the name of its series; one chart shows one measure.",
-        chart_fields,
-        build_chart,
-        fill_nothing,
-    ),
+    CardShape {
+        offered: true,
+        ..shape(
+            "chart",
+            "emit_chart_card",
+            "Numbers over time or across categories, as a line, area or bar chart. Give every point with the name of its series; one chart shows one measure.",
+            chart_fields,
+            build_chart,
+            fill_nothing,
+        )
+    },
     shape(
         "callout",
         "emit_callout_card",
@@ -2059,30 +2066,39 @@ const SHAPES: &[CardShape] = &[
             fill_nothing,
         )
     },
-    shape(
-        "calendar",
-        "emit_calendar_card",
-        "Events placed on dates and times.",
-        calendar_fields,
-        build_calendar,
-        fill_nothing,
-    ),
-    shape(
-        "map",
-        "emit_map_card",
-        "Places on a map: where they are relative to each other, a route through them in order, or an area they outline. Give each place's latitude and longitude.",
-        map_fields,
-        build_map,
-        fill_map,
-    ),
-    shape(
-        "controls",
-        "emit_controls_card",
-        "Inputs a person changes and results that update as they do: a calculation, a conversion or a what-if. Each result is an expression over the inputs; Vakyartha computes it. Later cards of the answer can follow its values: a stat through `follows`, a table cell written `= name`.",
-        controls_fields,
-        build_controls,
-        fill_nothing,
-    ),
+    CardShape {
+        offered: true,
+        ..shape(
+            "calendar",
+            "emit_calendar_card",
+            "Events placed on dates and times.",
+            calendar_fields,
+            build_calendar,
+            fill_nothing,
+        )
+    },
+    CardShape {
+        offered: true,
+        ..shape(
+            "map",
+            "emit_map_card",
+            "Places on a map: where they are relative to each other, a route through them in order, or an area they outline. Give each place's latitude and longitude.",
+            map_fields,
+            build_map,
+            fill_map,
+        )
+    },
+    CardShape {
+        offered: true,
+        ..shape(
+            "controls",
+            "emit_controls_card",
+            "Inputs a person changes and results that update as they do: a calculation, a conversion or a what-if. Each result is an expression over the inputs; Vakyartha computes it. Later cards of the answer can follow its values: a stat through `follows`, a table cell written `= name`.",
+            controls_fields,
+            build_controls,
+            fill_nothing,
+        )
+    },
     shape(
         "link",
         "emit_link_card",
@@ -2228,7 +2244,16 @@ pub fn conformance_cases() -> Vec<(&'static str, &'static str, Value)> {
     SHAPES
         .iter()
         .filter(|shape| shape.data_of_call.is_none())
-        .map(|shape| (shape.name, shape.form, fixture_for(shape.form)))
+        .map(|shape| {
+            let tool = EmitCardTool {
+                shape,
+                extra: Vec::new(),
+            };
+            let mut args = fixture_for(shape.form);
+            vak_tools::read_arguments(&tool.schema(), &mut args);
+            tool.fill_defaults(&mut args);
+            (shape.name, shape.form, args)
+        })
         .collect()
 }
 
@@ -2404,7 +2429,7 @@ pub struct EmitCardTool {
 }
 
 impl EmitCardTool {
-    /// One tool per form, with only the form's own kind.
+    /// Offered tools, with only each form's own kind.
     pub fn all() -> Vec<Self> {
         Self::with_packs(&PackKinds::default())
     }
@@ -2414,6 +2439,7 @@ impl EmitCardTool {
     pub fn with_packs(packs: &PackKinds) -> Vec<Self> {
         SHAPES
             .iter()
+            .filter(|shape| shape.offered)
             .map(|shape| EmitCardTool {
                 shape,
                 extra: packs.of(shape).to_vec(),
@@ -2844,10 +2870,10 @@ mod tests {
     use serde_json::json;
 
     fn tool(name: &str) -> EmitCardTool {
-        EmitCardTool::all()
-            .into_iter()
-            .find(|tool| tool.name() == name)
-            .unwrap()
+        EmitCardTool {
+            shape: SHAPES.iter().find(|shape| shape.name == name).unwrap(),
+            extra: Vec::new(),
+        }
     }
 
     /// A skill Vakyartha ships names only card tools that exist: a card
@@ -3382,9 +3408,9 @@ mod tests {
         );
         let grounded = SHAPES
             .iter()
-            .filter(|shape| shape.grounded_in.is_some())
+            .filter(|shape| shape.offered && shape.grounded_in.is_some())
             .count();
-        assert_eq!(fresh.core.len(), SHAPES.len() - grounded);
+        assert_eq!(fresh.core.len(), tools.len() - grounded);
         assert_eq!(fresh.deferred.len(), grounded);
         let every = std::collections::BTreeSet::from([
             vak_tools::Grounds::Ran,
@@ -3394,7 +3420,7 @@ mod tests {
         ]);
         let held = crate::capability::build_tool_surface(&tools, true, &Default::default(), &every);
         assert!(held.deferred.is_empty());
-        assert_eq!(held.core.len(), SHAPES.len());
+        assert_eq!(held.core.len(), tools.len());
     }
 
     #[test]
@@ -3922,10 +3948,11 @@ mod tests {
     #[test]
     fn an_active_pack_adds_its_kinds_to_its_block() {
         let packs = PackKinds::from_library(&library_with_pack(true), "/w");
-        let sources = EmitCardTool::with_packs(&packs)
-            .into_iter()
-            .find(|tool| tool.name() == "emit_sources_card")
-            .unwrap();
+        let shape = shape_of_form("sources").unwrap();
+        let sources = EmitCardTool {
+            shape,
+            extra: packs.of(shape).to_vec(),
+        };
         assert_eq!(
             sources.card_kinds(),
             vec!["sources".to_string(), "garden.brief".to_string()]

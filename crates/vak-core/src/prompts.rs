@@ -871,14 +871,8 @@ mod tests {
     #[test]
     fn the_seed_carries_no_card_payload_examples() {
         let seed = seed("test");
-        assert!(
-            seed.presentation_contract
-                .contains("available structured forms")
-        );
-        assert!(
-            seed.presentation_contract
-                .contains("cards are context, not new work")
-        );
+        assert!(seed.presentation_contract.contains("Answer in Markdown"));
+        assert!(seed.presentation_contract.contains("cards are context:"));
         assert!(seed.presentation_contract.contains("in reading order"));
         assert!(
             seed.presentation_contract
@@ -886,17 +880,9 @@ mod tests {
         );
         assert!(
             seed.presentation_contract
-                .contains("include that text verbatim")
+                .contains("You author the answer, not its layout")
         );
-        let requested_text_rule = seed
-            .presentation_contract
-            .find("include that text verbatim")
-            .expect("requested-text exception is explicit");
-        let empty_text_rule = seed
-            .presentation_contract
-            .find("Otherwise, when the cards answer fully")
-            .expect("empty-text rule has an explicit condition");
-        assert!(requested_text_rule < empty_text_rule);
+        assert!(seed.presentation_contract.contains("tool results"));
         assert!(!seed.capability_contract.contains("emit_*_card"));
         for block in [&seed.capability_contract, &seed.presentation_contract] {
             assert!(!block.contains("```vak"));

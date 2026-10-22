@@ -269,9 +269,13 @@ def builtin_tools():
 
 
 def card_tools():
-    """The card tools, one per card form and pack kind, named in one table."""
+    """Only offered card tools; the other shape builders remain drawable."""
     lines = production_lines(os.path.join(ROOT, "crates/vak-core/src/presentation_tools.rs"))
-    return sorted(set(re.findall(r'"(emit_[a-z_]+_card)"', "\n".join(lines))))
+    shapes = "\n".join(lines).split("const SHAPES:", 1)[1].split("fn shape_of_form", 1)[0]
+    return sorted(set(re.findall(
+        r'CardShape\s*\{\s*offered:\s*true,.*?\.\.shape\(\s*"[^"]+",\s*"(emit_[a-z_]+_card)"',
+        shapes, re.S,
+    )))
 
 
 def routes():

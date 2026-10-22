@@ -1258,7 +1258,7 @@ commit (invariant 30).
   information, never a topic. The forms are `vak_delivery::FORMS` (summary,
   steps, list, details, table, comparison, stats, chart, callout, sources,
   calendar, map, controls, link, media, file preview, markup preview, diff,
-  test report, terminal), and the same list is the card tools, the delivery validators
+  test report, terminal). The same list names the builders and delivery validators
   (`validate_form`, one text form each in `structured_markdown`), the host's
   form primitives (`vak_presentation::PRIMITIVES`, plus layout) and the
   client's `FORMS` table (`vak-client-ui/src/components/cards/index.tsx`),
@@ -1273,9 +1273,13 @@ commit (invariant 30).
   step of cards the model gets the next step and ends the turn by
   answering or stopping, as after any call. Nothing decides a card by words or counts:
   no signals read from text, no title word lists, no row thresholds. The
-  contributor guide is `docs/design/67-presentation-renderer-guide.md`. A model shows
-  each card by calling the card tool that owns its kind, by its own name
-  and precise schema (`vak-core/src/presentation_tools.rs`, one per form;
+  contributor guide is `docs/design/67-presentation-renderer-guide.md`.
+  Only chart, stats, map, calendar and controls are offered card tools;
+  every other builder remains for history, inline fences and runtime cards.
+  Markdown supplies interactive tables, lists, quotes, Mermaid and diff code.
+  Offered tools are a subset of drawable forms, never their registry.
+  A model calls an offered card tool by its own name
+  and precise schema (`vak-core/src/presentation_tools.rs`;
   a shape
   that could be given one of two fields is two cards, each with that
   field required, so the wire can enforce it); one nested call of every block, tried as the `answer` tool,
@@ -2175,8 +2179,8 @@ removed, and the change is verified with real turns.
 
 - Whether a request refers back, needs a tool or asks for a card is not read
   from its vocabulary. The planner carries the newest exchanges whole while
-  they fit, by recency and measured size alone; the model plans its own deliverables and the
-  runtime checks receipts (docs/design/86-model-plans-runtime-checks.md).
+  they fit, by recency and measured size alone; the model writes the answer and the runtime checks receipts, without a
+  model-authored layout or plan.
 - A loop that must end does so by a sequence of observed states, never a
   count: a failing tool is hinted, then shown its schema, then withdrawn for
   the turn; a tool the person declined is withdrawn for the turn at once;

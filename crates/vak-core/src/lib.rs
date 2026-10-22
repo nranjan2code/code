@@ -9188,7 +9188,7 @@ mod channel_mcp_network_tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         let prompt = |surface: Surface| core.clone().with_surface(surface).system_prompt();
-        let cards = "available structured forms";
+        let cards = "Answer in Markdown";
         let preview = "appear in the user's preview automatically";
 
         let desktop = prompt(Surface::Desktop);
@@ -10553,7 +10553,7 @@ mod plugin_runtime_tests {
         .unwrap();
         std::fs::write(
             package.join("presentation/brief.json"),
-            r#"{"schema_version":1,"id":"garden.brief","revision":1,"accepts":["garden.brief"],"block":"sources","root":{"primitive":"sources","props":{"*":{"kind":"binding","path":"$"}}}}"#,
+            r#"{"schema_version":1,"id":"garden.brief","revision":1,"accepts":["garden.brief"],"block":"chart","root":{"primitive":"chart","props":{"*":{"kind":"binding","path":"$"}}}}"#,
         )
         .unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
@@ -10565,7 +10565,7 @@ mod plugin_runtime_tests {
         let research_kinds = |core: &Core| {
             presentation_tools::EmitCardTool::with_packs(&core.pack_kinds())
                 .into_iter()
-                .find(|tool| vak_tools::Tool::name(tool) == "emit_sources_card")
+                .find(|tool| vak_tools::Tool::name(tool) == "emit_chart_card")
                 .map(|tool| vak_tools::Tool::card_kinds(&tool))
                 .unwrap_or_default()
         };

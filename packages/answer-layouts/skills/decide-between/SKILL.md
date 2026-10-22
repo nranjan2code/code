@@ -1,24 +1,15 @@
 ---
 name: decide-between
-description: Lay out a choice between two or more options (products, places, approaches, plans) as one answer built from cards.
+description: Explain a choice between options using Markdown and supported interactive forms.
 ---
 
 # A choice between options
 
-Use only the blocks needed for this request; a summary is optional. Each block
-must add information or interaction rather than repeat another. The following
-order is a composition guide, not a requirement to emit every listed card.
+Lead with the recommendation and its reason. Explain any missing preference
+that could change it. Compare options on the same aspects in a Markdown table
+when that makes the differences easier to inspect. State strengths, weaknesses
+and consequential risks without repeating the table in prose.
 
-1. `emit_summary_card`: the recommendation as the headline and the reason
-   in one sentence. When the choice depends on something the person has
-   not said, say what, and lead with the option that fits the common case.
-2. `emit_comparison_card`: every option with a short verdict, its
-   strengths and weaknesses, the aspects they differ on (the same aspects,
-   in the same order, for every option), and the recommendation.
-3. `emit_table_card` when shared attributes need inspection as records: one row per option, one column per aspect.
-4. `emit_callout_card` with tone `warning` for a risk that would change
-   the choice, only when there is one.
-
-Each card names its plan deliverable. Keep every verdict, strength and
-weakness to a few words. Use only facts the person gave or a source you
-retrieved; when a figure is not known, leave it out rather than guess.
+Use only facts supplied or retrieved. Leave unknown figures explicit. Use an
+admitted chart or controls tool when its interaction adds something useful.
+The runtime supplies layout and source cards; name no plan deliverables.

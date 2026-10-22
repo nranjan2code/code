@@ -5175,17 +5175,17 @@ mod tests {
         let mut failures = Vec::new();
         for (tool, semantic_type, args) in cases {
             let mut normalized_args = args.clone();
-            normalized_args["then"] = serde_json::json!("done");
-            let emitter = emitters
+            if let Some(emitter) = emitters
                 .iter()
                 .find(|emitter| vak_tools::Tool::name(*emitter) == tool)
-                .expect("registered emitter");
-            vak_tools::Tool::fill_defaults(emitter, &mut normalized_args);
-            if let Err(error) =
-                vak_tools::validate_input(&vak_tools::Tool::schema(emitter), &normalized_args)
             {
-                failures.push(format!("{semantic_type} via {tool}: pre-execution schema rejected normalized call: {error}"));
-                continue;
+                vak_tools::Tool::fill_defaults(emitter, &mut normalized_args);
+                if let Err(error) =
+                    vak_tools::validate_input(&vak_tools::Tool::schema(emitter), &normalized_args)
+                {
+                    failures.push(format!("{semantic_type} via {tool}: pre-execution schema rejected normalized call: {error}"));
+                    continue;
+                }
             }
             for padded in [false, true] {
                 let mut args = normalized_args.clone();

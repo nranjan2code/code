@@ -6,7 +6,9 @@
   layout. Step 1 is done: the `plan` tool and plan check, the forced card
   and Topics calls, and the `deliverable`, `replaces`, `beside_previous`
   and `then` fields are removed (docs 86 and 97 superseded). The remaining
-  steps are in docs/plans/open-items.md.
+  work is tracked in docs/plans/open-items.md. Step 2 offers only the five
+  interactive tools; Markdown replaces the other model-authored card calls,
+  while every form remains drawable.
 
 - 2026-10-22: The maintainer asked for one design run on conversation context
   instead of more one-slot fixes, and to fold the paused parallel continuity work

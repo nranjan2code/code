@@ -1,6 +1,13 @@
 # 98 — Answers beyond one card
 
-Status: implemented (2026-10-17): accepted by the maintainer; S1 to S5
+Status: in progress (2026-10-22): the model authors no layout. Only chart,
+stats, map, calendar and controls are offered tools; other forms remain
+drawable from history, fences and runtime records. Markdown is the normal
+answer contract. Runtime source and diff cards are the remaining redesign step.
+
+> **Historical record** — the earlier design and implementation follow.
+
+Earlier status: implemented (2026-10-17): accepted by the maintainer; S1 to S5
 built and checked live (2026-10-17); what S5 left is in
 docs/plans/open-items.md. Written at
 the maintainer's direction ("we cannot build a card for every scenario";

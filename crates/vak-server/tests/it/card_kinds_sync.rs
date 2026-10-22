@@ -1,9 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! The forms are one list everywhere (docs/design/92-card-forms.md): the
-//! card tools, the delivery validators, the host's primitives and the forms
-//! the client draws are the same set. A form one side lacks is a card the
-//! model can make and nobody draws, or a drawing nothing can reach.
+//! delivery validators, host primitives and client drawings agree. Offered
+//! card tools are a subset; the other forms serve history, fences and runtime cards.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -28,7 +27,7 @@ fn client_forms() -> BTreeSet<String> {
 
 #[test]
 fn the_card_kinds_are_exactly_the_types_the_client_draws() {
-    let tools: BTreeSet<String> = vak_core::presentation_tools::conformance_cases()
+    let forms: BTreeSet<String> = vak_core::presentation_tools::conformance_cases()
         .into_iter()
         .map(|(_, form, _)| form.to_string())
         .collect();
@@ -52,7 +51,18 @@ fn the_card_kinds_are_exactly_the_types_the_client_draws() {
         })
         .collect();
     let client = client_forms();
-    assert_eq!(tools, delivery, "card tools and delivery forms differ");
+    assert_eq!(forms, delivery, "builders and delivery forms differ");
+    let tools: BTreeSet<String> = vak_core::presentation_tools::EmitCardTool::all()
+        .iter()
+        .flat_map(vak_tools::Tool::card_kinds)
+        .collect();
+    assert!(tools.is_subset(&delivery));
+    assert_eq!(
+        tools,
+        ["chart", "stats", "map", "calendar", "controls"]
+            .map(str::to_string)
+            .into()
+    );
     assert_eq!(primitives, delivery, "host primitives and forms differ");
     assert_eq!(
         client, delivery,

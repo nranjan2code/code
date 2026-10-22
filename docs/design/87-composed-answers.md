@@ -1,6 +1,13 @@
 # 87 — Composed answers
 
-Status: in progress: direction approved by the maintainer on 2026-10-11;
+Status: in progress (2026-10-22): the model authors no layout. Only chart,
+stats, map, calendar and controls are offered tools; other forms remain
+drawable from history, fences and runtime records. Markdown is the normal
+answer contract. Runtime source and diff cards are the remaining redesign step.
+
+> **Historical record** — the earlier design and implementation follow.
+
+Earlier status: in progress: direction approved by the maintainer on 2026-10-11;
 stage 1 done,
 stage 2 built: the outline and its layout, with each card its own call of
 the card tool that owns its kind (§2; the maintainer's choice on

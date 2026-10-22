@@ -96,6 +96,15 @@ information per block rather than a mandatory summary/card sequence.
 
 ## Diff notes
 
+### 2026-10-22 — Markdown answers and five interactive card tools
+
+Replaced the presentation contract's instruction to imitate no card form in
+Markdown with the existing Markdown renderer contract: interactive tables,
+lists, checklists, quotes, fenced code, Mermaid and diffs. Chart, stats, map,
+calendar and controls retain precise tools. Source and file-change cards are
+the runtime's responsibility; the model authors no layout. This removes the
+competing card/prose instructions and the card-only final-answer rule.
+
 - 2026-10-22: the history bullet names what a request now carries (earlier
   exchanges as `<historical_exchange>` records, newest last, and a
   `<context_summary>` for older ones) and asks the model to resolve a

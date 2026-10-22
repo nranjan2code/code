@@ -56,7 +56,7 @@ impl Provider for Counting {
     }
 }
 
-/// A provider that answers with a callout card, then a word of narration.
+/// A provider that answers with a stats card, then a word of narration.
 struct Carding(crate::support::CapacityKey, std::sync::Mutex<u32>);
 
 #[async_trait::async_trait]
@@ -84,8 +84,8 @@ impl Provider for Carding {
             (
                 vec![ContentBlock::ToolUse {
                     id: "c1".into(),
-                    name: "emit_callout_card".into(),
-                    input: serde_json::json!({"semantic_type": "callout", "label": "Quote of the day", "text": "Small steps make big change.", "tone": "note"}),
+                    name: "emit_stats_card".into(),
+                    input: serde_json::json!({"semantic_type": "stats", "readings": [{"label": "Daily total", "value": "42"}]}),
                 }],
                 vak_llm::types::StopReason::ToolUse,
             )
@@ -1053,7 +1053,7 @@ async fn a_run_that_answered_with_a_card_delivers_the_card_as_a_card() {
         card["fallback_text"]
             .as_str()
             .unwrap()
-            .contains("Small steps make big change.")
+            .contains("Daily total")
     );
     let answer = items
         .iter()
@@ -1083,9 +1083,7 @@ async fn a_run_that_answered_with_a_card_delivers_the_card_as_a_card() {
     );
     let (_, transcript) = server.get(&format!("/sessions/{session}/transcript")).await;
     assert!(
-        transcript
-            .to_string()
-            .contains("Small steps make big change."),
+        transcript.to_string().contains("Daily total"),
         "the model still reads the card's text: {transcript}"
     );
     assert!(
@@ -1188,11 +1186,11 @@ async fn a_page_automation_makes_each_run_a_version_of_its_page() {
     assert!(
         kept.items.iter().any(|item| {
             item.kind == vak_delivery::presentation::OutputKind::Card
-                && item.fallback_text.contains("Small steps make big change.")
+                && item.fallback_text.contains("Daily total")
         }),
         "the run's card is kept as a card: {kept:?}"
     );
-    assert!(kept.text.contains("Small steps make big change."));
+    assert!(kept.text.contains("Daily total"));
     assert!(
         server
             .inbox()
