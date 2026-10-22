@@ -330,3 +330,19 @@ Type `TurnMarkRecord` in `crates/vak-session/src/turn_marks.rs`. Class: ledger. 
 | `turn` | `String` | yes | The turn, by its directive's entry id. |
 | `trace` | `Option<TraceKey>` | no |  |
 | `actor` | `Option<PrincipalId>` | no |  |
+
+## workspace_context
+
+Type `WorkspaceContextRecord` in `crates/vak-session/src/workspaces.rs`. Class: ledger. Stored in: `sessions`. Version: 1.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `resource` | `String` | yes |  |
+| `revision` | `u64` | yes |  |
+| `workspace_type` | `String` | yes |  |
+| `plugin_digest` | `String` | yes |  |
+| `generation` | `u64` | yes |  |
+| `fields` | `Vec<String>` | yes |  |
+| `projection` | `crate::objects::ObjectRef` | yes |  |
+| `trace` | `Option<TraceKey>` | no |  |
+| `actor` | `Option<crate::ids::PrincipalId>` | no |  |

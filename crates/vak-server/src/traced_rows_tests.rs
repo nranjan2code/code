@@ -215,6 +215,18 @@ fn records() -> Vec<Record> {
                 "grant": "gnt_01920000-0000-7000-8000-000000000001",
             }),
         ),
+        record::<vak_session::workspaces::WorkspaceContextRecord>(
+            "WorkspaceContextRecord",
+            "crates/vak-session/src/workspaces.rs",
+            "ledger",
+            "sessions",
+            serde_json::json!({
+                "resource": "workspace-1", "revision": 1,
+                "workspace_type": "canvas.parameters", "plugin_digest": "sha256:abc",
+                "generation": 1, "fields": ["density"],
+                "projection": {"id": "sha256:def", "len": 7},
+            }),
+        ),
         record::<vak_sandbox::EnvironmentRecord>(
             "EnvironmentRecord",
             "crates/vak-sandbox/src/lib.rs",
@@ -285,7 +297,7 @@ fn every_ledger_row_type_is_traced() {
     let total = names.len();
     names.dedup();
     assert_eq!(total, names.len(), "row type names are unique");
-    assert_eq!(total, 21);
+    assert_eq!(total, 22);
 
     let mut declared = 0;
     for entry in std::fs::read_dir(workspace_root().join("crates"))
@@ -325,7 +337,7 @@ fn every_ledger_row_type_is_traced() {
 /// and writes it out again (the assertion lives in `record`).
 #[test]
 fn every_ledger_row_type_names_its_actor() {
-    assert_eq!(records().len(), 21);
+    assert_eq!(records().len(), 22);
 }
 
 struct Field {
