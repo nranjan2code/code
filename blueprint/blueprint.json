@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.25.0",
-  "revision": "e63ab93b7",
+  "revision": "16cbd38b4",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.23.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2464,
+   "total_commits": 2466,
    "days": 63,
    "peak_day": 174,
    "design_docs": 99,
@@ -135,7 +135,7 @@
     "section": "Shared chat and projection UX (2026-10-22)",
     "open": 2,
     "items": [
-     "Qualify the changed UI in installed native WebKit and native window controls;",
+     "Finish detailed native WebKit layout and window-control qualification, plus the expanded-queue phone check.",
      "Investigate the failed-answer fixture's MCP-network disclosure assertion;"
     ]
    },
@@ -425,15 +425,15 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 521,
+  "commits": 523,
   "areas": [
    [
     "docs",
-    420
+    421
    ],
    [
     "(root)",
-    302
+    303
    ],
    [
     "vak-core",
@@ -790,6 +790,22 @@
   ],
   "recent": [
    {
+    "hash": "16cbd38b4",
+    "date": "2026-10-22",
+    "subject": "Open next unreleased changelog section",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "1378854c9",
+    "date": "2026-10-22",
+    "subject": "Record 8.25.0 release and local install",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
     "hash": "e63ab93b7",
     "date": "2026-10-22",
     "subject": "Prepare 8.25.0 changelog",
@@ -901,28 +917,6 @@
     "subject": "Prepare 8.22.0 release notes",
     "areas": [
      "(root)"
-    ]
-   },
-   {
-    "hash": "a23c1109e",
-    "date": "2026-10-22",
-    "subject": "Bump workspace version to 8.22.0",
-    "areas": [
-     "(root)"
-    ]
-   },
-   {
-    "hash": "2fdf4a0b7",
-    "date": "2026-10-22",
-    "subject": "Enforce automatic Topic decisions at turn completion",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-control",
-     "vak-core",
-     "vak-server",
-     "vak-tools"
     ]
    }
   ],
@@ -30873,6 +30867,18 @@
  ],
  "replay": [
   {
+   "hash": "16cbd38b4",
+   "date": "2026-10-22",
+   "subject": "Open next unreleased changelog section",
+   "subsystems": []
+  },
+  {
+   "hash": "1378854c9",
+   "date": "2026-10-22",
+   "subject": "Record 8.25.0 release and local install",
+   "subsystems": []
+  },
+  {
    "hash": "e63ab93b7",
    "date": "2026-10-22",
    "subject": "Prepare 8.25.0 changelog",
@@ -37759,7 +37765,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1407,
+  "docs_commits": 1408,
   "hot": 656
  },
  "findings": [
