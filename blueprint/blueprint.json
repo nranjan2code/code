@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.23.0",
-  "revision": "df4642f77",
+  "version": "8.24.0",
+  "revision": "01cc187ae",
   "first_date": "2026-08-21",
   "last_date": "2026-10-22",
   "prose_reviewed": "8.23.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2458,
+   "total_commits": 2460,
    "days": 63,
    "peak_day": 174,
    "design_docs": 99,
@@ -417,7 +417,7 @@
  "activity": {
   "since": "2026-10-08",
   "until": "2026-10-22",
-  "commits": 515,
+  "commits": 517,
   "areas": [
    [
     "docs",
@@ -425,7 +425,7 @@
    ],
    [
     "(root)",
-    296
+    298
    ],
    [
     "vak-core",
@@ -782,6 +782,22 @@
   ],
   "recent": [
    {
+    "hash": "01cc187ae",
+    "date": "2026-10-22",
+    "subject": "Prepare 8.24.0 changelog",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "0a8ab10d8",
+    "date": "2026-10-22",
+    "subject": "Bump version to 8.24.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "df4642f77",
     "date": "2026-10-22",
     "subject": "Define general kept-work lifecycle",
@@ -900,39 +916,9 @@
     "areas": [
      "(root)"
     ]
-   },
-   {
-    "hash": "344a8466a",
-    "date": "2026-10-22",
-    "subject": "Complete Canvas workspace extensibility",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "examples",
-     "vak-agent",
-     "vak-catalog",
-     "vak-client-ui",
-     "vak-config",
-     "vak-core",
-     "vak-plugin",
-     "vak-server",
-     "vak-session"
-    ]
-   },
-   {
-    "hash": "56e0bc59d",
-    "date": "2026-10-22",
-    "subject": "Refresh blueprint for 8.20.0 release",
-    "areas": [
-     "blueprint",
-     "docs"
-    ]
    }
   ],
-  "unreleased": [
-   "Proposed a general lifecycle for saved interactive work, with edits creating versions on one Library item, visible operation controls, and script execution gated by current capabilities and enforceable isolation."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30878,6 +30864,18 @@
   }
  ],
  "replay": [
+  {
+   "hash": "01cc187ae",
+   "date": "2026-10-22",
+   "subject": "Prepare 8.24.0 changelog",
+   "subsystems": []
+  },
+  {
+   "hash": "0a8ab10d8",
+   "date": "2026-10-22",
+   "subject": "Bump version to 8.24.0",
+   "subsystems": []
+  },
   {
    "hash": "df4642f77",
    "date": "2026-10-22",
