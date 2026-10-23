@@ -199,3 +199,11 @@ viewport fit and absence of owner review mutations. Pure lifecycle/order parity
 runs with `node crates/vak-client-ui/tests/rich-response.mjs`; the regular gate
 includes it alongside composition and hydration tests. These fixtures do not
 claim live provider or installed WebKit acceptance.
+
+The source-link regression extends this fixture with a long API URL used as
+both title and publisher, a meaningful source title, long unbroken findings
+and titles, and an unsafe destination. `rich-response-matrix.html` runs it
+in four independent iframe viewports (1440×900 and 390×844, light and dark)
+and displays their results. It verifies unchanged full destinations, compact
+raw-URL labels, safe links and content containment down to each source/card.
+Typecheck with `tsc --noEmit -p tsconfig.rich-response-fixture.json`.

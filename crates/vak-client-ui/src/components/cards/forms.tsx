@@ -221,7 +221,15 @@ export function CalloutForm(props: { payload: Payload }) {
 }
 
 function hostOf(url: string): string {
-  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; }
+}
+
+/** Raw addresses are destinations, not useful source titles. */
+function sourceLabel(source: Payload, url: string): string {
+  for (const candidate of [text(source.title), text(source.source_name)]) {
+    if (candidate && candidate !== url && !/^(?:https?:\/\/|www\.)/i.test(candidate)) return candidate;
+  }
+  return hostOf(url) || "Source";
 }
 
 function readableDate(value?: string): string | undefined {
@@ -239,12 +247,16 @@ export function SourcesForm(props: { payload: Payload }) {
       <ol class="sources">
         <For each={records(p().sources)}>{(source) => {
           const url = text(source.url) ?? "";
+          const label = sourceLabel(source, url);
+          const sourceName = text(source.source_name);
+          const publisher = sourceName && !/^(?:https?:\/\/|www\.)/i.test(sourceName) ? sourceName : hostOf(url);
+          const detail = [publisher !== label ? publisher : undefined, readableDate(text(source.published_at))].filter(Boolean).join(" · ");
           return (
             <li class="source">
               <Prose class="source-finding" text={text(source.finding) ?? ""} />
               <div class="source-from">
-                <Linked label={text(source.title) ?? hostOf(url)} url={url} />
-                <span class="card-meta">{[text(source.source_name) ?? hostOf(url), readableDate(text(source.published_at))].filter(Boolean).join(" · ")}</span>
+                <Linked label={label} url={url} />
+                <Show when={detail}><span class="card-meta">{detail}</span></Show>
               </div>
             </li>
           );

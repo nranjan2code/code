@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rich response width regression</title></head><body>
+<h1>Rich response width regression</h1><p id="status" role="status">Checking four viewport/theme cases…</p>
+<div id="cases"></div>
+<script type="module">
+const cases = [[1440,900,"light"],[390,844,"light"],[1440,900,"dark"],[390,844,"dark"]];
+const frames = new Map();
+for (const [width,height,theme] of cases) {
+  const section = document.createElement("section"); const heading = document.createElement("h2"); heading.textContent = `${width} × ${height} ${theme}: checking`; section.append(heading);
+  const frame = document.createElement("iframe"); frame.title = heading.textContent; frame.width = String(width); frame.height = String(height); frame.src = `./rich-response.html?theme=${theme}&autocheck=1`; section.append(frame); document.querySelector("#cases").append(section); frames.set(frame, heading);
+}
+const results = new Map();
+addEventListener("message", event => {
+  if (event.origin !== location.origin || event.data?.fixture !== "rich-response") return;
+  for (const [frame, heading] of frames) if (event.source === frame.contentWindow) { results.set(frame, event.data.result); heading.textContent = `${frame.width} × ${frame.height} ${frame.src.includes("theme=dark") ? "dark" : "light"}: ${event.data.result}`; }
+  document.querySelector("#status").textContent = `${results.size}/4 complete; ${[...results.values()].filter(result => result === "PASS").length}/4 passed`;
+});
+</script></body></html>

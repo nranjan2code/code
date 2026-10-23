@@ -1,3 +1,9 @@
+## Unreleased
+
+- Show readable labels for source links while preserving their complete destinations.
+  Long source names and unbroken content wrap within the answer instead of
+  widening the conversation.
+
 ## 8.31.1 — 2026-10-23 — Rich response consolidation
 
 - Preserve prose, rich cards, exact data and result notices in source order

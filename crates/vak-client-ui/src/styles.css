@@ -3035,6 +3035,8 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 }
 .assistant-turn-body {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   padding-left: var(--space-6);
 }
 .msg.assistant .md { color: var(--text); line-height: 1.62; padding-left: 0; }
@@ -3087,6 +3089,8 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
    .assistant-name, .assistant-turn-body) are the same classes the streaming
    view uses, already styled above — so no duplication is needed for them. */
 .semantic-assistant {
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -6808,7 +6812,7 @@ code.ic[data-previewable="true"]:hover {
 .answer-block {
   font-family: var(--content);
   margin: var(--space-3) 0;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   animation: block-in var(--dur) var(--ease) both;
 }
 .card-prose > :first-child { margin-top: 0; }
@@ -6817,7 +6821,7 @@ code.ic[data-previewable="true"]:hover {
 @media (prefers-reduced-motion: reduce) { .answer-block { animation: none; } }
 .semantic-paragraph, .md-ul, .md-ol { max-width: var(--measure); }
 
-.card { display: grid; gap: var(--space-3); min-width: 0; padding: var(--form-inset, var(--space-4)); border: var(--form-border-width, 1px) solid var(--border-soft); border-radius: var(--form-corners, var(--radius)); background: var(--form-surface, var(--surface)); color: var(--text); font-size: var(--fs-reading); line-height: 1.6; container-type: inline-size; }
+.card { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); min-width: 0; padding: var(--form-inset, var(--space-4)); border: var(--form-border-width, 1px) solid var(--border-soft); border-radius: var(--form-corners, var(--radius)); background: var(--form-surface, var(--surface)); color: var(--text); font-size: var(--fs-reading); line-height: 1.6; container-type: inline-size; }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
 .card-heading { display: grid; gap: 2px; min-width: 0; }
 .card-eyebrow { color: var(--muted); font-size: var(--fs-caption); font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
@@ -6899,12 +6903,12 @@ code.ic[data-previewable="true"]:hover {
 .callout-title { font-weight: 600; }
 .callout-text { margin: 0; max-width: var(--measure); }
 
-.sources { margin: 0; padding-left: 1.4em; display: grid; gap: var(--space-3); }
-.source { padding-left: var(--space-1); }
+.sources { margin: 0; padding-left: 1.4em; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--space-3); }
+.source { min-width: 0; overflow-wrap: anywhere; padding-left: var(--space-1); }
 .source::marker { color: var(--muted); font-variant-numeric: tabular-nums; }
 .source-finding { margin: 0; max-width: var(--measure); }
-.source-from { display: flex; flex-wrap: wrap; gap: 2px var(--space-2); font-size: var(--fs-control); }
-.source-from a { color: var(--accent); }
+.source-from { min-width: 0; display: flex; flex-wrap: wrap; gap: 2px var(--space-2); font-size: var(--fs-control); }
+.source-from a { min-width: 0; max-width: 100%; overflow-wrap: anywhere; color: var(--accent); }
 
 .calendar { display: grid; gap: var(--space-4); }
 .calendar-day { display: grid; gap: var(--space-2); }

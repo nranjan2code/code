@@ -1,6 +1,10 @@
 ## Response projection across surfaces — 2026-10-23
 
 Review: `docs/audits/response-projection-across-surfaces-2026-10-23.md`.
+- [x] Correct raw source link labels and intrinsic-width overflow in the shared
+  renderer; long-URL/unbroken-content browser regression passes both widths/themes.
+  See `docs/audits/source-links-and-width-2026-10-23.md`.
+
 Current research: `docs/research/rich-responses-2026-10-23.md`.
 Contract and R0–R5 exits: `docs/design/104-rich-response-contract.md`.
 This refines the existing architecture/presentation plan's S3. The maintainer
