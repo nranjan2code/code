@@ -39,7 +39,7 @@ members = [
 ]
 
 [workspace.package]
-version = "8.29.0"
+version = "8.30.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/nranjan2code/code"
