@@ -9,7 +9,7 @@
   (docs/audits/progress-2026-10-22.md).
 - [x] Final full gate after receipt isolation passed on 2026-10-23; progress
   implementation, audit and current record are complete.
-- [ ] Installed native WebKit qualification remains open; no release requested.
+- [ ] Installed native WebKit qualification remains open; 8.29.0 release requested.
 - [ ] Open design question: whether independent completeness reasoning should
   ever use strands or the intent reader. Neither is used by this implementation.
 
@@ -24,7 +24,7 @@
   Browser checked at desktop/mobile sizes in light/dark themes
   (docs/audits/turn-navigator-labels-2026-10-22.md).
 - [ ] Qualify the answer-title navigator fix in installed native WebKit; it
-  is unreleased after 8.28.0.
+  is verified; 8.29.0 release and local installation were requested on 2026-10-23.
 
 - [x] Trace clarification chains against static and dynamic prompts. One
   carried exchange can omit the original subject, and subject-only search

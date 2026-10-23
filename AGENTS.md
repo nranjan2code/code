@@ -1279,6 +1279,9 @@ commit (invariant 30).
   never the chat body. It is separate from cards: never require a call,
   match a label to a card, refuse a card or change layout because of them.
   The loop may remind once about explicitly open items; output always stands.
+  Turn navigator previews use recorded answer headings or authored card titles,
+  excluding runtime receipts; untitled turns show their number. No plan parser
+  or old outline compatibility path supplies navigation labels.
   A model calls an offered card tool by its own name
   and precise schema (`vak-core/src/presentation_tools.rs`;
   a shape

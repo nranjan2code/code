@@ -1,14 +1,6 @@
 # 86 — The model plans, the runtime checks
 
 Status: superseded on 2026-10-22: the `plan` tool, the plan check and the forced card call are removed; a model authors no layout.
-Phases 1 (plan and check) and 2 (a commitment opens only from an explicit
-ask; `a_request_with_no_explicit_ask_opens_no_commitment`) are built;
-phase 3 (the card surface) has not been checked against the code
-(2026-10-14). Supersedes the parts of doc 47 that let a word-list
-reading drive behaviour (stop gates, model-visible part notes, commitments
-opened from a guessed horizon) and the card-completeness self-audit in doc
-30-render-architecture §30.1. Doc 47's safety floor (intent narrows, never
-widens; invariant 32) and its control plane stay as they are.
 
 ## What returned — 2026-10-22
 
@@ -17,6 +9,17 @@ items returned, through the separate `progress` tool and doc 88’s correction
 ladder. No mandatory plan, deliverable/card matching, layout, forced tool call
 or extra completeness-model call returned. This document remains superseded;
 the obsolete plan parser, outline wire and plan-only control tags are removed.
+
+> **Historical record** — the removed plan implementation follows.
+
+Earlier status: Phases 1 (plan and check) and 2 (a commitment opens only from an explicit
+ask; `a_request_with_no_explicit_ask_opens_no_commitment`) are built;
+phase 3 (the card surface) has not been checked against the code
+(2026-10-14). Supersedes the parts of doc 47 that let a word-list
+reading drive behaviour (stop gates, model-visible part notes, commitments
+opened from a guessed horizon) and the card-completeness self-audit in doc
+30-render-architecture §30.1. Doc 47's safety floor (intent narrows, never
+widens; invariant 32) and its control plane stay as they are.
 
 ## Evidence questions and completion (2026-10-19)
 

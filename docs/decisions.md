@@ -1,5 +1,9 @@
 # Decisions
 
+- 2026-10-23: The maintainer requested committing, pushing, releasing and
+  installing the completed progress and navigator changes locally. Cut 8.29.0;
+  this supersedes the earlier instruction to leave these changes unreleased.
+
 - 2026-10-22: Progress belongs in the existing top semicircle and right
   Details panel, not in the chat answer. Both surfaces read the same latest
   accepted list, without inferring delivery from cards.

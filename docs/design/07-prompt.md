@@ -1,6 +1,6 @@
 # 07 — System prompt
 Status: implemented in 2.0.0; current contract checked against the code on
-2026-10-14.
+2026-10-23; the current seed diffs are recorded below.
 
 ## Seed diff — 2026-10-22: optional progress
 

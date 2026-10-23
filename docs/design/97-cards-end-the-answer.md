@@ -3,6 +3,8 @@
 Status: superseded on 2026-10-22: `then` is removed; after a step of cards
 the model ends the turn by answering or stopping, as after any call.
 
+> **Historical record** — the removed card-ending contract follows.
+
 ## 1. What is wrong
 
 An answer shown as cards was shown twice. After a step whose cards were
