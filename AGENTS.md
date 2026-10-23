@@ -1260,6 +1260,8 @@ commit (invariant 30).
   form primitives (`vak_presentation::PRIMITIVES`, plus layout) and the
   client's `FORMS` table (`vak-client-ui/src/components/cards/index.tsx`),
   checked equal by `the_card_kinds_are_exactly_the_types_the_client_draws`.
+  Installed acceptance opens an existing conversation as well as a fresh one;
+  component digests alone do not prove stored records are readable.
   Every card carries its form as `StructuredOutput.block`, and the client
   draws by block in one shared card shell; a kind only selects a pack on
   the host. A form's own kind is its name; a pack adds kinds to a form

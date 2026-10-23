@@ -1,5 +1,10 @@
 # Decisions
 
+- 2026-10-23: After the installed dev conversation failed on removed
+  `topics_placement` records, the maintainer explicitly authorized erasure or
+  reset on this dev machine. Reset only the affected conversation through
+  the supported Trash action; do not restore retired plan compatibility.
+
 - 2026-10-23: The maintainer requested committing, pushing, releasing and
   installing the completed progress and navigator changes locally. Cut 8.29.0;
   this supersedes the earlier instruction to leave these changes unreleased.

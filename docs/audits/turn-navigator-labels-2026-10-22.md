@@ -1,7 +1,11 @@
 # Turn navigator answer titles — 2026-10-22
 
-Status: historical. Shared-client regression check; browser-qualified, unreleased
-and not yet qualified in installed native WebKit.
+Status: historical. Shared-client regression check; browser-qualified before release
+and not yet visually qualified in installed native WebKit.
+
+Released and locally installed as 8.29.0 on 2026-10-23; see
+[release verification](release-8.29.0-2026-10-23.md). The checks below describe
+the pre-release acceptance; native visual qualification remains open.
 
 The maintainer reported a hover showing a long raw request. The navigator read
 only accepted plan names, then the request. The card redesign removed the plan

@@ -1,3 +1,14 @@
+## Installed dev history — 2026-10-23
+
+- [x] Diagnose and reset the affected dev conversation after explicit maintainer
+  authorization: two retired `topics_placement` decision records could not
+  decode; moved only that conversation through the supported Trash action.
+  A fresh installed-app conversation opens; no compatibility code was restored
+  (docs/audits/release-8.29.0-2026-10-23.md).
+- [ ] Background history-load failures append repeated identical system messages.
+  Represent the current failure once and clear it on successful hydration;
+  preserve the reader's fail-closed behavior for unreadable records.
+
 ## Optional progress — 2026-10-22
 
 - [x] Loop-owned whole-list progress, ledger/projection, top semicircle and right Details view,
@@ -9,7 +20,10 @@
   (docs/audits/progress-2026-10-22.md).
 - [x] Final full gate after receipt isolation passed on 2026-10-23; progress
   implementation, audit and current record are complete.
-- [ ] Installed native WebKit qualification remains open; 8.29.0 release requested.
+- [x] Release and locally install 8.29.0 (`0f3a25b13`, tag `v8.29.0`);
+  clean-room checks, checksums, install verification and both services passed
+  (docs/audits/release-8.29.0-2026-10-23.md).
+- [ ] Installed native WebKit visual qualification remains open.
 - [ ] Open design question: whether independent completeness reasoning should
   ever use strands or the intent reader. Neither is used by this implementation.
 
@@ -24,7 +38,7 @@
   Browser checked at desktop/mobile sizes in light/dark themes
   (docs/audits/turn-navigator-labels-2026-10-22.md).
 - [ ] Qualify the answer-title navigator fix in installed native WebKit; it
-  is verified; 8.29.0 release and local installation were requested on 2026-10-23.
+  shipped in 8.29.0; browser checks passed, native visual acceptance remains open.
 
 - [x] Trace clarification chains against static and dynamic prompts. One
   carried exchange can omit the original subject, and subject-only search

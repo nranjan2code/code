@@ -127,6 +127,12 @@ cannot notarize something that does not exist until install. It is produced
 by `self install --prefix …/Vakyartha.app`, the same code path an install uses,
 so the artifact and the installed tree cannot diverge.
 
+After local installation, open an existing Agent conversation and complete a
+fresh direct-answer turn. Component integrity checks do not prove that existing
+ledger records can be projected. If an intentionally removed record type requires
+a dev reset, record it and use the authorized Trash/erasure path; never rewrite
+ledger frames or silently skip unreadable records.
+
 ### Current local release policy
 
 Builds and checks run on the maintainer's machine. GitHub Actions is disabled.

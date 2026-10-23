@@ -1,3 +1,5 @@
+## Unreleased
+
 ## 8.29.0 — 2026-10-23 — Visible progress and clearer turn navigation
 
 - For work with several steps, the agent can show and update progress in the top semicircle and Details panel.
