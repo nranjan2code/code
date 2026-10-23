@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.31.0",
-  "revision": "b9ada8ca3",
+  "version": "8.31.1",
+  "revision": "95f3da2bc",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.31.0 · 2026-10-23"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2495,
+   "total_commits": 2496,
    "days": 64,
    "peak_day": 174,
    "design_docs": 100,
@@ -456,12 +456,12 @@
    }
   ],
   "open_total": 125,
-  "measures_revision": "06f0cc389"
+  "measures_revision": "95f3da2bc"
  },
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 514,
+  "commits": 515,
   "areas": [
    [
     "docs",
@@ -469,7 +469,7 @@
    ],
    [
     "(root)",
-    297
+    298
    ],
    [
     "vak-core",
@@ -826,6 +826,14 @@
   ],
   "recent": [
    {
+    "hash": "95f3da2bc",
+    "date": "2026-10-23",
+    "subject": "Bump version to 8.31.1",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "b9ada8ca3",
     "date": "2026-10-23",
     "subject": "Consolidate rich responses across surfaces",
@@ -991,21 +999,9 @@
      "vak-server",
      "vak-tools"
     ]
-   },
-   {
-    "hash": "2c505a7c8",
-    "date": "2026-10-22",
-    "subject": "Record 8.28.0 release and verified local installation",
-    "areas": [
-     "docs"
-    ]
    }
   ],
-  "unreleased": [
-   "Preserve prose, rich cards, exact data and result notices in source order across channel delivery, saved answers, shared conversations, terminal, voice companions and transcript exports.",
-   "Keep heartbeat findings and urgency separate from presentation warnings, so a quiet reply stays quiet and notices do not become extra findings.",
-   "Render eligible Slack charts natively, keeping full data in accessible text and explicit static fallbacks for unsupported chart shapes."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/104-rich-response-contract.md",
@@ -31242,6 +31238,12 @@
  ],
  "replay": [
   {
+   "hash": "95f3da2bc",
+   "date": "2026-10-23",
+   "subject": "Bump version to 8.31.1",
+   "subsystems": []
+  },
+  {
    "hash": "b9ada8ca3",
    "date": "2026-10-23",
    "subject": "Consolidate rich responses across surfaces",
@@ -37945,7 +37947,7 @@
     "score": 124,
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6673
+    "line": 6672
    },
    {
     "score": 96,
@@ -37954,10 +37956,10 @@
     "line": 3829
    },
    {
-    "score": 87,
+    "score": 81,
     "name": "snapshot_inner",
     "file": "crates/vak-server/src/projection.rs",
-    "line": 905
+    "line": 736
    },
    {
     "score": 75,
@@ -38013,7 +38015,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 181 (rank 1 of 4,560 library functions) and `Core::run_turn_recorded` at 124 (rank 3); the median is 3 and the 99th percentile 24. 161 commits changed the first (6% of all) and 218 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.4 and `vak-agent/src/lib.rs` at 8.9 per thousand lines, against a median of 4.0 over 420 files; file size alone does not predict the rate (ρ = -0.11).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 181 (rank 1 of 4,561 library functions) and `Core::run_turn_recorded` at 124 (rank 3); the median is 3 and the 99th percentile 24. 161 commits changed the first (6% of all) and 218 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.4 and `vak-agent/src/lib.rs` at 8.9 per thousand lines, against a median of 4.0 over 420 files; file size alone does not predict the rate (ρ = -0.11).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own. The 2026-10-22 answer investigation found another lossy decision input: plan receipts retained a deliverable name but discarded the actual form. That checker was corrected, then retired by the maintainer's later Markdown/runtime-composition decision the same day. The current contract does not use model-authored plans. Broader state consolidation remains open.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`; [answer design investigation](../docs/audits/answer-design-contract-2026-10-22.md)."
