@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.30.0",
-  "revision": "681790483",
+  "revision": "f15337240",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2488,
+   "total_commits": 2490,
    "days": 64,
    "peak_day": 174,
    "design_docs": 99,
@@ -441,15 +441,15 @@
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 507,
+  "commits": 509,
   "areas": [
    [
     "docs",
-    403
+    405
    ],
    [
     "(root)",
-    291
+    292
    ],
    [
     "vak-core",
@@ -806,6 +806,23 @@
   ],
   "recent": [
    {
+    "hash": "f15337240",
+    "date": "2026-10-23",
+    "subject": "Open next changelog section after 8.30.0",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
+    "hash": "f064532dd",
+    "date": "2026-10-23",
+    "subject": "Record 8.30.0 local release and install",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
     "hash": "681790483",
     "date": "2026-10-23",
     "subject": "Prepare 8.30.0 release notes",
@@ -945,30 +962,6 @@
     "date": "2026-10-22",
     "subject": "Hand over the card redesign after step 1",
     "areas": [
-     "docs"
-    ]
-   },
-   {
-    "hash": "9d09f9c24",
-    "date": "2026-10-22",
-    "subject": "Let the model write answers without authoring layout",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-control",
-     "vak-core",
-     "vak-judge",
-     "vak-server",
-     "vak-tools"
-    ]
-   },
-   {
-    "hash": "1c8aeec23",
-    "date": "2026-10-22",
-    "subject": "Record 8.27.0 release and local install",
-    "areas": [
-     "(root)",
      "docs"
     ]
    }
@@ -30959,6 +30952,18 @@
  ],
  "replay": [
   {
+   "hash": "f15337240",
+   "date": "2026-10-23",
+   "subject": "Open next changelog section after 8.30.0",
+   "subsystems": []
+  },
+  {
+   "hash": "f064532dd",
+   "date": "2026-10-23",
+   "subject": "Record 8.30.0 local release and install",
+   "subsystems": []
+  },
+  {
    "hash": "681790483",
    "date": "2026-10-23",
    "subject": "Prepare 8.30.0 release notes",
@@ -37649,7 +37654,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1426,
+  "docs_commits": 1428,
   "hot": 659
  },
  "findings": [
