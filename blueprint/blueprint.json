@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.29.0",
-  "revision": "397f9eb85",
+  "version": "8.30.0",
+  "revision": "681790483",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2486,
+   "total_commits": 2488,
    "days": 64,
    "peak_day": 174,
    "design_docs": 99,
@@ -441,7 +441,7 @@
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 505,
+  "commits": 507,
   "areas": [
    [
     "docs",
@@ -449,7 +449,7 @@
    ],
    [
     "(root)",
-    289
+    291
    ],
    [
     "vak-core",
@@ -806,6 +806,22 @@
   ],
   "recent": [
    {
+    "hash": "681790483",
+    "date": "2026-10-23",
+    "subject": "Prepare 8.30.0 release notes",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "58ae587c4",
+    "date": "2026-10-23",
+    "subject": "Bump workspace to 8.30.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "397f9eb85",
     "date": "2026-10-23",
     "subject": "Fix side-chat isolation and composer command handling",
@@ -955,36 +971,9 @@
      "(root)",
      "docs"
     ]
-   },
-   {
-    "hash": "faba3c91e",
-    "date": "2026-10-22",
-    "subject": "Prepare 8.27.0 release",
-    "areas": [
-     "(root)"
-    ]
-   },
-   {
-    "hash": "52fc35a28",
-    "date": "2026-10-22",
-    "subject": "Carry the newest exchanges whole with one stored summary",
-    "areas": [
-     "(root)",
-     "docs",
-     "scripts",
-     "vak-agent",
-     "vak-context",
-     "vak-core",
-     "vak-eval",
-     "vak-session"
-    ]
    }
   ],
-  "unreleased": [
-   "Keep side questions out of the main conversation after reloads and later turns, and record each side question only once.",
-   "Keep command status and pause/resume/stop feedback visible after an answer.",
-   "Preserve file mentions with spaces, punctuation and non-ASCII names using quoted paths, including when combined with skills and custom commands."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -30969,6 +30958,18 @@
   }
  ],
  "replay": [
+  {
+   "hash": "681790483",
+   "date": "2026-10-23",
+   "subject": "Prepare 8.30.0 release notes",
+   "subsystems": []
+  },
+  {
+   "hash": "58ae587c4",
+   "date": "2026-10-23",
+   "subject": "Bump workspace to 8.30.0",
+   "subsystems": []
+  },
   {
    "hash": "397f9eb85",
    "date": "2026-10-23",
