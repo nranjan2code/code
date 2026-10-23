@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.31.1",
-  "revision": "e922e9c07",
+  "version": "8.31.2",
+  "revision": "477848061",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.31.0 · 2026-10-23"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2498,
+   "total_commits": 2499,
    "days": 64,
    "peak_day": 174,
    "design_docs": 100,
@@ -461,7 +461,7 @@
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 517,
+  "commits": 518,
   "areas": [
    [
     "docs",
@@ -469,7 +469,7 @@
    ],
    [
     "(root)",
-    299
+    300
    ],
    [
     "vak-core",
@@ -826,6 +826,14 @@
   ],
   "recent": [
    {
+    "hash": "477848061",
+    "date": "2026-10-23",
+    "subject": "Bump version to 8.31.2",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "e922e9c07",
     "date": "2026-10-23",
     "subject": "Keep source links readable and contain long answer content",
@@ -970,20 +978,9 @@
      "(root)",
      "docs"
     ]
-   },
-   {
-    "hash": "125f2aa63",
-    "date": "2026-10-23",
-    "subject": "Release 8.29.0: visible progress and clearer turn navigation",
-    "areas": [
-     "(root)",
-     "docs"
-    ]
    }
   ],
-  "unreleased": [
-   "Show readable labels for source links while preserving their complete destinations."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/104-rich-response-contract.md",
@@ -31219,6 +31216,12 @@
   }
  ],
  "replay": [
+  {
+   "hash": "477848061",
+   "date": "2026-10-23",
+   "subject": "Bump version to 8.31.2",
+   "subsystems": []
+  },
   {
    "hash": "e922e9c07",
    "date": "2026-10-23",
