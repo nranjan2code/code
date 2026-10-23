@@ -17,11 +17,10 @@ Fix verification: `docs/audits/composer-command-fixes-2026-10-23.md`.
 
 ## Release and local install — 2026-10-23
 
-- [x] Release and locally install 8.30.0 (`b9980856a`, local tag `v8.30.0`);
-  clean-room checks, checksums, install verification, both services and a fresh
-  direct-answer turn passed (docs/audits/release-8.30.0-2026-10-23.md). The
-  release remains local and unpublished.
-
+- [x] Release and locally install 8.31.0 (`cbd4f7881`, local tag `v8.31.0`);
+  release gates, native artifact provenance, install verification, both services
+  and a fresh direct-answer turn passed (docs/audits/release-8.31.0-2026-10-23.md).
+  The release remains local and unpublished.
 ## Installed dev history — 2026-10-23
 
 - [x] Diagnose and reset the affected dev conversation after explicit maintainer
