@@ -4,7 +4,7 @@ Status: in progress (23 October 2026) — implementation authorized by the
 maintainer, including clean replacement without legacy compatibility. Shared
 ordered answer selection, channel handoff, replay draft exclusion, saved-page
 text, terminal, exports, voice companion and shared rendering are implemented
-in the working tree; the full repository gate and local browser acceptance
+and released locally; the full repository gate and local browser acceptance
 pass. Slack native charts
 are qualified structurally. R3–R5 state/action and native acceptance exits below
 remain open; no external agent UI implementation is adopted.

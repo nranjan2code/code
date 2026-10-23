@@ -1,6 +1,6 @@
 # Source links and answer width — 2026-10-23
 
-Status: historical. Shared client correction and local browser acceptance; follow-up release/install pending.
+Status: historical. Shared client correction and local browser acceptance; released/installed as 8.31.2 (see the release record).
 
 The maintainer reported raw source URLs and horizontal overflow in installed
 8.31.1. Source titles had been populated with full query URLs. The Sources
@@ -24,3 +24,5 @@ did not reduce their minimum content width.
 
 This is a renderer/layout correction. It requires no prompt or authoring
 schema change. Full native/form-state qualification remains tracked separately.
+
+Release and installed-view evidence: [8.31.2](release-8.31.2-2026-10-23.md).
