@@ -1,5 +1,9 @@
 # Decisions
 
+- 2026-10-23: The maintainer authorized commit/push, version bump, release and
+  local installation of the rich-response consolidation. The
+  [8.31.1 release record](audits/release-8.31.1-2026-10-23.md) records execution.
+
 - 2026-10-23: The maintainer subsequently authorized implementing and testing
   the rich response contract, including prompt and regression-test updates,
   and explicitly preferred clean code with no old compatibility paths because
