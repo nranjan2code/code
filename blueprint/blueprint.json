@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.29.0",
-  "revision": "125f2aa63",
+  "revision": "0dcccfff9",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -19,11 +19,11 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2484,
+   "total_commits": 2485,
    "days": 64,
    "peak_day": 174,
    "design_docs": 99,
-   "agents_words": 20551,
+   "agents_words": 20573,
    "subsystems": 64,
    "connections": 838,
    "flows": 11
@@ -110,15 +110,22 @@
    "ignored": "see .cargo/audit.toml"
   },
   "stale_names": {
-   "names": 257,
+   "names": 259,
    "documents": 47
   },
   "open_items": [
    {
+    "section": "Installed dev history — 2026-10-23",
+    "open": 1,
+    "items": [
+     "Background history-load failures append repeated identical system messages."
+    ]
+   },
+   {
     "section": "Optional progress — 2026-10-22",
     "open": 2,
     "items": [
-     "Installed native WebKit qualification remains open;",
+     "Installed native WebKit visual qualification remains open.",
      "Open design question:"
     ]
    },
@@ -428,21 +435,21 @@
     ]
    }
   ],
-  "open_total": 121,
+  "open_total": 122,
   "measures_revision": "125f2aa63"
  },
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 503,
+  "commits": 504,
   "areas": [
    [
     "docs",
-    401
+    402
    ],
    [
     "(root)",
-    287
+    288
    ],
    [
     "vak-core",
@@ -799,6 +806,15 @@
   ],
   "recent": [
    {
+    "hash": "0dcccfff9",
+    "date": "2026-10-23",
+    "subject": "Record 8.29.0 installation and authorized dev history reset",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "125f2aa63",
     "date": "2026-10-23",
     "subject": "Release 8.29.0: visible progress and clearer turn navigation",
@@ -957,16 +973,6 @@
      "(root)",
      "docs",
      "vak-agent"
-    ]
-   },
-   {
-    "hash": "9f11bb811",
-    "date": "2026-10-22",
-    "subject": "Keep the caller's surface across pooled Agent workspaces",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-server"
     ]
    }
   ],
@@ -30955,6 +30961,12 @@
  ],
  "replay": [
   {
+   "hash": "0dcccfff9",
+   "date": "2026-10-23",
+   "subject": "Record 8.29.0 installation and authorized dev history reset",
+   "subsystems": []
+  },
+  {
    "hash": "125f2aa63",
    "date": "2026-10-23",
    "subject": "Release 8.29.0: visible progress and clearer turn navigation",
@@ -37616,7 +37628,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1424,
+  "docs_commits": 1425,
   "hot": 658
  },
  "findings": [
