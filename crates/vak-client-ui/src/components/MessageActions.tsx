@@ -4,7 +4,7 @@ import Icon from "./Icon";
 /** `onSetAside`, on a person's message whose turn has ended, sets that turn
  *  aside so later replies no longer see it; `onRetry` asks for that turn
  *  again in place of it and everything after it (docs/design/99 §4 F). */
-export default function MessageActions(props: { text: string; role: "user" | "assistant"; onSetAside?: () => void; onRetry?: () => void }) {
+export default function MessageActions(props: { text: string; role: "user" | "assistant"; allowEdit?: boolean; onSetAside?: () => void; onRetry?: () => void }) {
   const [copied, setCopied] = createSignal(false);
   const [copyFailed, setCopyFailed] = createSignal(false);
   const copy = async () => {
@@ -35,7 +35,7 @@ export default function MessageActions(props: { text: string; role: "user" | "as
         </Show>
         <span>{copied() ? "Copied" : copyFailed() ? "Copy failed" : "Copy"}</span>
       </button>
-      <Show when={props.role === "user"}>
+      <Show when={props.role === "user" && props.allowEdit !== false}>
         <button
           type="button"
           class="msg-action-btn"

@@ -1,0 +1,30 @@
+import { render } from "solid-js/web";
+import "../src/components/ChatPane";
+import PageView from "../src/components/PageView";
+import * as store from "../src/store";
+import type { OutputTimeline } from "../src/types";
+import corpus from "../../vak-delivery/tests/fixtures/rich-answer.json";
+import "../src/styles.css";
+
+document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light";
+const timeline = structuredClone(corpus) as unknown as OutputTimeline;
+timeline.items.push({ ...timeline.items[2], id:"shared-file", kind:"artifact", content:{type:"artifact",artifact:{name:"review.docx",path:"review.docx",status:{state:"in_folder"}}} });
+const requests: string[] = [];
+window.fetch = async (input) => { requests.push(String(input)); return new Response("{}", {headers:{"Content-Type":"application/json"}}); };
+store.setTechnicalDetails(false);
+render(() => <main style="max-width:820px;margin:0 auto;padding:16px"><PageView page={{format:"vak-page",title:"Rich response",items:timeline.items,text:""}} versionId="fixture" hideUser={false} /></main>, document.getElementById("root")!);
+(window as any).runChecks = () => {
+  const body = document.querySelector("main")!;
+  const text = body.textContent ?? "";
+  const order = ["Leading context survives.","Observed series","Note: these are supplied observations", "0007", "12345678901234567890.001", "Original observations"];
+  if (!order.every((part,index) => text.includes(part) && (!index || text.indexOf(part) > text.indexOf(order[index-1])))) throw new Error("Rich response order or exact scalars changed");
+  const chart = body.querySelector('svg[role="img"][aria-label="R3 to R4 changes by fourteen."]');
+  const points = Array.from(chart?.querySelectorAll("circle title") ?? []).map(point => point.textContent);
+  if (JSON.stringify(points) !== JSON.stringify(["Readings: R1, 10", "Readings: R2, 12", "Readings: R3, 11", "Readings: R4, 25"])) throw new Error("Rich chart lost its supplied observations");
+  if (!text.includes("Partial result") || !text.includes("Check the evidence")) throw new Error("Result verdict missing");
+  if (body.scrollWidth > innerWidth) throw new Error("Answer overflows viewport");
+  if (body.querySelector('button[aria-label="Edit prompt in composer"]')) throw new Error("Shared view offers owner composer edit");
+  if (body.querySelector('button[aria-label="Review changes"]')) throw new Error("Saved/shared view offers owner review mutation");
+  if (requests.length) throw new Error("Saved/shared page called an owner API: " + requests.join(","));
+  return ["No ambient owner API calls for shared files", "Shared page renderer preserves prose/card order and exact scalars", "Rich chart and result verdict remain visible", "Saved/shared view offers no owner mutation", "Answer fits viewport"];
+};

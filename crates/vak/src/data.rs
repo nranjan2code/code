@@ -606,7 +606,9 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 Ok(log) => {
                     print!(
                         "{}",
-                        vak_core::transcript_md::render_markdown(&log.derive_messages())
+                        vak_delivery::answer::transcript_markdown(&vak_server::project_response(
+                            &core, &session, &log
+                        ))
                     );
                     0
                 }

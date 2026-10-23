@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod adaptive;
+pub mod answer;
 pub mod channel;
 pub mod client;
 pub mod controls;
@@ -44,20 +45,6 @@ pub use vak_presentation as adaptive_presentation;
 
 pub const DELIVERY_SCHEMA_VERSION: u16 = 2;
 
-/// Text after a card remains ordinary assistant text. The complete model text
-/// is projected as written; presentation policy belongs in the prompt and
-/// structured output contract, not phrase matching here.
-pub fn card_followup_text(narration: &str) -> Option<&str> {
-    let text = narration.trim();
-    (!text.is_empty()).then_some(text)
-}
-
-/// Return non-empty assistant text that follows card output. Text prefixes,
-/// including "Note:", have no control meaning.
-pub fn visible_card_followup(narration: &str) -> Option<String> {
-    card_followup_text(narration).map(str::to_owned)
-}
-
 /// The complete answer and its conservative structural projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnswerDraft {
@@ -72,6 +59,9 @@ pub struct AnswerDraft {
     /// answer result represented by `source_markdown`.
     #[serde(default)]
     pub results: Vec<AnswerResult>,
+    /// Ordered accepted answer material, already filtered for its audience.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<OutputItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,7 +86,15 @@ impl AnswerDraft {
             document,
             metadata: BTreeMap::new(),
             results: Vec::new(),
+            items: Vec::new(),
         }
+    }
+
+    pub fn from_items(items: Vec<OutputItem>) -> Self {
+        let items: Vec<_> = items.into_iter().filter(answer::is_material).collect();
+        let mut draft = Self::from_markdown(answer::markdown(&items));
+        draft.items = items;
+        draft
     }
 
     fn channel_projection(&self) -> Self {
@@ -571,6 +569,10 @@ pub struct DeliveryJob {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeliveryPacket {
+    /// Host delivery policy, such as a held attachment. These notices are
+    /// separate from the accepted answer and its source identities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub delivery_notices: Vec<String>,
     pub schema_version: u16,
     pub job_id: String,
     pub target: String,
@@ -606,49 +608,6 @@ impl DeliveryPacket {
             vec![self.fallback_markdown.clone()]
         } else {
             Vec::new()
-        }
-    }
-
-    /// Add the turn's emitted semantic cards to the canonical presentation
-    /// timeline carried by this delivery packet. Surface adapters consume
-    /// these typed items and keep `chunks` as their text fallback.
-    pub fn attach_structured_cards(&mut self, cards: impl IntoIterator<Item = StructuredOutput>) {
-        let cards: Vec<_> = cards.into_iter().collect();
-        if cards.is_empty() {
-            return;
-        }
-        let timeline = self.presentation.get_or_insert_with(|| OutputTimeline {
-            covered_sequence: None,
-            schema_version: PRESENTATION_SCHEMA_VERSION,
-            session_id: String::new(),
-            turn_names: Default::default(),
-            cursor: None,
-            items: Vec::new(),
-            diagnostics: Vec::new(),
-            goal: None,
-        });
-        for (index, output) in cards.into_iter().enumerate() {
-            timeline.items.push(OutputItem {
-                placement: Default::default(),
-                card_state: None,
-                id: format!("{}/card/{index}", self.job_id),
-                timestamp: String::new(),
-                turn_id: self.job_id.clone(),
-                role: OutputRole::Tool,
-                kind: OutputKind::Card,
-                status: OutputStatus::Succeeded,
-                outcome: None,
-                fallback_text: structured_markdown(&output),
-                content: OutputContent::Structured { output },
-                provenance: Some(OutputProvenance {
-                    session_id: None,
-                    entry_id: None,
-                    tool_call_id: None,
-                    source: Some("channel_card".into()),
-                    presentation_id: None,
-                }),
-                actions: Vec::new(),
-            });
         }
     }
 
@@ -743,7 +702,26 @@ pub fn render(job: &DeliveryJob) -> Result<DeliveryPacket, DeliveryError> {
         ));
     }
 
-    let (rendered, fallback_markdown, actions, coverage) = render_content(job)?;
+    let (rendered, fallback_markdown, actions, mut coverage) = render_content(job)?;
+    if let DeliveryContent::Answer(answer) = &job.content
+        && !answer.items.is_empty()
+    {
+        coverage = answer
+            .items
+            .iter()
+            .map(|item| Coverage {
+                block_id: item.id.clone(),
+                disposition: if matches!(
+                    job.profile.surface.as_str(),
+                    "telegram" | "slack" | "discord"
+                ) {
+                    channel::disposition(&job.profile.surface, item)
+                } else {
+                    CoverageDisposition::Rendered
+                },
+            })
+            .collect();
+    }
     let chunks = match job.profile.markup {
         Markup::TelegramHtml => telegram::split_html_chunks(&rendered, job.profile.max_chars),
         Markup::SlackMrkdwn | Markup::DiscordMarkdown => {
@@ -765,6 +743,7 @@ pub fn render(job: &DeliveryJob) -> Result<DeliveryPacket, DeliveryError> {
 
     let presentation = presentation_for_job(job);
     Ok(DeliveryPacket {
+        delivery_notices: Vec::new(),
         schema_version: DELIVERY_SCHEMA_VERSION,
         job_id: job.job_id.clone(),
         target: job.target.clone(),
@@ -805,6 +784,11 @@ fn presentation_for_job(job: &DeliveryJob) -> Option<OutputTimeline> {
     let DeliveryContent::Answer(answer) = &job.content else {
         return None;
     };
+    if !answer.items.is_empty() {
+        let mut timeline = OutputTimeline::empty("");
+        timeline.items = answer.items.clone();
+        return Some(timeline);
+    }
     let default_status = metadata_status(&answer.metadata);
     let legacy_document = answer.document.clone();
     let has_typed_results = !answer.results.is_empty();
@@ -1528,45 +1512,22 @@ mod tests {
             skill_version: "1".into(),
             payload: serde_json::json!({"title":"Service health","status":"Healthy"}),
         };
-        packet.attach_structured_cards([card.clone()]);
+        let item = serde_json::from_value(serde_json::json!({
+            "id":"card-entry","timestamp":"","turn_id":"test-turn","role":"assistant","kind":"card","status":"partial",
+            "content":{"type":"structured","output":card},"fallback_text":"","actions":[]
+        })).expect("accepted item");
+        packet
+            .presentation
+            .as_mut()
+            .expect("timeline")
+            .items
+            .insert(0, item);
 
         assert_eq!(packet.structured_cards(), vec![&card]);
         let wire = serde_json::to_value(&packet).expect("packet should serialize");
         let restored: DeliveryPacket =
             serde_json::from_value(wire).expect("packet should round-trip");
         assert_eq!(restored.structured_cards(), vec![&card]);
-    }
-
-    #[test]
-    fn card_followup_is_ordinary_assistant_text() {
-        assert_eq!(
-            card_followup_text("The plan is shown above."),
-            Some("The plan is shown above.")
-        );
-        assert_eq!(
-            card_followup_text("Note: Bring an umbrella."),
-            Some("Note: Bring an umbrella.")
-        );
-        assert_eq!(
-            card_followup_text("Additional note: Allow extra travel time."),
-            Some("Additional note: Allow extra travel time.")
-        );
-        assert_eq!(card_followup_text("  \n  "), None);
-    }
-
-    #[test]
-    fn visible_card_followup_preserves_exact_assistant_text() {
-        for text in [
-            "The requested plan is complete. No further information is required.",
-            "Note: Bring an umbrella.",
-            "Additional note: Allow extra travel time.",
-            "
-- Check the schedule
-- Bring water",
-        ] {
-            assert_eq!(visible_card_followup(text).as_deref(), Some(text.trim()));
-        }
-        assert_eq!(visible_card_followup("  \n  "), None);
     }
 
     fn job(markup: Markup, max_chars: Option<usize>) -> DeliveryJob {

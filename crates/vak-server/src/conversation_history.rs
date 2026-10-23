@@ -430,8 +430,7 @@ fn build(state: &AppState, id: &str, query: PageQuery) -> Result<serde_json::Val
     if let Ok(objects) = core.objects() {
         view = view.with_objects(objects);
     }
-    let mut presentation = crate::project_presentation(&core, id, &view);
-    canonical_turns(&mut presentation, &view);
+    let mut presentation = crate::project_response(&core, id, &view);
     presentation.cursor = Some(leaf.clone());
     let mut transcript = crate::transcript_json(&view);
     let newer = catalog

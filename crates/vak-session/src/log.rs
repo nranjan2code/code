@@ -3587,11 +3587,35 @@ impl SessionLog {
     /// minus the runtime-authored nudges. For exports and other human-facing
     /// views; the model itself is fed `derive_messages`, which is unchanged.
     pub fn derive_conversation(&self) -> Vec<Message> {
-        self.derive_transcript()
+        let transcript = self.derive_transcript();
+        let rejected = Self::rejected_draft_ids(&transcript);
+        transcript
             .into_iter()
-            .filter(|item| item.control.is_none())
+            .filter(|item| {
+                item.control.is_none() && !item.context && !rejected.contains(&item.entry_id)
+            })
             .map(|item| item.as_typed())
             .collect()
+    }
+
+    /// Typed discard records remove the preceding authored draft from every
+    /// human-facing consumer, including mixed text/tool-call messages.
+    pub fn rejected_draft_ids(
+        transcript: &[TranscriptMessage],
+    ) -> std::collections::HashSet<String> {
+        let mut rejected = std::collections::HashSet::new();
+        let mut last = None;
+        for item in transcript {
+            if item.control.is_some_and(|kind| kind.discards_assistant_draft()) {
+                if let Some(id) = last.take() { rejected.insert(id); }
+            } else if item.message.role == vak_llm::Role::Assistant && !item.message.text_content().trim().is_empty() {
+                last = Some(item.entry_id.clone());
+            } else if item.message.role == vak_llm::Role::User && item.control.is_none()
+                && item.message.content.iter().any(|block| matches!(block, vak_llm::ContentBlock::Text { text } if !text.trim().is_empty())) {
+                last = None;
+            }
+        }
+        rejected
     }
 
     /// Read one settled exchange by its stable address using the same

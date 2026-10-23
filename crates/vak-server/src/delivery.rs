@@ -582,13 +582,13 @@ pub(crate) async fn render_response(
     chat: &str,
     markdown: String,
     requested: Option<&RequestedCapabilities>,
-    outcome_metadata: Option<std::collections::BTreeMap<String, String>>,
     provenance: Option<std::collections::BTreeMap<String, String>>,
     bot_id: Option<&str>,
-    session_id: Option<&str>,
-    cards: Vec<vak_delivery::StructuredOutput>,
+    items: Vec<vak_delivery::OutputItem>,
+    delivery_notices: Vec<String>,
 ) -> Result<DeliveryPacket, String> {
     let runtime = runtime(core);
+    let has_items = !items.is_empty();
     let profile = profile_for_surface(core, surface, requested);
     let job = DeliveryJob {
         job_id: uuid::Uuid::now_v7().to_string(),
@@ -598,18 +598,12 @@ pub(crate) async fn render_response(
             .unwrap_or_else(|| format!("{surface}:{chat}")),
         kind: DeliveryKind::Assistant,
         content: DeliveryContent::Answer({
-            let artifact_suffix = session_id
-                .and_then(|id| {
-                    crate::projection::sandbox_artifact_markdown(&core.scope().into_root(), id)
-                })
-                .unwrap_or_default();
             let cleaned_markdown = crate::projection::clean_scaffolding(&markdown);
-            let mut answer =
-                AnswerDraft::from_markdown(format!("{cleaned_markdown}{artifact_suffix}"));
-            if let Some(metadata) = outcome_metadata {
-                answer.metadata.extend(metadata.clone());
-                answer.document.metadata.extend(metadata);
-            }
+            let mut answer = if items.is_empty() {
+                AnswerDraft::from_markdown(cleaned_markdown)
+            } else {
+                AnswerDraft::from_items(items)
+            };
             if let Some(provenance) = provenance {
                 answer.metadata.extend(provenance.clone());
                 answer.document.metadata.extend(provenance);
@@ -622,7 +616,9 @@ pub(crate) async fn render_response(
         actor: core.admitted_trace().and_then(|trace| trace.actor),
     };
     let mut packet = runtime.render(&job).await?;
-    packet.attach_structured_cards(cards);
+    if has_items {
+        packet.delivery_notices = delivery_notices;
+    }
     Ok(packet)
 }
 

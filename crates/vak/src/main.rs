@@ -58,10 +58,10 @@ fn run_export(cwd: PathBuf, session_id: String, html: bool, out: Option<PathBuf>
             return 1;
         }
     };
-    let msgs = log.derive_conversation();
-    let md = vak_core::transcript_md::render_markdown(&msgs);
+    let timeline = vak_server::project_response(&core, &session_id, &log);
+    let md = vak_delivery::answer::transcript_markdown(&timeline);
     let content = if html {
-        vak_presentation::transcode_to_html(&format!("Session {session_id}"), &md)
+        vak_delivery::answer::html(&format!("Session {session_id}"), &md)
     } else {
         md
     };
@@ -1612,6 +1612,7 @@ async fn run_exec(
         }
     };
 
+    let projection_core = core.clone();
     let runner = tokio::spawn(async move {
         let fut = async {
             if let Some(objective) = goal.as_deref() {
@@ -1638,6 +1639,7 @@ async fn run_exec(
         fut.await
     });
 
+    let mut partial_answer = String::new();
     let mut total_in: u64 = 0;
     let mut total_out: u64 = 0;
     let mut tool_args: std::collections::HashMap<String, (String, String)> =
@@ -1652,10 +1654,12 @@ async fn run_exec(
                     writeln!(out).ok();
                 }
             }
+            // stdout is the accepted answer. A pipe cannot retract a draft
+            // rejected by a later runtime check; progress stays on stderr.
             AgentEvent::Stream(StreamEvent::TextDelta { delta, .. }) => {
-                write!(out, "{delta}").ok();
-                out.flush().ok();
+                partial_answer.push_str(&delta);
             }
+            AgentEvent::DraftDiscarded { .. } => partial_answer.clear(),
             AgentEvent::Stream(StreamEvent::ThinkingDelta { .. }) => {}
             AgentEvent::ToolCallStart {
                 id,
@@ -1805,12 +1809,34 @@ async fn run_exec(
     }
 
     let outcome = match runner.await {
-        Ok(Ok((o, _session))) => o,
+        Ok(Ok((o, session))) => {
+            let timeline = vak_server::project_response(
+                &projection_core,
+                session
+                    .header()
+                    .map(|header| header.session_id.as_str())
+                    .unwrap_or_default(),
+                &session,
+            );
+            writeln!(
+                out,
+                "{}",
+                vak_delivery::answer::markdown(vak_delivery::answer::latest(&timeline))
+            )
+            .ok();
+            o
+        }
         Ok(Err(e)) => {
+            if !partial_answer.trim().is_empty() {
+                writeln!(out, "Unsettled partial output:\n{partial_answer}").ok();
+            }
             eprintln!("error: {e}");
             return 2;
         }
         Err(e) => {
+            if !partial_answer.trim().is_empty() {
+                writeln!(out, "Unsettled partial output:\n{partial_answer}").ok();
+            }
             eprintln!("error: runner crashed: {e}");
             return 2;
         }

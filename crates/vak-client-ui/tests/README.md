@@ -188,3 +188,14 @@ deletions, unavailable versions, long filenames and mixed drafts. It verifies
 file/Office selection gates, comments, comparisons and technical-label wrapping,
 and refuses every mutation. `window.openReviewFormat(path)` opens an individual
 fixture; `window.setReviewTechnicalDetails(true)` exposes technical labels.
+
+# Rich response contract
+
+`rich-response.html` mounts the production PageView over the same independently
+specified JSON corpus used by delivery, channel and terminal tests. Run
+`window.runChecks()` at 1440×900 and 390×844 in both themes. It checks rich-chart
+presence, source order, exact decimal/identifier strings, partial-result notice,
+viewport fit and absence of owner review mutations. Pure lifecycle/order parity
+runs with `node crates/vak-client-ui/tests/rich-response.mjs`; the regular gate
+includes it alongside composition and hydration tests. These fixtures do not
+claim live provider or installed WebKit acceptance.

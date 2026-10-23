@@ -4254,16 +4254,12 @@ fn live_presentation_snapshot(
     session: &SessionLog,
 ) -> vak_delivery::OutputTimeline {
     match session.latest_turn_view() {
-        Ok(view) => {
-            let mut timeline = project_presentation(core, session_id, &view);
-            conversation_history::canonical_turns(&mut timeline, &view);
-            timeline
-        }
+        Ok(view) => project_response(core, session_id, &view),
         Err(_) => vak_delivery::OutputTimeline::empty(session_id),
     }
 }
 
-fn project_presentation(
+pub fn project_response(
     core: &Core,
     session_id: &str,
     session: &SessionLog,
@@ -8547,24 +8543,7 @@ mod active_transcript_tests {
 fn rejected_draft_entry_ids(
     transcript: &[vak_session::TranscriptMessage],
 ) -> std::collections::HashSet<String> {
-    let mut ids = std::collections::HashSet::new();
-    for pair in transcript.windows(2) {
-        let prev = &pair[0];
-        let next = &pair[1];
-        let is_text_only_assistant = prev.message.role == vak_llm::Role::Assistant
-            && !prev
-                .message
-                .content
-                .iter()
-                .any(|block| matches!(block, vak_llm::ContentBlock::ToolUse { .. }));
-        let next_asks_for_redo = next
-            .control
-            .is_some_and(vak_intent::control::ControlKind::discards_assistant_draft);
-        if is_text_only_assistant && next_asks_for_redo {
-            ids.insert(prev.entry_id.clone());
-        }
-    }
-    ids
+    vak_session::SessionLog::rejected_draft_ids(transcript)
 }
 
 /// The JSON transcript, built once for the live and the historical path.
@@ -8687,19 +8666,6 @@ pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
     })
 }
 
-/// `SessionLog::derive_conversation` minus discarded drafts (see
-/// `rejected_draft_entry_ids`) — the same exclusion `transcript_json` applies,
-/// kept here rather than in `vak-session` for the reason given there.
-pub(crate) fn conversation_messages(s: &SessionLog) -> Vec<vak_llm::Message> {
-    let transcript = s.derive_transcript();
-    let rejected_drafts = rejected_draft_entry_ids(&transcript);
-    transcript
-        .into_iter()
-        .filter(|item| item.control.is_none() && !rejected_drafts.contains(item.entry_id.as_str()))
-        .map(|item| item.message)
-        .collect()
-}
-
 /// Markdown export over the same projection the JSON transcript serves.
 /// One shared renderer with the TUI export — byte-identical output for the
 /// same session (docs/design/29-personal-os.md P4).
@@ -8719,21 +8685,19 @@ async fn transcript_markdown(
         let Some(s) = guard.as_ref() else {
             return Json(serde_json::json!({ "error": "run in progress" })).into_response();
         };
-        Some(vak_core::transcript_md::render_markdown(
-            &conversation_messages(s),
+        Some(vak_delivery::answer::transcript_markdown(
+            &project_response(&state.core, &id, s),
         ))
     } else {
-        open_historical_session(&state, &id)
-            .map(|s| vak_core::transcript_md::render_markdown(&conversation_messages(&s)))
+        open_historical_session(&state, &id).map(|s| {
+            vak_delivery::answer::transcript_markdown(&project_response(&state.core, &id, &s))
+        })
     };
 
     match md_opt {
         Some(md) => {
             if format_html {
-                html_response(vak_presentation::transcode_to_html(
-                    &format!("Session {id}"),
-                    &md,
-                ))
+                html_response(vak_delivery::answer::html(&format!("Session {id}"), &md))
             } else {
                 markdown_response(md)
             }

@@ -11,10 +11,6 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-pub mod transcoder;
-
-pub use transcoder::transcode_to_html;
-
 pub const SPEC_SCHEMA_VERSION: u16 = 1;
 pub const RENDER_TREE_SCHEMA_VERSION: u16 = 1;
 pub const MAX_SPEC_BYTES: usize = 256 * 1024;

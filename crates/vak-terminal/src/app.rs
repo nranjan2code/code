@@ -124,15 +124,6 @@ pub enum InboxAction {
     Reject,
 }
 
-/// A real presentation item from the SSE presentation stream.
-#[derive(Debug, Clone)]
-pub struct PresItem {
-    pub id: String,
-    pub kind: String,
-    pub title: String,
-    pub status: String,
-}
-
 pub struct TerminalApp {
     pub active_tab: ActiveTab,
     pub deck_focus: DeckFocus,
@@ -172,7 +163,8 @@ pub struct TerminalApp {
     pub audit_entries: Vec<AuditEntry>,
     pub merkle_nodes: Vec<MerkleNode>,
     pub pending_chats: Vec<PendingChatEntry>,
-    pub presentation_items: Vec<PresItem>,
+    pub presentation: vak_delivery::OutputTimeline,
+    presentation_sequence: Option<u64>,
     pub mcp_rows: Vec<McpRow>,
     pub inbox_entries: Vec<InboxEntry>,
 
@@ -238,7 +230,8 @@ impl TerminalApp {
             audit_entries: Vec::new(),
             merkle_nodes: Vec::new(),
             pending_chats: Vec::new(),
-            presentation_items: Vec::new(),
+            presentation: vak_delivery::OutputTimeline::empty(""),
+            presentation_sequence: None,
             mcp_rows: Vec::new(),
             inbox_entries: Vec::new(),
             connected: false,
@@ -436,89 +429,38 @@ impl TerminalApp {
     }
 
     /// Dispatch a real presentation `OutputStreamFrame` from the SSE stream.
-    fn handle_presentation_event(&mut self, frame_json: &serde_json::Value, _seq: u64) {
-        if let Some(snapshot) = frame_json.get("snapshot") {
-            if let Some(items) = snapshot.get("items").and_then(|v| v.as_array()) {
-                let mut new_items = Vec::new();
-                for item in items {
-                    let id = item
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let kind = item
-                        .get("kind")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    let title = item
-                        .get("title")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let status = item
-                        .get("status")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    new_items.push(PresItem {
-                        id: id.clone(),
-                        kind,
-                        title,
-                        status,
-                    });
-                }
-                self.presentation_items = new_items;
-            }
-
-            if let Some(diag) = snapshot.get("diagnostics").and_then(|v| v.as_array()) {
-                for d in diag {
-                    if let Some(text) = d.as_str() {
-                        self.incidents.push(IncidentEntry {
-                            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
-                            severity: IncidentSeverity::Info,
-                            message: text.to_string(),
-                        });
+    fn handle_presentation_event(&mut self, frame_json: &serde_json::Value, seq: u64) {
+        match serde_json::from_value::<vak_delivery::OutputStreamFrame>(frame_json.clone()) {
+            Ok(frame) => {
+                if let Some(snapshot) = frame.snapshot {
+                    let sequence = snapshot.covered_sequence.or(frame.sequence).unwrap_or(seq);
+                    if self
+                        .presentation_sequence
+                        .is_none_or(|previous| sequence >= previous)
+                    {
+                        self.presentation = snapshot;
+                        self.presentation_sequence = Some(sequence);
+                    }
+                } else {
+                    let sequence = frame.sequence.unwrap_or(seq);
+                    if self
+                        .presentation_sequence
+                        .is_none_or(|previous| sequence > previous)
+                        && let Some(delta) = frame.delta
+                    {
+                        vak_delivery::presentation::apply_stream_event(
+                            &mut self.presentation,
+                            delta,
+                        );
+                        self.presentation_sequence = Some(sequence);
                     }
                 }
             }
-        }
-
-        if let Some(delta) = frame_json.get("delta").and_then(|v| v.as_object())
-            && let Some(item) = delta.get("item").and_then(|v| v.as_object())
-        {
-            let id = item
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let kind = item
-                .get("kind")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let title = item
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let status = item
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            if let Some(existing) = self.presentation_items.iter_mut().find(|i| i.id == id) {
-                existing.kind = kind;
-                existing.title = title;
-                existing.status = status;
-            } else {
-                self.presentation_items.push(PresItem {
-                    id,
-                    kind,
-                    title,
-                    status,
-                });
-            }
+            Err(_) => self.incidents.push(IncidentEntry {
+                timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                severity: IncidentSeverity::Warn,
+                message: "Could not read an answer update; reconnect to reload it.".into(),
+            }),
         }
     }
 
@@ -1105,7 +1047,8 @@ impl TerminalApp {
                     is_running: self.control_state.running,
                     deck_focus: self.deck_focus,
                     card_expanded: self.card_expanded,
-                    presentation_items: &self.presentation_items,
+                    presentation_items: &self.presentation.items,
+                    scroll_offset: self.scroll_offset,
                     launch_url: launch_url.as_deref(),
                     sandbox_name: &self.health.sandbox,
                     cwd: &self.health.cwd,
@@ -1180,5 +1123,56 @@ impl TerminalApp {
 impl Widget for &TerminalApp {
     fn render(self, area: Rect, buf: &mut Buffer) {
         self.render_to(area, buf);
+    }
+}
+
+#[cfg(test)]
+mod answer_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn real_snapshot_and_removal_keep_card_data_and_result_state() {
+        let timeline: vak_delivery::OutputTimeline = serde_json::from_str(include_str!(
+            "../../vak-delivery/tests/fixtures/rich-answer.json"
+        ))
+        .unwrap();
+        let mut app = TerminalApp::new(
+            "fixture",
+            "fixture",
+            "local",
+            HealthReport::from_json(serde_json::json!({})),
+            Arc::new(ApiClient::new("http://127.0.0.1:1", "")),
+        );
+        app.handle_presentation_event(
+            &serde_json::json!({"schema_version":2,"session_id":"fixture","snapshot":timeline}),
+            1,
+        );
+        assert_eq!(app.presentation.items, timeline.items);
+        let answer = vak_delivery::answer::markdown(&app.presentation.items);
+        assert!(answer.contains("Observed series"));
+        assert!(answer.contains("12345678901234567890.001"));
+        assert!(answer.contains("Review is required"));
+        app.handle_presentation_event(&serde_json::json!({"schema_version":2,"session_id":"fixture","sequence":2,"delta":{"type":"item_removed","item_id":"leading"}}), 2);
+        assert!(
+            !app.presentation
+                .items
+                .iter()
+                .any(|item| item.id == "leading")
+        );
+        let update = serde_json::json!({"sequence":3,"delta":{"type":"text_delta","item_id":"between","delta":" tail"}});
+        app.handle_presentation_event(&update, 3);
+        app.handle_presentation_event(&update, 3);
+        assert_eq!(
+            app.presentation
+                .items
+                .iter()
+                .find(|item| item.id == "between")
+                .unwrap()
+                .fallback_text
+                .matches(" tail")
+                .count(),
+            1
+        );
     }
 }

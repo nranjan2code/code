@@ -399,12 +399,17 @@ async fn transcript_md_equals_shared_renderer_byte_for_byte() {
     );
     let body = res.text().await.unwrap();
 
-    // The exact projection the JSON transcript serves, through the one
-    // shared renderer — byte parity by construction.
-    let expected = vak_core::transcript_md::render_markdown(&[
-        user_msg,
-        vak_llm::Message::assistant(vec![ContentBlock::text("all done")]),
-    ]);
+    // Export consumes the same authorized timeline as the presentation endpoint.
+    let timeline: vak_delivery::OutputTimeline = srv
+        .client
+        .get(format!("{}/sessions/{id}/presentation", srv.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let expected = vak_delivery::answer::transcript_markdown(&timeline);
     assert_eq!(body, expected);
 
     let res = srv

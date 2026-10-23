@@ -876,6 +876,10 @@ mod tests {
         assert!(seed.presentation_contract.contains("in reading order"));
         assert!(
             seed.presentation_contract
+                .contains("Rich cards are answer content")
+        );
+        assert!(
+            seed.presentation_contract
                 .contains("Do not create a workspace file")
         );
         assert!(

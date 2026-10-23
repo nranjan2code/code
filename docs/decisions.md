@@ -1,5 +1,19 @@
 # Decisions
 
+- 2026-10-23: The maintainer subsequently authorized implementing and testing
+  the rich response contract, including prompt and regression-test updates,
+  and explicitly preferred clean code with no old compatibility paths because
+  there are no users. No release, installation or external UI dependency was
+  requested. See [doc 104](design/104-rich-response-contract.md).
+
+- 2026-10-23: The maintainer clarified that rich cards are required alongside
+  Markdown and requested current research and a comprehensive proposal,
+  explicitly accounting for changes by the third week of October 2026.
+  The [dated research](research/rich-responses-2026-10-23.md) and
+  [proposed rich response contract](design/104-rich-response-contract.md)
+  preserve that requirement. This request approves research/proposal work,
+  not an implementation, external UI dependency or wholesale authoring change.
+
 - 2026-10-23: The maintainer approved restoring useful turn names and Topics
   within the new answer design, without reverting removed planning machinery
   or forced Topics completion calls. Use an independent post-answer step on

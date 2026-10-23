@@ -6,6 +6,12 @@ collaborative goal projection, deterministic fallback, and cross-surface
 delivery path are shipped in 3.0.10. The open questions at the end are not
 claims about missing core behavior.
 
+> The 2026-10-23 consolidation is recorded in
+> [the rich response contract](104-rich-response-contract.md): ordered answer
+> selection is `vak_delivery::answer`, the stream reducer is in
+> `vak_delivery::presentation`, and surface consumers carry original accepted
+> items. Old split prose/card handoffs and separate transcript renderers are removed.
+
 > Native channel form rendering is specified in docs/design/102-channel-cards.md;
 > the non-native card-to-Markdown path drawn below is its historical predecessor.
 > The card vocabulary, the client registry and the signal and recipe

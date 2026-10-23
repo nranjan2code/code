@@ -31,7 +31,16 @@ fn packet(surface: &str, cards: Vec<StructuredOutput>, followup: &str) -> Delive
         actor: None,
     })
     .unwrap();
-    packet.attach_structured_cards(cards);
+    let items = cards.into_iter().enumerate().map(|(i, output)| serde_json::from_value(json!({
+        "id": format!("test-card-{i}"), "timestamp":"", "turn_id":"test-turn", "role":"assistant", "kind":"card", "status":"succeeded",
+        "content":{"type":"structured","output":output}, "fallback_text":"", "actions":[]
+    })).unwrap());
+    packet
+        .presentation
+        .as_mut()
+        .unwrap()
+        .items
+        .splice(0..0, items);
     packet
 }
 fn strings(value: &Value, values: &mut Vec<String>) {

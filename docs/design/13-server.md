@@ -20,7 +20,7 @@ consumers.
 | GET | `/sessions/:id/presentation/events` | SSE stream of semantic presentation events (`Snapshot`, `ItemStarted`, `TextDelta`, `ItemReplaced`, `ItemCompleted`). A frame carries the full `snapshot` only when the stream opens, a run settles, or the consumer resyncs; live frames carry the delta alone. Runtime bookkeeping (admission, capacity, diagnostics, retries, goal-update rows) never becomes a timeline item |
 | GET | `/stream?session=…&host=1&config=1` | every subscription a client holds on ONE SSE connection: per followed session its `agent`, `presentation`, `side`, `coworking` and `resync` frames, plus `host` and `config` changes. Agent frames carry the cursor vector `<session>:<seq>,…` as their id, so `Last-Event-ID` resumes every session. What the browser client uses; the per-session routes above serve single-session clients such as `vak term` (docs/design/48-web-client.md §4.7) |
 | GET | `/sessions/:id/transcript` | derived messages + usage; historical (non-attached) sessions fall back to opening the ledger from disk — error bodies stay 200-wrapped for wire compatibility |
-| GET | `/sessions/:id/transcript.md` | markdown export through the shared `transcript_md` renderer (byte-parity with TUI export); same disk fallback, proper 404 when unknown |
+| GET | `/sessions/:id/transcript.md` | markdown export through the shared ordered `vak_delivery::answer` renderer (byte-parity with TUI export); same disk fallback, proper 404 when unknown |
 | GET | `/sessions` | persisted session summaries (sidebar projection) |
 | POST | `/sessions/:id/attach` `{session_id}` | resume a persisted session into memory |
 | GET | `/sessions/:id/diff` | git status + diff of the session workspace |

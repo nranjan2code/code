@@ -226,7 +226,15 @@ async fn findings_record_exactly_one_entry_with_zero_deliveries() {
     let entries = heartbeat_entries(&fx.home);
     assert_eq!(entries.len(), 1, "findings park exactly one entry");
     assert_eq!(entries[0].title, "heartbeat: 2 findings");
-    assert_eq!(entries[0].body, "check the flaky cron\nclose stale PR #4");
+    assert!(
+        entries[0]
+            .body
+            .ends_with("check the flaky cron\nclose stale PR #4")
+    );
+    assert!(
+        entries[0].body.contains("Review is required"),
+        "display notices survive without being counted as findings"
+    );
     assert_eq!(entries[0].session_id.as_deref(), Some("heartbeat"));
     assert!(
         delivery_lines(&fx.home).is_empty(),

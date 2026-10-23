@@ -11,11 +11,12 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
-use crate::app::{DeckFocus, PresItem};
+use crate::app::DeckFocus;
 use crate::telemetry::TelemetryState;
 use crate::theme::{Symbols, Theme};
+use vak_delivery::{OutputContent, OutputItem, OutputStatus};
 
 pub struct StudioView<'a> {
     pub telemetry: &'a TelemetryState,
@@ -23,7 +24,8 @@ pub struct StudioView<'a> {
     pub is_running: bool,
     pub deck_focus: DeckFocus,
     pub card_expanded: bool,
-    pub presentation_items: &'a [PresItem],
+    pub presentation_items: &'a [OutputItem],
+    pub scroll_offset: usize,
     pub launch_url: Option<&'a str>,
     pub sandbox_name: &'a str,
     pub cwd: &'a str,
@@ -92,25 +94,11 @@ impl<'a> Widget for StudioView<'a> {
 
         // 2. Markdown Document Card — real presentation items
         let mut doc_lines: Vec<Line> = Vec::new();
-        // Show first text-like presentation item as the document card content
-        let doc_item = self
-            .presentation_items
-            .iter()
-            .find(|i| i.kind == "text" || i.kind == "markdown" || i.kind == "document");
-        if let Some(item) = doc_item {
-            doc_lines.push(Line::from(vec![
-                Span::styled(item.kind.clone(), self.theme.style_card()),
-                Span::styled(format!("  {}", item.title), self.theme.style_accent()),
-            ]));
-            doc_lines.push(Line::from(vec![Span::styled(
-                item.status.clone(),
-                self.theme.style_card().add_modifier(Modifier::DIM),
-            )]));
+        let answer = vak_delivery::answer::markdown(self.presentation_items);
+        if answer.is_empty() {
+            doc_lines.push(Line::from("Waiting for an answer…"));
         } else {
-            doc_lines.push(Line::from(vec![Span::styled(
-                "Waiting for presentation events…",
-                self.theme.style_card().add_modifier(Modifier::DIM),
-            )]));
+            doc_lines.extend(answer.lines().map(|line| Line::from(line.to_string())));
         }
 
         if self.card_expanded {
@@ -139,18 +127,27 @@ impl<'a> Widget for StudioView<'a> {
         let doc_block = Block::default()
             .borders(Borders::ALL)
             .border_style(left_border)
-            .title(format!(" {} Markdown Document Card [Space] ", doc_caret))
+            .title(format!(" {} Answer [Space] ", doc_caret))
             .title_style(self.theme.style_card());
 
         Paragraph::new(doc_lines)
             .block(doc_block)
+            .wrap(Wrap { trim: false })
+            .scroll((u16::try_from(self.scroll_offset).unwrap_or(u16::MAX), 0))
             .render(left_chunks[1], buf);
 
         // 3. Tool Execution Card — real presentation items with 'tool' kind
-        let tool_items: Vec<&PresItem> = self
+        let tool_items: Vec<&OutputItem> = self
             .presentation_items
             .iter()
-            .filter(|i| i.kind == "tool" || i.kind == "bash" || i.kind == "tool_call")
+            .filter(|i| {
+                matches!(
+                    i.content,
+                    OutputContent::Progress { .. }
+                        | OutputContent::Error { .. }
+                        | OutputContent::Information { .. }
+                )
+            })
             .collect();
 
         let tool_lines: Vec<Line> = if tool_items.is_empty() {
@@ -160,25 +157,29 @@ impl<'a> Widget for StudioView<'a> {
             )])]
         } else {
             let mut lines = Vec::new();
-            for item in tool_items.iter().take(5) {
-                let icon = if item.status == "running" || item.status == "active" {
+            for item in tool_items.iter() {
+                let icon = if item.status == OutputStatus::Running
+                    || item.status == OutputStatus::Pending
+                {
                     Symbols::STATUS_ACTIVE
-                } else if item.status == "error" || item.status == "failed" {
+                } else if item.status == OutputStatus::Failed {
                     Symbols::CROSS
                 } else {
                     Symbols::CHECK
                 };
-                let status_style = if item.status == "running" || item.status == "active" {
+                let status_style = if item.status == OutputStatus::Running
+                    || item.status == OutputStatus::Pending
+                {
                     self.theme.style_ok()
-                } else if item.status == "error" || item.status == "failed" {
+                } else if item.status == OutputStatus::Failed {
                     self.theme.style_danger()
                 } else {
                     self.theme.style_ok()
                 };
                 lines.push(Line::from(vec![
                     Span::styled(format!(" {} ", icon), status_style),
-                    Span::styled(item.title.clone(), self.theme.style_card()),
-                    Span::styled(format!(" [{}] ", item.status), status_style),
+                    Span::styled(item.fallback_text.clone(), self.theme.style_card()),
+                    Span::styled(format!(" [{:?}] ", item.status), status_style),
                 ]));
             }
             lines
@@ -352,10 +353,10 @@ impl<'a> Widget for StudioView<'a> {
             .render(hud_chunks[1], buf);
 
         // 3. Multi-File Diff Inspector — real diff data from presentation items
-        let diff_items: Vec<&PresItem> = self
+        let diff_items: Vec<&OutputItem> = self
             .presentation_items
             .iter()
-            .filter(|i| i.kind == "diff" || i.kind == "file_diff")
+            .filter(|i| matches!(&i.content, OutputContent::Structured { output } if output.block == "diff"))
             .collect();
 
         let diff_lines: Vec<Line> = if diff_items.is_empty() {
@@ -365,23 +366,23 @@ impl<'a> Widget for StudioView<'a> {
             )])]
         } else {
             let mut lines = Vec::new();
-            for item in diff_items.iter().take(5) {
-                let status_icon = if item.status.contains("ok") || item.status.contains("done") {
+            for item in diff_items.iter() {
+                let status_icon = if item.status == OutputStatus::Succeeded {
                     Symbols::CHECK
                 } else {
                     Symbols::STATUS_ACTIVE
                 };
                 lines.push(Line::from(vec![
                     Span::styled(
-                        item.title.clone(),
+                        item.fallback_text.clone(),
                         self.theme.style_card().add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(format!(" [{}] ", item.status), self.theme.style_ok()),
+                    Span::styled(format!(" [{:?}] ", item.status), self.theme.style_ok()),
                     Span::styled(format!(" {} ", status_icon), self.theme.style_ok()),
                 ]));
                 // Show the summary from the status field
                 lines.push(Line::from(vec![Span::styled(
-                    item.status.clone(),
+                    format!("{:?}", item.status),
                     self.theme.style_card(),
                 )]));
             }

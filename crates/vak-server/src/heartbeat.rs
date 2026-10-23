@@ -237,8 +237,18 @@ async fn run_heartbeat_turn(
 
     match outcome {
         Some(Ok((outcome, log))) => {
-            let text = crate::projection::text_with_run_cards(&log, outcome_text(&outcome));
-            record_reply(state, cfg, &text).await;
+            // Classify the heartbeat's reply protocol, never display notices:
+            // a review warning is not a finding and cannot turn "nothing"
+            // into an alert. Keep truthful notices on a finding's human view.
+            let items = crate::projection::run_answer(&log);
+            let mut seen = std::collections::HashSet::new();
+            let notices = items
+                .iter()
+                .filter_map(vak_delivery::answer::notice)
+                .filter(|notice| seen.insert(*notice))
+                .collect::<Vec<_>>()
+                .join("\n");
+            record_reply(state, cfg, &outcome_text(&outcome), &notices).await;
             Ok(())
         }
         Some(Err(e)) => Err(format!("heartbeat turn failed: {e}")),
@@ -322,7 +332,12 @@ fn outcome_text(o: &vak_agent::TurnOutcome) -> String {
 /// Anti-nag routing: "nothing"/"" logs a debug line and records nothing
 /// anywhere; findings always park one inbox entry, and additionally ride
 /// the delivery chokepoint only when some line is marked URGENT.
-async fn record_reply(state: &AppState, cfg: &vak_config::HeartbeatResolved, text: &str) {
+async fn record_reply(
+    state: &AppState,
+    cfg: &vak_config::HeartbeatResolved,
+    text: &str,
+    notices: &str,
+) {
     let reply = classify_reply(text, cfg.max_findings);
     let HeartbeatReply::Findings {
         stripped, urgent, ..
@@ -333,7 +348,12 @@ async fn record_reply(state: &AppState, cfg: &vak_config::HeartbeatResolved, tex
     };
     let n = stripped.len();
     let title = format!("heartbeat: {n} finding{}", if n == 1 { "" } else { "s" });
-    let body = stripped.join("\n");
+    let findings = stripped.join("\n");
+    let body = if notices.is_empty() {
+        findings
+    } else {
+        format!("{notices}\n\n{findings}")
+    };
     let home = state.core.shared_scope().into_root();
     let _ = vak_core::inbox::record(
         &vak_config::scope::AgentScope::new(&home),

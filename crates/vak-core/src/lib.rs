@@ -76,7 +76,6 @@ pub mod scheduled;
 pub mod tools_automations;
 pub mod tools_commitments;
 mod tools_workspaces;
-pub mod transcript_md;
 pub mod triggers;
 pub mod trust;
 pub mod workspaces;

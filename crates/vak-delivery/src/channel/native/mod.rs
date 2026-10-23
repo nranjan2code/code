@@ -17,6 +17,92 @@ pub(super) fn compile(surface: &str, card: &Card) -> Result<Vec<Message>, String
     }
 }
 
+/// Slack's categorical chart contract, qualified against the published block
+/// reference on 2026-10-23. Unsupported dimensions retain the full form fallback.
+pub(super) fn slack_chart(output: &crate::StructuredOutput) -> Option<Vec<Message>> {
+    use serde_json::{Value, json};
+    if output.block != "chart" {
+        return None;
+    }
+    let p = &output.payload;
+    let kind = p["chart_type"].as_str()?;
+    if !matches!(kind, "line" | "bar" | "area")
+        || p["x_scale"] != "category"
+        || p.get("follows").is_some()
+    {
+        return None;
+    }
+    let title = p["title"].as_str().unwrap_or("Chart");
+    if title.is_empty() || units(title) > 50 {
+        return None;
+    }
+    let series = p["series"].as_array()?;
+    if series.is_empty() || series.len() > 12 {
+        return None;
+    }
+    let mut names = std::collections::HashSet::new();
+    let mut categories: Vec<String> = Vec::new();
+    let mut compiled = Vec::new();
+    for (index, series) in series.iter().enumerate() {
+        let name = series["name"].as_str()?;
+        if name.is_empty() || units(name) > 20 || !names.insert(name) {
+            return None;
+        }
+        let points = series["points"].as_array()?;
+        if points.is_empty() || points.len() > 20 {
+            return None;
+        }
+        let mut labels = Vec::new();
+        let mut data = Vec::new();
+        for point in points {
+            let label = point["x"].as_str()?;
+            if label.is_empty() || units(label) > 20 || labels.iter().any(|s| s == label) {
+                return None;
+            }
+            // Never parse lexical decimals or fill missing measurements.
+            if !point["y"].is_number() {
+                return None;
+            }
+            labels.push(label.to_string());
+            data.push(json!({"label":label,"value":point["y"]}));
+        }
+        if index == 0 {
+            categories = labels;
+        } else if categories != labels {
+            return None;
+        }
+        compiled.push(json!({"name":name,"data":data}));
+    }
+    let mut axis = json!({"categories":categories});
+    for key in ["x_label", "y_label"] {
+        if let Some(label) = p[key].as_str() {
+            if units(label) > 50 {
+                return None;
+            }
+            axis[key] = Value::String(label.into());
+        }
+    }
+    let block = json!({"type":"data_visualization","title":title,
+        "chart":{"type":kind,"series":compiled,"axis_config":axis}});
+    let fallback = crate::structured_markdown(output);
+    if units(&fallback) > 40_000 {
+        return None;
+    }
+    let mut messages = Vec::new();
+    // The authored summary is visible as well as available to screen readers.
+    if let Some(summary) = p["accessible_summary"].as_str() {
+        messages.extend(super::notice("slack", summary).ok()?);
+    }
+    messages.push(Message {
+        method: "chat.postMessage",
+        body: json!({
+            "blocks":[block],"text":fallback,"mrkdwn":false,"parse":"none",
+            "unfurl_links":false,"unfurl_media":false,"link_names":false
+        }),
+    });
+    Some(messages)
+}
+
 pub(super) fn notice_chunks(surface: &str, text: &str) -> Result<Vec<String>, String> {
     let limit = match surface {
         "telegram" => 4096,

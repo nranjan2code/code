@@ -160,10 +160,11 @@ export function ScheduledHead(props: { name: string; failed: boolean; timestamp?
 }
 
 function UserMessage(props: { document: PresentationDocument; text: string }) {
+  const pageResources = useContext(PresentationPageResourceContext);
   return <div class="msg user"><div class="msg-bubble-wrap">
-    <div class="user-turn-head"><span class="turn-author-chip">You</span></div>
+    <div class="user-turn-head"><span class="turn-author-chip">{pageResources ? "Request" : "You"}</span></div>
     <div class="msg-user-content"><PresentationDocumentView document={props.document} /></div>
-    <MessageActions text={props.text} role="user" />
+    <MessageActions text={props.text} role="user" allowEdit={!pageResources} />
   </div></div>;
 }
 
@@ -666,7 +667,7 @@ function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: st
     executionId: saved ? undefined : executionId ?? undefined,
   });
   const [facts] = createResource(
-    () => { const value = path(); return value && isDocumentPath(value) ? value : null; },
+    () => { const value = path(); return !pageResources && value && isDocumentPath(value) ? value : null; },
     (value) => api.readOfficeFacts(source(value)),
   );
   const [problem, setProblem] = createSignal<string | null>(null);
@@ -855,7 +856,7 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
     ([session, made]) => api.madeByCall(session, made).catch(() => null),
   );
   const [exact] = createResource(
-    () => props.currentStateOnly && artifact.status && artifact.status.state !== "in_folder" && artifact.status.saved_as
+    () => !pageResources && props.sessionId && props.currentStateOnly && artifact.status && artifact.status.state !== "in_folder" && artifact.status.saved_as
       ? [props.sessionId, artifact.status.saved_as.version_id, artifact.status.saved_as.path] as const : null,
     async ([session, candidate, path]) => {
       try {
@@ -877,7 +878,7 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
   };
   const liveState = () => stateOf(current()?.now, "call");
   const behind = () => current()?.now?.is === "waiting" && (current()!.now as { behind: boolean }).behind;
-  const review = () => (props.showReview === false ? undefined : props.item.actions.find((action) => action.verb === "review_draft"));
+  const review = () => (!props.sessionId || pageResources || props.showReview === false ? undefined : props.item.actions.find((action) => action.verb === "review_draft"));
   const primary = () => {
     if (!review() || artifact.status?.state !== "draft") return false;
     const timeline = presentationOf(props.sessionId);
@@ -939,7 +940,7 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
         >
           {(made) => <button type="button" class="file-action-icon" aria-label="Open history" title="Open history" onClick={() => openInLibrary(made().artifact)}><Icon name="history" size={17} /></button>}
         </Show>
-        <Show when={props.askForChanges && props.resultId}><button type="button" class="file-action-icon" aria-label="Ask for changes" title="Ask for changes" onClick={askForChanges}><Icon name="pencil" size={17} /></button></Show>
+        <Show when={props.sessionId && !pageResources && props.askForChanges && props.resultId}><button type="button" class="file-action-icon" aria-label="Ask for changes" title="Ask for changes" onClick={askForChanges}><Icon name="pencil" size={17} /></button></Show>
       </div>
     </article>
   );
@@ -1010,7 +1011,7 @@ function OutcomeReviewActions(props: { item: OutputItem; sessionId: string }) {
       setBusy(false);
     }
   };
-  return <Show when={props.item.actions.length > 0}>
+  return <Show when={props.sessionId && props.item.actions.length > 0}>
     <div class="outcome-review-actions" aria-label="Outcome review">
       <Show when={error()}><div class="error-state" role="alert">{error()}</div></Show>
       <For each={props.item.actions}>{(action) => {

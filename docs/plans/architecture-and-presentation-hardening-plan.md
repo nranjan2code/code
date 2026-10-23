@@ -181,6 +181,27 @@ rewrite is necessary to close these failures.
 
 ## S3 — preserve answer identity, content and data fidelity
 
+The [23 October response projection review](../audits/response-projection-across-surfaces-2026-10-23.md)
+rechecks this stage against the current Markdown/runtime-card contract. It
+finds independently reconstructed channel and page text, discarded result
+metadata, incomplete terminal consumers and divergent visibility rules. Its
+proposed consolidation reuses existing presentation types and a shared
+turn/result/audience view; it adds no model-authored plan or new answer store.
+The review does not claim S3 implemented or its recommendation approved.
+The maintainer's subsequent rich-card requirement led to
+[current protocol/channel research](../research/rich-responses-2026-10-23.md)
+and [the rich response contract](../design/104-rich-response-contract.md).
+Its R0–R5 exits refine this stage and the applicable surface/interaction work:
+rich forms remain first-class, typed semantics survive target selection, and
+the current five offered tools are a starting authoring policy. The proposal
+did not itself authorize implementation or adopting an external UI runtime.
+The maintainer subsequently authorized implementation/tests and clean replacement
+without legacy compatibility. The shared answer boundary and consumer repairs,
+Slack native chart selection and local acceptance are recorded in
+[the consolidation audit](../audits/rich-response-consolidation-2026-10-23.md).
+The full R3–R5 qualification matrix remains open; an external UI runtime is
+still excluded.
+
 Scope: P01, P02, P03, P13, P14; A11 protocol work can be introduced here
 and completed in S6. Depends on S2 for delegated run/journal guarantees.
 

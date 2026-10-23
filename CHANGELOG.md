@@ -1,5 +1,14 @@
 ## Unreleased
 
+- Preserve prose, rich cards, exact data and result notices in source order
+  across channel delivery, saved answers, shared conversations, terminal,
+  voice companions and transcript exports. Discarded drafts no longer return
+  through conversation replay. CLI stdout emits the accepted answer at settlement.
+- Keep heartbeat findings and urgency separate from presentation warnings, so
+  a quiet reply stays quiet and notices do not become extra findings.
+- Render eligible Slack charts natively, keeping full data in accessible text
+  and explicit static fallbacks for unsupported chart shapes.
+
 ## 8.31.0 — 2026-10-23 — Topics and turn names
 
 - Give answered requests useful names and group related work into Topics in an

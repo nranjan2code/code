@@ -1,0 +1,341 @@
+{
+  "schema_version": 2,
+  "session_id": "fixture",
+  "items": [
+    {
+      "id": "directive-1",
+      "timestamp": "2026-10-23T10:00:00Z",
+      "turn_id": "directive-1",
+      "role": "user",
+      "kind": "message",
+      "status": "succeeded",
+      "outcome": null,
+      "content": {
+        "type": "document",
+        "document": {
+          "schema_version": 2,
+          "source_markdown": "Compare the recorded observations.",
+          "blocks": [
+            {
+              "type": "paragraph",
+              "id": "directive-1-paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Compare the recorded observations."
+                }
+              ]
+            }
+          ],
+          "metadata": {}
+        }
+      },
+      "provenance": {
+        "session_id": "fixture",
+        "entry_id": "directive-1",
+        "presentation_id": null,
+        "source": "fixture"
+      },
+      "actions": [],
+      "fallback_text": "Compare the recorded observations."
+    },
+    {
+      "id": "leading",
+      "timestamp": "2026-10-23T10:00:00Z",
+      "turn_id": "directive-1",
+      "role": "assistant",
+      "kind": "message",
+      "status": "partial",
+      "outcome": {
+        "result_id": "result-one",
+        "status": "partial",
+        "completion": "incomplete",
+        "evidence_state": "stale",
+        "requirement_ids": [
+          "evidence-1"
+        ],
+        "evidence_receipt_ids": [
+          "fetch-1"
+        ],
+        "evidence": [],
+        "human_review": "required"
+      },
+      "content": {
+        "type": "document",
+        "document": {
+          "schema_version": 2,
+          "source_markdown": "Leading context survives.",
+          "blocks": [
+            {
+              "type": "paragraph",
+              "id": "leading-paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Leading context survives."
+                }
+              ]
+            }
+          ],
+          "metadata": {}
+        }
+      },
+      "provenance": {
+        "session_id": "fixture",
+        "entry_id": "leading",
+        "presentation_id": null,
+        "source": "fixture"
+      },
+      "actions": [],
+      "fallback_text": "Leading context survives."
+    },
+    {
+      "id": "chart-entry",
+      "timestamp": "2026-10-23T10:00:00Z",
+      "turn_id": "directive-1",
+      "role": "tool",
+      "kind": "card",
+      "status": "partial",
+      "outcome": {
+        "result_id": "result-one",
+        "status": "partial",
+        "completion": "incomplete",
+        "evidence_state": "stale",
+        "requirement_ids": [
+          "evidence-1"
+        ],
+        "evidence_receipt_ids": [
+          "fetch-1"
+        ],
+        "evidence": [],
+        "human_review": "required"
+      },
+      "content": {
+        "type": "structured",
+        "output": {
+          "semantic_type": "chart",
+          "block": "chart",
+          "schema_version": 2,
+          "skill_id": "core",
+          "skill_version": "1",
+          "payload": {
+            "title": "Observed series",
+            "chart_type": "line",
+            "x_scale": "category",
+            "accessible_summary": "R3 to R4 changes by fourteen.",
+            "series": [
+              {
+                "name": "Readings",
+                "points": [
+                  {
+                    "x": "R1",
+                    "y": 10
+                  },
+                  {
+                    "x": "R2",
+                    "y": 12
+                  },
+                  {
+                    "x": "R3",
+                    "y": 11
+                  },
+                  {
+                    "x": "R4",
+                    "y": 25
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "provenance": {
+        "session_id": "fixture",
+        "entry_id": "chart-entry",
+        "presentation_id": "chart-entry",
+        "source": "fixture"
+      },
+      "actions": [],
+      "fallback_text": ""
+    },
+    {
+      "id": "between",
+      "timestamp": "2026-10-23T10:00:00Z",
+      "turn_id": "directive-1",
+      "role": "assistant",
+      "kind": "message",
+      "status": "partial",
+      "outcome": {
+        "result_id": "result-one",
+        "status": "partial",
+        "completion": "incomplete",
+        "evidence_state": "stale",
+        "requirement_ids": [
+          "evidence-1"
+        ],
+        "evidence_receipt_ids": [
+          "fetch-1"
+        ],
+        "evidence": [],
+        "human_review": "required"
+      },
+      "content": {
+        "type": "document",
+        "document": {
+          "schema_version": 2,
+          "source_markdown": "Note: these are supplied observations, not a forecast.",
+          "blocks": [
+            {
+              "type": "paragraph",
+              "id": "between-paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Note: these are supplied observations, not a forecast."
+                }
+              ]
+            }
+          ],
+          "metadata": {}
+        }
+      },
+      "provenance": {
+        "session_id": "fixture",
+        "entry_id": "between",
+        "presentation_id": null,
+        "source": "fixture"
+      },
+      "actions": [],
+      "fallback_text": "Note: these are supplied observations, not a forecast."
+    },
+    {
+      "id": "numbers",
+      "timestamp": "2026-10-23T10:00:00Z",
+      "turn_id": "directive-1",
+      "role": "assistant",
+      "kind": "message",
+      "status": "partial",
+      "outcome": {
+        "result_id": "result-one",
+        "status": "partial",
+        "completion": "incomplete",
+        "evidence_state": "stale",
+        "requirement_ids": [
+          "evidence-1"
+        ],
+        "evidence_receipt_ids": [
+          "fetch-1"
+        ],
+        "evidence": [],
+        "human_review": "required"
+      },
+      "content": {
+        "type": "document",
+        "document": {
+          "schema_version": 2,
+          "source_markdown": "| Identifier | Exact value |\n|---|---|\n| 0007 | 12345678901234567890.001 |",
+          "blocks": [
+            {
+              "type": "table",
+              "id": "numbers-table",
+              "alignments": [
+                "none",
+                "none"
+              ],
+              "header": [
+                [
+                  {
+                    "type": "text",
+                    "text": "Identifier"
+                  }
+                ],
+                [
+                  {
+                    "type": "text",
+                    "text": "Exact value"
+                  }
+                ]
+              ],
+              "rows": [
+                [
+                  [
+                    {
+                      "type": "text",
+                      "text": "0007"
+                    }
+                  ],
+                  [
+                    {
+                      "type": "text",
+                      "text": "12345678901234567890.001"
+                    }
+                  ]
+                ]
+              ]
+            }
+          ],
+          "metadata": {}
+        }
+      },
+      "provenance": {
+        "session_id": "fixture",
+        "entry_id": "numbers",
+        "presentation_id": null,
+        "source": "fixture"
+      },
+      "actions": [],
+      "fallback_text": "| Identifier | Exact value |\n|---|---|\n| 0007 | 12345678901234567890.001 |"
+    },
+    {
+      "id": "sources-entry",
+      "timestamp": "2026-10-23T10:00:00Z",
+      "turn_id": "directive-1",
+      "role": "assistant",
+      "kind": "card",
+      "status": "partial",
+      "outcome": {
+        "result_id": "result-one",
+        "status": "partial",
+        "completion": "incomplete",
+        "evidence_state": "stale",
+        "requirement_ids": [
+          "evidence-1"
+        ],
+        "evidence_receipt_ids": [
+          "fetch-1"
+        ],
+        "evidence": [],
+        "human_review": "required"
+      },
+      "content": {
+        "type": "structured",
+        "output": {
+          "semantic_type": "sources",
+          "block": "sources",
+          "schema_version": 2,
+          "skill_id": "core",
+          "skill_version": "1",
+          "payload": {
+            "title": "Sources",
+            "sources": [
+              {
+                "title": "Original observations",
+                "url": "https://example.com/observations",
+                "finding": "Retrieved in this turn."
+              }
+            ]
+          }
+        }
+      },
+      "provenance": {
+        "session_id": "fixture",
+        "entry_id": "sources-entry",
+        "presentation_id": "sources-entry",
+        "source": "fixture"
+      },
+      "actions": [],
+      "fallback_text": ""
+    }
+  ],
+  "diagnostics": []
+}

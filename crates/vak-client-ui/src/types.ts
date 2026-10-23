@@ -258,6 +258,7 @@ export interface GoalState {
 }
 
 export type PresentationDelta =
+  | { type: "item_removed"; item_id: string }
   | { type: "item_started"; item: OutputItem }
   | { type: "text_delta"; item_id: string; delta: string; text?: string }
   | { type: "item_replaced"; item: OutputItem }

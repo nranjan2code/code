@@ -489,7 +489,12 @@ async fn default_policy_denies_without_forwarding() {
     let res = inbound(&client, &gw.base, "webhook", "ci", "go", true).await;
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["text"], "skipping that step");
+    let text = body["text"].as_str().unwrap();
+    assert!(text.ends_with("skipping that step"));
+    assert!(
+        text.contains("Review is required"),
+        "the result's recorded review state survives delivery"
+    );
 
     // No approver configured: a verdict-shaped message to another chat must
     // remain ordinary conversation after the denial turn has settled.

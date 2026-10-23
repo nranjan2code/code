@@ -1021,7 +1021,12 @@ mod tests {
         let mut packet = super::super::channel_fixture::packet("telegram");
         let mut invalid = packet.structured_cards()[0].clone();
         invalid.block = "no_such_form".into();
-        packet.attach_structured_cards([invalid]);
+        packet
+            .presentation
+            .as_mut()
+            .unwrap()
+            .items
+            .push(super::super::channel_fixture::card_item(invalid, "invalid"));
         let bridge = TelegramBridge {
             api_base,
             bot_token: "test".into(),
@@ -1263,7 +1268,10 @@ mod tests {
             actor: None,
         })
         .unwrap();
-        packet.attach_structured_cards([card]);
+        packet.presentation.as_mut().unwrap().items.insert(
+            0,
+            super::super::channel_fixture::card_item(card, "live-card"),
+        );
         for message in vak_delivery::channel::messages(&packet).unwrap() {
             let mut body = message.body;
             body["chat_id"] = serde_json::json!(chat_id);

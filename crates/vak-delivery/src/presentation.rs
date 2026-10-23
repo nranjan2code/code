@@ -230,6 +230,9 @@ impl OutputTimeline {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OutputStreamEvent {
+    ItemRemoved {
+        item_id: String,
+    },
     Snapshot {
         timeline: OutputTimeline,
     },
@@ -1053,6 +1056,92 @@ fn safe_media(url: &str) -> bool {
         || lower.starts_with("data:image/")
         || lower.starts_with('/')
         || (!lower.contains(':') && !lower.starts_with("//"))
+}
+
+/// Apply accepted presentation operations; snapshots are authoritative and live
+/// updates cannot overwrite settled items. Shared by server and terminal.
+pub fn apply_stream_event(timeline: &mut OutputTimeline, event: OutputStreamEvent) {
+    match event {
+        OutputStreamEvent::Snapshot { timeline: snapshot } => *timeline = snapshot,
+        OutputStreamEvent::ItemRemoved { item_id } => {
+            timeline.items.retain(|item| item.id != item_id)
+        }
+        OutputStreamEvent::ItemStarted { item } | OutputStreamEvent::ItemReplaced { item } => {
+            // The background event consumer may trail the settlement snapshot.
+            // A late live card cannot overwrite its authoritative durable item.
+            if item.provenance.as_ref().and_then(|p| p.source.as_deref()) == Some("live_event")
+                && timeline.items.iter().any(|existing| {
+                    existing.id == item.id
+                        && existing
+                            .provenance
+                            .as_ref()
+                            .and_then(|p| p.source.as_deref())
+                            != Some("live_event")
+                })
+            {
+                return;
+            }
+            if let Some(replaced) = &item.placement.replaces {
+                timeline.items.retain(|candidate| {
+                    candidate
+                        .provenance
+                        .as_ref()
+                        .and_then(|p| p.presentation_id.as_ref())
+                        != Some(replaced)
+                });
+            }
+            if let Some(existing) = timeline
+                .items
+                .iter_mut()
+                .find(|candidate| candidate.id == item.id)
+            {
+                *existing = item;
+            } else {
+                timeline.items.push(item);
+            }
+        }
+        OutputStreamEvent::TextDelta {
+            item_id,
+            delta,
+            text,
+        } => {
+            if let Some(item) = timeline
+                .items
+                .iter_mut()
+                .find(|candidate| candidate.id == item_id)
+            {
+                let text = if text.is_empty() {
+                    format!("{}{delta}", item.fallback_text)
+                } else {
+                    text
+                };
+                item.fallback_text = text.clone();
+                // The renderer already supports source-only live documents.
+                // Compile once on completion/durable settlement, rather than
+                // parsing every growing prefix on the stream's hot path.
+                item.content = OutputContent::Document {
+                    document: PresentationDocument {
+                        source_markdown: text,
+                        ..Default::default()
+                    },
+                };
+            }
+        }
+        OutputStreamEvent::ItemCompleted { item_id, status } => {
+            if let Some(item) = timeline
+                .items
+                .iter_mut()
+                .find(|candidate| candidate.id == item_id)
+            {
+                item.status = status;
+                if matches!(item.content, OutputContent::Document { .. }) {
+                    item.content = OutputContent::Document {
+                        document: compile_markdown(item.fallback_text.clone()),
+                    };
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 4 proposal, 18 in progress, 58 implemented, 2 reference, 12 superseded, 5 historical.
+Counts: 4 proposal, 19 in progress, 58 implemented, 2 reference, 12 superseded, 5 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -23,6 +23,7 @@ Counts: 4 proposal, 18 in progress, 58 implemented, 2 reference, 12 superseded, 
 | [101-topics.md](101-topics.md) | 101 — Topics: Agent-owned organisation for people and the Agent | implemented | The conversation-scoped Topic view, main-model capability, human controls, CLI, Admin and catalog integration are built |
 | [102-channel-cards.md](102-channel-cards.md) | 102 — Native channel cards | implemented | shared form projection, native provider compilers and shared direct/proactive request plans are built and tested locally |
 | [103-kept-work-lifecycle.md](103-kept-work-lifecycle.md) | 103 — Kept work: create, change, run and use | proposal | design revision requested by the maintainer on 2026-10-22 |
+| [104-rich-response-contract.md](104-rich-response-contract.md) | 104 — Rich response contract | in progress | (23 October 2026) — implementation authorized by the maintainer, including clean replacement without legacy compatibility |
 | [11-planner.md](11-planner.md) | 11 — Dynamic planner | implemented | in 2.0.0 |
 | [12-evals.md](12-evals.md) | 12 — Eval harness | implemented | in 2.0.0 |
 | [13-server.md](13-server.md) | 13 — Server mode | implemented | in 2.0.0 |

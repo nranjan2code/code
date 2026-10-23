@@ -144,17 +144,23 @@ async fn a_saved_answer_is_kept_in_the_library_as_a_page() {
     }))
     .unwrap();
     let mut log = vak_session::SessionLog::create(path, header).unwrap();
+    let mut turn = String::new();
     for message in [
         vak_llm::Message::user_text("Which harbours are famous?"),
         vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(
             "Sydney and Hong Kong are the best known.",
         )]),
     ] {
-        log.append_message(vak_session::types::MessageRecord {
-            message,
-            meta: None,
-        })
-        .unwrap();
+        let is_user = message.role == vak_llm::Role::User;
+        let entry = log
+            .append_message(vak_session::types::MessageRecord {
+                message,
+                meta: None,
+            })
+            .unwrap();
+        if is_user {
+            turn = entry.id;
+        }
     }
     drop(log);
 
@@ -166,7 +172,7 @@ async fn a_saved_answer_is_kept_in_the_library_as_a_page() {
     let res = reqwest::Client::new()
         .post(format!("http://{addr}/library/answers"))
         .bearer_auth(&token)
-        .json(&json!({"session": id, "turn": "turn-1"}))
+        .json(&json!({"session": id, "turn": turn}))
         .send()
         .await
         .unwrap();

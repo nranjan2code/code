@@ -2194,9 +2194,9 @@ const DOCUMENT_INLINE_MAX_BYTES: usize = 64 * 1024;
 /// drafted with `office_apply`, for the channel to get back.
 pub(crate) struct ChatReply {
     pub(crate) text: String,
-    pub(crate) metadata: Option<std::collections::BTreeMap<String, String>>,
+    pub(crate) speech: String,
     pub(crate) drafts: Vec<TurnDraft>,
-    pub(crate) cards: Vec<vak_delivery::StructuredOutput>,
+    pub(crate) answer: Vec<vak_delivery::OutputItem>,
 }
 
 /// The latest draft this turn made of one workspace file.
@@ -2278,7 +2278,7 @@ async fn return_drafts(
     mut text: String,
     drafts: &[TurnDraft],
     accepts_files: bool,
-) -> (String, Vec<serde_json::Value>) {
+) -> (String, Vec<serde_json::Value>, Vec<String>) {
     use base64::Engine as _;
     let worker = core.tool_worker_exe();
     let mut files = Vec::new();
@@ -2348,7 +2348,7 @@ async fn return_drafts(
     if !notes.is_empty() {
         text = format!("{}\n\n{}", text.trim_end(), notes.join("\n"));
     }
-    (text, files)
+    (text, files, notes)
 }
 
 fn office_mime(name: &str) -> &'static str {
@@ -3331,17 +3331,16 @@ async fn gateway_inbound(
                 .as_ref()
                 .and_then(|capabilities| capabilities.accepts_files)
                 .unwrap_or(false);
-            let cards = reply.cards;
-            let (text, files) =
+            let answer = reply.answer;
+            let (text, files, delivery_notices) =
                 return_drafts(&core, reply.text, &reply.drafts, accepts_files).await;
-            let outcome_metadata = reply.metadata;
+
             match crate::delivery::render_response(
                 &core,
                 body.surface.trim(),
                 body.chat.trim(),
                 text.clone(),
                 body.capabilities.as_ref(),
-                outcome_metadata,
                 Some(std::collections::BTreeMap::from([
                     ("request_id".into(), request_id.clone()),
                     ("agent_id".into(),
@@ -3360,8 +3359,8 @@ async fn gateway_inbound(
                     ("bot_id".into(), body.bot_id.clone().unwrap_or_default()),
                 ])),
                 body.bot_id.as_deref(),
-                session_id.as_deref(),
-                cards,
+                answer,
+                delivery_notices,
             )
             .await
             {
@@ -3800,12 +3799,23 @@ async fn execute_turn_chain(
             match outcome {
                 Ok((o, log)) => {
                     let err = outcome_is_error(&o);
-                    let cards = crate::projection::run_cards(&log);
-                    let (mut text, metadata) =
-                        crate::projection::channel_answer(&log, outcome_text(&o));
+                    let timeline = crate::project_response(&core, &session_id, &log);
+                    let answer: Vec<_> = vak_delivery::answer::latest(&timeline)
+                        .into_iter()
+                        .cloned()
+                        .collect();
+                    let mut text = vak_delivery::answer::markdown(&answer);
+                    if text.trim().is_empty() {
+                        text = outcome_text(&o);
+                    }
+                    let speech = if answer.is_empty() {
+                        text.clone()
+                    } else {
+                        vak_delivery::answer::spoken(&answer)
+                    };
                     // A card-only answer sends its cards and no text; the
                     // placeholder is for a reply that carries nothing at all.
-                    if text.trim().is_empty() && cards.is_empty() {
+                    if text.trim().is_empty() && answer.is_empty() {
                         text = "(no text)".into();
                     }
                     if let Some(tx) = reply_tx {
@@ -3815,9 +3825,9 @@ async fn execute_turn_chain(
                             tx,
                             ChatReply {
                                 text: text.clone(),
-                                metadata,
+                                speech,
                                 drafts: turn_drafts(&log, core.cwd(), &core.agent_tools()),
-                                cards,
+                                answer,
                             },
                         ));
                     }
@@ -3846,9 +3856,9 @@ async fn execute_turn_chain(
                             tx,
                             ChatReply {
                                 text: text.clone(),
-                                metadata: None,
+                                speech: text.clone(),
                                 drafts: Vec::new(),
-                                cards: Vec::new(),
+                                answer: Vec::new(),
                             },
                         ));
                     }

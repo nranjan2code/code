@@ -27,7 +27,7 @@ export function readPage(bytes: Uint8Array): Page | null {
  *  and shared values work as they did in the answer; a viewer's changes to
  *  its controls are their own and are never saved. Its parts flow into as
  *  many columns as there is room for. */
-export default function PageView(props: { page: Page; versionId: string; resourceReader?: ReturnType<typeof api.pageResourceReader> }) {
+export default function PageView(props: { page: Page; versionId: string; hideUser?: boolean; resourceReader?: ReturnType<typeof api.pageResourceReader> }) {
   const resourceReader = () => props.resourceReader ?? api.pageResourceReader(props.page.resource_context?.artifact, props.versionId);
   const timeline = () => ({
     schema_version: 2,
@@ -39,7 +39,7 @@ export default function PageView(props: { page: Page; versionId: string; resourc
     <div class="answer-in-canvas">
       <InCanvasContext.Provider value={true}>
         <PresentationPageResourceContext.Provider value={resourceReader()}>
-          <PresentationTimelineView timeline={timeline()} sessionId="" valueScope={pageValuesKey(props.versionId)} allowContinuation={false} hideUser />
+          <PresentationTimelineView timeline={timeline()} sessionId="" valueScope={pageValuesKey(props.versionId)} allowContinuation={false} hideUser={props.hideUser ?? true} includeTurnExtras={false} />
         </PresentationPageResourceContext.Provider>
       </InCanvasContext.Provider>
     </div>

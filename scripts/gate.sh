@@ -62,6 +62,9 @@ fi
 step fmt cargo fmt --all --check
 step clippy cargo clippy --workspace --all-targets -- -D warnings
 step test cargo test --workspace
+step answer-composition node crates/vak-client-ui/tests/answer-composition.mjs
+step presentation-hydration node crates/vak-client-ui/tests/presentation-hydration.mjs
+step rich-response node crates/vak-client-ui/tests/rich-response.mjs
 step version scripts/check-version.sh
 step doc-paths python3 scripts/check_doc_paths.py
 step records python3 scripts/check_records.py

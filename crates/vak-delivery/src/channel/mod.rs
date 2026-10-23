@@ -57,6 +57,41 @@ fn card(output: &StructuredOutput) -> Result<Card, String> {
     forms::project(output)
 }
 
+/// Select the target before lowering rich semantics to a static form.
+fn compile_form(surface: &str, output: &StructuredOutput) -> Result<Vec<Message>, String> {
+    if output.schema_version != crate::PRESENTATION_SCHEMA_VERSION {
+        return Err("channel card has an unsupported presentation schema".into());
+    }
+    crate::validate_form(&output.block, &output.payload).map_err(|e| e.to_string())?;
+    if surface == "slack"
+        && let Some(messages) = native::slack_chart(output)
+    {
+        return Ok(messages);
+    }
+    native::compile(surface, &card(output)?)
+}
+
+/// Report what this target actually preserves, addressed by accepted item id.
+pub(crate) fn disposition(surface: &str, item: &crate::OutputItem) -> crate::CoverageDisposition {
+    use crate::{CoverageDisposition, OutputContent};
+    let reason = match &item.content {
+        OutputContent::Structured { output } => {
+            if surface == "slack" && native::slack_chart(output).is_some() {
+                return CoverageDisposition::Rendered;
+            }
+            match card(output) {
+                Ok(card) if card.limitations.is_empty() => return CoverageDisposition::Rendered,
+                Ok(card) => card.limitations.join(" "),
+                Err(_) => "The rich form could not be compiled for this target.".into(),
+            }
+        }
+        OutputContent::Adaptive { .. } => "Interactive presentation is preserved as readable text; use the conversation for its controls.".into(),
+        OutputContent::Artifact { .. } => "File identity and review state are preserved as readable text; use the authorized conversation for file operations.".into(),
+        _ => return CoverageDisposition::Rendered,
+    };
+    CoverageDisposition::PreservedInFallback { reason }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     /// Telegram API method; other providers have one create-message endpoint.
@@ -100,20 +135,40 @@ fn text_message(surface: &str, text: String, formatted: bool) -> Result<Message,
     Ok(Message { method, body })
 }
 
-/// One request plan, used by both direct replies and effect-backed pushes.
-/// Cards are emitted before their trailing narration, as the gateway's
-/// card-followup contract specifies. No card is also sent as fallback text.
+/// Compile accepted items in source order. Provider limits change continuation,
+/// never which prose, card or result verdict belongs to the answer.
 pub fn messages(packet: &DeliveryPacket) -> Result<Vec<Message>, String> {
     let mut messages = Vec::new();
-    for output in packet.structured_cards() {
-        messages.extend(native::compile(&packet.surface, &card(output)?)?);
+    if let Some(timeline) = &packet.presentation {
+        let mut notices = std::collections::HashSet::new();
+        for item in timeline
+            .items
+            .iter()
+            .filter(|item| crate::answer::is_material(item))
+        {
+            if let Some(notice) = crate::answer::notice(item)
+                && notices.insert(crate::answer::notice_key(item, notice))
+            {
+                messages.extend(self::notice(&packet.surface, notice)?);
+            }
+            match &item.content {
+                crate::OutputContent::Structured { output } => {
+                    messages.extend(compile_form(&packet.surface, output)?)
+                }
+                _ => messages.extend(prose(&packet.surface, &crate::answer::text(item))?),
+            }
+        }
+    } else {
+        for chunk in packet
+            .channel_text_chunks()
+            .into_iter()
+            .filter(|s| !s.is_empty())
+        {
+            messages.push(text_message(&packet.surface, chunk, true)?);
+        }
     }
-    for chunk in packet
-        .channel_text_chunks()
-        .into_iter()
-        .filter(|s| !s.is_empty())
-    {
-        messages.push(text_message(&packet.surface, chunk, true)?);
+    for note in &packet.delivery_notices {
+        messages.extend(notice(&packet.surface, note)?);
     }
     if let Some(message) = messages.last_mut() {
         if packet.surface == "telegram" && !packet.actions.is_empty() {
@@ -141,6 +196,32 @@ pub fn messages(packet: &DeliveryPacket) -> Result<Vec<Message>, String> {
         }
     }
     Ok(messages)
+}
+
+fn prose(surface: &str, markdown: &str) -> Result<Vec<Message>, String> {
+    if markdown.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let profile = match surface {
+        "telegram" => crate::Markup::TelegramHtml,
+        "slack" => crate::Markup::SlackMrkdwn,
+        "discord" => crate::Markup::DiscordMarkdown,
+        _ => return Err("channel has no prose compiler".into()),
+    };
+    let rendered = crate::render_text(markdown, profile);
+    let chunks = if surface == "telegram" {
+        crate::telegram::split_html_chunks(&rendered, Some(4096))
+    } else {
+        crate::chunk_markdown_preserving_fences(
+            &rendered,
+            Some(if surface == "slack" { 40_000 } else { 2000 }),
+        )
+    };
+    chunks
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .map(|part| text_message(surface, part, true))
+        .collect()
 }
 
 fn plain(elements: &[Element]) -> String {

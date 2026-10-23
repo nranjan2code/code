@@ -294,7 +294,13 @@ async fn inbound_wait_roundtrip_reuses_binding() {
     let run = header["run"].as_str().unwrap().to_string();
     assert!(run.starts_with("run_"), "{run}");
     let cost = vak_session::chain::RecordChain::at(home.join("home/cost-log")).text();
-    let row: serde_json::Value = serde_json::from_str(cost.lines().last().unwrap()).unwrap();
+    // Auxiliary work may append after the reply; address the admitted run,
+    // never whichever cost row happened to be written last.
+    let row: serde_json::Value = cost
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|row| row["trace"]["run"] == run.as_str())
+        .expect("the admitted run has a cost row");
     assert_eq!(row["trace"]["run"], run.as_str(), "one request, one run");
     assert!(
         row["actor"].as_str().unwrap().starts_with("prn_"),

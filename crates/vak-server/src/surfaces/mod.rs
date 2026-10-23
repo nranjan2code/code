@@ -428,13 +428,28 @@ pub(crate) mod channel_fixture {
         })
         .unwrap();
         let registry = vak_delivery::built_in_skill_registry();
-        packet.attach_structured_cards([
+        let cards = [
             vak_delivery::structured_output("summary",None,json!({"headline":"Observed result","label":"10:02 IST","points":["Nested point survives"]}),&registry).unwrap(),
             vak_delivery::structured_output("sources",None,json!({"sources":[{"title":"Primary record","url":"https://example.com/source","finding":"Evidence survives"}]}),&registry).unwrap()
-        ]);
+        ];
+        let timeline = packet.presentation.as_mut().unwrap();
+        let items = cards
+            .into_iter()
+            .enumerate()
+            .map(|(i, card)| card_item(card, &format!("test-card-{i}")));
+        timeline.items.splice(0..0, items);
         packet
     }
 
+    pub(super) fn card_item(
+        output: vak_delivery::StructuredOutput,
+        id: &str,
+    ) -> vak_delivery::OutputItem {
+        serde_json::from_value(serde_json::json!({
+            "id":id,"timestamp":"","turn_id":"test-turn","role":"assistant","kind":"card","status":"succeeded",
+            "content":{"type":"structured","output":output},"fallback_text":"","actions":[]
+        })).unwrap()
+    }
     /// Captures actual HTTP methods/bodies without contacting a chat account.
     /// `reject` is the zero-based message index that gets an application-level
     /// refusal; it must never be followed by a downgrade/re-send.

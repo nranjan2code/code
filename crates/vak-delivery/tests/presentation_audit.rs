@@ -1991,6 +1991,7 @@ fn audit_packet_structure() {
     scenarios.push(tc("channel_projection_multi_results", || {
         let src = "# Combined";
         let answer = AnswerDraft {
+            items: Vec::new(),
             schema_version: DELIVERY_SCHEMA_VERSION,
             source_markdown: src.into(),
             blocks: answer_blocks(src),
@@ -2027,6 +2028,7 @@ fn audit_packet_structure() {
     scenarios.push(tc("channel_projection_single_result", || {
         let src = "# Single";
         let answer = AnswerDraft {
+            items: Vec::new(),
             schema_version: DELIVERY_SCHEMA_VERSION,
             source_markdown: src.into(),
             blocks: answer_blocks(src),

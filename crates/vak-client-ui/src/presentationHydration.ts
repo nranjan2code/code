@@ -74,6 +74,8 @@ export function applyPresentationDelta(
       && delta.item.provenance?.source === "live_event"
       && current.items.some(item => item.id === delta.item.id && item.provenance?.source !== "live_event")) return current;
   switch (delta.type) {
+    case "item_removed":
+      return { ...current, items: current.items.filter(item => item.id !== delta.item_id) };
     case "item_started":
     case "item_replaced":
       return { ...current, items: upsertItem(current.items.filter((item) => !delta.item.placement?.replaces || item.provenance?.presentation_id !== delta.item.placement.replaces), delta.item) };

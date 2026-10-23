@@ -1,3 +1,40 @@
+## Response projection across surfaces — 2026-10-23
+
+Review: `docs/audits/response-projection-across-surfaces-2026-10-23.md`.
+Current research: `docs/research/rich-responses-2026-10-23.md`.
+Contract and R0–R5 exits: `docs/design/104-rich-response-contract.md`.
+This refines the existing architecture/presentation plan's S3. The maintainer
+subsequently authorized implementation and tests with clean replacement and
+no legacy compatibility. No release or external UI dependency was requested.
+
+- [x] Trace current response consumers and the two-month change history;
+  confirm independent content/order/visibility decisions and run the focused
+  client composition/hydration checks. That review preceded runtime changes.
+- [x] Research current primary protocols and channel APIs as of 23 October
+  2026; propose first-class rich answers, form/data/action separation and native
+  target compilation. Identify premature chart/map lowering. No dependency or
+  runtime change is approved or implemented by the research.
+- [x] Establish a shared turn/result/audience-scoped answer view over existing
+  OutputTimeline/OutputItem types; consolidate live/replay visibility and stable
+  identity without restoring removed model-authored plans.
+- [x] Preserve ordered items, result state and provenance through channel
+  handoff, saved-page text, guest composition, CLI/rich terminal and exports;
+  define voice's companion-answer projection. The shared corpus passes delivery,
+  hydration, exports and page-renderer checks. CLI stdout is accepted output at
+  settlement; provisional text is preserved and labelled on a fatal run error.
+- [x] Select a channel target before static form lowering; render eligible
+  Slack category charts natively, with complete accessible values and explicit
+  static fallback for unsupported dimensions. Preserve original answer items;
+  keep attachment hold/unavailable notices explicit through actual bridge
+  compilation, separate from accepted answer content and heartbeat findings.
+- [ ] Qualify remaining native map/component capabilities and consolidate form
+  descriptors/bindings/disposition reporting across every retained form;
+  qualify native features and limits per surface and test
+  state/action lifetimes through the existing services (doc 104 R3–R4).
+- [ ] Gate one corpus through production consumers across live, settlement,
+  reload, paging and cancellation. Keep semantic-quality and real native/channel
+  visual acceptance separate from deterministic projection conformance.
+
 ## Composer command acceptance — 2026-10-23
 
 Initial audit: `docs/audits/composer-commands-2026-10-23.md`.

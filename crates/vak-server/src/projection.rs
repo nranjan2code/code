@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
+use vak_delivery::presentation::apply_stream_event;
 
 /// Authored text is content. Runtime controls are filtered by their typed
 /// ledger metadata before projection, never by matching words in prose.
@@ -218,207 +219,64 @@ fn sandbox_artifact_actions(
 /// enough that a reader had to count commas to find the error flag.
 type TurnTool = (String, String, serde_json::Value, Option<String>, bool);
 
-/// The text a surface that cannot render cards natively — a chat channel, a
-/// webhook, the inbox, a scheduled routine's summary — gets for a finished run.
-///
-/// A card emitted through an `emit_*_card` call is not in the model's final
-/// text (that is only a line of narration), so delivering just that text drops
-/// the card entirely. This takes the cards of the latest turn from the same
-/// projection the desktop renders (so retries are superseded and nothing is
-/// counted twice) and puts their deterministic text form ahead of the
-/// narration.
+/// Readable latest-turn answer for text-only consumers. Preserve recorded
+/// prose/card order and verdicts; use caller narration only for an empty answer.
 pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> String {
-    let session_id = session
-        .header()
-        .map(|header| header.session_id.clone())
-        .unwrap_or_default();
-    let timeline = snapshot(&session_id, session);
-    let Some(turn) = timeline
-        .items
-        .iter()
-        .rev()
-        .find(|item| item.role == OutputRole::User)
-        .map(|item| item.turn_id.clone())
-    else {
-        return narration;
-    };
-    let cards: Vec<&str> = timeline
-        .items
-        .iter()
-        .filter(|item| {
-            item.turn_id == turn
-                && item.kind == OutputKind::Card
-                && matches!(
-                    item.content,
-                    OutputContent::Structured { .. } | OutputContent::Adaptive { .. }
-                )
-        })
-        .map(|item| item.fallback_text.trim())
-        // Structured fallback text includes a JSON appendix for audit/export.
-        // Chat channels receive the semantic card separately and should not
-        // expose that appendix as the user-facing card.
-        .map(|text| {
-            text.split_once("\n\n```json")
-                .map_or(text, |(body, _)| body)
-        })
-        .filter(|text| !text.is_empty())
-        .collect();
-    if cards.is_empty() {
-        return narration;
-    }
-    let cards = cards.join("\n\n");
-    match vak_delivery::visible_card_followup(&narration) {
-        Some(followup) => format!("{cards}\n\n{followup}"),
-        None => cards,
+    let items = run_answer(session);
+    let text = vak_delivery::answer::markdown(&items);
+    if text.trim().is_empty() {
+        narration
+    } else {
+        text
     }
 }
 
-/// One turn's answer as a page a person can keep (docs/design/98 §12): the
-/// turn's items as the conversation drew them, its request as the title, and
-/// as its text form its cards' text in the order shown, then the reply
-/// (beside cards, only what the reply adds to them). `None` when the turn
-/// has no answer.
+/// The accepted answer of the latest turn, with its source identities intact.
+pub(crate) fn run_answer(session: &SessionLog) -> Vec<OutputItem> {
+    let session_id = session
+        .header()
+        .map(|header| header.session_id.as_str())
+        .unwrap_or_default();
+    let timeline = snapshot(session_id, session);
+    vak_delivery::answer::latest(&timeline)
+        .into_iter()
+        .cloned()
+        .collect()
+}
+
+/// Keep the rich items and readable/searchable text in the same source order.
 pub(crate) fn answer_page(
     timeline: &OutputTimeline,
     turn: &str,
 ) -> Option<vak_delivery::page::Page> {
-    let of_turn = || timeline.items.iter().filter(|item| item.turn_id == turn);
-    let cards: Vec<&str> = of_turn()
-        .filter(|item| {
-            item.kind == OutputKind::Card
-                && matches!(
-                    item.content,
-                    OutputContent::Structured { .. } | OutputContent::Adaptive { .. }
-                )
-        })
-        .map(|item| item.fallback_text.trim())
-        .map(|text| {
-            text.split_once("\n\n```json")
-                .map_or(text, |(body, _)| body)
-        })
-        .filter(|text| !text.is_empty())
-        .collect();
-    let reply = of_turn()
-        .rev()
-        .filter(|item| item.role == OutputRole::Assistant)
-        .find_map(|item| match &item.content {
-            OutputContent::Document { document } => Some(document.source_markdown.clone()),
-            OutputContent::Outcome {
-                document: Some(document),
-                ..
-            } => Some(document.source_markdown.clone()),
-            _ => None,
-        })
-        .unwrap_or_default();
-    let reply = if cards.is_empty() {
-        reply.trim().to_string()
-    } else {
-        vak_delivery::visible_card_followup(&reply).unwrap_or_default()
-    };
-    let body: Vec<&str> = cards
-        .into_iter()
-        .chain(std::iter::once(reply.as_str()))
-        .filter(|part| !part.is_empty())
-        .collect();
-    if body.is_empty() {
+    let items = vak_delivery::answer::of_turn(timeline, turn);
+    if items.is_empty() {
         return None;
     }
-    let title = of_turn()
-        .find(|item| item.role == OutputRole::User)
-        .and_then(|item| {
+    let text = vak_delivery::answer::markdown(items);
+    let title = timeline
+        .items
+        .iter()
+        .find(|item| item.turn_id == turn && item.role == OutputRole::User)
+        .map(|item| {
             item.fallback_text
                 .lines()
-                .find(|line| !line.trim().is_empty())
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
         })
-        .map(|line| line.trim().to_string())
         .unwrap_or_default();
     Some(vak_delivery::page::Page::new(
         title,
-        of_turn().cloned().collect(),
-        body.join("\n\n"),
+        timeline
+            .items
+            .iter()
+            .filter(|item| item.turn_id == turn)
+            .cloned()
+            .collect(),
+        text,
     ))
-}
-
-/// Keep the model's short narration separate from the structured cards.
-/// Channel bridges have native card projections; including these same cards
-/// in the narration made Discord/Slack show each result twice.
-pub(crate) fn channel_answer(
-    session: &SessionLog,
-    narration: String,
-) -> (String, Option<std::collections::BTreeMap<String, String>>) {
-    let session_id = session
-        .header()
-        .map(|header| header.session_id.clone())
-        .unwrap_or_default();
-    let timeline = snapshot(&session_id, session);
-    let Some(turn) = timeline
-        .items
-        .iter()
-        .rev()
-        .find(|item| item.role == OutputRole::User)
-        .map(|item| item.turn_id.as_str())
-    else {
-        return (narration, None);
-    };
-    // Metadata travels with this reply, never through a mutable live handle
-    // that may still be streaming or already belong to a continuation.
-    let metadata = timeline.items.iter().rev().find_map(|item| {
-        if item.turn_id != turn || item.role != OutputRole::Assistant {
-            return None;
-        }
-        match &item.content {
-            OutputContent::Document { document } => Some(document.metadata.clone()),
-            _ => None,
-        }
-    });
-    let has_card = timeline.items.iter().any(|item| {
-        item.turn_id == turn
-            && item.kind == OutputKind::Card
-            && matches!(
-                &item.content,
-                OutputContent::Structured { .. } | OutputContent::Adaptive { .. }
-            )
-    });
-    if !has_card {
-        return (narration, metadata);
-    }
-    (
-        vak_delivery::visible_card_followup(&narration).unwrap_or_default(),
-        metadata,
-    )
-}
-
-/// Typed cards from the latest turn, retained separately for channel-native
-/// renderers. The text fallback remains alongside them for older consumers.
-pub(crate) fn run_cards(session: &SessionLog) -> Vec<vak_delivery::StructuredOutput> {
-    let session_id = session
-        .header()
-        .map(|header| header.session_id.clone())
-        .unwrap_or_default();
-    let timeline = snapshot(&session_id, session);
-    let Some(turn) = timeline
-        .items
-        .iter()
-        .rev()
-        .find(|item| item.role == OutputRole::User)
-        .map(|item| item.turn_id.as_str())
-    else {
-        return Vec::new();
-    };
-    timeline
-        .items
-        .iter()
-        .filter(|item| item.turn_id == turn && item.kind == OutputKind::Card)
-        .filter_map(|item| match &item.content {
-            OutputContent::Structured { output } => Some(output.clone()),
-            OutputContent::Adaptive { fallback_text, .. } => {
-                vak_delivery::structured_outputs_from_text(fallback_text)
-                    .into_iter()
-                    .next()
-            }
-            _ => None,
-        })
-        .collect()
 }
 
 /// The turn the tool call `execution` belongs to and that turn's result,
@@ -867,33 +725,6 @@ fn deduplicate_file_artifacts_with_scratch(
     *items = latest_first;
 }
 
-/// Returns a concise, transport-neutral artifact list for channel delivery.
-/// The browser can resolve richer previews, while text surfaces still need an
-/// explicit record that the generated files exist and where they live.
-pub(crate) fn sandbox_artifact_markdown(
-    home: &std::path::Path,
-    session_id: &str,
-) -> Option<String> {
-    let path = vak_config::scope::AgentScope::new(home).sandbox_executions(session_id);
-    let mut rows = Vec::new();
-    for event in crate::sandbox_records::events::<vak_tools::SandboxEvent>(&path) {
-        let vak_tools::SandboxEvent::ArtifactGenerated {
-            path,
-            mime_type,
-            size_bytes,
-            ..
-        } = event
-        else {
-            continue;
-        };
-        let row = format!("- `{path}` ({mime_type}, {size_bytes} bytes)");
-        if !rows.contains(&row) {
-            rows.push(row);
-        }
-    }
-    (!rows.is_empty()).then(|| format!("\n\nGenerated artifacts\n\n{}", rows.join("\n")))
-}
-
 fn has_user_request_content(content: &[ContentBlock]) -> bool {
     content.iter().any(|block| match block {
         ContentBlock::Text { text } => !clean_scaffolding(text).is_empty(),
@@ -1109,10 +940,9 @@ fn snapshot_inner(
     let mut turn_numbers: HashMap<String, usize> = HashMap::new();
     // An answer the runtime sent back for a redo (a `retries_answer` nudge
     // followed it) is an internal draft, not something to show: the user sees
-    // the redone answer, never both. `last_assistant_entry` is the answer the
+    // the redone answer, never both. The discarded assistant entry is the answer the
     // next such nudge would be rejecting.
-    let mut last_assistant_entry: Option<String> = None;
-    let mut rejected_drafts: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let rejected_drafts = SessionLog::rejected_draft_ids(&session.derive_transcript());
     let written = written_files(&chain);
     for entry in chain {
         match &entry.payload {
@@ -1128,19 +958,6 @@ fn snapshot_inner(
                     && has_user_request_content(&record.message.content)
                 {
                     seen_cards.clear();
-                }
-                if control.is_some_and(|kind| kind.discards_assistant_draft())
-                    && let Some(draft) = last_assistant_entry.take()
-                {
-                    rejected_drafts.insert(draft);
-                }
-                if record.message.role == Role::Assistant
-                    && record.message.content.iter().any(|block| {
-                        matches!(block, ContentBlock::Text { text } if !text.trim().is_empty())
-                    })
-                {
-                    last_assistant_entry = Some(entry.id.clone());
-
                 }
                 if record.message.role == Role::User
                     && control.is_none()
@@ -1837,55 +1654,6 @@ fn snapshot_inner(
         });
     }
     deduplicate_file_artifacts(&mut deduplicated);
-    let first_card_index_by_turn: HashMap<String, usize> = deduplicated
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| {
-            item.kind == OutputKind::Card
-                && item
-                    .provenance
-                    .as_ref()
-                    .and_then(|provenance| provenance.source.as_deref())
-                    .is_some_and(|source| source.starts_with("emit_") && source.ends_with("_card"))
-        })
-        .fold(HashMap::new(), |mut indices, (index, item)| {
-            indices.entry(item.turn_id.clone()).or_insert(index);
-            indices
-        });
-    for (index, item) in deduplicated.iter_mut().enumerate() {
-        if item.role != OutputRole::Assistant
-            || !first_card_index_by_turn
-                .get(&item.turn_id)
-                .is_some_and(|first_card| index > *first_card)
-        {
-            continue;
-        }
-        let source_text = match &item.content {
-            OutputContent::Document { document } => Some(document.source_markdown.clone()),
-            OutputContent::Outcome { document, .. } => document
-                .as_ref()
-                .map(|document| document.source_markdown.clone()),
-            _ => None,
-        };
-        let Some(followup) = source_text
-            .as_deref()
-            .and_then(vak_delivery::visible_card_followup)
-        else {
-            continue;
-        };
-        match &mut item.content {
-            OutputContent::Document { document } => {
-                document.metadata.insert("card_followup".into(), followup);
-            }
-            OutputContent::Outcome {
-                document: Some(document),
-                ..
-            } => {
-                document.metadata.insert("card_followup".into(), followup);
-            }
-            _ => {}
-        }
-    }
     timeline.items = deduplicated;
     // Each card's state as the person's actions left it (docs/design/96,
     // Q3), keyed by the Presentation entry the actions name.
@@ -1922,6 +1690,7 @@ fn snapshot_inner(
             item.placement = placement.clone();
         }
     }
+    crate::conversation_history::canonical_turns(&mut timeline, session);
     timeline.cursor = chain_cursor(session);
     log_turns_with_no_visible_answer(session_id, &timeline);
     timeline
@@ -2046,7 +1815,7 @@ fn artifact_at(path: &str) -> ArtifactRef {
         .unwrap_or(&path)
         .to_string();
     ArtifactRef {
-        name: filename,
+        name: crate::inbox::display_name(&filename),
         media_type: media_type_for_path(&path),
         path: Some(path),
         description: None,
@@ -2365,6 +2134,9 @@ fn activity_item(
 pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputStreamEvent> {
     let now = chrono::Utc::now().to_rfc3339();
     match event {
+        AgentEvent::DraftDiscarded { .. } => Some(OutputStreamEvent::ItemRemoved {
+            item_id: "live-assistant".into(),
+        }),
         // A card as recorded, drawn while the run goes on; the settled
         // snapshot replaces it (docs/design/96, live turn).
         AgentEvent::CardRecorded {
@@ -2736,7 +2508,13 @@ pub(crate) fn project_frame(
         OutputStreamEvent::ItemStarted { item } | OutputStreamEvent::ItemReplaced { item } => {
             if item.id == "live-assistant" {
                 item.id = format!("live-assistant-{sequence}");
-                item.turn_id = format!("live-turn-{sequence}");
+                item.turn_id = timeline
+                    .items
+                    .iter()
+                    .rev()
+                    .find(|item| item.role == OutputRole::User)
+                    .map(|item| item.turn_id.clone())
+                    .unwrap_or_else(|| format!("live-turn-{sequence}"));
             } else if item.turn_id == "live"
                 && let Some((_, turn)) = &active
             {
@@ -2744,7 +2522,8 @@ pub(crate) fn project_frame(
             }
         }
         OutputStreamEvent::TextDelta { item_id, .. }
-        | OutputStreamEvent::ItemCompleted { item_id, .. } => {
+        | OutputStreamEvent::ItemCompleted { item_id, .. }
+        | OutputStreamEvent::ItemRemoved { item_id } => {
             if let Some((id, _)) = &active {
                 *item_id = id.clone();
             }
@@ -2795,87 +2574,6 @@ pub(crate) fn settled_frame(
         sequence: Some(sequence),
         delta: None,
         snapshot: Some(snapshot),
-    }
-}
-
-pub(crate) fn apply_stream_event(timeline: &mut OutputTimeline, event: OutputStreamEvent) {
-    match event {
-        OutputStreamEvent::Snapshot { timeline: snapshot } => *timeline = snapshot,
-        OutputStreamEvent::ItemStarted { item } | OutputStreamEvent::ItemReplaced { item } => {
-            // The background event consumer may trail the settlement snapshot.
-            // A late live card cannot overwrite its authoritative durable item.
-            if item.provenance.as_ref().and_then(|p| p.source.as_deref()) == Some("live_event")
-                && timeline.items.iter().any(|existing| {
-                    existing.id == item.id
-                        && existing
-                            .provenance
-                            .as_ref()
-                            .and_then(|p| p.source.as_deref())
-                            != Some("live_event")
-                })
-            {
-                return;
-            }
-            if let Some(replaced) = &item.placement.replaces {
-                timeline.items.retain(|candidate| {
-                    candidate
-                        .provenance
-                        .as_ref()
-                        .and_then(|p| p.presentation_id.as_ref())
-                        != Some(replaced)
-                });
-            }
-            if let Some(existing) = timeline
-                .items
-                .iter_mut()
-                .find(|candidate| candidate.id == item.id)
-            {
-                *existing = item;
-            } else {
-                timeline.items.push(item);
-            }
-        }
-        OutputStreamEvent::TextDelta {
-            item_id,
-            delta,
-            text,
-        } => {
-            if let Some(item) = timeline
-                .items
-                .iter_mut()
-                .find(|candidate| candidate.id == item_id)
-            {
-                let text = if text.is_empty() {
-                    format!("{}{delta}", item.fallback_text)
-                } else {
-                    text
-                };
-                item.fallback_text = text.clone();
-                // The renderer already supports source-only live documents.
-                // Compile once on completion/durable settlement, rather than
-                // parsing every growing prefix on the stream's hot path.
-                item.content = OutputContent::Document {
-                    document: PresentationDocument {
-                        source_markdown: text,
-                        ..Default::default()
-                    },
-                };
-            }
-        }
-        OutputStreamEvent::ItemCompleted { item_id, status } => {
-            if let Some(item) = timeline
-                .items
-                .iter_mut()
-                .find(|candidate| candidate.id == item_id)
-            {
-                item.status = status;
-                if matches!(item.content, OutputContent::Document { .. }) {
-                    item.content = OutputContent::Document {
-                        document: compile_markdown(item.fallback_text.clone()),
-                    };
-                }
-            }
-        }
     }
 }
 
@@ -4555,7 +4253,22 @@ mod tests {
             1,
             "synthetic stop/repair messages must not be projected as user item"
         );
-        assert_eq!(user_items[0].turn_id, "turn-1");
+        assert_eq!(
+            user_items[0].turn_id,
+            *user_items[0]
+                .provenance
+                .as_ref()
+                .expect("provenance")
+                .entry_id
+                .as_ref()
+                .expect("user entry")
+        );
+        assert!(
+            timeline
+                .items
+                .iter()
+                .all(|item| item.turn_id == user_items[0].turn_id)
+        );
     }
 
     /// A second same-type card with NO repair nudge in between is a
@@ -5635,7 +5348,7 @@ mod tests {
     /// Channel fallbacks include the card projection and every assistant text
     /// block from the turn; text prefixes have no control meaning.
     #[test]
-    fn a_channel_gets_the_cards_of_the_run_ahead_of_the_narration() {
+    fn a_channel_gets_the_recorded_answer_not_unrecorded_narration() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut log = channel_log(&dir, "ch1");
         log.append_message(MessageRecord {
@@ -5653,13 +5366,18 @@ mod tests {
             !text.contains("```json"),
             "channel fallback must not leak the audit appendix: {text}"
         );
-        let cards = super::run_cards(&log);
+        let cards = super::run_answer(&log);
         assert_eq!(cards.len(), 1);
-        assert_eq!(cards[0].semantic_type, "chart");
-        assert!(text.contains("The chart is shown above."), "{text}");
+        assert!(
+            matches!(&cards[0].content, OutputContent::Structured { output } if output.block == "chart")
+        );
+        assert!(
+            !text.contains("The chart is shown above."),
+            "unrecorded narration is not answer material"
+        );
         let with_note = super::text_with_run_cards(&log, "Note: Check the holiday dip.".into());
         assert!(with_note.contains("sales rise steadily"), "{with_note}");
-        assert!(with_note.ends_with("Check the holiday dip."), "{with_note}");
+        assert_eq!(with_note, text);
     }
 
     #[test]
@@ -5680,10 +5398,14 @@ mod tests {
         })
         .expect("answer");
         let timeline = super::snapshot("card-note", &log);
-        let note = timeline.items.iter().find_map(|item| match &item.content {
-            OutputContent::Document { document } => document.metadata.get("card_followup"),
-            _ => None,
-        });
+        let note = timeline
+            .items
+            .iter()
+            .filter(|item| item.role == OutputRole::Assistant)
+            .find_map(|item| match &item.content {
+                OutputContent::Document { document } => Some(&document.source_markdown),
+                _ => None,
+            });
         assert_eq!(
             note.map(String::as_str),
             Some("Note: The holiday dip needs review.")
@@ -5781,6 +5503,23 @@ mod tests {
                 "The closing explanation survives too.",
             ]
         );
+        let items = vak_delivery::answer::latest(&timeline);
+        let turn = items[0].turn_id.clone();
+        let page = super::answer_page(&timeline, &turn).expect("saved page");
+        let channel = super::text_with_run_cards(&log, "unrecorded replacement".into());
+        assert_eq!(page.text, channel);
+        assert_eq!(
+            super::run_answer(&log),
+            items.into_iter().cloned().collect::<Vec<_>>()
+        );
+        assert!(
+            page.text.find("Leading context").expect("leading")
+                < page.text.find("result 0").expect("first card")
+        );
+        assert!(
+            page.text.find("result 0").expect("card")
+                < page.text.find("Note: the second").expect("interleaved")
+        );
     }
 
     #[test]
@@ -5809,17 +5548,11 @@ mod tests {
         );
         assert!(
             timeline.items.iter().any(|item| match &item.content {
-                OutputContent::Document { document } => document
-                    .metadata
-                    .get("card_followup")
-                    .is_some_and(|text| text == narration),
+                OutputContent::Document { document } => document.source_markdown == narration,
                 OutputContent::Outcome {
                     document: Some(document),
                     ..
-                } => document
-                    .metadata
-                    .get("card_followup")
-                    .is_some_and(|text| text == narration),
+                } => document.source_markdown == narration,
                 _ => false,
             }),
             "follow-up is projected as written, without phrase classification"
@@ -5862,17 +5595,11 @@ mod tests {
         );
         assert!(
             timeline.items.iter().any(|item| match &item.content {
-                OutputContent::Document { document } => document
-                    .metadata
-                    .get("card_followup")
-                    .is_some_and(|text| text == narration),
+                OutputContent::Document { document } => document.source_markdown == narration,
                 OutputContent::Outcome {
                     document: Some(document),
                     ..
-                } => document
-                    .metadata
-                    .get("card_followup")
-                    .is_some_and(|text| text == narration),
+                } => document.source_markdown == narration,
                 _ => false,
             }),
             "Note: remains ordinary text and is projected in full"
@@ -5914,17 +5641,12 @@ mod tests {
         let timeline = super::snapshot("card-duplicate-note", &log);
         assert!(
             timeline.items.iter().any(|item| match &item.content {
-                OutputContent::Document { document } => document
-                    .metadata
-                    .get("card_followup")
-                    .is_some_and(|text| text.contains("start time of 6 pm")),
+                OutputContent::Document { document } =>
+                    document.source_markdown.contains("start time of 6 pm"),
                 OutputContent::Outcome {
                     document: Some(document),
                     ..
-                } => document
-                    .metadata
-                    .get("card_followup")
-                    .is_some_and(|text| text.contains("start time of 6 pm")),
+                } => document.source_markdown.contains("start time of 6 pm"),
                 _ => false,
             }),
             "projection preserves source text and leaves deduplication to the model"
@@ -5996,11 +5718,10 @@ mod tests {
         .expect("second user");
 
         let narration = "The sales increased throughout the period.";
-        let (text, metadata) = super::channel_answer(&log, narration.into());
-        assert_eq!(text, narration);
-        assert!(
-            metadata.is_none(),
-            "an earlier turn cannot lend its outcome to this reply"
+        assert!(super::run_answer(&log).is_empty());
+        assert_eq!(
+            super::text_with_run_cards(&log, narration.into()),
+            narration
         );
     }
 
@@ -6300,7 +6021,7 @@ mod tests {
             meta: None,
         })
         .expect("final answer");
-        let messages = crate::conversation_messages(&log);
+        let messages = log.derive_conversation();
         let texts: Vec<String> = messages
             .iter()
             .flat_map(|m| m.content.iter())

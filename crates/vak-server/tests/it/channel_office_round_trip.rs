@@ -233,6 +233,20 @@ async fn a_labelled_draft_is_held_and_a_bridge_without_files_is_told_where_it_is
             .contains("memo.docx carries the sensitivity label Confidential"),
         "{labelled}"
     );
+    let packet: vak_delivery::DeliveryPacket =
+        serde_json::from_value(labelled["delivery"].clone()).unwrap();
+    let wire = serde_json::to_string(
+        &vak_delivery::channel::messages(&packet)
+            .unwrap()
+            .iter()
+            .map(|message| &message.body)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert!(
+        wire.contains("memo.docx carries the sensitivity label Confidential"),
+        "the actual bridge must receive the hold notice"
+    );
 
     let plain = round_trip(
         "budget.xlsx",
@@ -248,6 +262,20 @@ async fn a_labelled_draft_is_held_and_a_bridge_without_files_is_told_where_it_is
             .unwrap()
             .contains("The updated budget.xlsx is ready in Vak"),
         "{plain}"
+    );
+    let packet: vak_delivery::DeliveryPacket =
+        serde_json::from_value(plain["delivery"].clone()).unwrap();
+    let wire = serde_json::to_string(
+        &vak_delivery::channel::messages(&packet)
+            .unwrap()
+            .iter()
+            .map(|message| &message.body)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert!(
+        wire.contains("The updated budget.xlsx is ready in Vak"),
+        "the actual bridge must explain an undeliverable file"
     );
 }
 
@@ -389,10 +417,13 @@ async fn the_telegram_bridge_sends_the_edited_workbook_back() {
     assert_eq!(tick.unwrap(), 901);
 
     let sent = sent.lock().unwrap();
-    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert_eq!(sent.len(), 3, "one draft notice, one answer and one file");
     assert_eq!(sent[0].0, "message");
-    assert!(sent[0].1.contains("Raised it to 150."), "{}", sent[0].1);
-    let (kind, body) = &sent[1];
+    let notice: serde_json::Value = serde_json::from_str(&sent[0].1).unwrap();
+    assert_eq!(notice["text"], "budget.xlsx\nDraft — review required.");
+    assert_eq!(sent[1].0, "message");
+    assert!(sent[1].1.contains("Raised it to 150."), "{}", sent[1].1);
+    let (kind, body) = &sent[2];
     assert_eq!(kind, "document");
     assert!(
         body.contains("filename=\"budget.xlsx\""),

@@ -1,8 +1,8 @@
 import { createSignal, For, onCleanup, Show } from "solid-js";
-import type { Message, OutputItem, OutputTimeline } from "../types";
-import type { VersionBinding } from "../api";
+import type { OutputTimeline } from "../types";
+import type { FileResponse, VersionBinding } from "../api";
 import Icon from "./Icon";
-import { AdaptiveTreeView, StructuredView } from "./PresentationRenderer";
+import PageView from "./PageView";
 import AgentMark from "./AgentMark";
 import OfficeWorkspacePane from "./OfficeWorkspacePane";
 import { isDocumentPath } from "../officeFiles";
@@ -17,23 +17,14 @@ type SharedCandidate = {
   };
 };
 type SharedComment = { comment_id: string; actor_id: string; actor_name?: string; text: string; path?: string; anchor?: string; line_start?: number; line_end?: number };
-type SharedMessage = Message & { author_id?: string; author_name?: string };
 type PresentParticipant = { principal_id: string; display_name: string; office_room_id?: string | null; office_anchor?: string | null };
 type SharedApproval = { request_id: string; tool: string; args_json: string; reason: string; requested_at: string };
-
-function visibleText(message: Message): string {
-  const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
-  const shared = message as SharedMessage;
-  const prefix = shared.author_name ? `${shared.author_name}: ` : "";
-  return prefix && text.startsWith(prefix) ? text.slice(prefix.length) : text;
-}
 
 export default function SharedConversation() {
   const [code, setCode] = createSignal("");
   const [credential, setCredential] = createSignal<{ conversationId: string; token: string } | null>(null);
-  const [messages, setMessages] = createSignal<SharedMessage[]>([]);
   const [candidates, setCandidates] = createSignal<SharedCandidate[]>([]);
-  const [sharedResults, setSharedResults] = createSignal<OutputItem[]>([]);
+  const [presentation, setPresentation] = createSignal<OutputTimeline>({ schema_version: 2, session_id: "", items: [], diagnostics: [] });
   const [error, setError] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [updatedAt, setUpdatedAt] = createSignal<Date | null>(null);
@@ -81,15 +72,58 @@ export default function SharedConversation() {
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
   let updatesAbort: AbortController | undefined;
 
+  const resourceUrls = new Set<string>();
+  const sharedResource = async (path: string, format: "text" | "raw") => {
+    const current = credential();
+    if (current && !bindings().some(binding => binding.path === path)) {
+      const records = await read(current.conversationId, current.token, "/sandbox/records");
+      if (credential()?.token !== current.token) throw new Error("Access to this invitation ended.");
+      setBindings(records.artifacts ?? []);
+    }
+    const matches = bindings().filter(binding => binding.path === path);
+    const versions = new Set(matches.map(binding => `${binding.artifact}/${binding.version}`));
+    if (!current || versions.size !== 1) throw new Error("This file is not uniquely shared through this conversation.");
+    const binding = matches[0];
+    const response = await fetch(`/library/${encodeURIComponent(binding.artifact)}/versions/${encodeURIComponent(binding.version)}/${format}`, {
+      headers: { Authorization: `Bearer ${current.token}` }, credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
+    });
+    if (response.status === 401 || response.status === 403) { stop(); throw new Error("Access to this invitation ended."); }
+    if (!response.ok) throw new Error("Could not read this shared file.");
+    if (credential()?.token !== current.token) throw new Error("Access to this invitation ended.");
+    return response;
+  };
+  const resourceReader = {
+    readFile: async (path: string): Promise<FileResponse> => {
+      const response = await sharedResource(path, "text");
+      const file = await response.json();
+      if (!credential()) throw new Error("Access to this invitation ended.");
+      return { ...file, path, editable: false };
+    },
+    readFileBytes: async (path: string) => {
+      const response = await sharedResource(path, "raw");
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (!credential()) throw new Error("Access to this invitation ended.");
+      return { bytes, mime: response.headers.get("Content-Type") ?? "application/octet-stream" };
+    },
+    readFileRaw: async (path: string) => {
+      const response = await sharedResource(path, "raw");
+      const blob = await response.blob();
+      if (!credential()) throw new Error("Access to this invitation ended.");
+      const url = URL.createObjectURL(blob);
+      resourceUrls.add(url);
+      return url;
+    },
+  };
   const stop = () => {
+    for (const url of resourceUrls) URL.revokeObjectURL(url);
+    resourceUrls.clear();
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = undefined;
     updatesAbort?.abort();
     updatesAbort = undefined;
     setCredential(null);
-    setMessages([]);
     setCandidates([]);
-    setSharedResults([]);
+    setPresentation({ schema_version: 2, session_id: "", items: [], diagnostics: [] });
     setUpdatedAt(null);
     setPage(undefined); pageRequest = undefined; revision = undefined; setDraftsShown(false);
     if (openFile()?.imageUrl) URL.revokeObjectURL(openFile()!.imageUrl!);
@@ -144,23 +178,15 @@ export default function SharedConversation() {
       if (credential()?.token !== current.token) return;
       setApprovals(pending.approvals ?? []);
       if (snapshot.not_modified) { setUpdatedAt(new Date()); return; }
-      const transcript = snapshot.transcript;
-      const presentation = snapshot.presentation;
+
       pageRequest = before;
       revision = snapshot.revision;
       setPage(snapshot.page);
       const records = draftsShown() ? await read(current.conversationId, current.token, "/sandbox/records") : { records: [], artifacts: [] };
       if (credential()?.token !== current.token) return;
-      if (transcript) setMessages((transcript.messages ?? []).map((message: Message, index: number) => ({
-        ...message,
-        author_id: transcript.entries?.[index]?.author_id,
-        author_name: transcript.entries?.[index]?.author_name,
-      })).filter((message: Message) => message.role.toLowerCase() === "user" || message.role.toLowerCase() === "assistant"));
       setCandidates((records.records ?? []).filter((item: SharedCandidate) => item.kind === "Candidate"));
       setBindings(records.artifacts ?? []);
-      setSharedResults(((presentation as OutputTimeline).items ?? []).filter((item) =>
-        item.status !== "running" && (item.content.type === "structured" || item.content.type === "adaptive")
-      ));
+      setPresentation(snapshot.presentation);
       setApprovals(pending.approvals ?? []);
       const selected = openFile();
       if (selected) {
@@ -403,13 +429,13 @@ export default function SharedConversation() {
       <Show when={approvals().length > 0}><section class="shared-approvals" aria-label="Decisions requested"><h2>Decision needed</h2><For each={approvals()}>{(approval) => <article class="shared-approval"><strong>{agent().name} wants to use {approvalTitle(approval.tool, approval.args_json)}</strong><For each={approvalSubjects(approvalArgs(approval))}>{(subject) => <code class="ap-primary"><span class="ap-primary-key">{subject.key}</span>{subject.value}</code>}</For><p>{approval.reason || "This action needs a person’s decision before work can continue."}</p><details><summary>Review exact request</summary><pre>{approvalArgs(approval)}</pre></details><div><button type="button" class="btn primary" disabled={approvalBusy() === approval.request_id} onClick={() => void answerApproval(approval.request_id, true)}>Allow once</button><button type="button" class="btn danger" disabled={approvalBusy() === approval.request_id} onClick={() => void answerApproval(approval.request_id, false)}>Deny</button></div><span>This answers only this request. It cannot create a rule or accept files.</span></article>}</For></section></Show>
       <section class="shared-messages" aria-label="Conversation">
         <Show when={page()?.older}><button type="button" class="btn" disabled={loading()} onClick={() => void refresh(page()!.older!)}>Earlier messages</button></Show>
-        <For each={messages()} fallback={<p class="shared-empty">No visible messages yet.</p>}>
-          {(message) => <Show when={visibleText(message)}>{(text) => <article class="shared-message"><span class="shared-message-author"><Show when={message.role.toLowerCase() === "assistant"} fallback={<>{message.author_name || "Owner"}</>}><AgentMark character={agent().character} motion={agent().animation} size={18} /><span>{agent().name}</span></Show></span><p>{text()}</p></article>}</Show>}
-        </For>
+        <PageView page={{ format: "vak-page", title: "Shared conversation", items: presentation().items, text: "" }}
+          versionId={`shared:${credential()?.conversationId}:${revision ?? ""}`} hideUser={false}
+          resourceReader={resourceReader} />
       </section>
       <Show when={page()?.newer}><button type="button" class="btn" disabled={loading()} onClick={() => void refresh(page()!.newer!)}>Newer messages</button></Show>
       <Show when={canMessage()}><form class="shared-message-composer" onSubmit={(event) => void postMessage(event)}><label for="shared-message-text">Add to the conversation</label><textarea id="shared-message-text" value={messageText()} onInput={(event) => setMessageText(event.currentTarget.value)} maxLength={32768} rows={3} placeholder={`Message ${agent().name} and the people here`} required /><div><span>Your message is included when the owner next asks the Agent to work.</span><button type="submit" class="btn primary" disabled={messageBusy() || !messageText().trim()}>{messageBusy() ? "Sending…" : "Send message"}</button></div></form></Show>
-      <Show when={sharedResults().length > 0}><section class="shared-results" aria-label="Shared results"><h2>Results</h2><For each={sharedResults()}>{(item) => <article class="shared-result" data-result-id={item.outcome?.result_id ?? item.id}><Show when={item.content.type === "structured"}>{item.content.type === "structured" && <StructuredView output={item.content.output} fallback={item.fallback_text} />}</Show><Show when={item.content.type === "adaptive"}>{item.content.type === "adaptive" && <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} />}</Show></article>}</For></section></Show>
+
       <Show when={!draftsShown()}><button type="button" class="btn" onClick={() => { setDraftsShown(true); void refresh(pageRequest, true); }}>Show saved drafts</button></Show>
       <Show when={candidates().length > 0}><section class="shared-drafts"><h2>Saved drafts</h2><For each={candidates()}>{(record) => <div class="shared-draft"><strong>Draft {record.record.candidate?.candidate_id.slice(0, 8)}</strong><span>{record.record.candidate?.files.length ?? 0} files</span><ul><For each={record.record.candidate?.files ?? []}>{(file) => <li><button type="button" onClick={() => void showFile(record.record.candidate!.candidate_id, file.path)}><Icon name="file" size={13} />{file.path}</button></li>}</For></ul></div>}</For></section></Show>
       <Show when={fileError()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>
