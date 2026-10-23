@@ -1,7 +1,7 @@
 {
  "meta": {
-  "version": "8.30.0",
-  "revision": "ba1a31962",
+  "version": "8.31.0",
+  "revision": "06f0cc389",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2491,
+   "total_commits": 2493,
    "days": 64,
    "peak_day": 174,
    "design_docs": 99,
@@ -443,12 +443,12 @@
    }
   ],
   "open_total": 123,
-  "measures_revision": "681790483"
+  "measures_revision": "06f0cc389"
  },
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 510,
+  "commits": 512,
   "areas": [
    [
     "docs",
@@ -456,7 +456,7 @@
    ],
    [
     "(root)",
-    293
+    295
    ],
    [
     "vak-core",
@@ -813,6 +813,22 @@
   ],
   "recent": [
    {
+    "hash": "06f0cc389",
+    "date": "2026-10-23",
+    "subject": "Prepare 8.31.0 release notes",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
+    "hash": "3f29810a5",
+    "date": "2026-10-23",
+    "subject": "Bump version to 8.31.0",
+    "areas": [
+     "(root)"
+    ]
+   },
+   {
     "hash": "ba1a31962",
     "date": "2026-10-23",
     "subject": "Name answered turns and group Topics after delivery",
@@ -958,37 +974,9 @@
     "areas": [
      "docs"
     ]
-   },
-   {
-    "hash": "9037a9c4d",
-    "date": "2026-10-22",
-    "subject": "Derive source and file-change cards at turn close",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-server",
-     "vak-session"
-    ]
-   },
-   {
-    "hash": "acaa6734d",
-    "date": "2026-10-22",
-    "subject": "Offer five card tools and make Markdown the answer contract",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "packages",
-     "vak-core",
-     "vak-server"
-    ]
    }
   ],
-  "unreleased": [
-   "Give answered requests useful names and group related work into Topics in an independent step after the answer.",
-   "Keep the Topic sidebar refreshing when a workspace changes during a fetch."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -31155,6 +31143,18 @@
  ],
  "replay": [
   {
+   "hash": "06f0cc389",
+   "date": "2026-10-23",
+   "subject": "Prepare 8.31.0 release notes",
+   "subsystems": []
+  },
+  {
+   "hash": "3f29810a5",
+   "date": "2026-10-23",
+   "subject": "Bump version to 8.31.0",
+   "subsystems": []
+  },
+  {
    "hash": "ba1a31962",
    "date": "2026-10-23",
    "subject": "Name answered turns and group Topics after delivery",
@@ -37813,10 +37813,10 @@
     "line": 4181
    },
    {
-    "score": 115,
+    "score": 124,
     "name": "run_turn_recorded",
     "file": "crates/vak-core/src/lib.rs",
-    "line": 6672
+    "line": 6673
    },
    {
     "score": 96,
@@ -37884,7 +37884,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 181 (rank 1 of 4,545 library functions) and `Core::run_turn_recorded` at 115 (rank 3); the median is 3 and the 99th percentile 24. 161 commits changed the first (6% of all) and 218 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.4 and `vak-agent/src/lib.rs` at 8.9 per thousand lines, against a median of 4.0 over 421 files; file size alone does not predict the rate (ρ = -0.11).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 181 (rank 1 of 4,560 library functions) and `Core::run_turn_recorded` at 124 (rank 3); the median is 3 and the 99th percentile 24. 161 commits changed the first (6% of all) and 218 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.4 and `vak-agent/src/lib.rs` at 8.9 per thousand lines, against a median of 4.0 over 421 files; file size alone does not predict the rate (ρ = -0.11).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own. The 2026-10-22 answer investigation found another lossy decision input: plan receipts retained a deliverable name but discarded the actual form. The correction keeps active typed receipts and applies the same pure plan check in the loop and settlement, preserving exact replacement addresses. Broader state consolidation remains open.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`; [answer design investigation](../docs/audits/answer-design-contract-2026-10-22.md)."
