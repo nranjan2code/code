@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.31.1",
-  "revision": "a1b42c279",
+  "revision": "e922e9c07",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.31.0 · 2026-10-23"
@@ -13,13 +13,13 @@
    "ts_crates": 2,
    "rust_src": 348839,
    "rust_tests": 87763,
-   "ts_src": 64983,
+   "ts_src": 64995,
    "routes": 404,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2497,
+   "total_commits": 2498,
    "days": 64,
    "peak_day": 174,
    "design_docs": 100,
@@ -95,11 +95,8 @@
   "health": [
    {
     "check": "records",
-    "ok": false,
-    "problems": [
-     "FAIL: 1 record problem(s):",
-     "CHANGELOG.md: 8.31.1 is released; start a `## Unreleased` section"
-    ]
+    "ok": true,
+    "problems": []
    },
    {
     "check": "doc paths",
@@ -464,15 +461,15 @@
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 516,
+  "commits": 517,
   "areas": [
    [
     "docs",
-    409
+    410
    ],
    [
     "(root)",
-    298
+    299
    ],
    [
     "vak-core",
@@ -484,7 +481,7 @@
    ],
    [
     "vak-client-ui",
-    114
+    115
    ],
    [
     "vak-agent",
@@ -519,17 +516,17 @@
    [
     "cards",
     "Cards and presentation",
-    101
+    102
+   ],
+   [
+    "client",
+    "Workspace client",
+    97
    ],
    [
     "turn",
     "Turn admission",
     97
-   ],
-   [
-    "client",
-    "Workspace client",
-    96
    ],
    [
     "server",
@@ -829,6 +826,16 @@
   ],
   "recent": [
    {
+    "hash": "e922e9c07",
+    "date": "2026-10-23",
+    "subject": "Keep source links readable and contain long answer content",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-client-ui"
+    ]
+   },
+   {
     "hash": "a1b42c279",
     "date": "2026-10-23",
     "subject": "Record 8.31.1 release and local install",
@@ -972,29 +979,11 @@
      "(root)",
      "docs"
     ]
-   },
-   {
-    "hash": "626e40040",
-    "date": "2026-10-23",
-    "subject": "Add optional progress in presence and Details with one completion reminder",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "scripts",
-     "vak-agent",
-     "vak-client-ui",
-     "vak-control",
-     "vak-core",
-     "vak-delivery",
-     "vak-intent",
-     "vak-server",
-     "vak-session",
-     "vak-tools"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "Show readable labels for source links while preserving their complete destinations."
+  ],
   "in_progress": [
    {
     "path": "docs/design/104-rich-response-contract.md",
@@ -1473,7 +1462,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 86940,
+   "lines": 86952,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1673,9 +1662,9 @@
     "crates/vak-client-ui/src/wordDiff.ts",
     "crates/vak-client-ui/src/workProgress.ts"
    ],
-   "commits": 523,
+   "commits": 524,
    "fixes": 75,
-   "recent": 96,
+   "recent": 97,
    "fix_density": 3.9,
    "out": [
     {
@@ -14963,7 +14952,7 @@
    ],
    "modules": 25,
    "parts": [],
-   "lines": 18336,
+   "lines": 18348,
    "largest": [
     6113,
     "crates/vak-server/src/projection.rs"
@@ -15031,9 +15020,9 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 318,
+   "commits": 319,
    "fixes": 54,
-   "recent": 101,
+   "recent": 102,
    "fix_density": 2.9,
    "out": [
     {
@@ -31231,6 +31220,15 @@
  ],
  "replay": [
   {
+   "hash": "e922e9c07",
+   "date": "2026-10-23",
+   "subject": "Keep source links readable and contain long answer content",
+   "subsystems": [
+    "cards",
+    "client"
+   ]
+  },
+  {
    "hash": "a1b42c279",
    "date": "2026-10-23",
    "subject": "Record 8.31.1 release and local install",
@@ -36378,10 +36376,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 40020,
+   "src": 40032,
    "tests": 324,
    "files": 209,
-   "commits": 661,
+   "commits": 662,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -38005,8 +38003,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1432,
-  "hot": 661
+  "docs_commits": 1433,
+  "hot": 662
  },
  "findings": [
   {
