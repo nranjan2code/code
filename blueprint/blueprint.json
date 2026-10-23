@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.29.0",
-  "revision": "0dcccfff9",
+  "revision": "397f9eb85",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -11,15 +11,15 @@
   "stats": {
    "rust_crates": 35,
    "ts_crates": 2,
-   "rust_src": 347253,
-   "rust_tests": 87179,
-   "ts_src": 64873,
+   "rust_src": 347362,
+   "rust_tests": 87316,
+   "ts_src": 64886,
    "routes": 404,
    "forms": 20,
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2485,
+   "total_commits": 2486,
    "days": 64,
    "peak_day": 174,
    "design_docs": 99,
@@ -441,31 +441,31 @@
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 504,
+  "commits": 505,
   "areas": [
    [
     "docs",
-    402
+    403
    ],
    [
     "(root)",
-    288
+    289
    ],
    [
     "vak-core",
-    190
+    191
    ],
    [
     "vak-server",
-    149
+    150
    ],
    [
     "vak-client-ui",
-    111
+    112
    ],
    [
     "vak-agent",
-    107
+    108
    ],
    [
     "vak-tools",
@@ -473,7 +473,7 @@
    ],
    [
     "vak-session",
-    69
+    70
    ],
    [
     "vak",
@@ -501,12 +501,12 @@
    [
     "turn",
     "Turn admission",
-    94
+    95
    ],
    [
     "client",
     "Workspace client",
-    93
+    94
    ],
    [
     "loop",
@@ -516,7 +516,7 @@
    [
     "server",
     "HTTP service",
-    91
+    92
    ],
    [
     "tools",
@@ -526,7 +526,7 @@
    [
     "ledger",
     "Ledgers and records",
-    61
+    62
    ],
    [
     "control",
@@ -806,6 +806,20 @@
   ],
   "recent": [
    {
+    "hash": "397f9eb85",
+    "date": "2026-10-23",
+    "subject": "Fix side-chat isolation and composer command handling",
+    "areas": [
+     "(root)",
+     "docs",
+     "vak-agent",
+     "vak-client-ui",
+     "vak-core",
+     "vak-server",
+     "vak-session"
+    ]
+   },
+   {
     "hash": "0dcccfff9",
     "date": "2026-10-23",
     "subject": "Record 8.29.0 installation and authorized dev history reset",
@@ -964,19 +978,13 @@
      "vak-eval",
      "vak-session"
     ]
-   },
-   {
-    "hash": "92a7ad551",
-    "date": "2026-10-22",
-    "subject": "Stop treating an equal answer as drift",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent"
-    ]
    }
   ],
-  "unreleased": [],
+  "unreleased": [
+   "Keep side questions out of the main conversation after reloads and later turns, and record each side question only once.",
+   "Keep command status and pause/resume/stop feedback visible after an answer.",
+   "Preserve file mentions with spaces, punctuation and non-ASCII names using quoted paths, including when combined with skills and custom commands."
+  ],
   "in_progress": [
    {
     "path": "docs/design/49-live-voice.md",
@@ -1443,7 +1451,7 @@
   {
    "id": "L7",
    "name": "Surfaces",
-   "lines": 86806,
+   "lines": 86819,
    "crates": [
     "vak-client-ui",
     "vak-admin-ui",
@@ -1455,7 +1463,7 @@
   {
    "id": "L6",
    "name": "Service",
-   "lines": 81332,
+   "lines": 81338,
    "crates": [
     "vak-server",
     "vak-ops",
@@ -1465,7 +1473,7 @@
   {
    "id": "L5",
    "name": "Orchestration facade",
-   "lines": 67245,
+   "lines": 67318,
    "crates": [
     "vak-core",
     "vak-eval",
@@ -1516,7 +1524,7 @@
   {
    "id": "L1",
    "name": "Data substrate",
-   "lines": 39854,
+   "lines": 39884,
    "crates": [
     "vak-session",
     "vak-config",
@@ -1539,9 +1547,9 @@
    "layers": [
     "L7"
    ],
-   "modules": 69,
+   "modules": 70,
    "parts": [],
-   "lines": 19104,
+   "lines": 19117,
    "largest": [
     3241,
     "crates/vak-client-ui/src/api.ts"
@@ -1611,6 +1619,7 @@
     "crates/vak-client-ui/src/controlsExpression.ts",
     "crates/vak-client-ui/src/delimitedPreview.ts",
     "crates/vak-client-ui/src/externalLinks.ts",
+    "crates/vak-client-ui/src/fileMentions.ts",
     "crates/vak-client-ui/src/focusTrap.ts",
     "crates/vak-client-ui/src/highlight.ts",
     "crates/vak-client-ui/src/historyPages.ts",
@@ -1642,9 +1651,9 @@
     "crates/vak-client-ui/src/wordDiff.ts",
     "crates/vak-client-ui/src/workProgress.ts"
    ],
-   "commits": 520,
-   "fixes": 74,
-   "recent": 93,
+   "commits": 521,
+   "fixes": 75,
+   "recent": 94,
    "fix_density": 3.9,
    "out": [
     {
@@ -4453,7 +4462,7 @@
    ],
    "modules": 7,
    "parts": [],
-   "lines": 14394,
+   "lines": 14467,
    "largest": [
     12545,
     "crates/vak-core/src/lib.rs"
@@ -4486,9 +4495,9 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 392,
-   "fixes": 60,
-   "recent": 94,
+   "commits": 393,
+   "fixes": 61,
+   "recent": 95,
    "fix_density": 4.2,
    "out": [
     {
@@ -10891,9 +10900,9 @@
    ],
    "modules": 18,
    "parts": [],
-   "lines": 13525,
+   "lines": 13555,
    "largest": [
-    3978,
+    4002,
     "crates/vak-session/src/log.rs"
    ],
    "routes": [
@@ -10929,10 +10938,10 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 203,
-   "fixes": 18,
-   "recent": 61,
-   "fix_density": 1.3,
+   "commits": 204,
+   "fixes": 19,
+   "recent": 62,
+   "fix_density": 1.4,
    "out": [
     {
      "from": "ledger",
@@ -19259,9 +19268,9 @@
    ],
    "modules": 9,
    "parts": [],
-   "lines": 32878,
+   "lines": 32884,
    "largest": [
-    29032,
+    29038,
     "crates/vak-server/src/lib.rs"
    ],
    "routes": [
@@ -19299,9 +19308,9 @@
     "crates/vak-server/src/web.rs",
     "crates/vak-session/src/turn_marks.rs"
    ],
-   "commits": 561,
-   "fixes": 85,
-   "recent": 91,
+   "commits": 562,
+   "fixes": 86,
+   "recent": 92,
    "fix_density": 2.6,
    "out": [
     {
@@ -22073,8 +22082,8 @@
   }
  ],
  "coverage": {
-  "units": 743,
-  "claimed": 743,
+  "units": 744,
+  "claimed": 744,
   "routes": 404,
   "routes_claimed": 404,
   "verbs": 36,
@@ -30961,6 +30970,17 @@
  ],
  "replay": [
   {
+   "hash": "397f9eb85",
+   "date": "2026-10-23",
+   "subject": "Fix side-chat isolation and composer command handling",
+   "subsystems": [
+    "client",
+    "ledger",
+    "server",
+    "turn"
+   ]
+  },
+  {
    "hash": "0dcccfff9",
    "date": "2026-10-23",
    "subject": "Record 8.29.0 installation and authorized dev history reset",
@@ -35870,9 +35890,9 @@
    "kind": "rust",
    "role": "The agent loop: steps, retries, breaker, tool waves, cards, workers",
    "src": 16530,
-   "tests": 18958,
+   "tests": 18959,
    "files": 13,
-   "commits": 366,
+   "commits": 367,
    "deps": [
     "vak-config",
     "vak-context",
@@ -36003,10 +36023,10 @@
    "layer": "L7",
    "kind": "ts",
    "role": "SolidJS workspace client: the desktop bundle and the /app web bundle",
-   "src": 39910,
+   "src": 39923,
    "tests": 324,
-   "files": 208,
-   "commits": 658,
+   "files": 209,
+   "commits": 659,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -36214,10 +36234,10 @@
    "layer": "L5",
    "kind": "rust",
    "role": "SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure",
-   "src": 62685,
+   "src": 62758,
    "tests": 10573,
    "files": 76,
-   "commits": 667,
+   "commits": 668,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -37054,10 +37074,10 @@
    "layer": "L6",
    "kind": "rust",
    "role": "HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes",
-   "src": 77163,
-   "tests": 24764,
+   "src": 77169,
+   "tests": 24853,
    "files": 54,
-   "commits": 858,
+   "commits": 859,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -37120,7 +37140,7 @@
     "zeroize"
    ],
    "largest": [
-    29032,
+    29038,
     "crates/vak-server/src/lib.rs"
    ],
    "subsystems": [
@@ -37159,10 +37179,10 @@
    "layer": "L1",
    "kind": "rust",
    "role": "Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns",
-   "src": 18376,
-   "tests": 5102,
+   "src": 18406,
+   "tests": 5149,
    "files": 27,
-   "commits": 219,
+   "commits": 220,
    "deps": [
     "vak-config",
     "vak-control",
@@ -37203,7 +37223,7 @@
     "uuid"
    ],
    "largest": [
-    3978,
+    4002,
     "crates/vak-session/src/log.rs"
    ],
    "subsystems": [
@@ -37431,7 +37451,7 @@
   "files": [
    {
     "file": "crates/vak-server/src/lib.rs",
-    "lines": 29032
+    "lines": 29038
    },
    {
     "file": "crates/vak-core/src/lib.rs",
@@ -37467,7 +37487,7 @@
    },
    {
     "file": "crates/vak-session/src/log.rs",
-    "lines": 3978
+    "lines": 4002
    },
    {
     "file": "crates/vak-core/src/finops.rs",
@@ -37628,8 +37648,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1425,
-  "hot": 658
+  "docs_commits": 1426,
+  "hot": 659
  },
  "findings": [
   {
@@ -38325,7 +38345,7 @@
    {
     "key": "scan",
     "file": "crates/vak-session/src/log.rs",
-    "line": 596,
+    "line": 599,
     "meaning": "Cold session reads scan segments; bounded model context is not a bounded cold read."
    }
   ],
