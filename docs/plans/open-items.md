@@ -1,3 +1,20 @@
+## Composer command acceptance — 2026-10-23
+
+Initial audit: `docs/audits/composer-commands-2026-10-23.md`.
+Fix verification: `docs/audits/composer-command-fixes-2026-10-23.md`.
+
+- [x] Quote file mentions with spaces, punctuation and non-ASCII names, and
+  resolve the decoded full path through the existing workspace boundary.
+  Picker, syntax, conflicting-prefix and traversal/symlink regressions pass.
+- [x] Keep completed `/btw` side questions out of the main presentation,
+  transcript and subsequent model requests. Persist a synced branch-return
+  marker before releasing the writer, record the question once, and restore
+  on both successful and failed turn paths. Reopen, snapshot and next-turn
+  regression coverage passes; side entries remain reconstructable.
+- [x] Show `/status` and idle `/pause`, `/resume`, `/stop` feedback alongside
+  settled server projections. The real component fixture passes at desktop
+  and phone sizes in light and dark themes; live status feedback is visible.
+
 ## Installed dev history — 2026-10-23
 
 - [x] Diagnose and reset the affected dev conversation after explicit maintainer

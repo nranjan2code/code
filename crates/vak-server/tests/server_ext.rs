@@ -783,14 +783,46 @@ async fn failed_side_turn_does_not_wedge_the_session() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn side_chat_branches_off_and_restores_main_chain() {
-    let provider = Arc::new(Scripted {
-        capacity_key: crate::support::CapacityKey::default(),
-        responses: Mutex::new(VecDeque::from(vec![
-            text("main answer"),
-            text("side answer"),
-        ])),
+    struct Observed {
+        inner: Scripted,
+        requests: Mutex<Vec<String>>,
+    }
+    #[async_trait::async_trait]
+    impl Provider for Observed {
+        fn name(&self) -> &str {
+            self.inner.name()
+        }
+        fn rate_limit_key(&self) -> String {
+            self.inner.rate_limit_key()
+        }
+        async fn stream(
+            &self,
+            request: ChatRequest,
+            cancel: CancellationToken,
+        ) -> Result<EventStream, LlmError> {
+            self.requests.lock().unwrap().push(
+                request
+                    .messages
+                    .iter()
+                    .map(vak_llm::Message::text_content)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+            self.inner.stream(request, cancel).await
+        }
+    }
+    let provider = Arc::new(Observed {
+        inner: Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
+            responses: Mutex::new(VecDeque::from(vec![
+                text("main answer"),
+                text("side answer"),
+                text("main follow-up answer"),
+            ])),
+        },
+        requests: Mutex::new(Vec::new()),
     });
-    let (base, token, cwd, _server) = spawn_secured(provider).await;
+    let (base, token, cwd, _server) = spawn_secured(provider.clone()).await;
     let client = client_with(&token);
 
     let session_id: String = client
@@ -838,16 +870,73 @@ async fn side_chat_branches_off_and_restores_main_chain() {
         "main context must remain intact"
     );
 
-    // ...but the sibling branch stays reconstructable in the JSONL.
+    // The browser snapshot reads indexed, reopened history, not just the
+    // in-memory pointer used by the transcript endpoint.
+    let snapshot: serde_json::Value = client
+        .get(format!("{base}/sessions/{session_id}/snapshot"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let visible = serde_json::to_string(&snapshot).unwrap();
+    assert!(
+        !visible.contains("quick aside?") && !visible.contains("side answer"),
+        "side branch leaked into browser snapshot: {visible}"
+    );
+
+    client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "continue main conversation"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let next = wait_transcript(&client, &base, &session_id).await;
+    assert_eq!(
+        next["count"].as_u64(),
+        Some(4),
+        "the next writer must retain only main history"
+    );
+    let requests = provider.requests.lock().unwrap().clone();
+    assert!(
+        requests.iter().any(|r| r.contains("quick aside?")),
+        "side request dispatched"
+    );
+    let next_request = requests
+        .iter()
+        .find(|r| r.contains("continue main conversation"))
+        .unwrap();
+    assert!(
+        !next_request.contains("quick aside?") && !next_request.contains("side answer"),
+        "side branch leaked into model context: {next_request}"
+    );
+    drop(requests);
+
+    // The sibling branch stays reconstructable in the sealed ledger.
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let agent_home = cwd.join("home").join("agents").join("vak");
-    let home = if agent_home.exists() {
-        agent_home
-    } else {
-        cwd.join("home")
-    };
-    let mut dir = std::fs::read_dir(vak_session::SessionPath::sessions_dir(&home, &cwd)).unwrap();
-    let path = dir.next().unwrap().unwrap().path();
+    let catalog = vak_core::Core::new(cwd.clone()).unwrap();
+    catalog.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
+    let path = catalog
+        .catalog()
+        .unwrap()
+        .session_dir(&session_id)
+        .unwrap()
+        .unwrap();
+    let mut side_questions = 0;
+    vak_session::SessionLog::scan(&path, |entry| {
+        let entry = entry.expect("stored side entry decodes");
+        if let vak_session::EntryPayload::Message(record) = &entry.payload
+            && record.message.role == vak_llm::Role::User
+            && record.message.text_content() == "quick aside?"
+        {
+            side_questions += 1;
+        }
+        true
+    });
+    assert_eq!(side_questions, 1, "side directive recorded once");
     let raw = vak_session::SessionLog::text(&path);
     assert!(raw.contains("quick aside?"), "question persisted");
     assert!(

@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Keep side questions out of the main conversation after reloads and later
+  turns, and record each side question only once.
+- Keep command status and pause/resume/stop feedback visible after an answer.
+- Preserve file mentions with spaces, punctuation and non-ASCII names using
+  quoted paths, including when combined with skills and custom commands.
+
 ## 8.29.0 — 2026-10-23 — Visible progress and clearer turn navigation
 
 - For work with several steps, the agent can show and update progress in the top semicircle and Details panel.

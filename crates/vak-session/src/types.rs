@@ -1082,6 +1082,12 @@ pub enum ChildRunStatus {
 #[allow(clippy::large_enum_variant)]
 pub enum EntryPayload {
     Header(SessionHeader),
+    /// Return from a temporary branch. The parent is the restored active
+    /// head; `from` keeps the temporary branch addressable for audit. Never
+    /// model-visible. Unlike an in-memory branch_at, this survives reopening.
+    BranchRestored {
+        from: String,
+    },
     /// Exact addressed history projection for a provider request. Selection
     /// is derived state, but the choice the model saw belongs in this ledger.
     ContextSelection(ContextSelectionRecord),

@@ -111,6 +111,7 @@ The set evolves with shipped capabilities; the principal families are:
 | Kind | Why it is recorded | Raw model projection |
 |---|---|---|
 | `Header` | Admission snapshot and session ownership | No |
+| `BranchRestored` | Durable return from a temporary branch; parent selects the restored head | No |
 | `Message` | User, assistant, or tool-exchange message | Yes, subject to turn projection |
 | `Compaction` | Reusable context packet or reset handoff | Only when selected by projection |
 | `Receipt` | Provider dispatch attempts and settlement evidence | No |
@@ -154,6 +155,13 @@ Branches are not separate files or rewritten copies. `branch_at(entry_id)`
 sets the active tail to an existing entry. The next normal append uses that
 entry as its parent. The abandoned suffix remains in the file, but no longer
 contributes to active-chain projection or active-chain usage totals.
+
+Returning from a temporary side question uses `restore_branch(entry_id)`.
+It appends and syncs a `BranchRestored` audit entry whose parent is the main
+head and whose `from` names the side head. Reopening or reacquiring the writer
+therefore follows the main chain, even before another main turn is written.
+The side entries remain reconstructable through their own parent links.
+An in-memory `branch_at` alone does not persist a return to an earlier head.
 
 The entry id is the stable identity used to connect messages, turn cards,
 presentations, and recall operations. New entries use UUIDv7 ids. The entry

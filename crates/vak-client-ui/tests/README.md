@@ -1,5 +1,13 @@
 # Presentation lifecycle regression
 
+`/app/tests/composer-commands.html?run` mounts the real composer and chat pane
+over a settled server projection. It checks visible, once-only `/status` and
+idle `/pause`, `/resume`, `/stop` feedback, quoted file selection (spaces,
+non-ASCII names and embedded quotes), and a two-skill/custom-command/file chain.
+Use `&theme=dark` for dark mode. Run at 1440 × 900 and 390 × 844; the report
+includes overflow detection. Pure mention syntax tests run with
+`node crates/vak-client-ui/tests/file-mentions.mjs` from the repository root.
+
 Run the real Solid components with isolated fixture data (no provider calls):
 
 ```sh

@@ -1297,7 +1297,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 </Show>
                 <Show when={projectedTurn(entry().index)} fallback={<><Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<ItemView item={it()} sessionId={sid()} />}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>
                   <Show when={entry().index === turns().length - 1}><LiveAnswer sessionId={sid()!} /></Show></>}>
-                  {(timeline) => <div class="turn-result"><PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} hideUser /></div>}
+                  {(timeline) => <>
+                    <div class="turn-result"><PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} hideUser /></div>
+                    <Index each={entry().turn.filter((item) => item.kind === "system")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
+                  </>}
                 </Show>
                 </div>
                 </Show>

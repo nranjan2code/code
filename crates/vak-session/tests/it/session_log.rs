@@ -491,6 +491,53 @@ fn branching_derives_only_active_path() {
     assert_eq!(texts, vec!["a", "a-reply", "b", "b-reply", "d", "d-reply"]);
 }
 
+#[test]
+fn restored_branch_survives_reopening_and_the_next_main_turn() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("branch-return");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    log.append_message(user_msg("main question")).unwrap();
+    let main = log.append_message(assistant_msg("main answer")).unwrap();
+    log.append_message(user_msg("side question")).unwrap();
+    let side = log.append_message(assistant_msg("side answer")).unwrap();
+    log.restore_branch(&main.id).unwrap();
+    log.release_writer().unwrap();
+    let reader = SessionLog::open_read_only(path.clone()).unwrap();
+    assert_eq!(
+        reader
+            .derive_messages()
+            .iter()
+            .map(Message::text_content)
+            .collect::<Vec<_>>(),
+        ["main question", "main answer"]
+    );
+    assert!(
+        reader.chain_to_root().iter().any(
+            |e| matches!(&e.payload, EntryPayload::BranchRestored { from } if from == &side.id)
+        )
+    );
+    log.reacquire_writer().unwrap();
+    log.append_message(user_msg("next main question")).unwrap();
+    log.append_message(assistant_msg("next main answer"))
+        .unwrap();
+    log.release_writer().unwrap();
+    let reopened = SessionLog::open(path).unwrap();
+    assert_eq!(
+        reopened
+            .derive_messages()
+            .iter()
+            .map(Message::text_content)
+            .collect::<Vec<_>>(),
+        [
+            "main question",
+            "main answer",
+            "next main question",
+            "next main answer"
+        ]
+    );
+    assert!(SessionLog::text(reopened.path()).contains(&side.id));
+}
+
 /// A packet is rendered only when the plan's `packet_range` is exactly the
 /// range it covers (docs/design/68-context-engine.md §4): the packet is a
 /// cache of summariser work, never a boundary in the ledger.

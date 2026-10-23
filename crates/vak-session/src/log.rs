@@ -86,7 +86,7 @@ impl LedgerDir {
 /// Whether `entry` is a commit point, synced with everything before it:
 /// the header, what a person or a tool result put in (the directive, a
 /// steering message, tool results; never a runtime nudge), an effect outside the ledger, and the
-/// card that closes a turn. Everything else becomes durable at the next
+/// card that closes a turn, and a durable branch return. Everything else becomes durable at the next
 /// commit point or when the ledger closes. A failed call's fault touched
 /// nothing outside: it is written before the call's result and commits
 /// with it. What a result holds (`Provenance`) touched nothing outside
@@ -98,7 +98,10 @@ fn commits(entry: &Entry) -> bool {
             record.effect,
             crate::types::CallEffect::Failed { .. } | crate::types::CallEffect::Provenance(_)
         ),
-        EntryPayload::Header(_) | EntryPayload::TurnCard(_) | EntryPayload::TurnRetried(_) => true,
+        EntryPayload::Header(_)
+        | EntryPayload::TurnCard(_)
+        | EntryPayload::TurnRetried(_)
+        | EntryPayload::BranchRestored { .. } => true,
         EntryPayload::Message(record) => {
             record.message.role == vak_llm::Role::User && record.control_kind().is_none()
         }
@@ -2457,6 +2460,27 @@ impl SessionLog {
         self.tail_id = Some(entry_id.to_string());
         self.reserved_turn = None;
         self.current_turn = self.latest_directive_entry_id();
+        Ok(())
+    }
+
+    /// Persist a return to an existing branch before releasing the writer.
+    /// The marker's parent selects the restored chain even when the ledger
+    /// is reopened; the temporary suffix remains sealed and reconstructable.
+    pub fn restore_branch(&mut self, entry_id: &str) -> Result<(), SessionError> {
+        let before = (
+            self.tail_id.clone(),
+            self.current_turn.clone(),
+            self.reserved_turn.clone(),
+        );
+        let from = self.tail_id.clone().ok_or(SessionError::InvalidSelection)?;
+        self.branch_at(entry_id)?;
+        if let Err(error) = self.append(Entry::new(
+            self.tail_id.clone(),
+            EntryPayload::BranchRestored { from },
+        )) {
+            (self.tail_id, self.current_turn, self.reserved_turn) = before;
+            return Err(error);
+        }
         Ok(())
     }
 

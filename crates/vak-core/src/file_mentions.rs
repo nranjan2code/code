@@ -39,6 +39,28 @@ pub fn resolve_file_mentions(text: &str, workspace: &Path) -> String {
         let starts_word = previous.is_none_or(|p| p.is_whitespace() || p == '(');
         if c == '@' && starts_word {
             let rest = &text[index + 1..];
+            // The picker uses JSON strings for paths with spaces, punctuation
+            // or escapes. Keep the quotes for the model and remove only @,
+            // after checking the decoded full path against the workspace.
+            if rest.starts_with('"') {
+                let mut quoted = serde_json::Deserializer::from_str(rest).into_iter::<String>();
+                if let Some(Ok(path)) = quoted.next() {
+                    let length = quoted.byte_offset();
+                    if !names_workspace_file(&root, &path) {
+                        out.push('@');
+                    }
+                    out.push_str(&rest[..length]);
+                    for _ in 0..rest[..length].chars().count() {
+                        chars.next();
+                    }
+                    previous = Some('"');
+                    continue;
+                }
+                // An unfinished/invalid quoted token has no reliable end.
+                // Preserve it rather than resolving an @ inside its text.
+                out.push_str(&text[index..]);
+                break;
+            }
             let token_len = rest
                 .char_indices()
                 .find(|(_, ch)| !is_path_char(*ch))
@@ -122,5 +144,56 @@ mod tests {
     fn directories_are_not_files() {
         let dir = workspace();
         assert_eq!(resolve_file_mentions("@src", dir.path()), "@src");
+    }
+
+    #[test]
+    fn quoted_mentions_resolve_the_full_name_never_a_shorter_prefix() {
+        let dir = workspace();
+        let mut paths = vec!["space", "space name.txt", "नोट.txt", "a,b.txt"];
+        if cfg!(unix) {
+            paths.extend(["say \"hi\".txt", "back\\slash.txt", "trailing."]);
+        }
+        for path in paths {
+            std::fs::write(dir.path().join(path), "x").unwrap();
+            let quoted = serde_json::to_string(path).unwrap();
+            let input = format!("read @{quoted} and @notes.txt.");
+            assert_eq!(
+                resolve_file_mentions(&input, dir.path()),
+                format!("read {quoted} and notes.txt.")
+            );
+        }
+        let missing = "read @\"space missing.txt\"";
+        assert_eq!(resolve_file_mentions(missing, dir.path()), missing);
+    }
+
+    #[test]
+    fn quoted_mentions_preserve_unknown_names_and_refuse_workspace_escapes() {
+        let dir = workspace();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "x").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            dir.path().join("escape name.txt"),
+        )
+        .unwrap();
+        for path in [
+            "../secret.txt",
+            "escape name.txt",
+            "src",
+            "missing @notes.txt",
+            outside.path().join("secret.txt").to_str().unwrap(),
+        ] {
+            let input = format!("@{}", serde_json::to_string(path).unwrap());
+            assert_eq!(resolve_file_mentions(&input, dir.path()), input);
+        }
+        for input in [
+            "@\"unfinished",
+            "@\"bad\\q\"",
+            "@\"bad @notes.txt",
+            "mail@\"notes.txt\"",
+        ] {
+            assert_eq!(resolve_file_mentions(input, dir.path()), input);
+        }
     }
 }

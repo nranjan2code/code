@@ -31,6 +31,7 @@ import { loadHealth, openAgentChat, refreshSessions, sendPrompt, sendSideQuestio
 import * as api from "../api";
 import { ATTACH_ARTIFACT_EVENT, ATTACH_FILES_EVENT, type ArtifactChip } from "../attachFiles";
 import type { SkillInfo } from "../types";
+import { detectMention, fileMention } from "../fileMentions";
 import Icon from "./Icon";
 import StatusBar from "./StatusBar";
 import NeedsYou from "./NeedsYou";
@@ -40,13 +41,6 @@ import RunControls from "./RunControls";
 interface Mention {
   start: number; // index of '@'
   query: string;
-}
-
-function detectMention(text: string, caret: number): Mention | null {
-  const upto = text.slice(0, caret);
-  const m = /(^|[\s(])@([\w./-]*)$/.exec(upto);
-  if (!m) return null;
-  return { start: caret - m[2].length - 1, query: m[2] };
 }
 
 interface SlashOption {
@@ -460,11 +454,12 @@ export default function Composer(props: { cwd: string }) {
     const mn = mention();
     if (!mn) return;
     const t = text();
-    const next = `${t.slice(0, mn.start)}@${path} ${t.slice(ta.selectionStart)}`;
+    const token = fileMention(path);
+    const next = `${t.slice(0, mn.start)}${token} ${t.slice(ta.selectionStart)}`;
     setText(next);
     setMention(null);
     queueMicrotask(() => {
-      const pos = mn.start + path.length + 2;
+      const pos = mn.start + token.length + 1;
       ta.focus();
       ta.setSelectionRange(pos, pos);
       grow();

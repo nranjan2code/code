@@ -19958,22 +19958,18 @@ async fn side_chat(
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(taken));
         return provider_unavailable(e);
     }
-    let mut taken = match writable(&handle, taken) {
+    let taken = match writable(&handle, taken) {
         Ok(taken) => taken,
         Err(response) => return *response,
     };
-
-    let tail_main = taken.tail_id().cloned();
-    if let Err(_e) = taken.append_message(vak_session::MessageRecord {
-        message: vak_llm::Message::user_text(body.question.clone()),
-        meta: None,
-    }) {
+    let Some(tail_main) = taken.tail_id().cloned() else {
         *handle
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(taken));
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
+    };
+    // Core records the directive once as part of turn admission.
     let side_tx = handle.side_events_tx.clone();
     let side_activity = Arc::new(Mutex::new(Vec::new()));
     let approver: Arc<dyn Approver> = Arc::new(HttpApprover {
@@ -19986,16 +19982,16 @@ async fn side_chat(
         wait: Duration::from_secs(state.core.control_limits().approval_secs),
     });
     let events = mpsc_to_broadcast(side_tx.clone());
-    let cancel = handle
+    let cancel = CancellationToken::new();
+    *handle
         .side_cancel
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = cancel.clone();
     // A side chat reads this session's context, so it runs under the same
     // ceiling the session was created with.
     let core = handle.core.clone();
 
-    tokio::spawn(async move {
+    tokio::spawn(tracing::Instrument::in_current_span(async move {
         // No steering on side chats by design: they are read-only Q&A over
         // the session context, not a second control surface.
         let outcome = core
@@ -20009,56 +20005,66 @@ async fn side_chat(
                 events,
             )
             .await;
-        let agent_outcome = match &outcome {
+        let mut agent_outcome = match &outcome {
             Ok((turn, _)) => turn.agent_run_outcome(),
             Err(_) => vak_agent::AgentRunOutcome::Failed,
         };
-        let (summary, _is_error) = match &outcome {
+        let (mut summary, _is_error) = match &outcome {
             Ok((vak_agent::TurnOutcome::Completed { .. }, _)) => ("completed".to_string(), false),
             Ok((vak_agent::TurnOutcome::Aborted { .. }, _)) => ("aborted".to_string(), false),
             Ok((vak_agent::TurnOutcome::MaxTurnsReached, _)) => ("max_turns".to_string(), true),
             Ok((vak_agent::TurnOutcome::Failed { error }, _)) => (format!("failed: {error}"), true),
             Err(e) => (format!("error: {e}"), true),
         };
-        let turn_ok = matches!(&outcome, Ok((_, _)));
-        if let Ok((_, mut restored)) = outcome {
-            for activity in std::mem::take(
-                &mut *side_activity
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-            ) {
-                let _ = restored.append_activity(activity);
+        // Admission errors can consume the handle too. Recover its ledger,
+        // then persist the return before releasing the writer on either path.
+        let restored = match outcome {
+            Ok((_, log)) => Some(log),
+            Err(_) => core.open_session(&id).await.ok(),
+        };
+        if let Some(mut restored) = restored {
+            let result = (|| -> Result<(), vak_session::SessionError> {
+                restored.reacquire_writer()?;
+                for activity in std::mem::take(
+                    &mut *side_activity
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                ) {
+                    restored.append_activity(activity)?;
+                }
+                restored.restore_branch(&tail_main)
+            })();
+            match result {
+                Ok(()) => {
+                    *handle
+                        .presentation
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        crate::projection::snapshot(&id, &restored);
+                    let ledger = restored.path().to_path_buf();
+                    *handle
+                        .session
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        Some(crate::rest(restored));
+                    catalog_session_later(&core, &ledger);
+                }
+                Err(error) => {
+                    // Do not expose a side branch as a writable main handle.
+                    tracing::error!(error_kind = %vak_telemetry::error_kind(&error), "side question branch restoration failed");
+                    agent_outcome = vak_agent::AgentRunOutcome::Failed;
+                    summary = "Could not restore the conversation after the side question.".into();
+                }
             }
-            // Rewind the branch pointer to the main line: the side entries
-            // remain in the ledger as a sibling branch — reconstructable via
-            // their parent chain, invisible to derive_messages().
-            if let Some(main_tail) = &tail_main {
-                let _ = restored.branch_at(main_tail);
-            }
-            *handle
-                .presentation
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                crate::projection::snapshot(&id, &restored);
-            *handle
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(restored));
+        } else {
+            agent_outcome = vak_agent::AgentRunOutcome::Failed;
+            summary = "Could not reopen the conversation after the side question.".into();
         }
         let _ = side_tx.send(AgentEvent::RunFinished {
             outcome: agent_outcome,
             summary,
         });
-        // On a failed turn the taken log is gone with the Err — reopen the
-        // durable ledger so the session does not stay wedged as
-        // "run in progress" forever (found by the v0.6 deployment gate).
-        if !turn_ok && let Some(log) = reopen_ledger(&core, &id) {
-            *handle
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(crate::rest(log));
-        }
-    });
+    }));
 
     StatusCode::ACCEPTED.into_response()
 }
