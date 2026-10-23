@@ -1,4 +1,4 @@
-## Unreleased
+## 8.31.0 — 2026-10-23 — Topics and turn names
 
 - Give answered requests useful names and group related work into Topics in an
   independent step after the answer. Plain replies and follow-ups no longer
