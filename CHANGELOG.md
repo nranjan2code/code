@@ -1,4 +1,4 @@
-## Unreleased
+## 8.30.0 — 2026-10-23 — Conversation controls and file mentions
 
 - Keep side questions out of the main conversation after reloads and later
   turns, and record each side question only once.
