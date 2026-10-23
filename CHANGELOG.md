@@ -1,4 +1,4 @@
-## Unreleased
+## 8.31.1 — 2026-10-23 — Rich response consolidation
 
 - Preserve prose, rich cards, exact data and result notices in source order
   across channel delivery, saved answers, shared conversations, terminal,
