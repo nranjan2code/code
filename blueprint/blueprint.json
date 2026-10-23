@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.31.0",
-  "revision": "06f0cc389",
+  "revision": "75ce6364a",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.25.0 · 2026-10-22"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2493,
+   "total_commits": 2494,
    "days": 64,
    "peak_day": 174,
    "design_docs": 99,
@@ -448,15 +448,15 @@
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 512,
+  "commits": 513,
   "areas": [
    [
     "docs",
-    406
+    407
    ],
    [
     "(root)",
-    295
+    296
    ],
    [
     "vak-core",
@@ -813,6 +813,15 @@
   ],
   "recent": [
    {
+    "hash": "75ce6364a",
+    "date": "2026-10-23",
+    "subject": "Record 8.31.0 local release and install",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "06f0cc389",
     "date": "2026-10-23",
     "subject": "Prepare 8.31.0 release notes",
@@ -965,14 +974,6 @@
     "subject": "Release 8.28.0: Markdown answers and runtime cards",
     "areas": [
      "(root)"
-    ]
-   },
-   {
-    "hash": "7b12f3ad3",
-    "date": "2026-10-22",
-    "subject": "Record all thirty live card-redesign acceptance outputs",
-    "areas": [
-     "docs"
     ]
    }
   ],
@@ -31143,6 +31144,12 @@
  ],
  "replay": [
   {
+   "hash": "75ce6364a",
+   "date": "2026-10-23",
+   "subject": "Record 8.31.0 local release and install",
+   "subsystems": []
+  },
+  {
    "hash": "06f0cc389",
    "date": "2026-10-23",
    "subject": "Prepare 8.31.0 release notes",
@@ -37875,7 +37882,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1429,
+  "docs_commits": 1430,
   "hot": 660
  },
  "findings": [
