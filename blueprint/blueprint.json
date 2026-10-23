@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.31.1",
-  "revision": "95f3da2bc",
+  "revision": "a1b42c279",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.31.0 · 2026-10-23"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2496,
+   "total_commits": 2497,
    "days": 64,
    "peak_day": 174,
    "design_docs": 100,
@@ -95,8 +95,11 @@
   "health": [
    {
     "check": "records",
-    "ok": true,
-    "problems": []
+    "ok": false,
+    "problems": [
+     "FAIL: 1 record problem(s):",
+     "CHANGELOG.md: 8.31.1 is released; start a `## Unreleased` section"
+    ]
    },
    {
     "check": "doc paths",
@@ -461,11 +464,11 @@
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 515,
+  "commits": 516,
   "areas": [
    [
     "docs",
-    408
+    409
    ],
    [
     "(root)",
@@ -826,6 +829,14 @@
   ],
   "recent": [
    {
+    "hash": "a1b42c279",
+    "date": "2026-10-23",
+    "subject": "Record 8.31.1 release and local install",
+    "areas": [
+     "docs"
+    ]
+   },
+   {
     "hash": "95f3da2bc",
     "date": "2026-10-23",
     "subject": "Bump version to 8.31.1",
@@ -979,24 +990,6 @@
      "vak-intent",
      "vak-server",
      "vak-session",
-     "vak-tools"
-    ]
-   },
-   {
-    "hash": "bc8d1f92b",
-    "date": "2026-10-22",
-    "subject": "Remove obsolete plan compatibility and use answer titles in navigation",
-    "areas": [
-     "(root)",
-     "blueprint",
-     "docs",
-     "vak-agent",
-     "vak-client-ui",
-     "vak-control",
-     "vak-delivery",
-     "vak-intent",
-     "vak-judge",
-     "vak-server",
      "vak-tools"
     ]
    }
@@ -31238,6 +31231,12 @@
  ],
  "replay": [
   {
+   "hash": "a1b42c279",
+   "date": "2026-10-23",
+   "subject": "Record 8.31.1 release and local install",
+   "subsystems": []
+  },
+  {
    "hash": "95f3da2bc",
    "date": "2026-10-23",
    "subject": "Bump version to 8.31.1",
@@ -38006,7 +38005,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1431,
+  "docs_commits": 1432,
   "hot": 661
  },
  "findings": [
