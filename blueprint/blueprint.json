@@ -1,7 +1,7 @@
 {
  "meta": {
   "version": "8.31.2",
-  "revision": "477848061",
+  "revision": "43e95dc56",
   "first_date": "2026-08-21",
   "last_date": "2026-10-23",
   "prose_reviewed": "8.31.0 · 2026-10-23"
@@ -19,7 +19,7 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2499,
+   "total_commits": 2500,
    "days": 64,
    "peak_day": 174,
    "design_docs": 100,
@@ -461,15 +461,15 @@
  "activity": {
   "since": "2026-10-09",
   "until": "2026-10-23",
-  "commits": 518,
+  "commits": 519,
   "areas": [
    [
     "docs",
-    410
+    411
    ],
    [
     "(root)",
-    300
+    301
    ],
    [
     "vak-core",
@@ -826,6 +826,15 @@
   ],
   "recent": [
    {
+    "hash": "43e95dc56",
+    "date": "2026-10-23",
+    "subject": "Record 8.31.2 release and installed source-link verification",
+    "areas": [
+     "(root)",
+     "docs"
+    ]
+   },
+   {
     "hash": "477848061",
     "date": "2026-10-23",
     "subject": "Bump version to 8.31.2",
@@ -968,15 +977,6 @@
      "vak-core",
      "vak-server",
      "vak-session"
-    ]
-   },
-   {
-    "hash": "0dcccfff9",
-    "date": "2026-10-23",
-    "subject": "Record 8.29.0 installation and authorized dev history reset",
-    "areas": [
-     "(root)",
-     "docs"
     ]
    }
   ],
@@ -31217,6 +31217,12 @@
  ],
  "replay": [
   {
+   "hash": "43e95dc56",
+   "date": "2026-10-23",
+   "subject": "Record 8.31.2 release and installed source-link verification",
+   "subsystems": []
+  },
+  {
    "hash": "477848061",
    "date": "2026-10-23",
    "subject": "Bump version to 8.31.2",
@@ -38006,7 +38012,7 @@
   ]
  },
  "work": {
-  "docs_commits": 1433,
+  "docs_commits": 1434,
   "hot": 662
  },
  "findings": [
