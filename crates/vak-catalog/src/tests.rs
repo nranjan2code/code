@@ -460,6 +460,24 @@ fn topic_documents_are_searchable_in_their_conversation_audience_and_follow_tras
         run_with_turn(&data, &folder, "scout", "telegram:42", "work on analysis");
     let scope = vak_config::scope::AgentScope::new(agent_home(&data, "scout"));
     let topics = vak_session::work_threads::TopicStore::new(&scope, &session).unwrap();
+    topics
+        .request_organisation(
+            vak_session::work_threads::TurnName {
+                turn_id: turn.clone(),
+                title: Some("Aurora migration request".into()),
+                source: vak_session::work_threads::PlacementSource::Model,
+                trigger: vak_session::ids::TriggerId::new(),
+                request: vak_session::objects::ObjectRef {
+                    id: "fixture".into(),
+                    len: 0,
+                },
+                known_topics: vec![],
+                response: None,
+                trace: trace.clone(),
+            },
+            false,
+        )
+        .unwrap();
     let topic = topics.create("Aurora migration", false, &trace).unwrap();
     topics
         .assign_model(&turn, "migration notes", vec![topic.clone()], &trace)
@@ -483,6 +501,18 @@ fn topic_documents_are_searchable_in_their_conversation_audience_and_follow_tras
             && hit.node.run.is_some()
             && hit.node.cause.is_some()
     }));
+
+    assert!(hits.iter().any(|hit| hit.node.kind == "turn_name"));
+    let elsewhere = Audience {
+        audience: Some("telegram:99".into()),
+        ..chat.clone()
+    };
+    assert!(
+        catalog
+            .search("Aurora migration", &elsewhere, &Scope::default(), 10)
+            .unwrap()
+            .is_empty()
+    );
 
     topics
         .assign_human(&turn, "migration notes", Vec::new(), &trace)
@@ -515,7 +545,7 @@ fn topic_documents_are_searchable_in_their_conversation_audience_and_follow_tras
             .search("Aurora migration", &chat, &Scope::default(), 10)
             .unwrap()
             .iter()
-            .all(|hit| hit.node.kind != "topic")
+            .all(|hit| hit.node.kind != "topic" && hit.node.kind != "turn_name")
     );
 
     vak_session::conversation_state::update(
@@ -530,7 +560,7 @@ fn topic_documents_are_searchable_in_their_conversation_audience_and_follow_tras
             .search("Aurora migration", &chat, &Scope::default(), 10)
             .unwrap()
             .iter()
-            .any(|hit| hit.node.kind == "topic")
+            .any(|hit| hit.node.kind == "turn_name")
     );
 }
 

@@ -40,6 +40,7 @@ pub mod lifecycle;
 pub mod measure;
 pub mod memory;
 pub mod onboarding;
+pub mod organisation;
 pub mod packages;
 pub mod presentation_tools;
 /// The three permission rule lists, in `vak_config::Config`'s own order:
@@ -8374,6 +8375,17 @@ impl Core {
         // it never blocks the return below.
         self.maybe_start_capacity_probe(&turn_primary_leg).await;
 
+        // The answer is already written. Organisation owns a separate run and
+        // never changes or gates its outcome, tools or presentation.
+        if session
+            .header()
+            .is_some_and(|header| header.parent_session_id.is_none())
+            && matches!(outcome, TurnOutcome::Completed { .. })
+            && let Err(error) =
+                self.queue_turn_organisation(&mut session, &turn_id, false, &run_trace)
+        {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "conversation organisation was not queued");
+        }
         Ok((outcome, session))
     }
 

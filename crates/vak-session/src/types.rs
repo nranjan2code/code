@@ -1092,6 +1092,13 @@ pub enum EntryPayload {
     /// is derived state, but the choice the model saw belongs in this ledger.
     ContextSelection(ContextSelectionRecord),
     Message(MessageRecord),
+    /// Exact input to a post-answer organisation run, stored under this
+    /// conversation's key. It is auxiliary input, never another chat message.
+    OrganisationRequested {
+        turn_id: String,
+        request: crate::objects::ObjectRef,
+        trace: crate::trace::TraceKey,
+    },
     Compaction(CompactionEntry),
     /// Audit record for one unit of provider work (docs/design/42-managed-work-contracts.md).
     /// Never model-visible: `derive_messages` skips it.

@@ -1,3 +1,4 @@
+import { organisationOf } from "../store";
 import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
@@ -879,7 +880,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const turnPreview = (index: number) => {
     const user = turns()[index]?.find((item) => item.kind === "user");
     const text = user?.kind === "user" ? turnDisplayLabel(user.entryId, presentationOf(sid())).replace(/\s+/g, " ").trim() : "";
-    return text || `Turn ${index}`;
+    if (text) return text;
+    const turn = user?.kind === "user" ? serverTurnFor(user.entryId, presentationOf(sid())?.items ?? []) : null;
+    const status = organisationOf(sid())?.turn_names?.find(name => name.turn_id === turn)?.status;
+    return status === "pending" ? "Naming request…" : status === "failed" ? "Name unavailable" : `Turn ${index}`;
   };
   const tickIndices = createMemo(() => {
     const count = navigableTurnCount();

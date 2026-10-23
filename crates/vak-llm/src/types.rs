@@ -362,7 +362,7 @@ pub fn depth_str(depth: vak_control::Depth) -> &'static str {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRequest {
     pub model: String,
     pub system: Option<String>,

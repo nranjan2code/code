@@ -327,6 +327,7 @@ SUBSYSTEMS = [
      ["crates/vak-core/src/agent_definitions.rs", "crates/vak-core/src/agent_network.rs",
       "crates/vak-server/src/agents.rs", "crates/vak-server/src/agent_chats.rs", "crates/vak/src/agents_cli.rs",
       "crates/vak-server/src/topics.rs", "crates/vak-session/src/work_threads.rs",
+      "crates/vak-core/src/organisation.rs",
       "crates/vak-tools/src/topics.rs", "crates/vak/src/topics.rs",
       "crates/vak-client-ui/src/components/TopicsPanel.tsx",
       "crates/vak-client-ui/src/components/Agent*.tsx", "crates/vak-client-ui/src/agent*.ts",

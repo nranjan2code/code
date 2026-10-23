@@ -163,6 +163,7 @@ pub(crate) fn projections(state: &AppState) -> Result<Vec<serde_json::Value>, Tr
     let effects = state.core.effects().list().unwrap_or_default();
     Ok(of_this_space(state)?
         .iter()
+        .filter(|trigger| !trigger.organises_turn())
         .map(|trigger| {
             projection(
                 state,
@@ -695,7 +696,14 @@ pub(crate) async fn claim_and_fire(
         &runs,
         &trigger,
         now,
-        catch_up(state),
+        if trigger.organises_turn() {
+            triggers::CatchUp {
+                missed: true,
+                floor: now,
+            }
+        } else {
+            catch_up(state)
+        },
         run_now,
         |slot| trigger.trace_for(slot, &cwd),
     );
@@ -721,6 +729,21 @@ async fn fire(
     trigger: Trigger,
     started: triggers::Started,
 ) -> Result<String, NotFired> {
+    if let TriggerAction::OrganiseTurn { session, .. } = &trigger.action {
+        let id = trigger.id.to_string();
+        let (_, core) = crate::topics::source(state, session).map_err(|_| NotFired::Refused)?;
+        let cancel = core.permission_lease();
+        let span = vak_session::runs::span(&started.trace);
+        tokio::spawn(tracing::Instrument::instrument(
+            async move {
+                if let Err(error) = core.organise_claimed(&trigger, started, cancel).await {
+                    tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "conversation organisation did not finish");
+                }
+            },
+            span,
+        ));
+        return Ok(id);
+    }
     let triggers::Started {
         mut run,
         trace,
@@ -1500,7 +1523,9 @@ pub(crate) async fn deliver_home(
     let what = match &trigger.action {
         TriggerAction::Prompt { text, .. } => text.clone(),
         TriggerAction::Script { command } => format!("Run the command `{command}`."),
-        TriggerAction::SourcePoll { .. } | TriggerAction::AbilityReview => return None,
+        TriggerAction::SourcePoll { .. }
+        | TriggerAction::AbilityReview
+        | TriggerAction::OrganiseTurn { .. } => return None,
     };
     let delivery = vak_core::scheduled::Delivery {
         meta: vak_session::types::ScheduledMeta {

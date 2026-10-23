@@ -289,6 +289,14 @@ pub enum TriggerAction {
     /// fixes, each waiting for the owner's review (docs/design/93 §8).
     /// Nothing failed costs nothing.
     AbilityReview,
+    /// Internal post-answer metadata work. Input is an object of the source
+    /// conversation, also addressed by its ledger's OrganisationRequested row.
+    OrganiseTurn {
+        session: String,
+        turn: String,
+        provider: String,
+        request: vak_session::objects::ObjectRef,
+    },
 }
 
 /// When a scheduled trigger's slots fall.
@@ -486,7 +494,8 @@ impl Trigger {
             TriggerAction::Prompt { text, .. } => Some(text),
             TriggerAction::Script { .. }
             | TriggerAction::SourcePoll { .. }
-            | TriggerAction::AbilityReview => None,
+            | TriggerAction::AbilityReview
+            | TriggerAction::OrganiseTurn { .. } => None,
         }
     }
 
@@ -495,7 +504,8 @@ impl Trigger {
             TriggerAction::Script { command } => Some(command),
             TriggerAction::Prompt { .. }
             | TriggerAction::SourcePoll { .. }
-            | TriggerAction::AbilityReview => None,
+            | TriggerAction::AbilityReview
+            | TriggerAction::OrganiseTurn { .. } => None,
         }
     }
 
@@ -505,7 +515,8 @@ impl Trigger {
             TriggerAction::SourcePoll { source } => Some(*source),
             TriggerAction::Prompt { .. }
             | TriggerAction::Script { .. }
-            | TriggerAction::AbilityReview => None,
+            | TriggerAction::AbilityReview
+            | TriggerAction::OrganiseTurn { .. } => None,
         }
     }
 
@@ -514,8 +525,13 @@ impl Trigger {
             TriggerAction::Prompt { model_pin, .. } => model_pin.as_deref(),
             TriggerAction::Script { .. }
             | TriggerAction::SourcePoll { .. }
-            | TriggerAction::AbilityReview => None,
+            | TriggerAction::AbilityReview
+            | TriggerAction::OrganiseTurn { .. } => None,
         }
+    }
+
+    pub fn organises_turn(&self) -> bool {
+        matches!(self.action, TriggerAction::OrganiseTurn { .. })
     }
 
     /// Whether it is an Agent's review of its failing abilities.
@@ -536,6 +552,17 @@ impl Trigger {
             return Err(invalid("an Agent is required"));
         }
         match &self.action {
+            TriggerAction::OrganiseTurn { session, turn, .. } => {
+                if self.deliver_to.is_some()
+                    || self.scope.is_some()
+                    || self.home.is_some()
+                    || self.page.is_some()
+                    || uuid::Uuid::parse_str(session).is_err()
+                    || uuid::Uuid::parse_str(turn).is_err()
+                {
+                    return Err(invalid("invalid conversation organisation action"));
+                }
+            }
             TriggerAction::Prompt { text, .. } if text.trim().is_empty() => {
                 return Err(invalid("the prompt is empty"));
             }
@@ -920,11 +947,26 @@ pub fn due(
         return decision;
     }
     let after = claim.high_water.unwrap_or(trigger.created_at);
+    // A newly registered one-shot may already be due, including exactly
+    // at creation. It has no previous slot to exclude. Repeating schedules
+    // still start strictly after registration/the high-water mark.
+    let passed = if claim.high_water.is_none() {
+        match trigger.schedule() {
+            Some(Schedule::Once { at }) => (*at <= now).then_some(Passed {
+                first: *at,
+                previous: None,
+                newest: *at,
+            }),
+            _ => passed_slots(trigger, after, now),
+        }
+    } else {
+        passed_slots(trigger, after, now)
+    };
     let Some(Passed {
         first,
         previous,
         newest,
-    }) = passed_slots(trigger, after, now)
+    }) = passed
     else {
         return decision;
     };
@@ -968,7 +1010,7 @@ impl Trigger {
                 request_id: format!("manual:{event}"),
             },
         };
-        TraceKey::root(
+        let trace = TraceKey::root(
             local::tenant(),
             local::space(cwd),
             local::agent(&self.agent),
@@ -977,7 +1019,11 @@ impl Trigger {
         .acting(
             local::agent_principal(&self.agent),
             Some(local::local_owner()),
-        )
+        );
+        match &self.action {
+            TriggerAction::OrganiseTurn { session, turn, .. } => trace.in_turn(session, turn),
+            _ => trace,
+        }
     }
 }
 
@@ -1784,6 +1830,45 @@ mod tests {
             made_by: None,
             page: None,
         }
+    }
+
+    #[test]
+    fn a_one_shot_due_at_creation_is_claimed_once() {
+        let mut trigger = prompt_trigger();
+        let now = trigger.created_at;
+        trigger.kind = TriggerKind::Schedule {
+            schedule: Schedule::Once { at: now },
+        };
+        let decision = due(
+            &trigger,
+            &vak_session::runs::Claim::default(),
+            None,
+            now,
+            CatchUp {
+                missed: true,
+                floor: now,
+            },
+            None,
+        );
+        assert_eq!(
+            decision.start,
+            Some((vak_session::runs::Slot::At { at: now }, 1))
+        );
+        assert!(
+            due(
+                &trigger,
+                &decision.claim,
+                None,
+                now,
+                CatchUp {
+                    missed: true,
+                    floor: now
+                },
+                None
+            )
+            .start
+            .is_none()
+        );
     }
 
     #[test]

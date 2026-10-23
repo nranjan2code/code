@@ -1,5 +1,12 @@
 # Decisions
 
+- 2026-10-23: The maintainer approved restoring useful turn names and Topics
+  within the new answer design, without reverting removed planning machinery
+  or forced Topics completion calls. Use an independent post-answer step on
+  the same main model, existing stable turn addresses/context selections and
+  existing Topic storage and human controls. “Organisation” names internal
+  metadata work; it introduces no new product entity. See doc 101.
+
 - 2026-10-23: After the installed dev conversation failed on removed
   `topics_placement` records, the maintainer explicitly authorized erasure or
   reset on this dev machine. Reset only the affected conversation through

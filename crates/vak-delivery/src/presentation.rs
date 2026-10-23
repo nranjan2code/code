@@ -201,6 +201,8 @@ pub struct OutputTimeline {
     pub covered_sequence: Option<u64>,
     pub schema_version: u16,
     pub session_id: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub turn_names: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub cursor: Option<String>,
     pub items: Vec<OutputItem>,
@@ -216,6 +218,7 @@ impl OutputTimeline {
             covered_sequence: None,
             schema_version: PRESENTATION_SCHEMA_VERSION,
             session_id: session_id.into(),
+            turn_names: Default::default(),
             cursor: None,
             items: Vec::new(),
             diagnostics: Vec::new(),

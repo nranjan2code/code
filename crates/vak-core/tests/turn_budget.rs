@@ -4,7 +4,11 @@
 //! a turn grows its ledger by at most 20 KB mean and costs at most six
 //! record syncs for its ledger and side ledgers, plus the two its run
 //! record adds at M4.2 (opened with its ledger named, then settled; a
-//! settle lost to a power cut would read a finished run as abandoned). Turns are real Core turns with a tool call and an answer;
+//! settle lost to a power cut would read a finished run as abandoned). The
+//! independent names/Topics step adds an allowance of eight durable boundaries:
+//! logged input, pending Document, Trigger, claim, run open, source binding,
+//! accepted Document and run settle. Measure it through settlement rather than
+//! sampling a nondeterministic portion of its work. Turns are real Core turns with a tool call and an answer;
 //! the first turn, which binds the capability interface in full, is
 //! excluded from the mean.
 
@@ -22,7 +26,7 @@ use vak_llm::{EventStream, LlmError, Provider};
 
 const TURNS: u64 = 5;
 const BYTES_PER_TURN: u64 = 20 * 1024;
-const SYNCS_PER_TURN: u64 = 8;
+const SYNCS_PER_TURN: u64 = 8 + 8;
 
 /// Each turn reads a file, then answers.
 struct ReadThenAnswer {
@@ -167,6 +171,28 @@ async fn run_turns() -> Measured {
                 )
                 .await
                 .unwrap();
+            let sid = session.header().unwrap().session_id.as_str();
+            let snapshot = vak_session::work_threads::TopicStore::new(&core.scope(), sid)
+                .unwrap()
+                .snapshot()
+                .unwrap();
+            let trigger = snapshot.turn_names.last().unwrap().trigger;
+            tokio::time::timeout(std::time::Duration::from_secs(20), async {
+                loop {
+                    if core
+                        .runs()
+                        .of_trigger(&trigger)
+                        .unwrap()
+                        .first()
+                        .is_some_and(|run| run.status == vak_session::runs::RunStatus::Completed)
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
             session
         }
     };

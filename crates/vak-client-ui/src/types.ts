@@ -239,6 +239,7 @@ export interface ResultOutcome {
 }
 
 export interface OutputTimeline {
+  turn_names?: Record<string, string>;
   covered_sequence?: number | null;
   schema_version: number;
   session_id: string;

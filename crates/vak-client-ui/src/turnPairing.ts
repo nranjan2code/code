@@ -17,6 +17,8 @@ export function turnDisplayLabel(entryId: string | undefined, timeline: OutputTi
   if (!timeline) return "";
   const turn = serverTurnFor(entryId, timeline.items);
   if (!turn) return "";
+  const name = timeline.turn_names?.[turn]?.trim();
+  if (name) return name;
   const items = timeline.items.filter(item => item.turn_id === turn);
   for (const item of items) {
     if (item.role !== "assistant" || item.content.type !== "document") continue;

@@ -521,7 +521,10 @@ impl vak_tools::Tool for AutomationsTool {
     async fn execute(&self, args: &Value, ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let action = args.get("action").and_then(Value::as_str).unwrap_or("");
         let all = match triggers::list(&self.shared) {
-            Ok(all) => triggers::for_workspace(all, &self.cwd),
+            Ok(all) => triggers::for_workspace(all, &self.cwd)
+                .into_iter()
+                .filter(|trigger| !trigger.organises_turn())
+                .collect::<Vec<_>>(),
             Err(e) => return refuse(Fault::Tool, e.to_string()),
         };
         match action {

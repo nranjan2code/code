@@ -44,6 +44,18 @@ impl Provider for Scripted {
         request: ChatRequest,
         _cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
+        if request
+            .output_schema
+            .as_ref()
+            .is_some_and(|schema| schema.name == "turn_organisation")
+        {
+            let (mut sink, rx) = stream::channel(4);
+            sink.close_message(answer(
+                r#"{"title":"Fixture request","outcomes":[{"outcome":"Answer","topics":[]}]}"#,
+            ))
+            .await;
+            return Ok(rx);
+        }
         self.requests.lock().unwrap().push(request);
         let next = self.responses.lock().unwrap().pop_front();
         let (mut sink, rx) = stream::channel(64);

@@ -87,6 +87,19 @@ impl vak_llm::Provider for WithoutAutomaticTopics {
         request: vak_llm::types::ChatRequest,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<vak_llm::EventStream, vak_llm::LlmError> {
+        if request
+            .output_schema
+            .as_ref()
+            .is_some_and(|schema| schema.name == "turn_organisation")
+        {
+            let mut message = vak_llm::AssistantMessage::empty(&request.model);
+            message.content = vec![vak_llm::ContentBlock::text(
+                r#"{"title":"Fixture answer","outcomes":[]}"#,
+            )];
+            let (mut sink, rx) = vak_llm::stream::channel(4);
+            sink.close_message(message).await;
+            return Ok(rx);
+        }
         if let Some(cache) = &request.cache
             && uuid::Uuid::parse_str(&cache.session_key).is_ok()
         {

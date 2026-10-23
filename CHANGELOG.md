@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Give answered requests useful names and group related work into Topics in an
+  independent step after the answer. Plain replies and follow-ups no longer
+  need headings or a planning tool to acquire navigation names. People can
+  rename requests and retry or name the requests currently shown in Topics.
+- Keep the Topic sidebar refreshing when a workspace changes during a fetch.
+
 ## 8.30.0 — 2026-10-23 — Conversation controls and file mentions
 
 - Keep side questions out of the main conversation after reloads and later

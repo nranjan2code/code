@@ -26,3 +26,5 @@ mod state_registry;
 mod topics;
 mod turn_path_reads_flat;
 mod worktree;
+
+mod organisation;

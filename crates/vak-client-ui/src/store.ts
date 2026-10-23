@@ -940,6 +940,10 @@ export function evictHistoryViews(keep: ReadonlySet<string>): string[] {
     presentationIndices.delete(id);
     setItemsBySession(id, []);
     setPresentationBySession(id, null);
+    setOrganisationBySession(id, undefined);
+    const organisationTimer = organisationTimers.get(id);
+    if (organisationTimer) clearTimeout(organisationTimer);
+    organisationTimers.delete(id);
     setHistoryPages(id, undefined!);
     setHistoryErrors(id, null);
   }
@@ -1057,8 +1061,39 @@ export function usageOf(id: string | null): Usage {
   return (id && usageBySession[id]) || {};
 }
 
+const [organisationBySession, setOrganisationBySession] = createStore<Record<string, api.SessionTopics | undefined>>({});
+const organisationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+export const organisationOf = (id: string | null) => id ? organisationBySession[id] : undefined;
+
+/** Metadata has its own revision; it can change after the answer settles. */
+export async function refreshOrganisation(id: string): Promise<void> {
+  const timer = organisationTimers.get(id);
+  if (timer) clearTimeout(timer);
+  organisationTimers.delete(id);
+  if (!backend().ready || (id !== activeId() && id !== splitId())) return;
+  const cwd = backend().cwd;
+  try {
+    const next = await api.listSessionTopics(id);
+    if (cwd !== backend().cwd) return;
+    acceptOrganisation(id, next);
+    if (next.organisation_pending && (id === activeId() || id === splitId())) {
+      organisationTimers.set(id, setTimeout(() => void refreshOrganisation(id), 1000));
+    }
+  } catch { /* The answer stays readable; Topics controls expose retry errors. */ }
+}
+
+export function acceptOrganisation(id: string, next: api.SessionTopics) {
+  const revision = organisationBySession[id]?.revision;
+  if (revision != null && next.revision < revision) return;
+  setOrganisationBySession(id, reconcile(next));
+  if (revision !== next.revision) setTopicsChanged((count) => count + 1);
+}
+
 export function presentationOf(id: string | null): OutputTimeline | null {
-  return id ? (presentationBySession[id] ?? null) : null;
+  const timeline = id ? presentationBySession[id] : null;
+  const organisation = id ? organisationBySession[id] : undefined;
+  if (!timeline || !organisation) return timeline ?? null;
+  return { ...timeline, turn_names: { ...timeline.turn_names, ...Object.fromEntries((organisation.turn_names ?? []).flatMap(name => name.title ? [[name.turn_id, name.title]] : [])) } };
 }
 
 export function presentationErrorOf(id: string | null): string | null {

@@ -41,6 +41,7 @@ import {
   hydrateFromPresentation,
   itemsOf,
   presentationOf,
+  refreshOrganisation,
   hydrateWorkbenchExecutions,
   setWorkbenchLoadError,
   resetWorkbenchExecutions,
@@ -329,6 +330,7 @@ async function hydrate(id: string, background = false) {
       previous = undefined!;
     }
     if (!conversationHydration.current(id, version)) return;
+    void refreshOrganisation(id);
     if (snapshot.not_modified) {
       if (!snapshot.running && isRunning(id)) markRunning(id, false);
       return;

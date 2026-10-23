@@ -101,7 +101,8 @@ fn commits(entry: &Entry) -> bool {
         EntryPayload::Header(_)
         | EntryPayload::TurnCard(_)
         | EntryPayload::TurnRetried(_)
-        | EntryPayload::BranchRestored { .. } => true,
+        | EntryPayload::BranchRestored { .. }
+        | EntryPayload::OrganisationRequested { .. } => true,
         EntryPayload::Message(record) => {
             record.message.role == vak_llm::Role::User && record.control_kind().is_none()
         }
@@ -3590,6 +3591,133 @@ impl SessionLog {
             .into_iter()
             .filter(|item| item.control.is_none())
             .map(|item| item.as_typed())
+            .collect()
+    }
+
+    /// Read one settled exchange by its stable address using the same
+    /// branch/reset/set-aside visibility rule as the context planner.
+    pub fn visible_settled_turn(&self, turn_id: &str) -> Option<crate::turns::Turn> {
+        let (closing, _) = self
+            .visible_turn_cards_rev()
+            .find(|(_, card)| card.turn_id == turn_id)?;
+        self.current_turn_index_at(Some(closing))
+            .turns
+            .into_iter()
+            .find(|turn| turn.id == turn_id && (turn.closed || turn.ended_answered))
+    }
+
+    /// Naming reads the answer's already-recorded history selection. Topics
+    /// and provenance links are descriptive metadata, never history admission.
+    /// Tool bodies are deliberately not copied into this auxiliary request.
+    pub fn organisation_context(
+        &self,
+        turn_id: &str,
+    ) -> Result<(serde_json::Value, Vec<String>), SessionError> {
+        let current = self
+            .visible_settled_turn(turn_id)
+            .ok_or(SessionError::InvalidSelection)?;
+        let selection = self.active_entries_rev().find(|entry| {
+            entry.at_turn.as_deref() == Some(turn_id)
+                && matches!(entry.payload, EntryPayload::ContextSelection(_))
+        });
+        let mut admitted = std::collections::BTreeSet::from([turn_id.to_string()]);
+        let mut history = Vec::new();
+        let mut summary = None;
+        if let Some(entry) = selection {
+            self.replay_context_selection(&entry.id)?;
+            if let EntryPayload::ContextSelection(record) = &entry.payload {
+                for (id, fidelity) in &record.plan.per_turn {
+                    let Some(turn) = self.visible_settled_turn(id) else {
+                        continue;
+                    };
+                    if turn.set_aside || turn.behind_reset {
+                        continue;
+                    }
+                    admitted.insert(id.clone());
+                    if *fidelity == crate::turns::Fidelity::Card {
+                        history.push(serde_json::json!({"turn_id":id,"card":turn.card.as_ref().map(|c| c.addressed_message())}));
+                    } else if *fidelity == crate::turns::Fidelity::Full {
+                        history.push(serde_json::json!({"turn_id":id,"asked":turn.directive.text_content(),"answered":turn.final_answer.as_ref().map(|m| m.text_content()),"links":turn.links}));
+                    }
+                }
+                if let Some((first, last)) = &record.plan.packet_range {
+                    summary = self.stored_packet_at(Some(&record.leaf_id), first, last)
+                        .map(|p| serde_json::json!({"first_turn_id":first,"last_turn_id":last,"summary":p.summary}));
+                    let mut within = false;
+                    for (_, card) in self.visible_turn_cards_rev() {
+                        if card.turn_id == *last {
+                            within = true;
+                        }
+                        if within {
+                            admitted.insert(card.turn_id.clone());
+                        }
+                        if card.turn_id == *first {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let session = self
+            .header()
+            .ok_or(SessionError::InvalidSelection)?
+            .session_id
+            .as_str();
+        let scopes = self
+            .chain_to_root()
+            .iter()
+            .filter(|entry| admitted.contains(&entry.id))
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::Message(record) => {
+                    record.meta.as_ref().and_then(|m| m.author_id.as_deref())
+                }
+                _ => None,
+            })
+            .map(|author| crate::objects::contributor_scope(session, author))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let recalled: Vec<_> = current
+            .steps
+            .iter()
+            .flat_map(|step| &step.assistant.content)
+            .filter_map(|block| match block {
+                vak_llm::ContentBlock::ToolUse { id, name, input } if name == "recall" => {
+                    Some(serde_json::json!({"call_id":id,"input":input}))
+                }
+                _ => None,
+            })
+            .collect();
+        Ok((
+            serde_json::json!({
+                "selection_entry":selection.map(|entry| &entry.id),"history":history,"summary":summary,
+                "current":{"turn_id":turn_id,"asked":current.directive.text_content(),"answered":current.final_answer.as_ref().map(|m| m.text_content()),"links":current.links,"recall_calls":recalled}
+            }),
+            scopes,
+        ))
+    }
+
+    /// Reconstruct the exact auxiliary model requests from the same sealed
+    /// ledger as the dialogue. They never enter a subsequent answer's context.
+    pub fn organisation_requests(&self) -> Result<Vec<vak_llm::ChatRequest>, SessionError> {
+        self.chain_to_root()
+            .iter()
+            .filter_map(|entry| {
+                if let EntryPayload::OrganisationRequested { request, .. } = &entry.payload {
+                    Some(request)
+                } else {
+                    None
+                }
+            })
+            .map(|object| {
+                let text = self.object_text(object).ok_or_else(|| {
+                    SessionError::Objects("organisation input is unavailable".into())
+                })?;
+                let stored: crate::work_threads::StoredOrganisationRequest =
+                    serde_json::from_str(&text)
+                        .map_err(|error| SessionError::Objects(error.to_string()))?;
+                stored.restore()
+            })
             .collect()
     }
 

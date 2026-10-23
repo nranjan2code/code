@@ -30,7 +30,7 @@ fn storage_error(error: TopicError) -> Response {
 /// Resolve only a real, visible source conversation; never manufacture a
 /// store from a caller's Agent or path. Participant routes also pass the live
 /// audience middleware. Mutations are owner-only in the route allowlist.
-fn source(state: &AppState, id: &str) -> Result<(TopicStore, vak_core::Core), Response> {
+pub(crate) fn source(state: &AppState, id: &str) -> Result<(TopicStore, vak_core::Core), Response> {
     let lifecycle = vak_core::trash::state(&state.core.shared_scope(), id).map_err(|_| {
         failed(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -73,18 +73,49 @@ pub(crate) fn focus(
 
 pub(crate) async fn get(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     match tokio::task::spawn_blocking(move || {
-        let (store, _) = source(&state, &id)?;
-        store
-            .snapshot()
-            .map(Json)
-            .map(IntoResponse::into_response)
-            .map_err(storage_error)
+        let (store, core) = source(&state, &id)?;
+        snapshot_response(&store, &core)
     })
     .await
     {
         Ok(Ok(response)) | Ok(Err(response)) => response,
         Err(_) => failed(StatusCode::SERVICE_UNAVAILABLE, "Topics could not be read."),
     }
+}
+
+fn snapshot_response(store: &TopicStore, core: &vak_core::Core) -> Result<Response, Response> {
+    let snapshot = store.snapshot().map_err(storage_error)?;
+    let mut pending = false;
+    let mut failed = false;
+    let mut value = serde_json::to_value(&snapshot).map_err(|_| failed_response())?;
+    let runs = core.runs().list().map_err(|_| failed_response())?;
+    for (index, name) in snapshot.turn_names.iter().enumerate() {
+        let last = runs.iter().find(|run| run.trigger == Some(name.trigger));
+        let status = match last.map(|run| run.status) {
+            Some(vak_session::runs::RunStatus::Completed) if name.response.is_some() => "complete",
+            Some(vak_session::runs::RunStatus::Running) => "pending",
+            None if vak_core::triggers::get(&core.shared_scope(), &name.trigger.to_string())
+                .map_err(|_| failed_response())?
+                .is_some() =>
+            {
+                "pending"
+            }
+            _ => "failed",
+        };
+        pending |= status == "pending";
+        failed |= status == "failed";
+        value["turn_names"][index]["status"] = json!(status);
+    }
+    value["organisation_pending"] = json!(pending);
+    value["organisation_failed"] = json!(failed);
+    Ok(Json(value).into_response())
+}
+
+fn failed_response() -> Response {
+    failed(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Conversation organisation is unavailable.",
+    )
 }
 
 pub(crate) async fn open(
@@ -150,6 +181,15 @@ pub(crate) enum Action {
         #[serde(default)]
         whole_turn: bool,
     },
+    RenameTurn {
+        turn_id: String,
+        title: String,
+    },
+    Organise {
+        turn_ids: Vec<String>,
+        #[serde(default)]
+        retry: bool,
+    },
     Automatic {
         automatic: bool,
     },
@@ -169,6 +209,78 @@ pub(crate) async fn change(
 ) -> Response {
     // An authenticated human made this request. Mint and open the real run
     // before moving any Document ref, and retain its guard across all paths.
+    if let Action::Organise { turn_ids, retry } = &write.action {
+        let (store, core) = match source(&state, &id) {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+        match store.snapshot() {
+            Ok(snapshot) if snapshot.revision == write.revision => {}
+            Ok(_) => return storage_error(TopicError::Conflict),
+            Err(error) => return storage_error(error),
+        }
+        let core = core.with_run_admission(
+            vak_core::admission::RunAdmission::default().actor(crate::request_actor(&state)),
+        );
+        let mut trace = core.mint_trace(None);
+        trace.session = uuid::Uuid::parse_str(&id)
+            .ok()
+            .and_then(vak_session::ids::SessionId::from_uuid);
+        let mut run = match core.runs().begin(&trace, None, None) {
+            Ok(run) => run,
+            Err(_) => return failed_response(),
+        };
+        let span = vak_session::runs::span(&trace);
+        let result = tracing::Instrument::instrument(
+            async {
+                core.runs()
+                    .session(trace.run, &id)
+                    .map_err(|_| failed_response())?;
+                let (_, handle) = crate::ensure_session_handle(&state, &id)
+                    .await
+                    .map_err(|_| failed_response())?;
+                let mut guard = handle.session.lock().map_err(|_| failed_response())?;
+                let session = guard.as_mut().ok_or_else(|| {
+                    failed(
+                        StatusCode::CONFLICT,
+                        "Wait for the current answer to finish.",
+                    )
+                })?;
+                let mut session = crate::writing(session).map_err(|_| {
+                    failed(
+                        StatusCode::CONFLICT,
+                        "This conversation is being changed elsewhere.",
+                    )
+                })?;
+                if turn_ids
+                    .iter()
+                    .any(|turn| session.visible_settled_turn(turn).is_none())
+                {
+                    return Err(StatusCode::NOT_FOUND.into_response());
+                }
+                for turn in turn_ids {
+                    core.queue_turn_organisation(&mut session, turn, *retry, &trace)
+                        .map_err(|_| failed_response())?;
+                }
+                snapshot_response(&store, &core)
+            },
+            span,
+        )
+        .await;
+        run.settle_with(
+            if result.is_ok() {
+                vak_session::runs::RunOutcome::Completed
+            } else {
+                vak_session::runs::RunOutcome::Failed {
+                    reason: "Organisation could not be queued".into(),
+                }
+            },
+            None,
+        );
+        return match result {
+            Ok(response) | Err(response) => response,
+        };
+    }
     let actor = crate::request_actor(&state);
     match tokio::task::spawn_blocking(move || {
         let (store, core) = source(&state, &id)?;
@@ -235,6 +347,12 @@ fn apply(
     trace: &vak_session::trace::TraceKey,
 ) -> Result<Option<TopicId>, TopicError> {
     match action {
+        Action::RenameTurn { turn_id, title } => store.rename_turn(&turn_id, &title, trace)?,
+        Action::Organise { .. } => {
+            return Err(TopicError::Invalid(
+                "organisation must be queued asynchronously".into(),
+            ));
+        }
         Action::Create { title, pinned } => return store.create(&title, pinned, trace).map(Some),
         Action::Rename { topic_id, title } => {
             store.rename(&TopicId::parse(&topic_id)?, &title, trace)?
@@ -456,6 +574,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn owner_can_queue_backfill_on_the_attached_idle_ledger() {
+        let (_dir, state, app, owner) = setup();
+        let (id, turn) = seed_session(&state);
+        let mut log = state.core.open_session(&id).await.unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(
+                "The supplied notes are reviewed.",
+            )]),
+            meta: None,
+        })
+        .unwrap();
+        let index = log.current_turn_index();
+        let card = index.turn_by_id(&turn).unwrap().build_card(
+            "answered",
+            "The supplied notes are reviewed.".into(),
+            &|text| text.len() as u64,
+        );
+        log.append_turn_card(vak_session::types::TurnCardRecord {
+            turn_id: turn.clone(),
+            card,
+        })
+        .unwrap();
+        let handle = crate::register_handle(
+            &state,
+            id.clone(),
+            log,
+            state.core.cwd().clone(),
+            state.core.clone(),
+        );
+        let response = app
+            .oneshot(request(
+                &owner,
+                axum::http::Method::POST,
+                format!("/sessions/{id}/topics"),
+                Some(serde_json::json!({"revision":0,"action":"organise","turn_ids":[turn]})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            value(response).await["turn_names"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            handle
+                .session
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .organisation_requests()
+                .unwrap()
+                .len(),
+            1,
+            "backfill must append through the existing live handle"
+        );
+    }
+
+    #[tokio::test]
     async fn owner_can_correct_topic_membership_and_lifecycle_with_revision_checks() {
         let (_dir, state, app, owner) = setup();
         let (session, turn) = seed_session(&state);
@@ -658,6 +838,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(mutation.status(), StatusCode::FORBIDDEN);
+
+        for action in [
+            serde_json::json!({"action":"organise","turn_ids":["not-an-authority"],"retry":true}),
+            serde_json::json!({"action":"rename_turn","turn_id":"not-an-authority","title":"Guest change"}),
+        ] {
+            let mut body = action;
+            body["revision"] = serde_json::json!(1);
+            let refused = app
+                .clone()
+                .oneshot(request(
+                    guest,
+                    axum::http::Method::POST,
+                    format!("/sessions/{session}/topics"),
+                    Some(body),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        }
 
         let aggregate = app
             .clone()

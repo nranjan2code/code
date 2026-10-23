@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 import * as api from "../api";
-import { activeTopic, setActiveTopic, setNotice, setTopicsChanged } from "../store";
+import { activeTopic, setActiveTopic, setNotice, setTopicsChanged, topicsChanged, organisationOf, acceptOrganisation, refreshOrganisation, presentationOf } from "../store";
 import { openTopic } from "../App";
 
 export default function TopicsPanel(props: { sessionId: string }) {
@@ -9,6 +9,7 @@ export default function TopicsPanel(props: { sessionId: string }) {
   const [title, setTitle] = createSignal("");
   const [renameId, setRenameId] = createSignal<string | null>(null);
   const [renameTitle, setRenameTitle] = createSignal("");
+  const [renameTurn, setRenameTurn] = createSignal<string | null>(null);
   const [showArchived, setShowArchived] = createSignal(false);
   const [error, setError] = createSignal("");
 
@@ -21,6 +22,7 @@ export default function TopicsPanel(props: { sessionId: string }) {
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   createEffect(() => { props.sessionId; setState(null); void refresh(); });
+  createEffect(() => { topicsChanged(); const latest = organisationOf(props.sessionId); if (latest) setState(latest); });
   const change = async (action: api.TopicAction): Promise<(api.SessionTopics & { created_topic_id?: string }) | null> => {
     const revision = state()?.revision;
     if (revision == null) return null;
@@ -28,6 +30,8 @@ export default function TopicsPanel(props: { sessionId: string }) {
     try {
       const next = await api.updateSessionTopics(props.sessionId, action, revision);
       setState(next);
+      acceptOrganisation(props.sessionId, next);
+      void refreshOrganisation(props.sessionId);
       setTopicsChanged((count) => count + 1);
       const selected = activeTopic();
       if (selected?.sessionId === props.sessionId) {
@@ -67,11 +71,25 @@ export default function TopicsPanel(props: { sessionId: string }) {
 
   return <section class="topics-panel" aria-label="Topics">
     <div class="topics-panel-head">
-      <div><p>Organize answers from this conversation.</p></div>
-      <label class="topics-auto"><input type="checkbox" checked={state()?.automatic ?? true} disabled={!state() || busy()} onChange={(event) => void change({ action: "automatic", automatic: event.currentTarget.checked })} />Organize automatically</label>
+      <div><p>Browse topics and name requests from this conversation.</p></div>
+      <label class="topics-auto"><input type="checkbox" checked={state()?.automatic ?? true} disabled={!state() || busy()} onChange={(event) => void change({ action: "automatic", automatic: event.currentTarget.checked })} />Group related requests automatically</label>
     </div>
     <Show when={error()}><p class="topics-error" role="alert">{error()}</p></Show>
     <Show when={state()} fallback={<p class="topics-empty">Loading topics…</p>}>
+      <p class="topics-empty"><Show when={state()?.organisation_pending} fallback={state()?.organisation_failed ? "Some request names or topics need another try." : "Names and topics are updated after each answer."}>Naming requests and updating topics…</Show></p>
+      <button type="button" disabled={busy() || state()?.organisation_pending} onClick={() => {
+        const turns = [...new Set((presentationOf(props.sessionId)?.items ?? []).flatMap(item => item.role === "user" && item.turn_id ? [item.turn_id] : []))];
+        if (turns.length) void change({ action: "organise", turn_ids: turns, retry: !!state()?.organisation_failed });
+      }}>{state()?.organisation_failed ? "Try again" : "Name and group requests shown here"}</button>
+      <For each={(state()?.turn_names ?? []).filter(name => name.title)}>{(name) => <div class="topics-row">
+        <Show when={renameTurn() === name.turn_id} fallback={<><strong>{name.title}</strong><button type="button" disabled={busy()} onClick={() => { setRenameTurn(name.turn_id); setRenameTitle(name.title ?? ""); }}>Rename request</button></>}>
+          <form class="topics-rename" onSubmit={(event) => { event.preventDefault(); if (renameTitle().trim()) void change({action:"rename_turn", turn_id:name.turn_id, title:renameTitle().trim()}).then(result => { if (result) setRenameTurn(null); }); }}>
+            <input aria-label="Request name" value={renameTitle()} onInput={event => setRenameTitle(event.currentTarget.value)} />
+            <button type="submit" disabled={busy() || !renameTitle().trim()}>Save</button>
+            <button type="button" onClick={() => setRenameTurn(null)}>Cancel</button>
+          </form>
+        </Show>
+      </div>}</For>
       <form class="topics-create" onSubmit={create}>
         <input aria-label="New topic name" placeholder="Name a topic" value={title()} onInput={(event) => setTitle(event.currentTarget.value)} />
         <button type="submit" disabled={!title().trim() || busy()}>Add</button>

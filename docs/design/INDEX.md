@@ -20,7 +20,7 @@ Counts: 4 proposal, 18 in progress, 58 implemented, 2 reference, 12 superseded, 
 | [09-extensibility.md](09-extensibility.md) | 09 — Extensibility (skills · workers · hooks · MCP · custom commands) | implemented | in 2.0.0 |
 | [10-flows.md](10-flows.md) | 10 — Flows (static DAGs) | implemented | in 2.0.0 |
 | [100-workers.md](100-workers.md) | 100 — Workers: work handed over, kept running | proposal | implementation deferred by the maintainer on 2026-10-18 |
-| [101-topics.md](101-topics.md) | 101 — Topics: Agent-owned organisation for people and the Agent | implemented | as a conversation-scoped view with a runtime placement check |
+| [101-topics.md](101-topics.md) | 101 — Topics: Agent-owned organisation for people and the Agent | implemented | The conversation-scoped Topic view, main-model capability, human controls, CLI, Admin and catalog integration are built |
 | [102-channel-cards.md](102-channel-cards.md) | 102 — Native channel cards | implemented | shared form projection, native provider compilers and shared direct/proactive request plans are built and tested locally |
 | [103-kept-work-lifecycle.md](103-kept-work-lifecycle.md) | 103 — Kept work: create, change, run and use | proposal | design revision requested by the maintainer on 2026-10-22 |
 | [11-planner.md](11-planner.md) | 11 — Dynamic planner | implemented | in 2.0.0 |

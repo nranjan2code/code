@@ -792,9 +792,12 @@ export function openAgent(id: string, createNew = false): Promise<{session_id: s
 
 export type TopicPlacement = { turn_id: string; outcome: string; whole_turn?: boolean; topic_ids: string[]; source: "model" | "person" | string; actor?: string | null; trace?: string | null; updated_at?: string | null };
 export type Topic = { id: string; title: string; archived: boolean; pinned: boolean; created_by?: string | null; updated_by?: string | null; trace?: string | null };
-export type SessionTopics = { topics: Topic[]; placements: TopicPlacement[]; automatic: boolean; revision: number; last_mutation?: unknown };
+export type TurnName = { status?: "pending" | "failed" | "complete"; turn_id: string; title: string | null; source: "model" | "human"; response?: unknown };
+export type SessionTopics = { turn_names?: TurnName[]; organisation_pending?: boolean; organisation_failed?: boolean; topics: Topic[]; placements: TopicPlacement[]; automatic: boolean; revision: number; last_mutation?: unknown };
 export type AgentTopic = Topic & { session_id: string; placements: TopicPlacement[] };
 export type TopicAction =
+  | { action: "organise"; turn_ids: string[]; retry?: boolean }
+  | { action: "rename_turn"; turn_id: string; title: string }
   | { action: "create"; title: string }
   | { action: "rename"; topic_id: string; title: string }
   | { action: "pin"; topic_id: string; pinned: boolean }

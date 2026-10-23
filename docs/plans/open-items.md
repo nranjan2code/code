@@ -263,7 +263,25 @@ dependencies and exit evidence are in [the plan](kept-work-plan.md).
   GPU/context loss, reduced motion, background/resume and multiple refresh rates.
   Same-machine viewport emulation is not device certification.
 
+## Installed turn names and Topics (2026-10-23)
+
+- [x] Author useful names independently after plain or card-only answers using
+  the main model and the answer's recorded admitted context; keep stable turn
+  addresses, manual names, replay and contributor erasure.
+- [x] Restore automatic Topics after answers through existing Trigger/Run and
+  Topic Document services, without a completion gate or retired plans. Preserve
+  human placement, automatic-off and archived Topics; provide visible failure,
+  retry and explicit backfill of shown requests. Fix workspace-switch fetch
+  recovery in the sidebar. Real-model and browser qualification are in
+  [acceptance](../audits/turn-names-and-topics-acceptance-2026-10-23.md).
+- [ ] Release and installed-app qualification remain unrequested. The installed
+  8.30.0 behaviour is the earlier
+  [investigation](../audits/turn-names-and-topics-2026-10-23.md), not this dev build.
+
 ## Turn navigator and automatic Topics (2026-10-22)
+
+> **Historical record** — the completion check below was removed by the card
+> redesign; the installed follow-up is tracked above.
 
 - [x] Add wheel/trackpad, drag and keyboard rolling, accepted-plan previews,
   honest loaded counts and lazy page-edge navigation; fix Topic refresh loop.

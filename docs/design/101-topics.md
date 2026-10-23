@@ -1,12 +1,61 @@
 # 101 — Topics: Agent-owned organisation for people and the Agent
 
-Status: implemented as a conversation-scoped view with a runtime placement check. Sealed Topic records,
-main-model tools, human controls, Agent navigation, CLI, Admin and catalog
-integration and shared Doctor diagnostics are built. Focused checks, responsive component acceptance and a
-local OpenAI Luna run are recorded in
-`docs/audits/topics-acceptance-2026-10-21.md`. Background semantic enrichment,
-cross-conversation Topic merging, busy focused queuing and managed-run focus
-remain outside this cut.
+Status: implemented. The conversation-scoped Topic view, main-model capability,
+human controls, CLI, Admin and catalog integration are built. Post-answer turn
+naming and Topic placement are qualified in the development build; see
+`docs/audits/turn-names-and-topics-acceptance-2026-10-23.md`. The removed
+answer-completion placement gate stays removed. Cross-conversation Topic merging, busy focused queuing and
+managed-run focus remain outside this cut.
+
+## Current runtime boundary, 2026-10-23
+
+An answered top-level turn queues an independent names-and-Topics request to
+the same configured main model. It uses the existing Trigger/claim/run services,
+request admission, capacity estimate and spend gate. It does not delay the
+answer, force an answer tool call, change progress or revive retired plans.
+The main-model `topics` capability remains available for explicit organisation.
+
+The input names its canonical turn and the answer's recorded ContextSelection.
+Only that selection's historical exchanges and exact stored summary accompany
+the current request, answer and presentation records. Existing file/turn links
+and recall call addresses describe provenance; Topics and names never choose
+historical admission, certify support or grant authority. A follow-up such as
+“improve that” therefore retains the already-admitted subject without a second
+history-routing algorithm. Addressed backfill uses that earlier selection and
+never includes later dialogue. The normal branch, reset and set-aside visibility
+rule applies. Tool bodies are not copied into the metadata request.
+
+The exact auxiliary ChatRequest is a conversation object named by a new
+OrganisationRequested ledger entry before dispatch, and is reconstructable
+through SessionLog::organisation_requests. Contributor scopes seal the complete
+input in layers so erasing any contributor makes the input unreadable. It never
+enters a later answer's derive_messages projection. The same sealed Topic
+Document holds authored names, pending Trigger/request references and raw
+response/receipt references. Status is queried from existing Runs, not written
+onto Triggers. Catalog names inherit the source conversation's audience and
+trash boundary.
+
+A structured result atomically names the turn and places its outcomes into
+active addressed Topics, new model-named Topics or explicitly no Topic.
+Substantive work belongs in a Topic from its first request regardless of answer
+length; simple standalone answers may remain explicitly ungrouped. No
+keyword/domain classifier or fixed taxonomy is involved. Human names and
+placements win over late results; automatic-off disables model grouping while
+names can still arrive. Archived Topics cannot receive placements. A retry
+replaces the pending Trigger identity, fencing older results. Failed input,
+route changes and invalid model output leave the answer intact and expose an
+explicit retry; there is no bespoke queue or retry loop.
+
+The client polls metadata while pending and refreshes independently of the
+unchanged answer snapshot. A workspace change cancels the old fetch identity,
+clears its loading state and reloads an expanded Topic list. Recorded names take precedence over answer-heading
+fallbacks. Topics offers inline name corrections and a request to name/group
+currently shown turns, rather than silently charging to backfill all history.
+No release or local installation is implied by development acceptance.
+
+> **Historical record** — the placement-enforcement description and its
+> acceptance claims below describe the earlier implementation, superseded by
+> the 2026-10-22 card redesign. Storage, tools and human controls remain built.
 
 ## Product contract
 

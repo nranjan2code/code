@@ -496,6 +496,34 @@ fn topic_document(
         [&session_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
+    for name in snapshot
+        .turn_names
+        .iter()
+        .filter(|name| name.title.is_some())
+    {
+        let id = format!("turn-name:{}", name.turn_id);
+        upsert(
+            tx,
+            Upsert {
+                id: &id,
+                kind: "turn_name",
+                space: space.clone(),
+                agent: Some(agent_id(agent)),
+                agent_name: Some(agent.to_string()),
+                session: Some(session_id.clone()),
+                run: Some(name.trace.run.to_string()),
+                actor: name.trace.actor.as_ref().map(ToString::to_string),
+                cause: Some(vak_session::runs::cause_kind(&name.trace.cause).to_string()),
+                audience: audience.clone(),
+                title: name.title.clone(),
+                locator: Some(path.display().to_string()),
+                ..Default::default()
+            },
+        )?;
+        edge(tx, &id, "part_of", &session_id)?;
+        edge(tx, &id, "names", &turn_node(&name.turn_id))?;
+        set_text(tx, &id, name.title.as_deref().unwrap_or_default())?;
+    }
     for topic in &snapshot.topics {
         let id = format!("topic:{}", topic.id.as_str());
         // Reconcile the derived memberships from the latest sealed snapshot.
@@ -543,7 +571,8 @@ fn topic_document(
 /// Removes topics when the conversation is in the trash or erased.
 fn forget_topics(tx: &Transaction<'_>, session: &str) -> rusqlite::Result<()> {
     let session = session_node(session);
-    let mut statement = tx.prepare("SELECT id FROM nodes WHERE kind = 'topic' AND session = ?1")?;
+    let mut statement =
+        tx.prepare("SELECT id FROM nodes WHERE kind IN ('topic', 'turn_name') AND session = ?1")?;
     let ids = statement
         .query_map([&session], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;

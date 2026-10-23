@@ -335,6 +335,7 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::ContextSelection(_) => "context-selection",
             EntryPayload::WorkspaceContext(_) => "workspace-context",
             EntryPayload::BranchRestored { .. } => "branch-restored",
+            EntryPayload::OrganisationRequested { .. } => "organisation-requested",
         })
         .filter(|kind| *kind != "decision")
         .collect();

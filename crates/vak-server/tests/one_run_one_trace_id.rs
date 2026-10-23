@@ -138,13 +138,19 @@ async fn one_run_one_trace_id() {
     let mut lines = Vec::new();
     for _ in 0..100 {
         lines = vak_telemetry::lines(&buffer);
-        if !closes(&lines, "run").is_empty() {
+        if closes(&lines, "run")
+            .iter()
+            .any(|line| line["cause"] == "channel")
+        {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    let runs = closes(&lines, "run");
-    assert_eq!(runs.len(), 1, "one run: {runs:?}");
+    let runs: Vec<_> = closes(&lines, "run")
+        .into_iter()
+        .filter(|line| line["cause"] == "channel")
+        .collect();
+    assert_eq!(runs.len(), 1, "one source run: {runs:?}");
     let trace = runs[0]["trace_id"].as_str().unwrap().to_string();
 
     // What the run sends is an effect of it, and its delivery span names it.
@@ -191,7 +197,10 @@ async fn one_run_one_trace_id() {
         "execution",
         "delivery",
     ] {
-        let found = closes(&lines, name);
+        let found: Vec<_> = closes(&lines, name)
+            .into_iter()
+            .filter(|line| line["trace_id"] == trace.as_str())
+            .collect();
         assert!(!found.is_empty(), "no {name} span closed");
         for line in found {
             assert_eq!(line["trace_id"], trace.as_str(), "{name}: {line}");
@@ -209,11 +218,25 @@ async fn one_run_one_trace_id() {
         .map(|span| span["name"].as_str().unwrap())
         .collect();
     assert_eq!(path, ["run", "turn", "step", "tool_call"]);
-    // Every line under the run carries its trace id.
+    // Independent metadata owns a new root; it must never borrow the
+    // source turn's span tree while carrying a different trace id.
+    for run in closes(&lines, "run")
+        .into_iter()
+        .filter(|line| line["cause"] == "schedule")
+    {
+        assert_ne!(run["trace_id"], trace.as_str());
+        assert!(
+            run["spans"].as_array().is_none_or(|spans| spans.is_empty()),
+            "independent metadata inherited the answer span: {run}"
+        );
+    }
+    // Every line under the source run carries its trace id.
     for line in &lines {
-        let in_run = line["spans"]
-            .as_array()
-            .is_some_and(|spans| spans.first().is_some_and(|span| span["name"] == "run"));
+        let in_run = line["spans"].as_array().is_some_and(|spans| {
+            spans
+                .first()
+                .is_some_and(|span| span["name"] == "run" && span["trace_id"] == trace.as_str())
+        });
         if in_run {
             assert_eq!(line["trace_id"], trace.as_str(), "{line}");
         }

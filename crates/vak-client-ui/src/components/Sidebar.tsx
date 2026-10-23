@@ -20,16 +20,18 @@ function AgentTopicList(props: { agent: Pick<api.Agent, "id" | "name" | "revisio
   const [expanded, setExpanded] = createSignal(false);
   const [loadedOnce, setLoadedOnce] = createSignal(false);
   let requestVersion = 0;
-  createEffect(() => {
-    backend().cwd;
+  createEffect(on(() => backend().cwd, () => {
     requestVersion++;
+    setLoading(false); setError("");
     setTopics([]); setNext(null); setLoadedOnce(false);
-  });
+    if (expanded()) void load();
+  }));
   const load = async (before?: string) => {
     if (loading()) return;
     const cwd = backend().cwd;
     const agentId = props.agent.id;
     const request = ++requestVersion;
+    const epoch = topicsChanged();
     setLoading(true);
     try {
       const page = await api.listAgentTopics(agentId, before);
@@ -44,7 +46,7 @@ function AgentTopicList(props: { agent: Pick<api.Agent, "id" | "name" | "revisio
       setError("");
       setLoadedOnce(true);
     } catch (e) { if (cwd === backend().cwd && agentId === props.agent.id && request === requestVersion) setError(e instanceof Error ? e.message : String(e)); }
-    finally { if (request === requestVersion) setLoading(false); }
+    finally { if (request === requestVersion) { setLoading(false); if (expanded() && topicsChanged() !== epoch) void load(); } }
   };
   createEffect(on(topicsChanged, () => { if (expanded() && loadedOnce() && !loading()) void load(); }, { defer: true }));
   return <details class="sb-topics" onToggle={(event) => { const open = (event.currentTarget as HTMLDetailsElement).open; setExpanded(open); if (open && !loadedOnce() && !loading()) void load(); }}>

@@ -191,7 +191,15 @@ async fn every_cause_writes_run() {
     open_run.end_with(vak_session::runs::RunEnd::Settled(outcome.run_outcome()));
     drop(open_run);
 
-    let runs = user.runs().list().unwrap();
+    // The returned answer has settled its own run; independent metadata
+    // triggers may still be running, as tested by it/organisation.rs.
+    let runs: Vec<_> = user
+        .runs()
+        .list()
+        .unwrap()
+        .into_iter()
+        .filter(|run| run.trigger.is_none())
+        .collect();
     let mut seen: Vec<&str> = runs
         .iter()
         .map(|run| cause_name(&run.trace.as_ref().expect("an opened run has its key").cause))

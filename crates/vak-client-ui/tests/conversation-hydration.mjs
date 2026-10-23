@@ -17,6 +17,7 @@ let identity = false;
 let cards = [];
 let reads = [];
 let notes = [];
+let metadataReads = [];
 const snapshot = (label = "answer") => ({
   session_id: "s", running: false,
   transcript: { messages: [{ label }], entries: [{ entry_id: "user" }], usage: {}, set_aside: [] },
@@ -24,6 +25,7 @@ const snapshot = (label = "answer") => ({
 });
 const context = {
   conversationHydration: coordinator,
+  refreshOrganisation: async id => { metadataReads.push(id); },
   historyPages: {},
   readableSnapshot: () => new Promise((resolve, reject) => reads.push({ resolve, reject })),
   api: { sandboxExecutions: async () => ({ events: [] }) },
@@ -47,6 +49,13 @@ reads.shift().resolve(snapshot());
 await pending;
 assert.equal(identity, true, "identical settled read commits identity");
 assert.equal(cards[0].id, "answer", "the same commit includes the saved card");
+const refreshed = metadataReads.length;
+pending = context.hydrate("s", true);
+reads.shift().resolve({session_id:"s",running:false,not_modified:true});
+await pending;
+assert.equal(metadataReads.length, refreshed + 1, "names refresh even when the answer snapshot has not changed");
+assert.equal(cards[0].id, "answer", "metadata refresh does not replace settled output");
+
 
 const older = context.hydrate("s", true);
 const oldRead = reads.shift();

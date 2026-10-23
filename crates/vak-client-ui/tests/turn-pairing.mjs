@@ -31,3 +31,7 @@ assert.equal(turnDisplayLabel('user-1', {items: [user, {...titledCard,turn_id:'t
 assert.equal(turnDisplayLabel('user-1', {items: [{...user,fallback_text:'Long raw request'}, {...titledCard,provenance:{source:'derived'}}]}), '');
 
 assert.equal(latestWorkLabel({items: [user, titledCard, heading]}), 'Observed changes');
+
+assert.equal(turnDisplayLabel('user-1', {items: [user], turn_names: {'turn-1': 'Indian markets dashboard'}}), 'Indian markets dashboard');
+assert.equal(turnDisplayLabel('user-1', {items: [user, heading], turn_names: {'turn-1': 'A human name'}}), 'A human name');
+assert.equal(turnDisplayLabel('not-loaded', {items: [user], turn_names: {'turn-1': 'Wrong request'}}), '');

@@ -4280,6 +4280,15 @@ fn project_presentation(
         }
         Err(_) => crate::projection::snapshot_with_skills(session_id, session, &planner),
     };
+    if let Ok(store) = vak_session::work_threads::TopicStore::new(&core.scope(), session_id)
+        && let Ok(snapshot) = store.snapshot()
+    {
+        timeline.turn_names = snapshot
+            .turn_names
+            .into_iter()
+            .filter_map(|name| name.title.map(|title| (name.turn_id, title)))
+            .collect();
+    }
     if let Ok(catalog) = core.catalog()
         && let Err(error) = crate::projection::append_sandbox_artifacts_page(
             &mut timeline,

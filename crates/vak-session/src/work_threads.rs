@@ -15,6 +15,52 @@ use crate::{ids::PrincipalId, trace::TraceKey};
 
 const SCHEMA: u32 = 1;
 
+/// Exact auxiliary input, readable only while every contributing person's
+/// scope remains readable. Each layer uses the existing sealed-content format.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StoredOrganisationRequest {
+    request: serde_json::Value,
+    contributor_scopes: Vec<String>,
+}
+
+impl StoredOrganisationRequest {
+    pub fn seal(
+        request: &vak_llm::ChatRequest,
+        contributor_scopes: Vec<String>,
+    ) -> Result<Self, crate::types::SessionError> {
+        let mut value = serde_json::to_value(request)
+            .map_err(|e| crate::types::SessionError::Objects(e.to_string()))?;
+        for scope in &contributor_scopes {
+            let mut wrapper = serde_json::json!({"request":value});
+            crate::content::seal_fields_under(&mut wrapper, scope, &["request"])?;
+            value = wrapper;
+        }
+        Ok(Self {
+            request: value,
+            contributor_scopes,
+        })
+    }
+
+    pub fn restore(self) -> Result<vak_llm::ChatRequest, crate::types::SessionError> {
+        let mut value = self.request;
+        for _ in self.contributor_scopes.iter().rev() {
+            if crate::content::restore(&mut value)? == crate::content::Restored::Erased {
+                return Err(crate::types::SessionError::Erased(
+                    "request contributor".into(),
+                ));
+            }
+            value = value
+                .get_mut("request")
+                .map(serde_json::Value::take)
+                .ok_or_else(|| {
+                    crate::types::SessionError::Objects("invalid auxiliary request".into())
+                })?;
+        }
+        serde_json::from_value(value)
+            .map_err(|e| crate::types::SessionError::Objects(e.to_string()))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct TopicId(String);
@@ -80,7 +126,7 @@ pub struct Placement {
     /// Raw canonical UUIDv7, matching the turn addresses in the conversation
     /// ledger and history APIs.
     pub turn_id: String,
-    /// The exact outcome name from the accepted plan.
+    /// An authored name for this outcome.
     pub outcome: String,
     /// A user may assign an entire turn without naming one of its planned
     /// outcomes. Model placements on that turn cannot override this choice.
@@ -106,6 +152,10 @@ pub enum MutationKind {
     AutomaticEnabled,
     AutomaticDisabled,
     ModelPlacement,
+    OrganisationRequested,
+    OrganisationAttempted,
+    Organised,
+    TurnRenamed,
     HumanPlacement,
 }
 
@@ -121,12 +171,52 @@ pub struct MutationRecord {
     pub at: DateTime<Utc>,
 }
 
+/// Authored navigation metadata and the audit of its independent model step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnName {
+    pub turn_id: String,
+    pub title: Option<String>,
+    pub source: PlacementSource,
+    pub trigger: crate::ids::TriggerId,
+    pub request: crate::objects::ObjectRef,
+    #[serde(default)]
+    pub known_topics: Vec<TopicId>,
+    #[serde(default)]
+    pub response: Option<crate::objects::ObjectRef>,
+    pub trace: TraceKey,
+}
+
+/// Structured organisation output; topic ids reuse active Topics, while a
+/// missing id asks to create the model-authored title in this transaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Organisation {
+    pub title: String,
+    pub outcomes: Vec<OrganisedOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrganisedOutcome {
+    pub outcome: String,
+    pub topics: Vec<OrganisedTopic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrganisedTopic {
+    pub id: Option<TopicId>,
+    pub title: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TopicSnapshot {
     pub schema: u32,
     pub topics: Vec<Topic>,
     pub placements: Vec<Placement>,
+    #[serde(default)]
+    pub turn_names: Vec<TurnName>,
     pub automatic: bool,
     pub revision: u64,
     pub last_mutation: Option<MutationRecord>,
@@ -138,6 +228,7 @@ impl Default for TopicSnapshot {
             schema: SCHEMA,
             topics: Vec::new(),
             placements: Vec::new(),
+            turn_names: Vec::new(),
             automatic: true,
             revision: 0,
             last_mutation: None,
@@ -211,6 +302,235 @@ impl TopicStore {
             .map_err(|error| TopicError::Invalid(format!("cannot decode snapshot: {error}")))?;
         validate_snapshot(&snapshot, &self.session_id)?;
         Ok(snapshot)
+    }
+
+    /// Register an independent organisation request once. A pending request
+    /// survives restart through its Trigger; an explicit retry supplies a new
+    /// trigger and input. A human title is always retained.
+    pub fn request_organisation(
+        &self,
+        mut name: TurnName,
+        retry: bool,
+    ) -> Result<bool, TopicError> {
+        parse_uuid7(&name.turn_id, "turn id")?;
+        let trace = name.trace.clone();
+        self.mutate(
+            &trace,
+            MutationKind::OrganisationRequested,
+            Some(name.turn_id.clone()),
+            |snapshot, _| {
+                if let Some(existing) = snapshot
+                    .turn_names
+                    .iter_mut()
+                    .find(|row| row.turn_id == name.turn_id)
+                {
+                    if !retry {
+                        return Ok(None);
+                    }
+                    if existing.source == PlacementSource::Human {
+                        name.title = existing.title.clone();
+                        name.source = PlacementSource::Human;
+                    }
+                    *existing = name.clone();
+                } else {
+                    snapshot.turn_names.push(name.clone());
+                }
+                Ok(Some(()))
+            },
+        )
+        .map(|changed| changed.is_some())
+    }
+
+    pub fn rename_turn(&self, turn: &str, title: &str, trace: &TraceKey) -> Result<(), TopicError> {
+        let title = clean_title(title)?;
+        self.mutate(
+            trace,
+            MutationKind::TurnRenamed,
+            Some(turn.into()),
+            |snapshot, _| {
+                let row = snapshot
+                    .turn_names
+                    .iter_mut()
+                    .find(|row| row.turn_id == turn)
+                    .ok_or_else(|| TopicError::Invalid("turn name is unavailable".into()))?;
+                row.title = Some(title.clone());
+                row.source = PlacementSource::Human;
+                row.trace = trace.clone();
+                Ok(Some(()))
+            },
+        )
+        .map(|_| ())
+    }
+
+    /// Preserve the exact failed model response/receipt under the source key.
+    /// Status remains a query over Runs; this is audit evidence, not a queue.
+    pub fn note_organisation_attempt(
+        &self,
+        turn: &str,
+        trigger: crate::ids::TriggerId,
+        response: crate::objects::ObjectRef,
+        trace: &TraceKey,
+    ) -> Result<(), TopicError> {
+        self.mutate(
+            trace,
+            MutationKind::OrganisationAttempted,
+            Some(turn.into()),
+            |snapshot, _| {
+                let Some(row) = snapshot.turn_names.iter_mut().find(|row| {
+                    row.turn_id == turn && row.trigger == trigger && row.response.is_none()
+                }) else {
+                    return Ok(None);
+                };
+                row.response = Some(response.clone());
+                Ok(Some(()))
+            },
+        )
+        .map(|_| ())
+    }
+
+    /// Apply the title, new Topics and all placements in one sealed Document
+    /// version. Recheck human corrections, automatic-off, archived Topics and
+    /// the exact pending trigger inside CAS; a late run cannot replace a retry.
+    pub fn organise(
+        &self,
+        turn: &str,
+        trigger: crate::ids::TriggerId,
+        result: &Organisation,
+        response: crate::objects::ObjectRef,
+        trace: &TraceKey,
+    ) -> Result<bool, TopicError> {
+        let title = clean_title(&result.title)?;
+        for outcome in &result.outcomes {
+            clean_title(&outcome.outcome)?;
+            for topic in &outcome.topics {
+                clean_title(&topic.title)?;
+            }
+        }
+        // Stable across CAS retries, including references shared by outcomes.
+        let mut new_ids = std::collections::BTreeMap::new();
+        for topic in result
+            .outcomes
+            .iter()
+            .flat_map(|o| &o.topics)
+            .filter(|t| t.id.is_none())
+        {
+            new_ids
+                .entry(topic.title.trim().to_string())
+                .or_insert_with(TopicId::new);
+        }
+        self.mutate(
+            trace,
+            MutationKind::Organised,
+            Some(turn.into()),
+            |snapshot, actor| {
+                let Some(index) = snapshot.turn_names.iter().position(|row| {
+                    row.turn_id == turn && row.trigger == trigger && row.response.is_none()
+                }) else {
+                    return Ok(None);
+                };
+                if snapshot.automatic && result.outcomes.is_empty() {
+                    return Err(TopicError::Invalid(
+                        "automatic organisation requires an explicit outcome decision".into(),
+                    ));
+                }
+                let mut outcomes = std::collections::HashSet::new();
+                if result
+                    .outcomes
+                    .iter()
+                    .any(|outcome| !outcomes.insert(outcome.outcome.trim()))
+                {
+                    return Err(TopicError::Invalid("duplicate outcome decision".into()));
+                }
+                let human_turn = snapshot.placements.iter().any(|p| {
+                    p.turn_id == turn && p.source == PlacementSource::Human && p.whole_turn
+                });
+                if snapshot.automatic && !human_turn {
+                    // This result is a complete model decision for the turn.
+                    // Retries replace prior model outcomes while preserving
+                    // every human correction, including explicit ungrouping.
+                    snapshot
+                        .placements
+                        .retain(|p| p.turn_id != turn || p.source != PlacementSource::Model);
+                    for outcome in &result.outcomes {
+                        if snapshot.placements.iter().any(|p| {
+                            p.turn_id == turn
+                                && p.source == PlacementSource::Human
+                                && p.outcome == outcome.outcome.trim()
+                        }) {
+                            continue;
+                        }
+                        let mut ids = Vec::new();
+                        for choice in &outcome.topics {
+                            let id = if let Some(id) = &choice.id {
+                                if !snapshot.turn_names[index].known_topics.contains(id) {
+                                    return Err(TopicError::Invalid(
+                                        "topic was not in the recorded organisation input".into(),
+                                    ));
+                                }
+                                if find_topic(snapshot, id)?.archived {
+                                    return Err(TopicError::Invalid(
+                                        "archived topic cannot receive a placement".into(),
+                                    ));
+                                }
+                                id.clone()
+                            } else {
+                                // Concurrent proposals of the same new name share
+                                // one identity. Names already in the input are
+                                // selected by id, never matched by their words.
+                                let concurrent = snapshot.topics.iter().find(|topic| {
+                                    !topic.archived
+                                        && !snapshot.turn_names[index]
+                                            .known_topics
+                                            .contains(&topic.id)
+                                        && topic.title == choice.title.trim()
+                                });
+                                let id = concurrent
+                                    .map(|topic| topic.id.clone())
+                                    .or_else(|| new_ids.get(choice.title.trim()).cloned())
+                                    .ok_or_else(|| {
+                                        TopicError::Invalid("new topic has no id".into())
+                                    })?;
+                                if !snapshot.topics.iter().any(|topic| topic.id == id) {
+                                    snapshot.topics.push(Topic {
+                                        id: id.clone(),
+                                        title: choice.title.trim().into(),
+                                        archived: false,
+                                        pinned: false,
+                                        created_at: Utc::now(),
+                                        updated_at: Utc::now(),
+                                        created_by: *actor,
+                                        updated_by: *actor,
+                                        trace: trace.clone(),
+                                    });
+                                }
+                                id
+                            };
+                            if !ids.contains(&id) {
+                                ids.push(id);
+                            }
+                        }
+                        snapshot.placements.push(Placement {
+                            turn_id: turn.into(),
+                            outcome: outcome.outcome.trim().into(),
+                            whole_turn: false,
+                            topic_ids: ids,
+                            source: PlacementSource::Model,
+                            actor: *actor,
+                            trace: trace.clone(),
+                            updated_at: Utc::now(),
+                        });
+                    }
+                }
+                let row = &mut snapshot.turn_names[index];
+                if row.source != PlacementSource::Human {
+                    row.title = Some(title.clone());
+                    row.trace = trace.clone();
+                }
+                row.response = Some(response.clone());
+                Ok(Some(()))
+            },
+        )
+        .map(|changed| changed.is_some())
     }
 
     pub fn get(&self, id: &TopicId) -> Result<Topic, TopicError> {
@@ -720,6 +1040,21 @@ fn validate_snapshot(snapshot: &TopicSnapshot, session_id: &str) -> Result<(), T
     if snapshot.schema != SCHEMA {
         return Err(TopicError::Invalid("unsupported snapshot schema".into()));
     }
+    let mut names = std::collections::HashSet::new();
+    for row in &snapshot.turn_names {
+        parse_uuid7(&row.turn_id, "turn id")?;
+        if !names.insert(&row.turn_id)
+            || row
+                .title
+                .as_ref()
+                .is_some_and(|title| title.trim().is_empty())
+            || row.trace.session_id().as_deref() != Some(session_id)
+        {
+            return Err(TopicError::Invalid(
+                "invalid turn name provenance or duplicate turn".into(),
+            ));
+        }
+    }
     let mut topics = std::collections::HashSet::new();
     for topic in &snapshot.topics {
         topic.id.validate()?;
@@ -765,7 +1100,8 @@ fn validate_snapshot(snapshot: &TopicSnapshot, session_id: &str) -> Result<(), T
     if snapshot.revision == 0
         && (snapshot.last_mutation.is_some()
             || !snapshot.topics.is_empty()
-            || !snapshot.placements.is_empty())
+            || !snapshot.placements.is_empty()
+            || !snapshot.turn_names.is_empty())
     {
         return Err(TopicError::Invalid(
             "initial revision contains mutations".into(),
@@ -817,6 +1153,204 @@ mod tests {
             turn_id,
             trace,
         )
+    }
+
+    fn pending(store: &TopicStore, turn: &str, trace: &TraceKey) -> crate::ids::TriggerId {
+        let trigger = crate::ids::TriggerId::new();
+        assert!(
+            store
+                .request_organisation(
+                    TurnName {
+                        turn_id: turn.into(),
+                        title: None,
+                        source: PlacementSource::Model,
+                        trigger,
+                        known_topics: store
+                            .snapshot()
+                            .unwrap()
+                            .topics
+                            .into_iter()
+                            .map(|topic| topic.id)
+                            .collect(),
+                        request: crate::objects::ObjectRef {
+                            id: "input".into(),
+                            len: 5
+                        },
+                        response: None,
+                        trace: trace.clone()
+                    },
+                    false
+                )
+                .unwrap()
+        );
+        trigger
+    }
+
+    fn response() -> crate::objects::ObjectRef {
+        crate::objects::ObjectRef {
+            id: "response".into(),
+            len: 8,
+        }
+    }
+
+    #[test]
+    fn auxiliary_input_roundtrips_through_every_contributor_scope() {
+        let (_store, _turn, trace) = setup();
+        let session = trace.session_id().unwrap();
+        let scopes = [
+            crate::ids::PrincipalId::new(),
+            crate::ids::PrincipalId::new(),
+        ]
+        .iter()
+        .map(|author| crate::objects::contributor_scope(&session, &author.to_string()))
+        .collect();
+        let mut request = vak_llm::ChatRequest::new("fixture");
+        request
+            .messages
+            .push(vak_llm::Message::user_text("Private supplied context"));
+        let stored = StoredOrganisationRequest::seal(&request, scopes).unwrap();
+        let encoded = serde_json::to_string(&stored).unwrap();
+        assert!(!encoded.contains("Private supplied context"));
+        let decoded: StoredOrganisationRequest = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            serde_json::to_value(decoded.restore().unwrap()).unwrap(),
+            serde_json::to_value(request).unwrap()
+        );
+    }
+
+    #[test]
+    fn organisation_names_plain_answers_and_creates_shared_topics_atomically() {
+        let (store, turn, trace) = setup();
+        store
+            .assign_model(&turn, "Earlier draft grouping", vec![], &trace)
+            .unwrap();
+        let trigger = pending(&store, &turn, &trace);
+        let result = Organisation {
+            title: "A useful work name".into(),
+            outcomes: vec![
+                OrganisedOutcome {
+                    outcome: "Research".into(),
+                    topics: vec![OrganisedTopic {
+                        id: None,
+                        title: "Ongoing work".into(),
+                    }],
+                },
+                OrganisedOutcome {
+                    outcome: "Write the brief".into(),
+                    topics: vec![OrganisedTopic {
+                        id: None,
+                        title: "Ongoing work".into(),
+                    }],
+                },
+            ],
+        };
+        let before = store.snapshot().unwrap().revision;
+        assert!(
+            store
+                .organise(&turn, trigger, &result, response(), &trace)
+                .unwrap()
+        );
+        let after = store.snapshot().unwrap();
+        assert_eq!(after.revision, before + 1);
+        assert_eq!(
+            after.turn_names[0].title.as_deref(),
+            Some("A useful work name")
+        );
+        assert_eq!(after.topics.len(), 1);
+        assert_eq!(after.placements.len(), 2);
+        assert!(
+            after
+                .placements
+                .iter()
+                .all(|p| p.topic_ids == vec![after.topics[0].id.clone()])
+        );
+        assert!(
+            !store
+                .organise(&turn, trigger, &result, response(), &trace)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn late_organisation_preserves_human_names_placement_and_automatic_off() {
+        for automatic in [false, true] {
+            let (store, turn, trace) = setup();
+            let trigger = pending(&store, &turn, &trace);
+            store.rename_turn(&turn, "My chosen name", &trace).unwrap();
+            if automatic {
+                store.assign_turn_human(&turn, vec![], &trace).unwrap();
+            } else {
+                store.set_automatic(false, &trace).unwrap();
+            }
+            let result = Organisation {
+                title: "Model name".into(),
+                outcomes: vec![OrganisedOutcome {
+                    outcome: "A result".into(),
+                    topics: vec![OrganisedTopic {
+                        id: None,
+                        title: "Must not exist".into(),
+                    }],
+                }],
+            };
+            assert!(
+                store
+                    .organise(&turn, trigger, &result, response(), &trace)
+                    .unwrap()
+            );
+            let state = store.snapshot().unwrap();
+            assert_eq!(state.turn_names[0].title.as_deref(), Some("My chosen name"));
+            assert!(state.topics.is_empty());
+            assert!(
+                state
+                    .placements
+                    .iter()
+                    .all(|p| p.source == PlacementSource::Human)
+            );
+        }
+    }
+
+    #[test]
+    fn archived_or_missing_topic_rejects_the_whole_result_and_retry_fences_old_results() {
+        let (store, turn, trace) = setup();
+        let topic = store.create("Past work", false, &trace).unwrap();
+        let trigger = pending(&store, &turn, &trace);
+        store.archive(&topic, &trace).unwrap();
+        let result = Organisation {
+            title: "Must not partly save".into(),
+            outcomes: vec![OrganisedOutcome {
+                outcome: "A result".into(),
+                topics: vec![OrganisedTopic {
+                    id: Some(topic),
+                    title: "Past work".into(),
+                }],
+            }],
+        };
+        let before = store.snapshot().unwrap();
+        assert!(
+            store
+                .organise(&turn, trigger, &result, response(), &trace)
+                .is_err()
+        );
+        assert_eq!(store.snapshot().unwrap(), before);
+        let retry = crate::ids::TriggerId::new();
+        let mut next = before.turn_names[0].clone();
+        next.trigger = retry;
+        assert!(store.request_organisation(next, true).unwrap());
+        assert!(
+            !store
+                .organise(
+                    &turn,
+                    trigger,
+                    &Organisation {
+                        title: "Old result".into(),
+                        outcomes: vec![]
+                    },
+                    response(),
+                    &trace
+                )
+                .unwrap()
+        );
+        assert_eq!(store.snapshot().unwrap().turn_names[0].trigger, retry);
     }
 
     #[test]
