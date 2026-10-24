@@ -1,10 +1,10 @@
 {
  "meta": {
-  "version": "8.31.2",
-  "revision": "43e95dc56",
+  "version": "8.32.0",
+  "revision": "76591163d",
   "first_date": "2026-08-21",
-  "last_date": "2026-10-23",
-  "prose_reviewed": "8.31.2 · 2026-10-24"
+  "last_date": "2026-10-24",
+  "prose_reviewed": "8.32.0 · 2026-10-24"
  },
  "summary": {
   "text": "Vakyartha (`vak`) is a local-first agent harness for one owner: agents that work on code, documents, research and everyday tasks, reached from a desktop app, the browser, a terminal and chat apps, with every model input and tool result kept in an append-only record. Its thesis is strong safety, transparent operation, extensible integrations and a simple core.\n\nThe lower layers (storage, permission, the pure deciders, the document engines) are well shaped and change rarely. Above them, three large crates (`vak-core`, `vak-agent`, `vak-server`) hold the turn and most features, and that is where most of the work and most of the risk sit.",
@@ -19,8 +19,8 @@
    "worker_tasks": 14,
    "state_paths": 81,
    "lock_crates": 764,
-   "total_commits": 2500,
-   "days": 64,
+   "total_commits": 2502,
+   "days": 65,
    "peak_day": 174,
    "design_docs": 100,
    "agents_words": 20551,
@@ -118,7 +118,7 @@
   ],
   "advisories": {
    "vulnerabilities": [],
-   "warnings": 10,
+   "warnings": 11,
    "ignored": "see .cargo/audit.toml"
   },
   "stale_names": {
@@ -472,36 +472,36 @@
    }
   ],
   "open_total": 128,
-  "measures_revision": "95f3da2bc"
+  "measures_revision": "76591163d"
  },
  "activity": {
-  "since": "2026-10-09",
-  "until": "2026-10-23",
-  "commits": 519,
+  "since": "2026-10-10",
+  "until": "2026-10-24",
+  "commits": 488,
   "areas": [
    [
     "docs",
-    411
+    382
    ],
    [
     "(root)",
-    301
+    286
    ],
    [
     "vak-core",
-    193
+    178
    ],
    [
     "vak-server",
-    152
-   ],
-   [
-    "vak-client-ui",
-    115
+    139
    ],
    [
     "vak-agent",
-    109
+    108
+   ],
+   [
+    "vak-client-ui",
+    107
    ],
    [
     "vak-tools",
@@ -509,23 +509,23 @@
    ],
    [
     "vak-session",
-    72
-   ],
-   [
-    "vak",
-    57
+    63
    ],
    [
     "vak-control",
+    47
+   ],
+   [
+    "vak",
     46
    ],
    [
-    "vak-admin-ui",
-    45
+    "vak-config",
+    37
    ],
    [
-    "vak-config",
-    42
+    "blueprint",
+    34
    ]
   ],
   "by_subsystem": [
@@ -535,24 +535,24 @@
     102
    ],
    [
-    "client",
-    "Workspace client",
-    97
-   ],
-   [
     "turn",
     "Turn admission",
-    97
-   ],
-   [
-    "server",
-    "HTTP service",
     94
    ],
    [
     "loop",
     "Agent loop",
-    93
+    92
+   ],
+   [
+    "client",
+    "Workspace client",
+    89
+   ],
+   [
+    "server",
+    "HTTP service",
+    84
    ],
    [
     "tools",
@@ -562,42 +562,32 @@
    [
     "ledger",
     "Ledgers and records",
-    64
+    57
    ],
    [
     "control",
     "Control plane and judges",
-    53
+    54
    ],
    [
     "engineering",
     "Build, gate and release",
-    53
-   ],
-   [
-    "admin",
-    "Admin console",
-    43
+    51
    ],
    [
     "config",
     "Configuration and secrets",
-    42
+    36
    ],
    [
     "library",
     "Library and file state",
-    35
+    34
    ],
    [
-    "cli",
-    "Command line",
-    32
-   ],
-   [
-    "state",
-    "State registry and baseline",
-    32
+    "admin",
+    "Admin console",
+    31
    ],
    [
     "workers",
@@ -612,22 +602,32 @@
    [
     "intent",
     "Intent kernel",
-    27
+    26
    ],
    [
-    "automations",
-    "Automations and triggers",
-    26
+    "cli",
+    "Command line",
+    24
    ],
    [
     "capabilities",
     "Capability registry",
-    25
+    24
+   ],
+   [
+    "automations",
+    "Automations and triggers",
+    23
    ],
    [
     "catalog",
     "Catalog and search",
-    25
+    22
+   ],
+   [
+    "state",
+    "State registry and baseline",
+    22
    ],
    [
     "canvas",
@@ -635,19 +635,9 @@
     22
    ],
    [
-    "lifecycle",
-    "Lifecycle and erasure",
-    21
-   ],
-   [
     "abilities",
     "Self-evolving abilities",
     20
-   ],
-   [
-    "llm",
-    "Model providers and routing",
-    18
    ],
    [
     "memory",
@@ -655,13 +645,8 @@
     18
    ],
    [
-    "gateway",
-    "Gateway and channels",
-    18
-   ],
-   [
-    "agents",
-    "Agents",
+    "llm",
+    "Model providers and routing",
     17
    ],
    [
@@ -670,29 +655,34 @@
     17
    ],
    [
-    "sandbox",
-    "Sandbox and execution",
-    16
-   ],
-   [
-    "runs",
-    "Runs, effects and cursors",
-    16
-   ],
-   [
     "office",
     "Office and PDF documents",
     16
    ],
    [
-    "mail",
-    "Mail and calendar",
+    "gateway",
+    "Gateway and channels",
     16
    ],
    [
     "context",
     "Context engine",
     15
+   ],
+   [
+    "agents",
+    "Agents",
+    15
+   ],
+   [
+    "sandbox",
+    "Sandbox and execution",
+    14
+   ],
+   [
+    "prompt",
+    "Prompt layers",
+    13
    ],
    [
     "recall",
@@ -705,14 +695,14 @@
     13
    ],
    [
-    "storage",
-    "Storage substrate",
+    "runs",
+    "Runs, effects and cursors",
     13
    ],
    [
-    "prompt",
-    "Prompt layers",
-    12
+    "mail",
+    "Mail and calendar",
+    13
    ],
    [
     "inbox",
@@ -740,8 +730,18 @@
     9
    ],
    [
+    "lifecycle",
+    "Lifecycle and erasure",
+    8
+   ],
+   [
     "commitments",
     "Commitments",
+    7
+   ],
+   [
+    "storage",
+    "Storage substrate",
     7
    ],
    [
@@ -750,29 +750,19 @@
     7
    ],
    [
-    "backup",
-    "Backup and restore",
-    6
-   ],
-   [
-    "sync",
-    "Sync",
+    "doctor",
+    "Doctor and health",
     5
    ],
    [
     "intake",
     "Intake and feeds",
-    5
+    4
    ],
    [
     "operations",
     "Operations",
-    5
-   ],
-   [
-    "doctor",
-    "Doctor and health",
-    5
+    4
    ],
    [
     "onboarding",
@@ -782,11 +772,6 @@
    [
     "goal",
     "Goals and managed work",
-    3
-   ],
-   [
-    "install",
-    "Install and update",
     3
    ],
    [
@@ -815,6 +800,11 @@
     2
    ],
    [
+    "backup",
+    "Backup and restore",
+    2
+   ],
+   [
     "checkpoints",
     "Checkpoints and worktrees",
     2
@@ -830,8 +820,18 @@
     2
    ],
    [
+    "install",
+    "Install and update",
+    2
+   ],
+   [
     "site",
     "Public site and brand",
+    1
+   ],
+   [
+    "sync",
+    "Sync",
     1
    ],
    [
@@ -841,6 +841,34 @@
    ]
   ],
   "recent": [
+   {
+    "hash": "76591163d",
+    "date": "2026-10-24",
+    "subject": "Release 8.32.0: one typed answer path",
+    "areas": [
+     "(root)",
+     "blueprint"
+    ]
+   },
+   {
+    "hash": "e4ee1a17c",
+    "date": "2026-10-24",
+    "subject": "Unify typed live and saved answers and remove retired protocols",
+    "areas": [
+     "(root)",
+     "blueprint",
+     "docs",
+     "vak",
+     "vak-agent",
+     "vak-client-ui",
+     "vak-control",
+     "vak-core",
+     "vak-delivery",
+     "vak-intent",
+     "vak-server",
+     "vak-session"
+    ]
+   },
    {
     "hash": "43e95dc56",
     "date": "2026-10-23",
@@ -972,36 +1000,9 @@
     "areas": [
      "(root)"
     ]
-   },
-   {
-    "hash": "58ae587c4",
-    "date": "2026-10-23",
-    "subject": "Bump workspace to 8.30.0",
-    "areas": [
-     "(root)"
-    ]
-   },
-   {
-    "hash": "397f9eb85",
-    "date": "2026-10-23",
-    "subject": "Fix side-chat isolation and composer command handling",
-    "areas": [
-     "(root)",
-     "docs",
-     "vak-agent",
-     "vak-client-ui",
-     "vak-core",
-     "vak-server",
-     "vak-session"
-    ]
    }
   ],
-  "unreleased": [
-   "Render live and saved answer items through the same typed timeline, preserving prose/card order and actual request identity.",
-   "A card acceptance receipt now states that the card is answer content and that completion needs no repeated prose.",
-   "Keep new live steps and discarded drafts out of earlier saved answers;",
-   "Offer the existing summary, details, steps, list, table, comparison and callout forms alongside the interactive forms."
-  ],
+  "unreleased": [],
   "in_progress": [
    {
     "path": "docs/design/104-rich-response-contract.md",
@@ -1680,9 +1681,9 @@
     "crates/vak-client-ui/src/wordDiff.ts",
     "crates/vak-client-ui/src/workProgress.ts"
    ],
-   "commits": 524,
+   "commits": 525,
    "fixes": 75,
-   "recent": 97,
+   "recent": 89,
    "fix_density": 4.0,
    "out": [
     {
@@ -3108,7 +3109,7 @@
    ],
    "commits": 282,
    "fixes": 48,
-   "recent": 43,
+   "recent": 31,
    "fix_density": 2.1,
    "out": [
     {
@@ -4058,9 +4059,9 @@
     "crates/vak/src/main.rs",
     "crates/vak/src/question_prompt.rs"
    ],
-   "commits": 135,
+   "commits": 136,
    "fixes": 10,
-   "recent": 32,
+   "recent": 24,
    "fix_density": 1.9,
    "out": [
     {
@@ -4524,9 +4525,9 @@
     "crates/vak-core/src/run_services.rs",
     "crates/vak-core/src/workspaces.rs"
    ],
-   "commits": 395,
+   "commits": 396,
    "fixes": 61,
-   "recent": 97,
+   "recent": 94,
    "fix_density": 4.2,
    "out": [
     {
@@ -5345,9 +5346,9 @@
     "crates/vak-agent/src/stop_policy.rs",
     "crates/vak-agent/src/workspace.rs"
    ],
-   "commits": 310,
+   "commits": 311,
    "fixes": 57,
-   "recent": 93,
+   "recent": 92,
    "fix_density": 4.5,
    "out": [
     {
@@ -6360,9 +6361,9 @@
     "crates/vak-core/src/prompts.rs",
     "crates/vak/src/prompts.rs"
    ],
-   "commits": 36,
+   "commits": 37,
    "fixes": 3,
-   "recent": 12,
+   "recent": 13,
    "fix_density": 1.7,
    "out": [
     {
@@ -6559,9 +6560,9 @@
     "crates/vak-intent/src/strand.rs",
     "crates/vak/src/intent.rs"
    ],
-   "commits": 99,
+   "commits": 100,
    "fixes": 20,
-   "recent": 27,
+   "recent": 26,
    "fix_density": 1.8,
    "out": [
     {
@@ -6902,9 +6903,9 @@
     "crates/vak-judge/src/outcome.rs",
     "crates/vak-tools/src/progress.rs"
    ],
-   "commits": 53,
+   "commits": 54,
    "fixes": 6,
-   "recent": 53,
+   "recent": 54,
    "fix_density": 1.8,
    "out": [
     {
@@ -7374,7 +7375,7 @@
    ],
    "commits": 103,
    "fixes": 12,
-   "recent": 18,
+   "recent": 17,
    "fix_density": 0.8,
    "out": [
     {
@@ -8415,7 +8416,7 @@
    ],
    "commits": 79,
    "fixes": 17,
-   "recent": 25,
+   "recent": 24,
    "fix_density": 3.9,
    "out": [
     {
@@ -10156,7 +10157,7 @@
    ],
    "commits": 133,
    "fixes": 19,
-   "recent": 16,
+   "recent": 14,
    "fix_density": 2.8,
    "out": [
     {
@@ -10977,9 +10978,9 @@
     "crates/vak-session/src/verify.rs",
     "crates/vak-session/src/work.rs"
    ],
-   "commits": 206,
+   "commits": 207,
    "fixes": 19,
-   "recent": 64,
+   "recent": 57,
    "fix_density": 1.4,
    "out": [
     {
@@ -11730,7 +11731,7 @@
    ],
    "commits": 29,
    "fixes": 0,
-   "recent": 13,
+   "recent": 7,
    "fix_density": 0.0,
    "out": [
     {
@@ -11907,7 +11908,7 @@
    ],
    "commits": 27,
    "fixes": 1,
-   "recent": 16,
+   "recent": 13,
    "fix_density": 0.2,
    "out": [
     {
@@ -12303,7 +12304,7 @@
    ],
    "commits": 44,
    "fixes": 2,
-   "recent": 25,
+   "recent": 22,
    "fix_density": 0.3,
    "out": [
     {
@@ -12680,7 +12681,7 @@
    ],
    "commits": 81,
    "fixes": 6,
-   "recent": 32,
+   "recent": 22,
    "fix_density": 1.6,
    "out": [
     {
@@ -12981,7 +12982,7 @@
    ],
    "commits": 38,
    "fixes": 1,
-   "recent": 21,
+   "recent": 8,
    "fix_density": 0.2,
    "out": [
     {
@@ -13426,7 +13427,7 @@
    ],
    "commits": 21,
    "fixes": 2,
-   "recent": 6,
+   "recent": 2,
    "fix_density": 1.7,
    "out": [
     {
@@ -13594,7 +13595,7 @@
    ],
    "commits": 5,
    "fixes": 1,
-   "recent": 5,
+   "recent": 1,
    "fix_density": 0.9,
    "out": [
     {
@@ -13958,7 +13959,7 @@
    ],
    "commits": 210,
    "fixes": 31,
-   "recent": 42,
+   "recent": 36,
    "fix_density": 3.1,
    "out": [
     {
@@ -15027,7 +15028,7 @@
     "crates/vak-server/src/projection.rs",
     "crates/vak-session/src/card_actions.rs"
    ],
-   "commits": 319,
+   "commits": 320,
    "fixes": 54,
    "recent": 102,
    "fix_density": 3.0,
@@ -15478,7 +15479,7 @@
     "crates/vak-delivery/src/templates.rs",
     "crates/vak-server/src/delivery.rs"
    ],
-   "commits": 137,
+   "commits": 138,
    "fixes": 25,
    "recent": 28,
    "fix_density": 2.0,
@@ -16131,7 +16132,7 @@
    ],
    "commits": 55,
    "fixes": 4,
-   "recent": 35,
+   "recent": 34,
    "fix_density": 0.5,
    "out": [
     {
@@ -16903,7 +16904,7 @@
    ],
    "commits": 165,
    "fixes": 13,
-   "recent": 16,
+   "recent": 13,
    "fix_density": 0.5,
    "out": [
     {
@@ -17184,7 +17185,7 @@
    ],
    "commits": 10,
    "fixes": 0,
-   "recent": 5,
+   "recent": 4,
    "fix_density": 0.0,
    "out": [
     {
@@ -18072,7 +18073,7 @@
    ],
    "commits": 35,
    "fixes": 1,
-   "recent": 26,
+   "recent": 23,
    "fix_density": 0.2,
    "out": [
     {
@@ -18843,7 +18844,7 @@
    ],
    "commits": 86,
    "fixes": 16,
-   "recent": 17,
+   "recent": 15,
    "fix_density": 2.3,
    "out": [
     {
@@ -19465,9 +19466,9 @@
     "crates/vak-server/src/web.rs",
     "crates/vak-session/src/turn_marks.rs"
    ],
-   "commits": 563,
+   "commits": 564,
    "fixes": 86,
-   "recent": 94,
+   "recent": 84,
    "fix_density": 2.6,
    "out": [
     {
@@ -20307,9 +20308,9 @@
     "crates/vak-server/src/surfaces/slack.rs",
     "crates/vak-server/src/surfaces/telegram.rs"
    ],
-   "commits": 141,
+   "commits": 142,
    "fixes": 20,
-   "recent": 18,
+   "recent": 16,
    "fix_density": 2.2,
    "out": [
     {
@@ -20787,7 +20788,7 @@
    ],
    "commits": 76,
    "fixes": 18,
-   "recent": 5,
+   "recent": 4,
    "fix_density": 4.5,
    "out": [
     {
@@ -21838,7 +21839,7 @@
    ],
    "commits": 60,
    "fixes": 16,
-   "recent": 3,
+   "recent": 2,
    "fix_density": 4.7,
    "out": [
     {
@@ -22239,9 +22240,9 @@
     "scripts/verify-macos-release.sh",
     "scripts/version.sh"
    ],
-   "commits": 140,
+   "commits": 142,
    "fixes": 22,
-   "recent": 53,
+   "recent": 51,
    "fix_density": null,
    "out": [],
    "in": [],
@@ -31207,6 +31208,34 @@
  ],
  "replay": [
   {
+   "hash": "76591163d",
+   "date": "2026-10-24",
+   "subject": "Release 8.32.0: one typed answer path",
+   "subsystems": [
+    "engineering"
+   ]
+  },
+  {
+   "hash": "e4ee1a17c",
+   "date": "2026-10-24",
+   "subject": "Unify typed live and saved answers and remove retired protocols",
+   "subsystems": [
+    "cards",
+    "cli",
+    "client",
+    "control",
+    "delivery",
+    "engineering",
+    "gateway",
+    "intent",
+    "ledger",
+    "loop",
+    "prompt",
+    "server",
+    "turn"
+   ]
+  },
+  {
    "hash": "43e95dc56",
    "date": "2026-10-23",
    "subject": "Record 8.31.2 release and installed source-link verification",
@@ -35751,361 +35780,6 @@
     "runs",
     "server"
    ]
-  },
-  {
-   "hash": "332be8b39",
-   "date": "2026-10-09",
-   "subject": "Handover: what the 2026-10-09 checks closed and what needs the maintainer",
-   "subsystems": []
-  },
-  {
-   "hash": "57f2f6436",
-   "date": "2026-10-09",
-   "subject": "vak sessions lists ledgers again; one overlay width; lab large home and Mac checks pass",
-   "subsystems": [
-    "cli",
-    "client",
-    "engineering",
-    "llm"
-   ]
-  },
-  {
-   "hash": "0beb48193",
-   "date": "2026-10-09",
-   "subject": "Sync lab: a hung docker exec is a failed probe; the Mac with a Linux machine (mac.sh)",
-   "subsystems": [
-    "engineering"
-   ]
-  },
-  {
-   "hash": "33b6cdfd2",
-   "date": "2026-10-09",
-   "subject": "An idle holder stops pushing every tick; admin prompts say their own undo",
-   "subsystems": [
-    "admin",
-    "ledger",
-    "storage"
-   ]
-  },
-  {
-   "hash": "a24f2edc3",
-   "date": "2026-10-09",
-   "subject": "Handover: four product limits closed",
-   "subsystems": []
-  },
-  {
-   "hash": "c35897158",
-   "date": "2026-10-09",
-   "subject": "Sync lab: a large data home with pushes and pulls killed mid-copy (not yet run)",
-   "subsystems": [
-    "engineering"
-   ]
-  },
-  {
-   "hash": "11c1d563d",
-   "date": "2026-10-09",
-   "subject": "Close four product limits: restore marks, letting a sender back in, key retirement, self-restart",
-   "subsystems": [
-    "admin",
-    "backup",
-    "cli",
-    "client",
-    "config",
-    "gateway",
-    "ledger",
-    "lifecycle",
-    "server",
-    "state",
-    "storage"
-   ]
-  },
-  {
-   "hash": "2576dec14",
-   "date": "2026-10-09",
-   "subject": "Fixes from the browser checks of sync, keys, Agents and holds",
-   "subsystems": [
-    "agents",
-    "client",
-    "lifecycle",
-    "state",
-    "sync"
-   ]
-  },
-  {
-   "hash": "49d81123c",
-   "date": "2026-10-09",
-   "subject": "Catalog branch membership: one jump pointer per entry, not n log n rows",
-   "subsystems": [
-    "catalog"
-   ]
-  },
-  {
-   "hash": "e216d2f9b",
-   "date": "2026-10-09",
-   "subject": "Write-path growth remeasured on 7.0",
-   "subsystems": []
-  },
-  {
-   "hash": "57fe3f0f9",
-   "date": "2026-10-09",
-   "subject": "Agent workspaces travel with a backup and a push, within limits",
-   "subsystems": [
-    "backup",
-    "state",
-    "sync"
-   ]
-  },
-  {
-   "hash": "45247b3fd",
-   "date": "2026-10-09",
-   "subject": "File locks unlock explicitly on drop, not after a wait",
-   "subsystems": [
-    "mail",
-    "sandbox"
-   ]
-  },
-  {
-   "hash": "4169d30c6",
-   "date": "2026-10-09",
-   "subject": "Card tools out of view: name their arguments in the catalogue",
-   "subsystems": [
-    "capabilities",
-    "loop",
-    "turn"
-   ]
-  },
-  {
-   "hash": "7cc3e8470",
-   "date": "2026-10-09",
-   "subject": "Workspace acceptance waits out a lock a forked child still holds",
-   "subsystems": [
-    "sandbox"
-   ]
-  },
-  {
-   "hash": "53ed195cc",
-   "date": "2026-10-09",
-   "subject": "Stop guard: the reason is the whole message; the echo was not reproduced",
-   "subsystems": [
-    "cards",
-    "intent",
-    "loop"
-   ]
-  },
-  {
-   "hash": "9a5bdfa43",
-   "date": "2026-10-09",
-   "subject": "A routine's run history is its run records",
-   "subsystems": [
-    "automations",
-    "client",
-    "mail",
-    "runs",
-    "server"
-   ]
-  },
-  {
-   "hash": "8a28898dc",
-   "date": "2026-10-09",
-   "subject": "A deleted trigger's claim goes with it",
-   "subsystems": [
-    "automations",
-    "intake",
-    "ledger",
-    "lifecycle",
-    "runs",
-    "storage"
-   ]
-  },
-  {
-   "hash": "dc2d32fb7",
-   "date": "2026-10-09",
-   "subject": "Remove the intent's delivery cadence and urgency",
-   "subsystems": [
-    "admin",
-    "intent"
-   ]
-  },
-  {
-   "hash": "355ccfb66",
-   "date": "2026-10-09",
-   "subject": "Remove held deliveries: every delivery is prepared and sent at once",
-   "subsystems": [
-    "admin",
-    "automations",
-    "catalog",
-    "delivery",
-    "gateway",
-    "mail",
-    "operations",
-    "runs"
-   ]
-  },
-  {
-   "hash": "9ea33e5c1",
-   "date": "2026-10-09",
-   "subject": "Delete the data-architecture tracker; its open items move to plan §9",
-   "subsystems": []
-  },
-  {
-   "hash": "717feb914",
-   "date": "2026-10-09",
-   "subject": "Handover note for the next session: state, rules, open items, traps",
-   "subsystems": []
-  },
-  {
-   "hash": "aaf4d9b24",
-   "date": "2026-10-09",
-   "subject": "M9-c to M9-f: two machines take turns on the remote; the Docker lab and acceptance",
-   "subsystems": [
-    "admin",
-    "backup",
-    "cli",
-    "client",
-    "config",
-    "engineering",
-    "ledger",
-    "lifecycle",
-    "server",
-    "state",
-    "storage",
-    "sync",
-    "turn"
-   ]
-  },
-  {
-   "hash": "fadecaeab",
-   "date": "2026-10-09",
-   "subject": "M9-a, M9-b: the folder remote and the key file a second machine reads it with",
-   "subsystems": [
-    "backup",
-    "cli",
-    "config",
-    "ledger",
-    "lifecycle",
-    "state",
-    "storage",
-    "sync",
-    "turn"
-   ]
-  },
-  {
-   "hash": "b46b2560a",
-   "date": "2026-10-09",
-   "subject": "M9 design: a folder remote, two machines taking turns",
-   "subsystems": []
-  },
-  {
-   "hash": "063d074c3",
-   "date": "2026-10-09",
-   "subject": "M7b-h: the acceptance run, and the four defects it found",
-   "subsystems": [
-    "admin",
-    "ledger",
-    "lifecycle",
-    "server"
-   ]
-  },
-  {
-   "hash": "39950366e",
-   "date": "2026-10-09",
-   "subject": "M7b-g: key rotation re-protects every stored key; the Keys screen and Your data",
-   "subsystems": [
-    "admin",
-    "cli",
-    "client",
-    "config",
-    "ledger",
-    "lifecycle",
-    "server",
-    "state",
-    "storage",
-    "turn"
-   ]
-  },
-  {
-   "hash": "9be4c9af1",
-   "date": "2026-10-09",
-   "subject": "M7b-f: the owner erases everything Vakyartha stored, leaving one signed receipt",
-   "subsystems": [
-    "admin",
-    "cli",
-    "config",
-    "install",
-    "lifecycle",
-    "server",
-    "state"
-   ]
-  },
-  {
-   "hash": "0f422b9c7",
-   "date": "2026-10-09",
-   "subject": "M7b-e: the owner erases one person who wrote to a bot, across chats",
-   "subsystems": [
-    "admin",
-    "catalog",
-    "gateway",
-    "lifecycle",
-    "server"
-   ]
-  },
-  {
-   "hash": "07c87323c",
-   "date": "2026-10-09",
-   "subject": "M7b-d: the owner erases what is kept for a project, never its folder",
-   "subsystems": [
-    "admin",
-    "cli",
-    "lifecycle",
-    "server",
-    "state"
-   ]
-  },
-  {
-   "hash": "7fc1ed6ff",
-   "date": "2026-10-09",
-   "subject": "M7b-c: the owner erases everything an archived or revoked Agent holds",
-   "subsystems": [
-    "agents",
-    "cli",
-    "client",
-    "lifecycle",
-    "server",
-    "state"
-   ]
-  },
-  {
-   "hash": "83590e070",
-   "date": "2026-10-09",
-   "subject": "M7b-b: holds on files as well as conversations, listed in one place",
-   "subsystems": [
-    "admin",
-    "client",
-    "ledger",
-    "library",
-    "lifecycle",
-    "server"
-   ]
-  },
-  {
-   "hash": "e351ee370",
-   "date": "2026-10-09",
-   "subject": "M7b-a: the owner edits the install's retention rules",
-   "subsystems": [
-    "admin",
-    "cli",
-    "client",
-    "config",
-    "lifecycle",
-    "server",
-    "state"
-   ]
-  },
-  {
-   "hash": "4614d64bd",
-   "date": "2026-10-09",
-   "subject": "M7b design: governance trimmed to one owner",
-   "subsystems": []
   }
  ],
  "groups": [
@@ -36127,7 +35801,7 @@
    "src": 15059,
    "tests": 1528,
    "files": 32,
-   "commits": 217,
+   "commits": 218,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -36244,7 +35918,7 @@
    "src": 16334,
    "tests": 18763,
    "files": 12,
-   "commits": 368,
+   "commits": 369,
    "deps": [
     "vak-config",
     "vak-context",
@@ -36378,7 +36052,7 @@
    "src": 39594,
    "tests": 324,
    "files": 209,
-   "commits": 662,
+   "commits": 663,
    "deps": [],
    "used_by": [],
    "upward": [],
@@ -36552,7 +36226,7 @@
    "src": 1719,
    "tests": 0,
    "files": 3,
-   "commits": 46,
+   "commits": 47,
    "deps": [],
    "used_by": [
     "vak",
@@ -36589,7 +36263,7 @@
    "src": 63203,
    "tests": 10920,
    "files": 76,
-   "commits": 670,
+   "commits": 671,
    "deps": [
     "vak-agent",
     "vak-catalog",
@@ -36699,7 +36373,7 @@
    "src": 10746,
    "tests": 4376,
    "files": 22,
-   "commits": 117,
+   "commits": 118,
    "deps": [
     "vak-intent",
     "vak-presentation",
@@ -36942,7 +36616,7 @@
    "src": 9922,
    "tests": 3694,
    "files": 13,
-   "commits": 92,
+   "commits": 93,
    "deps": [],
    "used_by": [
     "vak",
@@ -37429,7 +37103,7 @@
    "src": 76993,
    "tests": 24962,
    "files": 54,
-   "commits": 861,
+   "commits": 862,
    "deps": [
     "vak-agent",
     "vak-bus",
@@ -37534,7 +37208,7 @@
    "src": 19073,
    "tests": 5149,
    "files": 27,
-   "commits": 222,
+   "commits": 223,
    "deps": [
     "vak-config",
     "vak-control",
@@ -37928,7 +37602,7 @@
   ],
   "complexity": [
    {
-    "score": 181,
+    "score": 175,
     "name": "run_message_inner",
     "file": "crates/vak-agent/src/lib.rs",
     "line": 1862
@@ -37952,16 +37626,16 @@
     "line": 3829
    },
    {
-    "score": 81,
-    "name": "snapshot_inner",
-    "file": "crates/vak-server/src/projection.rs",
-    "line": 736
-   },
-   {
     "score": 75,
     "name": "load_with_trust",
     "file": "crates/vak-config/src/lib.rs",
     "line": 3021
+   },
+   {
+    "score": 73,
+    "name": "snapshot_inner",
+    "file": "crates/vak-server/src/projection.rs",
+    "line": 718
    },
    {
     "score": 68,
@@ -37973,25 +37647,25 @@
     "score": 61,
     "name": "complete_with_reliability",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 5513
+    "line": 5422
    },
    {
     "score": 46,
     "name": "execute_one",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 8537
+    "line": 8446
    },
    {
     "score": 43,
     "name": "execute_batch_calls",
     "file": "crates/vak-agent/src/lib.rs",
-    "line": 7373
+    "line": 7282
    },
    {
     "score": 42,
     "name": "structured_markdown",
     "file": "crates/vak-delivery/src/skills.rs",
-    "line": 1103
+    "line": 993
    },
    {
     "score": 39,
@@ -38002,8 +37676,8 @@
   ]
  },
  "work": {
-  "docs_commits": 1434,
-  "hot": 662
+  "docs_commits": 1435,
+  "hot": 663
  },
  "findings": [
   {
@@ -38011,7 +37685,7 @@
    "tag": "Structure",
    "verdict": "Caused defects",
    "title": "A turn's decisions share mutable state inside two outlier functions",
-   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 181 (rank 1 of 4,561 library functions) and `Core::run_turn_recorded` at 124 (rank 3); the median is 3 and the 99th percentile 24. 160 commits changed the first (6% of all) and 218 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.4 and `vak-agent/src/lib.rs` at 9.0 per thousand lines, against a median of 4.0 over 419 files; file size alone does not predict the rate (ρ = -0.11).",
+   "evidence": "Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 175 (rank 1 of 4,555 library functions) and `Core::run_turn_recorded` at 124 (rank 3); the median is 3 and the 99th percentile 24. 162 commits changed the first (6% of all) and 218 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.4 and `vak-agent/src/lib.rs` at 9.0 per thousand lines, against a median of 4.0 over 419 files; file size alone does not predict the rate (ρ = -0.11).",
    "matters": "The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own. The 2026-10-22 answer investigation found another lossy decision input: plan receipts retained a deliverable name but discarded the actual form. That checker was corrected, then retired by the maintainer's later Markdown/runtime-composition decision the same day. The current contract does not use model-authored plans. Broader state consolidation remains open.",
    "fix": "Do that for the rest: the turn's state as one type, each decision a pure function of it, and the end-of-turn checks (among them goal mode's audit, the managed-work gate and the commitment hold, which judge durable work at different scopes on purpose) as one ordered list with tests of how they combine. Context planning and the model call can stay as they are.",
    "sources": "Complexity table; `git log -L`; commit 948ece43d; `evidence.py` `hotspots`; [answer design investigation](../docs/audits/answer-design-contract-2026-10-22.md)."
