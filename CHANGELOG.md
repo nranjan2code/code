@@ -1,4 +1,4 @@
-## Unreleased
+## 8.32.0 — 2026-10-24 — One typed answer path
 
 - Render live and saved answer items through the same typed timeline, preserving
   prose/card order and actual request identity. Remove transcript card rendering,
