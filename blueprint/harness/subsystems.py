@@ -237,7 +237,7 @@ SUBSYSTEMS = [
     ("cards", "Cards and presentation",
      "Card forms and tools, packs, the closed primitives, projection to clients",
      ["crates/vak-presentation/src/**", "crates/vak-core/src/presentation_tools.rs",
-      "crates/vak-core/src/presentation_store.rs", "crates/vak-agent/src/cards.rs", "crates/vak-agent/src/fences.rs",
+      "crates/vak-core/src/presentation_store.rs", "crates/vak-agent/src/cards.rs",
       "crates/vak-server/src/projection.rs", "crates/vak-server/src/client_events.rs",
       "crates/vak-server/src/card_actions.rs", "crates/vak-session/src/card_actions.rs",
       "crates/vak-server/src/maps.rs", "crates/vak-client-ui/src/components/cards/**",

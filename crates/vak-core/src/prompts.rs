@@ -871,12 +871,15 @@ mod tests {
     #[test]
     fn the_seed_carries_no_card_payload_examples() {
         let seed = seed("test");
-        assert!(seed.presentation_contract.contains("Answer in Markdown"));
+        assert!(
+            seed.presentation_contract
+                .contains("Compose one answer from rich forms and prose")
+        );
         assert!(seed.presentation_contract.contains("cards are context:"));
         assert!(seed.presentation_contract.contains("in reading order"));
         assert!(
             seed.presentation_contract
-                .contains("Rich cards are answer content")
+                .contains("Rich forms carry the answer itself")
         );
         assert!(
             seed.presentation_contract
@@ -884,7 +887,7 @@ mod tests {
         );
         assert!(
             seed.presentation_contract
-                .contains("You author the answer, not its layout")
+                .contains("You author the content,\n  not its layout")
         );
         assert!(seed.presentation_contract.contains("tool results"));
         assert!(!seed.capability_contract.contains("emit_*_card"));

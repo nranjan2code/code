@@ -896,9 +896,6 @@ pub enum PresentationSource {
     Derived { from: Vec<String> },
     /// Emitted through an `emit_*_card` tool call.
     ToolCall { tool_use_id: String },
-    /// Emitted as an inline ```` ```vak ```` fence in assistant text (models
-    /// without tool calling).
-    Fence { message_entry_id: String },
     /// Emitted by a worker this conversation delegated to through the
     /// `tool_use_id` call (`task`). The worker's own ledger holds the card's
     /// original call; this entry is how the delegating conversation shows it
@@ -907,10 +904,6 @@ pub enum PresentationSource {
         tool_use_id: String,
         worker_session_id: String,
     },
-    /// One block of an `answer` call, the turn's whole answer as one
-    /// document (docs/design/87-composed-answers.md §2). One call carries
-    /// several; `block` is the block's position in the call's `blocks`.
-    Answer { tool_use_id: String, block: u32 },
     /// A card a scheduled run showed, delivered with its answer into the
     /// conversation its automation belongs to (docs/design/94 §4); the
     /// run's own ledger holds its original call.

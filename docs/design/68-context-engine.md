@@ -9,6 +9,16 @@ Native provider compaction
 (§12) is not implemented; the hosted probe ladder is opt-in via
 `[probe] hosted`.
 
+## Presentation admission correction, 2026-10-24
+
+Only typed card tools and declared runtime records write presentations. The
+inline-fence fallback and retired whole-answer source are removed without
+compatibility readers. Fenced examples stay document code; they cannot write
+cards. TurnStart carries the actual recorded directive ID and submission key;
+projection never derives the current turn from a cached previous request.
+Accepted cards remain in the canonical context record, and their receipts allow
+the model to finish without repeating them as prose.
+
 ## Current request contract, 2026-10-22
 
 A request carries the open turn verbatim and, newest first, every visible
@@ -800,11 +810,8 @@ Consequences:
   ledger without being resent on every turn. `asked`, the presentation refs,
   and the trace in a TurnCard make a past result discoverable and expandable
   through recall when needed.
-- The inline-fence fallback (models without tool calling) converges on the
-  same entry: a fence that parses and validates is written as
-  `PresentationSource::Fence`. Duplicate detection is one rule — a second
-  card in the same turn with the same `payload_digest` is not written, and
-  its fence is dropped from the projection.
+- Inline-fence and whole-answer compatibility records are no longer admitted
+  or read. Presentation records come from typed tools and runtime writers.
 - Feedback and selection (`PresentationFeedbackBody`,
   `PresentationSelectionBody`) key on the entry id, so "the user dismissed
   this card" is an event about a ledger fact.
@@ -887,10 +894,8 @@ is a lookup, not a scan.
 **In-turn consequences.** The `emit_*_card` tool result becomes a short ack
 (`{ "presentation": "<id>", "ok": true }`), never an echo of the payload:
 the payload is already in the `tool_use` input and stays there verbatim for
-the rest of the turn. An inline ```` ```vak ```` fence for a card that was
-emitted by tool is a duplicate and is dropped from the ledger's
-model-visible projection (the "no repeats" rule already governs display;
-this applies it to what the model sees of its own history too).
+the rest of the turn. The acknowledgement identifies it as accepted answer
+content; another prose answer is unnecessary when the answer is complete.
 
 The standard request path keeps the full ledger and carries a filled
 window:

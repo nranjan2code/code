@@ -6,14 +6,13 @@ import { StructuredView, structuredRendererTypes } from "../src/components/Prese
 import * as store from "../src/store";
 import { artifactPreviewHtml, artifactPreviewMarkup } from "../src/artifactPreview";
 import { sandboxedSrcdoc } from "../src/safeUrl";
-import { assistantParts } from "../src/structured";
 import "../src/styles.css";
 
 document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light";
 
 const sid = "render-fixture";
 const card = { semantic_type: "stats", block: "stats", schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: { readings: [{ label: "Files reviewed", value: 12, unit: "files" }] } };
-const answer = `Here is the result.\n\n\`\`\`vak\n${JSON.stringify(card)}\n\`\`\`\n\nAll twelve files are ready for review.`;
+const answer = "All twelve files are ready for review.";
 const originalFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url = String(input);
@@ -32,12 +31,13 @@ const messages = (text = answer) => [
 ];
 const doc = (text: string) => ({ schema_version: 2, blocks: [{ type: "paragraph", id: text, content: [{ type: "text", text }] }], source_markdown: text, metadata: {}, diagnostics: [] });
 const snapshot = () => ({ schema_version: 2, session_id: sid, diagnostics: [], items: [
-  { id: "user-1", turn_id: "turn-1", role: "user", kind: "message", status: "succeeded", content: { type: "document", document: doc("Review the files and show me a clean result.") }, actions: [], fallback_text: "Review the files and show me a clean result." },
+  { id: "user-1", turn_id: "turn-1", role: "user", kind: "message", status: "succeeded", content: { type: "document", document: doc("Review the files and show me a clean result.") }, provenance: { entry_id: "request-1" }, actions: [], fallback_text: "Review the files and show me a clean result." },
   { id: "assistant-1", turn_id: "turn-1", role: "assistant", kind: "outcome", status: "succeeded", content: { type: "document", document: { ...doc(answer), blocks: [{ type: "structured", id: "metric-1", output: card, fallback_markdown: "Files reviewed: 12 files" }, ...doc("All twelve files are ready for review.").blocks] } }, actions: [], fallback_text: answer },
 ] });
 store.setDockTab(null);
 store.setActiveId(sid);
-store.hydrateFromTranscript(sid, messages() as any);
+store.hydrateFromTranscript(sid, messages() as any, [{entry_id:"request-1"},{entry_id:"assistant-1"}]);
+store.hydrateFromPresentation(sid, snapshot() as any);
 render(() => <div style="display:flex;height:100vh;width:100%"><main style="flex:1;min-width:0;display:flex;flex-direction:column"><header style="padding:16px;border-bottom:1px solid var(--border)"><strong>Vak</strong></header><ChatPane /></main><Show when={store.dockTab() === "workbench"}><aside style="width:42%;min-width:280px"><WorkbenchPanel /></aside></Show></div>, document.getElementById("root")!);
 
 // One payload per form, in the shape the host's card tools store.
@@ -122,9 +122,9 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   store.appendUser(sid, "Please add a summary."); store.markRunning(sid, true);
   store.applyEvent(sid, { Stream: { TextDelta: { delta: "One more result.", partial: {} } } } as any, {}); await tick();
   check(document.querySelector(".semantic-turn") === oldCard, "Previous turn remains mounted during next turn");
-  const bubble = document.querySelector(".msg.assistant");
+  const bubble = document.querySelector(".semantic-turn");
   store.applyEvent(sid, { Stream: { TextDelta: { delta: " With more detail.", partial: {} } } } as any, {}); await tick();
-  check(document.querySelector(".msg.assistant") === bubble, "Streaming keeps the assistant bubble mounted");
+  check(document.querySelector(".semantic-turn") === bubble, "Streaming keeps the assistant bubble mounted");
   store.applyEvent("background-task", { Sandbox: { kind: "ExecutionStarted", execution_id: "other", tool: "bash", language: "sh", scratch_dir: ".vak/scratch/other", code_preview: "echo other" } } as any, {});
   check(!store.workbenchExecutions().some((item) => item.id === "other"), "Background execution cannot contaminate focused Workbench");
   const fixtureReader = {
@@ -134,8 +134,6 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   const preview = await artifactPreviewHtml(".vak/scratch/result/index.html", '<head><link rel="stylesheet" href="style.css"></head><body><h1>Preview</h1><script src="app.js"></script></body>', fixtureReader);
   check(preview.includes("rgb(240, 248, 242)") && preview.includes("Preview is interactive") && !preview.includes('src="app.js"'), "Preview resolves relative CSS and JavaScript through authenticated reads");
   check(preview.includes("connect-src 'none'") && preview.includes("base-uri 'none'"), "Preview retains network and origin isolation");
-  check(assistantParts('```vak\n{"semantic_type":', true).length === 0, "Incomplete transport is held while streaming");
-  check(assistantParts('```json\n{"ordinary":true}\n```').some((part) => part.type === "text"), "Ordinary JSON remains ordinary content");
   let refused = false;
   try { await artifactPreviewHtml(".vak/scratch/result/index.html", '<img src="../private.png">', fixtureReader); } catch { refused = true; }
   check(refused, "Artifact assets cannot traverse outside the preview directory");
@@ -158,7 +156,8 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   });
   check(previewRan, "An explicitly interactive isolated fixture executes bundled script and stylesheet");
   store.markRunning(sid, false);
-  store.hydrateFromTranscript(sid, messages() as any);
+  store.hydrateFromTranscript(sid, messages() as any, [{entry_id:"request-1"},{entry_id:"assistant-1"}]);
+store.hydrateFromPresentation(sid, snapshot() as any);
   store.hydrateFromPresentation(sid, snapshot() as any);
   store.clearPresentation(sid);
   store.hydrateFromTranscript(sid, messages(Array.from({length: 80}, (_, i) => `Paragraph ${i}: a longer answer to verify reading position.`).join("\n\n")) as any);
@@ -174,7 +173,8 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   store.appendUser(sid, "Continue the explanation."); await tick();
   check(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2, "Submitting a prompt returns to the latest turn");
   store.markRunning(sid, false);
-  store.hydrateFromTranscript(sid, messages() as any);
+  store.hydrateFromTranscript(sid, messages() as any, [{entry_id:"request-1"},{entry_id:"assistant-1"}]);
+store.hydrateFromPresentation(sid, snapshot() as any);
   store.hydrateFromPresentation(sid, snapshot() as any);
   return passed;
 };

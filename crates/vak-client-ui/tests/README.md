@@ -18,7 +18,7 @@ agent-browser --session vak-render-check eval 'window.runChecks()'
 ```
 
 The browser returns the passed assertions, or rejects on the first failure.
-The fixture covers saved/live/durable cards, transport fences, completion refresh,
+The fixture covers saved/live/durable typed cards, literal code examples, completion refresh,
 contextual task details, stable message nodes, scroll position, background task
 isolation, and authenticated relative-asset loading. The sandbox check executes a script
 inside an opaque-origin iframe and verifies its stylesheet using a test-only
@@ -207,3 +207,10 @@ in four independent iframe viewports (1440×900 and 390×844, light and dark)
 and displays their results. It verifies unchanged full destinations, compact
 raw-URL labels, safe links and content containment down to each source/card.
 Typecheck with `tsc --noEmit -p tsconfig.rich-response-fixture.json`.
+
+`chat-stability.html` exercises the real ChatPane/store across new request,
+streamed prose and cards, discard, cancellation, durable settlement and reopening.
+Its output reports PASS or the first failed assertion. The fixture also checks
+that request identity binds by submission key and code examples cannot create
+cards. Run it at desktop and phone widths; TypeScript checks alone do not prove
+those visual transitions.

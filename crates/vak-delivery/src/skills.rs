@@ -9,7 +9,7 @@
 //!
 //! Skills are **data**, not code: a plugin ships a
 //! [`PresentationSkillManifest`] that is serialized into the delivery job and
-//! sent to the isolated worker, which validates ```vak fences against it
+//! sent to the isolated worker, which validates typed outputs against it
 //! without filesystem or network access.
 
 use serde::{Deserialize, Serialize};
@@ -254,116 +254,6 @@ pub fn structured_output(
     };
     skills.validate(&output)?;
     Ok(output)
-}
-
-/// A ```vak fence's body: `{"semantic_type": …, "payload": …}`.
-pub fn parse_fragment(source: &str) -> Result<StructuredOutput, SkillError> {
-    parse_fragment_with(source, &built_in_skill_registry())
-}
-
-/// [`parse_fragment`] against a plugin-extended registry.
-pub fn parse_fragment_with(
-    source: &str,
-    skills: &SkillRegistry,
-) -> Result<StructuredOutput, SkillError> {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Fragment {
-        semantic_type: String,
-        payload: Value,
-    }
-    let fragment: Fragment = serde_json::from_str(source.trim())
-        .map_err(|err| SkillError::InvalidPayload(err.to_string()))?;
-    structured_output(&fragment.semantic_type, None, fragment.payload, skills)
-}
-
-/// Every valid ```vak fence in `text`, in order, each once.
-pub fn structured_outputs_from_text(text: &str) -> Vec<StructuredOutput> {
-    structured_outputs_from_text_with(text, &built_in_skill_registry())
-}
-
-/// [`structured_outputs_from_text`] against a plugin-extended registry.
-pub fn structured_outputs_from_text_with(
-    text: &str,
-    skills: &SkillRegistry,
-) -> Vec<StructuredOutput> {
-    let mut outputs: Vec<StructuredOutput> = Vec::new();
-    for body in vak_fences(text) {
-        if let Ok(output) = parse_fragment_with(&body, skills)
-            && !outputs.contains(&output)
-        {
-            outputs.push(output);
-        }
-    }
-    outputs
-}
-
-/// The bodies of every ```vak fence in `source`, as Markdown parses them.
-fn vak_fences(source: &str) -> Vec<String> {
-    use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
-    let mut bodies = Vec::new();
-    let mut pending: Option<String> = None;
-    for event in Parser::new(source) {
-        match event {
-            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(language)))
-                if language.as_ref() == "vak" =>
-            {
-                pending = Some(String::new());
-            }
-            Event::Text(text) => {
-                if let Some(body) = &mut pending {
-                    body.push_str(&text);
-                }
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                if let Some(body) = pending.take() {
-                    bodies.push(body);
-                }
-            }
-            _ => {}
-        }
-    }
-    bodies
-}
-
-/// Replace each valid ```vak fence with its card's text form. Ordinary
-/// Markdown and invalid fences stay exactly as written.
-pub fn project_structured_fences(source: &str) -> String {
-    project_structured_fences_with(source, &built_in_skill_registry())
-}
-
-/// [`project_structured_fences`] against a plugin-extended registry.
-pub fn project_structured_fences_with(source: &str, skills: &SkillRegistry) -> String {
-    use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
-    let mut replacements = Vec::new();
-    let mut pending: Option<(usize, String)> = None;
-    for (event, range) in Parser::new(source).into_offset_iter() {
-        match event {
-            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(language)))
-                if language.as_ref() == "vak" =>
-            {
-                pending = Some((range.start, String::new()));
-            }
-            Event::Text(text) => {
-                if let Some((_, content)) = &mut pending {
-                    content.push_str(&text);
-                }
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                if let Some((start, content)) = pending.take()
-                    && let Ok(output) = parse_fragment_with(&content, skills)
-                {
-                    replacements.push((start..range.end, structured_markdown(&output)));
-                }
-            }
-            _ => {}
-        }
-    }
-    let mut result = source.to_string();
-    for (range, replacement) in replacements.into_iter().rev() {
-        result.replace_range(range, &replacement);
-    }
-    result
 }
 
 // ---- validation ------------------------------------------------------------
@@ -1595,7 +1485,8 @@ pub(crate) mod tests {
 
     #[test]
     fn a_kind_no_skill_provides_is_refused() {
-        let error = parse_fragment(r#"{"semantic_type": "recipe", "payload": {}}"#).unwrap_err();
+        let error =
+            structured_output("recipe", None, json!({}), &built_in_skill_registry()).unwrap_err();
         assert_eq!(error, SkillError::UnknownType("recipe".into()));
     }
 
@@ -1634,22 +1525,5 @@ pub(crate) mod tests {
             schema: None,
         });
         assert!(claims_form.is_err());
-    }
-
-    #[test]
-    fn fences_are_found_in_order_and_projected_in_place() {
-        let text = "Intro\n\n```vak\n{\"semantic_type\":\"callout\",\"payload\":{\"tone\":\"tip\",\"text\":\"Hi\"}}\n```\n\nOutro";
-        assert_eq!(structured_outputs_from_text(text).len(), 1);
-        let projected = project_structured_fences(text);
-        assert!(
-            projected.contains("> Hi")
-                && projected.starts_with("Intro")
-                && projected.ends_with("Outro")
-        );
-        let bare = r#"{"semantic_type":"callout","payload":{"tone":"tip","text":"Hi"}}"#;
-        assert!(
-            structured_outputs_from_text(bare).is_empty(),
-            "JSON outside a fence is prose"
-        );
     }
 }

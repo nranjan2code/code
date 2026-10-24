@@ -1,5 +1,19 @@
 ## Unreleased
 
+- Render live and saved answer items through the same typed timeline, preserving
+  prose/card order and actual request identity. Remove transcript card rendering,
+  inline JSON/fence card interpretation and the retired whole-answer protocol.
+  Code examples remain literal. The delivery worker protocol advances to 2.
+- A card acceptance receipt now states that the card is answer content and that
+  completion needs no repeated prose. Short answers can remain ordinary text.
+
+- Keep new live steps and discarded drafts out of earlier saved answers; live
+  steps carry the recorded request identity instead of borrowing the last
+  request in a stale snapshot.
+- Offer the existing summary, details, steps, list, table, comparison and
+  callout forms alongside the interactive forms. Structured answers use the
+  shared rich forms, with prose for explanations and short direct replies.
+
 ## 8.31.2 — 2026-10-23 — Readable source links and contained answers
 
 - Show readable labels for source links while preserving their complete destinations.

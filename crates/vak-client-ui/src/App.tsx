@@ -879,11 +879,11 @@ export async function sendPrompt(
   const thisGoal = goalAppliesTo(id);
   setArmedGoal(null);
   conversationHydration.invalidate(id);
-  appendUser(id, text, attachments?.files);
+  const requestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  appendUser(id, text, attachments?.files, "main", requestId);
   try {
-    const requestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (isRunning(id) && !topicId) {
       if (attachments?.files.length) {
         throw new Error("files can be attached once this turn finishes");

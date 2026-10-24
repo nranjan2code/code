@@ -1235,7 +1235,6 @@ mod tests {
                     )),
                 ),
                 profile: profile.clone(),
-                skill_registry: None,
                 trace: None,
                 actor: None,
             };
@@ -1263,7 +1262,6 @@ mod tests {
                 vak_delivery::AnswerDraft::from_markdown(""),
             ),
             profile: profile.clone(),
-            skill_registry: None,
             trace: None,
             actor: None,
         })

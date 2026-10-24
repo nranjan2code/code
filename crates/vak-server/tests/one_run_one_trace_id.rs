@@ -169,7 +169,6 @@ async fn one_run_one_trace_id() {
             "found them",
         )),
         profile: vak_delivery::DeliveryProfile::plain("log"),
-        skill_registry: None,
         trace: None,
         actor: None,
     };

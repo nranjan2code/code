@@ -67,41 +67,10 @@ import MermaidViewer from "./presentation/MermaidViewer";
 const showOperatorChrome = () => technicalDetails();
 import { CardIdContext, FormView, PackTree, PresentationInteractionContext, PresentationPageResourceContext, PresentationSessionContext, downloadCsv, formNames } from "./cards";
 import AgentMark from "./AgentMark";
-import { assistantParts, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
-import type { AssistantPart } from "../structured";
+import { stripControlScaffolding } from "../structured";
 import { themedPreview } from "../previewTheme";
 
-/** Renders a run of `AssistantPart`s (text + cards) with adjacent cards
- * grouped into a connected layout instead of independent stacked blocks —
- * shared by every render site that replays `assistantParts()` output
- * (streamed paragraphs, raw_markdown fallbacks, and whole-document view). */
 type PresentationDocumentContext = { sessionId?: string; resultId?: string; presentationId?: string };
-
-function AssistantPartsView(props: { parts: AssistantPart[]; textWrap?: (text: string) => JSX.Element } & PresentationDocumentContext) {
-  const groups = createMemo(() => groupAssistantParts(props.parts));
-  const wrapText = (text: string) => (props.textWrap ? props.textWrap(text) : <p class="semantic-paragraph">{text}</p>);
-  return (
-    <For each={groups()}>
-      {(group) =>
-        group.type === "text" ? (
-          wrapText(group.text)
-        ) : group.cards.length === 1 ? (
-          <StructuredView output={group.cards[0].output} fallback={group.cards[0].source} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />
-        ) : (
-          <div class="card-group" style={{ "--card-group-count": group.cards.length }}>
-            <For each={group.cards}>
-              {(card) => (
-                <div class="card-group-item">
-                  <StructuredView output={card.output} fallback={card.source} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />
-                </div>
-              )}
-            </For>
-          </div>
-        )
-      }
-    </For>
-  );
-}
 
 /** Wraps settled assistant content with the same Vakyartha avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
@@ -168,27 +137,6 @@ function UserMessage(props: { document: PresentationDocument; text: string }) {
   </div></div>;
 }
 
-function inlineNodesToText(nodes: InlineNode[]): string {
-  let out = "";
-  for (const node of nodes) {
-    switch (node.type) {
-      case "text": out += node.text; break;
-      case "soft_break":
-      case "hard_break": out += "\n"; break;
-      case "code": out += node.code; break;
-      case "strong":
-      case "emphasis":
-      case "strikethrough":
-        out += inlineNodesToText(node.content);
-        break;
-      case "link":
-        out += inlineNodesToText(node.label);
-        break;
-      default: break;
-    }
-  }
-  return out;
-}
 
 function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
   return (
@@ -497,13 +445,6 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string } & Presenta
           case "heading":
             return <Heading block={block} />;
           case "paragraph": {
-            const raw = inlineNodesToText(block.content);
-            if (raw.includes('"semantic_type"')) {
-              const parts = assistantParts(raw);
-              if (parts.some((p) => p.type === "card")) {
-                return <AssistantPartsView parts={parts} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />;
-              }
-            }
             return <p class="semantic-paragraph"><InlineSequence nodes={block.content} /></p>;
           }
           case "list": {
@@ -546,20 +487,6 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string } & Presenta
           case "rule":
             return <hr class="semantic-rule" />;
           case "raw_markdown": {
-            if (block.markdown.includes('"semantic_type"')) {
-              const parts = assistantParts(block.markdown);
-              if (parts.some((p) => p.type === "card")) {
-                return (
-                  <AssistantPartsView
-                    parts={parts}
-                    sessionId={props.sessionId}
-                    resultId={props.resultId}
-                    presentationId={props.presentationId}
-                    textWrap={(text) => <div class="semantic-limited" title={block.reason}><pre>{text}</pre></div>}
-                  />
-                );
-              }
-            }
             return <div class="semantic-limited" title={block.reason}><pre>{block.markdown}</pre></div>;
           }
         }
@@ -584,13 +511,7 @@ export function PresentationDocumentView(props: { document: PresentationDocument
     <div class="semantic-document">
       <Show when={showOperatorChrome() && outcomeLabel()}><div class={`semantic-outcome-status ${completion() || outcomeStatus()}`} role="status">{outcomeLabel()}</div></Show>
       <Show when={props.document.blocks.length === 0 && props.document.source_markdown}>
-        <AssistantPartsView
-          parts={assistantParts(props.document.source_markdown)}
-          sessionId={props.sessionId}
-          resultId={props.resultId}
-          presentationId={props.presentationId}
-          textWrap={(text) => <div class="semantic-source">{text}</div>}
-        />
+        <MarkdownView text={props.document.source_markdown} />
       </Show>
       <Show when={props.document.blocks.length === 0 && !props.document.source_markdown}>
         <section class="semantic-recovery" role="status">
@@ -1207,7 +1128,7 @@ function cardInteractionFor(sessionId?: string, presentationId?: string, state?:
 
 export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; resultId?: string; presentationId?: string; cardState?: import("../types").CardState | null }) {
   const [showOriginal, setShowOriginal] = createSignal(false);
-  const fallback = () => props.fallback && !parseVakFence(props.fallback)
+  const fallback = () => props.fallback
     ? <MarkdownView text={props.fallback} />
     : <details class="tool-details"><summary>View original result</summary><pre>{props.fallback || JSON.stringify(props.output.payload, null, 2)}</pre></details>;
   return <ErrorBoundary fallback={() => <section><p role="status">Rich presentation unavailable. Original content:</p>{fallback()}</section>}>
@@ -1267,50 +1188,15 @@ function composeAnswer(
 
 }
 
-/** When cards mounted, so cards that land together come in one after
- *  another rather than all at once. */
-const cardArrivals: number[] = [];
-
-function arrivalDelay(): number {
-  const now = performance.now();
-  while (cardArrivals.length && now - cardArrivals[0] > 400) cardArrivals.shift();
-  cardArrivals.push(now);
-  return (cardArrivals.length - 1) * 90;
-}
-
-/** A running turn's answer as it forms (docs/design/96, live turn): each
- *  card as soon as it is recorded. The settled turn replaces it. */
+/** Live and saved answers use the same typed-item renderer. */
 export function LiveAnswer(props: { sessionId: string }) {
-  // A card already settled in the timeline belongs to its turn, not to this one.
-  const cards = () => {
-    const items = presentationOf(props.sessionId)?.items ?? [];
-    const settled = new Set(items.filter((item) => item.provenance?.source !== "live_event")
-      .map((item) => item.provenance?.presentation_id).filter(Boolean));
-    return items.filter((item) => item.provenance?.source === "live_event" && item.kind === "card"
-      && item.content.type === "structured" && !settled.has(item.provenance?.presentation_id));
+  const timeline = () => {
+    const current = presentationOf(props.sessionId);
+    return current ? { ...current, items: current.items.filter(item => item.provenance?.source === "live_event") } : null;
   };
-  return <>
-    <Show when={cards().length > 0}>
-      {/* The settled turn's frame (timeline column, indented body, result
-          width), so the answer does not move when the settled turn replaces it. */}
-      <div class="semantic-timeline"><div class="assistant-turn-body"><article class="primary-result">
-      <div class="primary-result-material live-answer" aria-label="Answer so far">
-        <For each={[...new Set(cards().map((item) => item.turn_id))]}>{(turn) =>
-          <AnswerValuesScope scopeKey={conversationValuesKey(props.sessionId, turn)} items={cards().filter((item) => item.turn_id === turn)}>
-          {composeAnswer(cards().filter((item) => item.turn_id === turn).map((item) => ({
-            item,
-            node: <div class="card-arrive" style={{ "animation-delay": `${arrivalDelay()}ms` }}>
-              <Show when={item.content.type === "structured" && item.content.output}>{(output) =>
-                <StructuredView output={output()} fallback={item.fallback_text} sessionId={props.sessionId} presentationId={item.provenance?.presentation_id ?? undefined} />}
-              </Show>
-            </div>,
-          })))}
-          </AnswerValuesScope>
-        }</For>
-      </div>
-      </article></div></div>
-    </Show>
-  </>;
+  return <Show when={timeline()}>{(value) =>
+    <PresentationTimelineView timeline={value()} sessionId={props.sessionId} includeTurnExtras={false} hideUser />
+  }</Show>;
 }
 
 function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allowContinuation: boolean }) {
@@ -1326,20 +1212,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
     return ids.size === 1 ? [...ids][0] : undefined;
   };
   const ordered = () => {
-    const seen = new Set<string>();
-    const nonProgress = props.items
-      .filter((item) => !["progress", "retry", "information"].includes(item.kind))
-      // A denied approval can produce both a permission error and a later
-      // abort marker. Present one calm outcome in chat; full receipts remain
-      // available in task details.
-      .filter((item) => {
-        if (item.kind !== "error") return true;
-        const raw = item.fallback_text.toLowerCase();
-        if (!raw.includes("denied") && !raw.includes("aborted")) return true;
-        if (seen.has("permission-stop")) return false;
-        seen.add("permission-stop");
-        return true;
-      });
+    const nonProgress = props.items.filter(item => !["progress", "retry", "information"].includes(item.kind));
 
     const isRealAnswer = (content: import("../types").OutputContent): boolean => {
       if (["document", "structured", "adaptive"].includes(content.type)) return true;
@@ -1358,6 +1231,8 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       if (item.role === "tool" && item.kind === "error") {
         if (hasAssistantAnswer || !showOperatorChrome()) return false;
       }
+      if (item.content.type === "document" && ["pending", "running"].includes(item.status)
+          && !item.content.document.blocks.length && !item.content.document.source_markdown.trim()) return false;
       // Bare lifecycle outcomes without a document are internal control summaries
       if (item.content.type === "outcome" && !item.content.document && !showOperatorChrome()) {
         return false;
@@ -1422,17 +1297,6 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
     const cleanFallback = stripControlScaffolding(item.fallback_text).trim();
     if (!cleanFallback) return null;
 
-    if (!showOperatorChrome()) {
-      const lines = cleanFallback.split("\n").map((l) => l.trim()).filter(Boolean);
-      if (
-        lines.length === 0 ||
-        lines.every((line) =>
-          /^(?:primary deliverable\s*:|completed$|Surface:\s+|Outcome:\s+|contract_id:)/i.test(line)
-        )
-      ) {
-        return null;
-      }
-    }
     return <div class="semantic-source">{cleanFallback}</div>;
   };
   const visible = createMemo(() => {
@@ -1454,11 +1318,12 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       const resultId = group.resultId ?? uniqueResultId();
       const copyText = material.filter((entry) => entry.item.kind !== "artifact").map(({ item }) =>
         answerDocument(item)?.source_markdown ?? item.fallback_text).filter(Boolean).join("\n\n");
+      const live = material.some(entry => entry.item.provenance?.source === "live_event");
       const status = anchor.status !== "succeeded" ? anchor.status : anchor.outcome?.status;
       const attention = status === "failed" ? "Work needs attention" : status === "denied" ? "Action not allowed" : status === "cancelled" ? "Work stopped" : status === "partial" ? "Partial result" : "Outcome not verified";
       return <AssistantMessage sessionId={props.sessionId}>
         <article class="primary-result" data-result-id={resultId ?? anchor.id} aria-label="Agent result">
-          <Show when={status && status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={16} /><span><strong>{attention}</strong>Check the evidence before relying on completion claims.</span></div></Show>
+          <Show when={status && !["succeeded", "running", "pending"].includes(status)}><div class="primary-result-caution" role="status"><Icon name="warning" size={16} /><span><strong>{attention}</strong>Check the evidence before relying on completion claims.</span></div></Show>
           {answerSegments(material).map((segment) => {
             const entry = segment[0];
             const document = answerDocument(entry.item);
@@ -1467,7 +1332,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
               : <div class="primary-result-material" aria-label="Result material">{composeAnswer(segment)}</div>;
           })}
           <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={anchor} sessionId={props.sessionId} resultId={resultId} />
-          <ResultActions turnId={props.id} answer={anchor} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={resultId} copyText={copyText} />
+          <Show when={!live}><ResultActions turnId={props.id} answer={anchor} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={resultId} copyText={copyText} /></Show>
         </article>
       </AssistantMessage>;
     });
@@ -1478,7 +1343,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       <Show
         when={visible().length > 0}
         fallback={
-          <Show when={props.items.length > 0}>
+          <Show when={props.items.some(item => !["running", "pending"].includes(item.status) && item.provenance?.source !== "live_event")}>
             <section class="semantic-recovery" role="status">
               <Icon name="warning" size={15} />
               <div>
@@ -1491,7 +1356,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       >
         <For each={blocks()}>{(node) => node}</For>
       </Show>
-      <Show when={props.sessionId && !useContext(InCanvasContext) && (showOperatorChrome() || !groupAnswerEntries(visible()).some(group => group.kind === "result"))}><button type="button" class="turn-details-action" onClick={async () => { if (activeId() !== props.sessionId && !await activate(props.sessionId)) return; openTurnDetails(props.sessionId, props.id); }}>View request details</button></Show>
+      <Show when={props.sessionId && !props.items.some(item => item.provenance?.source === "live_event") && !useContext(InCanvasContext) && (showOperatorChrome() || !groupAnswerEntries(visible()).some(group => group.kind === "result"))}><button type="button" class="turn-details-action" onClick={async () => { if (activeId() !== props.sessionId && !await activate(props.sessionId)) return; openTurnDetails(props.sessionId, props.id); }}>View request details</button></Show>
     </section>
   );
 }

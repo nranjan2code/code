@@ -77,7 +77,6 @@ fn make_job(source: &str, markup: Markup, surface: &str) -> DeliveryJob {
             supports_actions: false,
             template: None,
         },
-        skill_registry: None,
         trace: None,
         actor: None,
     }

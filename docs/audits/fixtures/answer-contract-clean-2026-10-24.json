@@ -1,0 +1,357 @@
+{
+  "identity": {
+    "git_head": "4d8ffeea1a9665c9f9cfdbc0d86960f444d05067",
+    "dirty_runtime_source_digest": "1e0bb6b0c3f5cb16c0f73c168f4403e982a56ffa551833be813ed92c111c7365",
+    "runtime_source_files": 692,
+    "binary_sha256": {
+      "/tmp/vak-answer-clean-20261024/candidate/vak-tool-worker": "f3d0bc1eb507f78dbbf9e52689f1ef264462f039d60f96b3a9a6a06756d1b3cf",
+      "/tmp/vak-answer-clean-20261024/candidate/vak": "fa402643f0153b618c85a297b0b7e81f9e7ec14a87c96e10232119a2d401d93e"
+    },
+    "ui_manifest_sha256": "07a006ba3aba02931458071234885c34a1bab10ba5efbd82c71661269c1dc2c3",
+    "scope": "frozen development CLI/worker images on port 8938; uncommitted source; not installed"
+  },
+  "route": "openai-responses / gpt-6-luna",
+  "workspace": "disposable workspace with frozen development images on port 8938",
+  "cases": [
+    {
+      "id": "observations",
+      "acceptance": "Keep Riverwatch and each original value. Largest adjacent change is +14 from R3 to R4. Presentation supports inspecting supplied evidence without invented data.",
+      "turns": [
+        {
+          "prompt": "Analyze Riverwatch observations in order: R1=10, R2=12, R3=11, R4=25, R5=26. Preserve each measurement and identify where the largest change happened. Use only these supplied values; do not fetch sources or create files.",
+          "seconds": 11.2,
+          "ordered_material": [
+            {
+              "id": "call_KPQTWBTHd4toVN6OZxGIM8xm-structured-0",
+              "status": "partial",
+              "content": {
+                "output": {
+                  "block": "summary",
+                  "payload": {
+                    "headline": "Largest change: +14 from R3 to R4",
+                    "label": "Riverwatch",
+                    "points": [
+                      "Measurements preserved in order: R1 10, R2 12, R3 11, R4 25, R5 26."
+                    ],
+                    "text": "Using only the values you supplied, the largest consecutive change is an increase of 14 between R3 (11) and R4 (25)."
+                  },
+                  "schema_version": 2,
+                  "semantic_type": "summary",
+                  "skill_id": "core",
+                  "skill_version": "2.0.0"
+                },
+                "type": "structured"
+              },
+              "fallback_text": "**Largest change: +14 from R3 to R4**\n\nUsing only the values you supplied, the largest consecutive change is an increase of 14 between R3 (11) and R4 (25).\n\n- Measurements preserved in order: R1 10, R2 12, R3 11, R4 25, R5 26."
+            }
+          ]
+        },
+        {
+          "prompt": "New independent task: reply with exactly this text and nothing else: The lantern is blue.",
+          "seconds": 5.2,
+          "ordered_material": [
+            {
+              "id": "01a16c9e-f43e-7683-98ef-c4bf8d264303-text-0",
+              "status": "succeeded",
+              "content": {
+                "document": {
+                  "blocks": [
+                    {
+                      "content": [
+                        {
+                          "text": "The lantern is blue.",
+                          "type": "text"
+                        }
+                      ],
+                      "id": "block-1",
+                      "type": "paragraph"
+                    }
+                  ],
+                  "coverage": [
+                    {
+                      "block_id": "block-1",
+                      "disposition": "native"
+                    }
+                  ],
+                  "diagnostics": [],
+                  "metadata": {
+                    "outcome_completion": "complete",
+                    "outcome_evaluation": "[{\"requirement_id\":\"deliverable-1\",\"status\":\"met\",\"reason\":\"response content exists\"}]",
+                    "outcome_evidence_receipts": "",
+                    "outcome_evidence_state": "none",
+                    "outcome_human_review": "not_required",
+                    "outcome_objective": "New independent task: reply with exactly this text and nothing else: The lantern is blue.",
+                    "outcome_requirements": "deliverable-1",
+                    "outcome_revision": "0",
+                    "outcome_status": "produced"
+                  },
+                  "schema_version": 2,
+                  "source_markdown": "The lantern is blue."
+                },
+                "type": "document"
+              },
+              "fallback_text": "The lantern is blue."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "options",
+      "acceptance": "Keep three-person capacity and offline constraint; neither option satisfies both. Preserve unresolved tradeoff. Independent final request returns exact requested sentence.",
+      "turns": [
+        {
+          "prompt": "Help me choose a packing system. Cedar costs 20 per month, fits two people and works offline. Birch costs 35 per month, fits five people and requires internet. We are three people and sometimes lose internet. Use only these facts, preserve the unresolved tradeoff, and do not fetch sources or create files.",
+          "seconds": 10.4,
+          "ordered_material": [
+            {
+              "id": "call_4qv9s5J87X4I9on0rjdFdgy3-structured-0",
+              "status": "partial",
+              "content": {
+                "output": {
+                  "block": "comparison",
+                  "payload": {
+                    "aspects": [
+                      {
+                        "label": "Monthly cost",
+                        "values": [
+                          "20",
+                          "35"
+                        ]
+                      },
+                      {
+                        "label": "People supported",
+                        "values": [
+                          "2 (short by 1)",
+                          "5"
+                        ]
+                      },
+                      {
+                        "label": "Internet",
+                        "values": [
+                          "Works offline",
+                          "Required"
+                        ]
+                      }
+                    ],
+                    "label": "Choice",
+                    "options": [
+                      {
+                        "name": "Cedar",
+                        "strengths": [
+                          "Lower monthly cost",
+                          "works offline, which helps when internet is lost"
+                        ],
+                        "verdict": "Better on cost and unreliable connectivity, but does not fit your three-person group",
+                        "weaknesses": [
+                          "Supports only two people"
+                        ]
+                      },
+                      {
+                        "name": "Birch",
+                        "strengths": [
+                          "Fits all three of you, with room for two more"
+                        ],
+                        "verdict": "Better on group size, but its internet requirement conflicts with occasional outages",
+                        "weaknesses": [
+                          "Costs 15 more per month than Cedar",
+                          "requires internet"
+                        ]
+                      }
+                    ],
+                    "recommendation": "The supplied facts leave a real tradeoff: Cedar handles outages and costs less but is too small; Birch fits your group but depends on internet. Neither meets both stated needs, so there is no clear winner without deciding which constraint matters more.",
+                    "title": "Packing-system tradeoff"
+                  },
+                  "schema_version": 2,
+                  "semantic_type": "comparison",
+                  "skill_id": "core",
+                  "skill_version": "2.0.0"
+                },
+                "type": "structured"
+              },
+              "fallback_text": "**Choice \u00b7 Packing-system tradeoff**\n\n- **Cedar**: Better on cost and unreliable connectivity, but does not fit your three-person group\n\n  + Lower monthly cost\n\n  + works offline, which helps when internet is lost\n\n  \u2212 Supports only two people\n\n- **Birch**: Better on group size, but its internet requirement conflicts with occasional outages\n\n  + Fits all three of you, with room for two more\n\n  \u2212 Costs 15 more per month than Cedar\n\n  \u2212 requires internet\n\n| | Cedar | Birch |\n\n|---| --- | --- |\n\n| Monthly cost | 20 | 35 |\n\n| People supported | 2 (short by 1) | 5 |\n\n| Internet | Works offline | Required |\n\nRecommendation: The supplied facts leave a real tradeoff: Cedar handles outages and costs less but is too small; Birch fits your group but depends on internet. Neither meets both stated needs, so there is no clear winner without deciding which constraint matters more."
+            }
+          ]
+        },
+        {
+          "prompt": "New independent task: reply with exactly this text and nothing else: The lantern is blue.",
+          "seconds": 5.4,
+          "ordered_material": [
+            {
+              "id": "01a16c9f-323f-78a2-a3f8-1b6bf783da8e-text-0",
+              "status": "succeeded",
+              "content": {
+                "document": {
+                  "blocks": [
+                    {
+                      "content": [
+                        {
+                          "text": "The lantern is blue.",
+                          "type": "text"
+                        }
+                      ],
+                      "id": "block-1",
+                      "type": "paragraph"
+                    }
+                  ],
+                  "coverage": [
+                    {
+                      "block_id": "block-1",
+                      "disposition": "native"
+                    }
+                  ],
+                  "diagnostics": [],
+                  "metadata": {
+                    "outcome_completion": "complete",
+                    "outcome_evaluation": "[{\"requirement_id\":\"deliverable-1\",\"status\":\"met\",\"reason\":\"response content exists\"}]",
+                    "outcome_evidence_receipts": "",
+                    "outcome_evidence_state": "none",
+                    "outcome_human_review": "not_required",
+                    "outcome_objective": "New independent task: reply with exactly this text and nothing else: The lantern is blue.",
+                    "outcome_requirements": "deliverable-1",
+                    "outcome_revision": "0",
+                    "outcome_status": "produced"
+                  },
+                  "schema_version": 2,
+                  "source_markdown": "The lantern is blue."
+                },
+                "type": "document"
+              },
+              "fallback_text": "The lantern is blue."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "labelled-facts",
+      "acceptance": "Preserve supplied quantities and units without inventing interpretation or facts. Independent reply is exactly 14.",
+      "turns": [
+        {
+          "prompt": "Explain the supplied instrument reading: temperature 22.2 degrees C, apparent temperature 24.8 degrees C, humidity 81 percent, wind 4.7 km/h. Use only these facts. Do not fetch sources or create files.",
+          "seconds": 9.4,
+          "ordered_material": [
+            {
+              "id": "call_mCABk2o2oFHkEGM3XxuqfF6d-structured-0",
+              "status": "partial",
+              "content": {
+                "output": {
+                  "block": "summary",
+                  "payload": {
+                    "headline": "The instrument reports 22.2 \u00b0C, while the apparent temperature is 24.8 \u00b0C.",
+                    "label": "Reading explained",
+                    "points": [
+                      "Apparent temperature is 2.6 \u00b0C above the measured temperature.",
+                      "Humidity is 81%; wind speed is 4.7 km/h."
+                    ],
+                    "text": "This describes a reading where the apparent temperature is warmer than the measured air temperature. Source for all figures: the instrument reading you supplied."
+                  },
+                  "schema_version": 2,
+                  "semantic_type": "summary",
+                  "skill_id": "core",
+                  "skill_version": "2.0.0"
+                },
+                "type": "structured"
+              },
+              "fallback_text": "**The instrument reports 22.2 \u00b0C, while the apparent temperature is 24.8 \u00b0C.**\n\nThis describes a reading where the apparent temperature is warmer than the measured air temperature. Source for all figures: the instrument reading you supplied.\n\n- Apparent temperature is 2.6 \u00b0C above the measured temperature.\n\n- Humidity is 81%; wind speed is 4.7 km/h."
+            }
+          ]
+        },
+        {
+          "prompt": "What is 8 + 6? Reply with just the answer.",
+          "seconds": 4.5,
+          "ordered_material": [
+            {
+              "id": "01a16c9f-6a4f-7b83-8125-0be44734ea2d-text-0",
+              "status": "succeeded",
+              "content": {
+                "document": {
+                  "blocks": [
+                    {
+                      "content": [
+                        {
+                          "text": "14",
+                          "type": "text"
+                        }
+                      ],
+                      "id": "block-1",
+                      "type": "paragraph"
+                    }
+                  ],
+                  "coverage": [
+                    {
+                      "block_id": "block-1",
+                      "disposition": "native"
+                    }
+                  ],
+                  "diagnostics": [],
+                  "metadata": {
+                    "outcome_completion": "complete",
+                    "outcome_evaluation": "[{\"requirement_id\":\"deliverable-1\",\"status\":\"met\",\"reason\":\"response content exists\"}]",
+                    "outcome_evidence_receipts": "",
+                    "outcome_evidence_state": "none",
+                    "outcome_human_review": "not_required",
+                    "outcome_objective": "What is 8 + 6? Reply with just the answer.",
+                    "outcome_requirements": "deliverable-1",
+                    "outcome_revision": "0",
+                    "outcome_status": "produced"
+                  },
+                  "schema_version": 2,
+                  "source_markdown": "14"
+                },
+                "type": "document"
+              },
+              "fallback_text": "14"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "review": {
+    "transport_and_authorship": "Typed summary/comparison forms delivered; original values, +14 difference, option constraints and independent exact follow-ups preserved. No full second prose copy follows the forms.",
+    "semantic_limitation": "The final labelled-facts sample calls the temperature an air temperature although the supplied reading did not specify what it measured. Its numeric values and 2.6 degree difference are correct, but that unsupported qualifier fails the strict supplied-facts criterion. Earlier captures did not use this qualifier. No runtime word list or further prompt tuning was added to hide it.",
+    "source_identity": "Frozen image hashes were captured before launch and checked unchanged. The src-file digest is the capture tree including embedded tests. A later change only updated the acknowledgement wording expectation inside a Rust test; runtime code was not changed."
+  },
+  "stream_checks": {
+    "request_id": "22e21880-6aa2-4080-b1f6-42785c83f64d",
+    "turn_id": "01a16ca0-5ca8-7ff3-ab45-c4b7a78ede49",
+    "prior_items_checked": 7,
+    "live_starts": [
+      {
+        "placement": {
+          "part": null,
+          "beside": null,
+          "replaces": null
+        },
+        "id": "live-assistant-107",
+        "timestamp": "2026-10-24T06:36:51.540347+00:00",
+        "turn_id": "01a16ca0-5ca8-7ff3-ab45-c4b7a78ede49",
+        "role": "assistant",
+        "kind": "outcome",
+        "status": "running",
+        "content": {
+          "type": "document",
+          "document": {
+            "schema_version": 2,
+            "source_markdown": "",
+            "blocks": [],
+            "coverage": [],
+            "metadata": {},
+            "diagnostics": []
+          }
+        },
+        "provenance": {
+          "session_id": "01a16c9e-b518-7900-82c7-6c0ab4934b1f",
+          "source": "live_event"
+        },
+        "actions": [],
+        "fallback_text": ""
+      }
+    ],
+    "answer": [
+      "17"
+    ],
+    "checks": "live item identity matches the actual recorded directive; all prior settled items remain identical; exact independent answer"
+  }
+}

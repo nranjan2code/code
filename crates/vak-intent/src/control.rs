@@ -38,8 +38,6 @@ pub enum ControlKind {
     /// Recorded history only: no longer written (control-plane C5). It
     /// judged from words whether an answer used what a retrieval returned.
     GroundingCheck,
-    /// A `vak` fence in the answer did not parse.
-    FenceCheck,
     /// The answer restated a card that a tool call had already shown.
     DuplicateCardCheck,
     /// Recorded history only: no longer written. It asked for a card where
@@ -75,12 +73,11 @@ pub enum ControlKind {
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 16] = [
+    pub const ALL: [ControlKind; 15] = [
         ControlKind::StopHook,
         ControlKind::StopGuard,
         ControlKind::KeepWorking,
         ControlKind::GroundingCheck,
-        ControlKind::FenceCheck,
         ControlKind::DuplicateCardCheck,
         ControlKind::PresentationCheck,
         ControlKind::CardCompletionCheck,
@@ -102,7 +99,6 @@ impl ControlKind {
             ControlKind::StopGuard => "[stop-guard]",
             ControlKind::KeepWorking => "[keep-working]",
             ControlKind::GroundingCheck => "[grounding-check]",
-            ControlKind::FenceCheck => "[fence-check]",
             ControlKind::DuplicateCardCheck => "[duplicate-card-check]",
             ControlKind::PresentationCheck => "[presentation-check]",
             ControlKind::CardCompletionCheck => "[card-completion-check]",
@@ -124,7 +120,6 @@ impl ControlKind {
         matches!(
             self,
             ControlKind::GroundingCheck
-                | ControlKind::FenceCheck
                 | ControlKind::DuplicateCardCheck
                 | ControlKind::PresentationCheck
                 | ControlKind::CardCompletionCheck
@@ -443,7 +438,6 @@ mod tests {
             armed,
             vec![
                 ControlKind::GroundingCheck,
-                ControlKind::FenceCheck,
                 ControlKind::DuplicateCardCheck,
                 ControlKind::PresentationCheck,
                 ControlKind::CardCompletionCheck,

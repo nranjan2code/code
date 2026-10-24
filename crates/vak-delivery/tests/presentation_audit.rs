@@ -33,8 +33,7 @@ use vak_delivery::ToolResultPayload;
 use vak_delivery::discord;
 use vak_delivery::skills::{
     PRESENTATION_SKILL_API, PresentationSkillManifest, SkillError, SkillRegistry, StructuredOutput,
-    built_in_skill_registry, parse_fragment, project_structured_fences,
-    structured_outputs_from_text,
+    built_in_skill_registry,
 };
 use vak_delivery::slack;
 use vak_delivery::telegram;
@@ -109,7 +108,6 @@ fn answer_job(
             supports_actions: false,
             template: None,
         },
-        skill_registry: None,
         trace: None,
         actor: None,
     }
@@ -137,7 +135,6 @@ fn approval_job(_markup: Markup, surface: &str) -> DeliveryJob {
             }],
         }),
         profile: plain_profile(surface),
-        skill_registry: None,
         trace: None,
         actor: None,
     }
@@ -154,7 +151,6 @@ fn progress_job(_markup: Markup, surface: &str) -> DeliveryJob {
             percent: Some(75),
         }),
         profile: plain_profile(surface),
-        skill_registry: None,
         trace: None,
         actor: None,
     }
@@ -175,7 +171,6 @@ fn tool_result_job(_markup: Markup, surface: &str, is_error: bool) -> DeliveryJo
             is_error,
         }),
         profile: plain_profile(surface),
-        skill_registry: None,
         trace: None,
         actor: None,
     }
@@ -190,7 +185,6 @@ fn text_job(markdown: &str, _markup: Markup, surface: &str) -> DeliveryJob {
             markdown: markdown.into(),
         },
         profile: plain_profile(surface),
-        skill_registry: None,
         trace: None,
         actor: None,
     }
@@ -349,7 +343,6 @@ fn audit_kind_content_matching() {
                     markdown: "sys".into(),
                 },
                 profile: plain_profile("test"),
-                skill_registry: None,
                 trace: None,
                 actor: None,
             };
@@ -376,7 +369,6 @@ fn audit_kind_content_matching() {
                     actions: vec![],
                 }),
                 profile: plain_profile("test"),
-                skill_registry: None,
                 trace: None,
                 actor: None,
             };
@@ -414,7 +406,6 @@ fn audit_kind_content_matching() {
                 percent: None,
             }),
             profile: plain_profile("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -433,7 +424,6 @@ fn audit_kind_content_matching() {
                 is_error: false,
             }),
             profile: plain_profile("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1202,7 +1192,6 @@ fn audit_worker_protocol() {
                 markdown: "sys".into(),
             },
             profile: plain_profile("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1295,7 +1284,6 @@ fn audit_worker_protocol() {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(answer_draft("source")),
             profile,
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1608,7 +1596,6 @@ fn audit_render_errors() {
                     markdown: "x".into(),
                 },
                 profile: plain_profile("test"),
-                skill_registry: None,
                 trace: None,
                 actor: None,
             };
@@ -1629,7 +1616,6 @@ fn audit_render_errors() {
                 actions: vec![],
             }),
             profile: plain_profile("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1645,7 +1631,6 @@ fn audit_render_errors() {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1673,7 +1658,6 @@ fn audit_render_errors() {
                 actions: vec![],
             }),
             profile,
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1695,7 +1679,6 @@ fn audit_render_errors() {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(answer_draft("source")),
             profile,
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1816,7 +1799,6 @@ fn audit_packet_structure() {
                 supports_actions: false,
                 template: None,
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1851,7 +1833,6 @@ fn audit_packet_structure() {
                 supports_actions: true,
                 template: None,
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1935,7 +1916,6 @@ fn audit_packet_structure() {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1956,7 +1936,6 @@ fn audit_packet_structure() {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1978,7 +1957,6 @@ fn audit_packet_structure() {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2016,7 +1994,6 @@ fn audit_packet_structure() {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2046,7 +2023,6 @@ fn audit_packet_structure() {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2293,7 +2269,6 @@ fn audit_content_kind_markup_matrix() {
                     kind: k,
                     content,
                     profile: DeliveryProfile::plain("test"),
-                    skill_registry: None,
                     trace: None,
                     actor: None,
                 };

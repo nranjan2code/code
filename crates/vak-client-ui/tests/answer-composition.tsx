@@ -13,7 +13,7 @@ const text = (id: string, text: string) => item(id, "assistant", "outcome", { ty
 const table = (id: string, title: string) => item(id, "tool", "card", { type: "structured", output: { semantic_type: "table", block: "table", schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: { title, columns: [{ label: "Item", numeric: false }, { label: "Amount", numeric: true }], rows: [["Value", "9007199254740993"]] } } }, title);
 const fragments = ["Leading context survives.", "Note: the second result uses a different scope.", "The closing explanation survives too."];
 const note = item("paired-note", "tool", "card", { type: "structured", output: { semantic_type: "callout", block: "callout", schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: { tone: "note", text: "A compact note beside a wide table." } } }, "Compact note");
-note.placement = { beside: "first-presentation" };
+note.placement = { part: null, beside: "first-presentation", replaces: null };
 const timeline = { schema_version: 2, session_id: sid, diagnostics: [], items: [
   item("user", "user", "message", { type: "document", document: doc("Compare both results.") }, "Compare both results."),
   text("leading", fragments[0]), {...table("first", "First table"), provenance: {presentation_id:"first-presentation"}}, note, text("middle", fragments[1]), table("second", "Second table"), text("closing", fragments[2]),

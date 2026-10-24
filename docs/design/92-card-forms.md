@@ -1,9 +1,16 @@
 # 92 — Card forms
 
-Status: implemented (2026-10-22): every form remains drawable from its
-builder, while only chart, stats, map, calendar and controls are offered
-card tools. The registry test checks equality of drawable forms and the
-subset of offered tools. Markdown is the normal answer contract.
+Status: implemented. The shared registry offers summary, steps, list, details,
+table, comparison, stats, chart, callout, calendar, map and controls for
+structured answer content. Remaining forms retain runtime builders. Live and saved answers use the same
+typed renderer. Inline-card fences and the retired whole-answer protocol are
+removed without compatibility readers; fenced code is ordinary code.
+The 24 October correction restores structured authorship after the maintainer
+reported prose/table answers instead of rich forms. No topic classification,
+mandatory card count or separate layout planner selects the output.
+
+> **Historical record** — the 22 October authoring policy below was replaced
+> on 24 October; its runtime-derived sources and diff contract still applies.
 
 ## Runtime composition, 2026-10-22
 

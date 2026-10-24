@@ -1,6 +1,17 @@
 # 07 — System prompt
 Status: implemented in 2.0.0; current contract checked against the code on
-2026-10-23; the current seed diffs are recorded below.
+2026-10-24; the current seed diffs are recorded below.
+
+## Seed diff — 2026-10-24: typed rich answer authorship
+
+The model chooses admitted forms by information shape, never subject or paragraph
+length. Labelled facts, quantities, records and options use their typed tools;
+prose explains them or gives a direct unstructured/text-only reply. Accepted
+cards are already answer content, so the tool receipt explicitly allows finishing
+without another prose answer. Values are not echoed back in the receipt. The
+runtime keeps layout, evidence provenance and actions under their existing owners.
+Inline card fences and the retired whole-answer reader are removed. Code examples
+remain code on every surface. See [the current response contract](104-rich-response-contract.md).
 
 ## Seed diff — 2026-10-22: optional progress
 

@@ -22,7 +22,6 @@ fn job(id: &str, markdown: &str) -> DeliveryJob {
             supports_actions: false,
             template: None,
         },
-        skill_registry: None,
         trace: None,
         actor: None,
     }

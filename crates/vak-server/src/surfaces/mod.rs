@@ -422,7 +422,6 @@ pub(crate) mod channel_fixture {
                 supports_actions: false,
                 template: None,
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         })

@@ -7,6 +7,21 @@ history of this file.
 
 Read this before touching anything that decides how a result looks.
 
+## Accepted content and lifecycle
+
+A form is admitted through its typed tool or a declared runtime writer, validated
+by `vak-delivery` and recorded once. The tool argument schema and stored-payload
+schema have different jobs; conformance tests exercise the actual conversion.
+Client form names are checked against the delivery registry. Do not add an inline
+JSON reader, Markdown card fence or transcript renderer as another admission path.
+
+Live and durable items both render through `PresentationTimelineView`. Requests
+carry their actual recorded identity; source provenance identifies in-flight
+content. An empty running document is not a failed result. A discarded draft
+is removed by exact item identity. File results use the same path, with review
+and actions still owned by the existing server services. A settled snapshot
+replaces live state rather than appending a second answer.
+
 ## Table scalar fidelity
 
 Authored table cells remain strings. The optional `numeric_columns` tool

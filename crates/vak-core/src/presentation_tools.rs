@@ -1973,39 +1973,52 @@ fn build_ability_chart(args: &Map<String, Value>) -> Result<Value, String> {
 }
 
 const SHAPES: &[CardShape] = &[
-    shape(
-        "summary",
-        "emit_summary_card",
-        "Lead the answer: a headline and one to three sentences that give the answer itself, with key points.",
-        summary_fields,
-        build_summary,
-        fill_nothing,
-    ),
-    shape(
-        "steps",
-        "emit_steps_card",
-        "Things done in order, one after another. Each step has a short label, and a detail, time or duration when they help. A step can offer alternatives the person picks one of (`choices`), and their pick comes back to you.",
-        steps_fields,
-        build_steps,
-        fill_steps,
-    ),
-    shape(
-        "list",
-        "emit_list_card",
-        "Items in no particular order. Mark it checkable when the items are to be ticked off.",
-        list_fields,
-        build_list,
-        fill_list,
-    ),
-    shape(
-        "details",
-        "emit_details_card",
-        "Labelled facts about one subject, or questions with their answers.",
-        details_fields,
-        build_details,
-        fill_nothing,
-    ),
     CardShape {
+        offered: true,
+        ..shape(
+            "summary",
+            "emit_summary_card",
+            "Lead the answer: a headline and one to three sentences that give the answer itself, with key points.",
+            summary_fields,
+            build_summary,
+            fill_nothing,
+        )
+    },
+    CardShape {
+        offered: true,
+        ..shape(
+            "steps",
+            "emit_steps_card",
+            "Things done in order, one after another. Each step has a short label, and a detail, time or duration when they help. A step can offer alternatives the person picks one of (`choices`), and their pick comes back to you.",
+            steps_fields,
+            build_steps,
+            fill_steps,
+        )
+    },
+    CardShape {
+        offered: true,
+        ..shape(
+            "list",
+            "emit_list_card",
+            "Items in no particular order. Mark it checkable when the items are to be ticked off.",
+            list_fields,
+            build_list,
+            fill_list,
+        )
+    },
+    CardShape {
+        offered: true,
+        ..shape(
+            "details",
+            "emit_details_card",
+            "Labelled facts about one subject, or questions with their answers.",
+            details_fields,
+            build_details,
+            fill_nothing,
+        )
+    },
+    CardShape {
+        offered: true,
         followable: &[&["rows", "*", "*"]],
         ..shape(
             "table",
@@ -2016,14 +2029,17 @@ const SHAPES: &[CardShape] = &[
             fill_table,
         )
     },
-    shape(
-        "comparison",
-        "emit_comparison_card",
-        "Two to four options side by side: each one's name, verdict, strengths and weaknesses, the aspects they differ on, and which you recommend.",
-        comparison_fields,
-        build_comparison,
-        fill_comparison,
-    ),
+    CardShape {
+        offered: true,
+        ..shape(
+            "comparison",
+            "emit_comparison_card",
+            "Two to four options side by side: each one's name, verdict, strengths and weaknesses, the aspects they differ on, and which you recommend.",
+            comparison_fields,
+            build_comparison,
+            fill_comparison,
+        )
+    },
     CardShape {
         offered: true,
         followable: &[&["readings", "*", "value"]],
@@ -2047,14 +2063,17 @@ const SHAPES: &[CardShape] = &[
             fill_nothing,
         )
     },
-    shape(
-        "callout",
-        "emit_callout_card",
-        "One short note set apart, with its tone: a tip, a note, a warning or something important.",
-        callout_fields,
-        build_callout,
-        fill_nothing,
-    ),
+    CardShape {
+        offered: true,
+        ..shape(
+            "callout",
+            "emit_callout_card",
+            "One short note set apart, with its tone: a tip, a note, a warning or something important.",
+            callout_fields,
+            build_callout,
+            fill_nothing,
+        )
+    },
     CardShape {
         grounded_in: Some(vak_tools::Grounds::Retrieved),
         ..shape(
@@ -2572,7 +2591,10 @@ impl Tool for EmitCardTool {
             &vak_delivery::built_in_skill_registry(),
         ) {
             Ok(output) => {
-                let mut ack = format!("Accepted for presentation ({}).", output.semantic_type);
+                let mut ack = format!(
+                    "Accepted answer content ({}). The card is part of your answer. Finish without more text when the answer is complete; add prose only for information the cards do not contain.",
+                    output.semantic_type
+                );
                 // What a later card of the answer can follow (docs/design/98 §2).
                 if output.block == "controls"
                     && let Ok(published) = vak_delivery::controls::published(&output.payload)
@@ -3170,7 +3192,11 @@ mod tests {
         let chart = tool("emit_chart_card");
         let out = chart.execute(&fixture_for("chart"), &ctx).await;
         assert!(!out.is_error(), "{}", out.content);
-        assert!(out.content.starts_with("Accepted for presentation"));
+        assert!(out.content.starts_with("Accepted answer content"));
+        assert!(
+            out.content
+                .contains("Finish without more text when the answer is complete")
+        );
         assert!(!out.content.contains("Shown to the user"));
         let out = chart
             .execute(&json!({"chart_type": "bar", "data": []}), &ctx)

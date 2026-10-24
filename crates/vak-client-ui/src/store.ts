@@ -31,7 +31,7 @@ import type {
 } from "./types";
 
 export type Item =
-  | { kind: "user"; text: string; entryId?: string; authorId?: string; authorName?: string; scheduled?: { name: string; failed: boolean; at?: string }; files?: api.InboxFile[]; artifacts?: { id: string; name: string; mode: "continue" | "another" }[] }
+  | { kind: "user"; text: string; entryId?: string; requestId?: string; authorId?: string; authorName?: string; scheduled?: { name: string; failed: boolean; at?: string }; files?: api.InboxFile[]; artifacts?: { id: string; name: string; mode: "continue" | "another" }[] }
   | { kind: "assistant"; key: string; text: string; streaming: boolean }
   | { kind: "thinking"; key: string; text: string; done: boolean }
   | {
@@ -919,7 +919,7 @@ export function hydrateHistoryPage(id: string, page: LoadedHistory, direction: "
   setItemsBySession(id, keepLiveGates(itemsBySession[id] ?? [], incoming));
   hydrateSetAside(id, merged.setAside);
   const current = presentationBySession[id];
-  const liveItems = isRunning(id) ? current?.items.filter(item => item.turn_id.startsWith("live") || item.provenance?.source === "live_event") ?? [] : [];
+  const liveItems = isRunning(id) ? current?.items.filter(item => item.provenance?.source === "live_event") ?? [] : [];
   const presentation = liveItems.length && current
     ? mergePresentationSnapshot(merged.presentation, { ...current, cursor: "live:history-merge", items: liveItems })
     : merged.presentation;
@@ -1149,7 +1149,7 @@ export function applyPresentationEvent(id: string, event: PresentationStreamEven
     let indices = presentationIndices.get(id);
     if (!indices) { indices = new Map(timeline.items.map((item, index) => [item.id, index])); presentationIndices.set(id, indices); }
     const delta = event.delta;
-    if ((delta.type === "item_started" || delta.type === "item_replaced") && delta.item.placement?.replaces) {
+    if (delta.type === "item_removed" || ((delta.type === "item_started" || delta.type === "item_replaced") && delta.item.placement?.replaces)) {
       const updated = applyPresentationDelta(timeline, delta);
       if (updated) {
         presentationIndices.set(id, new Map(updated.items.map((item, index) => [item.id, index])));
@@ -1436,6 +1436,9 @@ export function applyEvent(
     return;
   }
   if ("TurnStart" in ev) {
+    const { directive_id, request_id } = ev.TurnStart;
+    if (directive_id && request_id) updateList(b, id, items => items.map(item =>
+      item.kind === "user" && item.requestId === request_id ? { ...item, entryId: directive_id } : item));
     markRunning(id, true, b);
     // `TurnStart` arrives once per step; the start sound is for the run.
     if (!startSounded.has(K(b, id))) {
@@ -1709,8 +1712,8 @@ export function applyEvent(
 
 // ---- imperative helpers used by App ---------------------------------------
 
-export function appendUser(id: string, text: string, files?: api.InboxFile[], bucket: Bucket = "main") {
-  pushItem(bucket, id, { kind: "user", text, files: files?.length ? files : undefined });
+export function appendUser(id: string, text: string, files?: api.InboxFile[], bucket: Bucket = "main", requestId?: string) {
+  pushItem(bucket, id, { kind: "user", text, requestId, files: files?.length ? files : undefined });
   if (bucket === "main") setLastSubmittedPrompt({ sessionId: id, sequence: ++submittedPromptSequence });
 }
 

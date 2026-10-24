@@ -4264,17 +4264,14 @@ pub fn project_response(
     session_id: &str,
     session: &SessionLog,
 ) -> vak_delivery::OutputTimeline {
-    let planner = delivery::merged_presentation_skills(core);
     let adaptive_store =
         vak_core::presentation_store::PresentationStore::new(core.scope().presentations());
     let mut timeline = match adaptive_store.load() {
         Ok(library) => {
             let effective = core.effective_presentations(&library, &core.cwd().to_string_lossy());
-            crate::projection::snapshot_with_skills_and_library(
-                session_id, session, &planner, &effective,
-            )
+            crate::projection::snapshot_with_library(session_id, session, &effective)
         }
-        Err(_) => crate::projection::snapshot_with_skills(session_id, session, &planner),
+        Err(_) => crate::projection::snapshot(session_id, session),
     };
     if let Ok(store) = vak_session::work_threads::TopicStore::new(&core.scope(), session_id)
         && let Ok(snapshot) = store.snapshot()
@@ -5856,6 +5853,13 @@ async fn run_prompt(
         TurnStart::Message(record)
     } else {
         start
+    };
+    let start = match start {
+        TurnStart::Message(mut record) => {
+            record.meta.get_or_insert_with(Default::default).request_id = request_id.clone();
+            TurnStart::Message(record)
+        }
+        other => other,
     };
     let restricted = matches!(
         start,
@@ -7969,17 +7973,14 @@ async fn presentation_snapshot(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(session) = guard.as_ref() {
-            let planner = delivery::merged_presentation_skills(&handle.core);
             let mut timeline = match presentation_store(&state).load() {
                 Ok(library) => {
                     let effective = handle
                         .core
                         .effective_presentations(&library, &handle.core.cwd().to_string_lossy());
-                    crate::projection::snapshot_with_skills_and_library(
-                        &id, session, &planner, &effective,
-                    )
+                    crate::projection::snapshot_with_library(&id, session, &effective)
                 }
-                Err(_) => crate::projection::snapshot_with_skills(&id, session, &planner),
+                Err(_) => crate::projection::snapshot(&id, session),
             };
             crate::projection::append_sandbox_artifacts(
                 &mut timeline,
@@ -8006,10 +8007,7 @@ async fn presentation_snapshot(
                         .unwrap_or_default();
                     let core = state.active_core();
                     let effective = core.effective_presentations(&library, &owner);
-                    let planner = delivery::merged_presentation_skills(&core);
-                    crate::projection::snapshot_with_skills_and_library(
-                        &id, &session, &planner, &effective,
-                    )
+                    crate::projection::snapshot_with_library(&id, &session, &effective)
                 }
                 Err(_) => crate::projection::snapshot(&id, &session),
             };
@@ -8042,17 +8040,14 @@ async fn session_result(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(session) = guard.as_ref() {
-            let planner = delivery::merged_presentation_skills(&handle.core);
             match presentation_store(&state).load() {
                 Ok(library) => {
                     let effective = handle
                         .core
                         .effective_presentations(&library, &handle.core.cwd().to_string_lossy());
-                    crate::projection::snapshot_with_skills_and_library(
-                        &id, session, &planner, &effective,
-                    )
+                    crate::projection::snapshot_with_library(&id, session, &effective)
                 }
-                Err(_) => crate::projection::snapshot_with_skills(&id, session, &planner),
+                Err(_) => crate::projection::snapshot(&id, session),
             }
         } else {
             handle
@@ -8070,10 +8065,7 @@ async fn session_result(
                     .unwrap_or_default();
                 let core = state.active_core();
                 let effective = core.effective_presentations(&library, &owner);
-                let planner = delivery::merged_presentation_skills(&core);
-                crate::projection::snapshot_with_skills_and_library(
-                    &id, &session, &planner, &effective,
-                )
+                crate::projection::snapshot_with_library(&id, &session, &effective)
             }
             Err(_) => crate::projection::snapshot(&id, &session),
         }

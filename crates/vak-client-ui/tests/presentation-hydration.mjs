@@ -118,3 +118,6 @@ const durableCards = {...settled,items:[durableCard]};
 const lateCard = {...durableCard,turn_id:'directive-id',provenance:{...durableCard.provenance,source:'live_event'}};
 assert.equal(applyPresentationDelta(durableCards,{type:'item_started',item:lateCard}),durableCards);
 console.log('late live cards never replace their authoritative settled item');
+
+const liveNamedSettled = { ...settled, items: [{ ...settled.items[0], turn_id: "live-sounding-recorded-id" }] };
+assert.equal(mergePresentationSnapshot(liveNamedSettled, nextRunLive).items[0], liveNamedSettled.items[0], "recorded authority comes from provenance, never an ID prefix");

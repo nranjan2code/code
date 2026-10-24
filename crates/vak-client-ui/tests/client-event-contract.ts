@@ -6,7 +6,9 @@ export const wireExamples = [
   "StreamOpened",
   {
     "TurnStart": {
-      "turn": 1
+      "turn": 1,
+      "directive_id": "directive-1",
+      "request_id": "request-1"
     }
   },
   {

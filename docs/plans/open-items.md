@@ -1,3 +1,32 @@
+## Live answer regression and rich authorship — 2026-10-24
+
+Evidence: `docs/audits/response-regression-and-history-2026-10-24.md` and
+`docs/audits/answer-contract-clean-2026-10-24.md`.
+
+- [x] Reproduce the previous-turn “No result” warning through the real ChatPane;
+  carry recorded directive identity in step events, keep live material out of
+  settled answers, and apply draft removals to the real presentation store.
+- [x] Inspect the latest vak-home run through authenticated APIs and enumerate
+  the two-month GitHub history; distinguish authored Markdown policy, actual
+  projection bugs and incomplete native/semantic acceptance.
+- [x] Restore existing structured answer forms without domain rules; focused
+  runtime/browser checks and natural supplied-data turns exercise them.
+- [x] Consolidate live/saved prose, cards and files through the typed renderer;
+  remove the transcript renderer, inline-card and retired whole-answer protocols,
+  their repair loop and unused worker registry field. No compatibility reader.
+- [x] Correct accepted-card receipts so a complete card answer needs no second
+  prose answer. Final natural requests preserve values and independent replies;
+  finite semantic review remains distinct from a universal quality claim.
+- [ ] Resolve the unsupported “air temperature” qualifier in the final strict
+  supplied-facts sample. Numeric values and transport pass, but this is an open
+  semantic-quality finding; no domain word list or further prompt tuning hides it.
+- [ ] Complete the expanded final browser/native lifecycle fixture after the
+  maintainer enables browser testing. Work settings currently disable browser
+  access; the maintainer explicitly chose non-browser checks for this run.
+- [ ] Qualify the corrected rich-answer → new live request → settlement → reload
+  sequence in the installed native app before claiming an installed fix.
+  Source corrections are uncommitted and no release/install was performed.
+
 ## Response projection across surfaces — 2026-10-23
 
 Review: `docs/audits/response-projection-across-surfaces-2026-10-23.md`.

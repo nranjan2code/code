@@ -26,7 +26,6 @@ fn packet(surface: &str, cards: Vec<StructuredOutput>, followup: &str) -> Delive
             supports_actions: false,
             template: None,
         },
-        skill_registry: None,
         trace: None,
         actor: None,
     })

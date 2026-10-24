@@ -219,6 +219,14 @@ async fn single_turn_no_tools_completes() {
     }
     let session = h.agent.session.lock().await;
     assert_eq!(session.derive_messages().len(), 2);
+    let directive = session.latest_directive_entry_id().unwrap();
+    let mut starts = Vec::new();
+    while let Ok(event) = h._events_rx.try_recv() {
+        if let vak_agent::AgentEvent::TurnStart { directive_id, .. } = event {
+            starts.push(directive_id);
+        }
+    }
+    assert_eq!(starts, vec![Some(directive)]);
 }
 
 #[tokio::test]
@@ -964,49 +972,6 @@ async fn aggregate_model_call_limit_stops_retries_without_endurance_spinning() {
         "budget exhaustion is permanent and stops retries: {outcome:?}"
     );
     assert_eq!(h.requests.lock().unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn fence_card_write_failure_does_not_deliver_a_successful_turn() {
-    let fence =
-        "Here's the chart.\n\n```vak\n{\"semantic_type\":\"chart\",\"title\":\"Evidence\"}\n```";
-    let mut h = harness(
-        vec![ScriptedResponse::Message(assistant_text(fence))],
-        vec![],
-    );
-    let path = h.agent.session.lock().await.path().to_path_buf();
-    let session = h.agent.session.clone();
-    h.agent.config.presentation_rebuild = Some(Arc::new(move |_name, input| {
-        if let Ok(mut log) = session.try_lock() {
-            *log = SessionLog::open_read_only(path.clone()).ok()?;
-        }
-        Some(vak_tools::PresentationCard {
-            presentation_id: None,
-            semantic_type: "chart".into(),
-            skill_id: "test".into(),
-            skill_version: "1".into(),
-            schema_version: 1,
-            payload: input.clone(),
-            title: "Evidence".into(),
-            identity_digest: "evidence".into(),
-            block: Some("chart".into()),
-            data_call_id: None,
-        })
-    }));
-
-    let outcome = h
-        .agent
-        .run(
-            "show evidence",
-            &Default::default(),
-            CancellationToken::new(),
-            h.events_tx.clone(),
-        )
-        .await;
-    assert!(
-        matches!(&outcome, TurnOutcome::Failed { error } if error.to_string().contains("session write failed")),
-        "a failed presentation append must fail the turn: {outcome:?}"
-    );
 }
 
 #[tokio::test]

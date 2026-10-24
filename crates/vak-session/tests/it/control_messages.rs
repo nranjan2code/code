@@ -43,8 +43,8 @@ fn log(dir: &tempfile::TempDir) -> SessionLog {
 
 #[test]
 fn the_structural_tag_wins_even_when_the_body_has_no_marker() {
-    let record = MessageRecord::control(ControlKind::FenceCheck, "please resend");
-    assert_eq!(record.control_kind(), Some(ControlKind::FenceCheck));
+    let record = MessageRecord::control(ControlKind::PresentationCheck, "please resend");
+    assert_eq!(record.control_kind(), Some(ControlKind::PresentationCheck));
 }
 
 #[test]

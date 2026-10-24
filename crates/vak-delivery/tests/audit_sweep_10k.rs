@@ -44,7 +44,6 @@ use vak_delivery::ToolResultPayload;
 use vak_delivery::discord;
 use vak_delivery::skills::{
     PRESENTATION_SKILL_API, PresentationSkillManifest, StructuredOutput, built_in_skill_registry,
-    parse_fragment, project_structured_fences, structured_outputs_from_text,
 };
 use vak_delivery::slack;
 use vak_delivery::telegram;
@@ -98,7 +97,6 @@ fn answer_job(source: &str, markup: Markup, surface: &str) -> DeliveryJob {
             supports_actions: false,
             template: None,
         },
-        skill_registry: None,
         trace: None,
         actor: None,
     }
@@ -671,7 +669,6 @@ fn blue_team_error_paths_never_panic() {
                         supports_actions: false,
                         template: None,
                     },
-                    skill_registry: None,
                     trace: None,
                     actor: None,
                 };
@@ -705,7 +702,6 @@ fn blue_team_error_paths_never_panic() {
                     supports_actions: false,
                     template: None,
                 },
-                skill_registry: None,
                 trace: None,
                 actor: None,
             };

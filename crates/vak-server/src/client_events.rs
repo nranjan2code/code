@@ -68,6 +68,8 @@ pub enum ClientEvent {
     StreamOpened,
     TurnStart {
         turn: usize,
+        directive_id: Option<String>,
+        request_id: Option<String>,
     },
     TextDelta {
         delta: String,
@@ -149,7 +151,15 @@ pub enum ClientEvent {
 pub(crate) fn project(event: AgentEvent) -> Option<ClientEvent> {
     match event {
         AgentEvent::StreamOpened => Some(ClientEvent::StreamOpened),
-        AgentEvent::TurnStart { turn } => Some(ClientEvent::TurnStart { turn }),
+        AgentEvent::TurnStart {
+            turn,
+            directive_id,
+            request_id,
+        } => Some(ClientEvent::TurnStart {
+            turn,
+            directive_id,
+            request_id,
+        }),
         AgentEvent::Stream(vak_llm::StreamEvent::TextDelta { delta, .. }) => {
             Some(ClientEvent::TextDelta { delta })
         }
@@ -282,7 +292,11 @@ mod tests {
         let dropped = |event: AgentEvent| assert!(project(event).is_none());
 
         kept(AgentEvent::StreamOpened);
-        kept(AgentEvent::TurnStart { turn: 1 });
+        kept(AgentEvent::TurnStart {
+            turn: 1,
+            directive_id: Some("directive-1".into()),
+            request_id: Some("request-1".into()),
+        });
         kept(AgentEvent::Stream(StreamEvent::TextDelta {
             delta: "hi".into(),
             partial: blank_message(),
@@ -542,7 +556,11 @@ mod tests {
 
         let events = vec![
             ClientEvent::StreamOpened,
-            ClientEvent::TurnStart { turn: 1 },
+            ClientEvent::TurnStart {
+                turn: 1,
+                directive_id: Some("directive-1".into()),
+                request_id: Some("request-1".into()),
+            },
             ClientEvent::TextDelta {
                 delta: "text".into(),
             },

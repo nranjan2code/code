@@ -740,7 +740,6 @@ pub enum Cause {
     StopHook,
     StopGuard,
     Grounding,
-    Fence,
     DuplicateCard,
     Presentation,
     CardCompletion,

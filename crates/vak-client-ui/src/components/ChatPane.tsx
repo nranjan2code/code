@@ -1,7 +1,6 @@
 import { organisationOf } from "../store";
 import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
-import { createStore, reconcile } from "solid-js/store";
 import { earlierSessions, sessionsPageRequest, historyPages, historyLoading, historyErrors, activeId, activeTopic, topicsChanged, setActiveTopic, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, turnsSetAside, turnSettled, setTurnAside, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item, openInLibrary } from "../store";
 import { showEarlierConversations, showRecentConversations, loadHistoryPage, showLatestHistory, activate, approve, isApprovalPending, openFileSmart, retryTurn } from "../App";
 import Icon from "./Icon";
@@ -11,31 +10,17 @@ import SetupBanner from "./SetupBanner";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import TopicTurnControl from "./TopicTurnControl";
-import PresentationTimelineView, { Artifact, LiveAnswer, ResultCard, ScheduledHead, StructuredView } from "./PresentationRenderer";
+import PresentationTimelineView, { Artifact, LiveAnswer, ScheduledHead } from "./PresentationRenderer";
 import { attachFiles } from "../attachFiles";
 import type { OutputItem } from "../types";
 import { hasSettledProjection, serverTurnFor, turnDisplayLabel } from "../turnPairing";
 import * as api from "../api";
 import "../focusTrap";
-import { assistantParts, cleanAssistantText, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
+import { stripControlScaffolding } from "../structured";
 import Skeleton from "./Skeleton";
 import { approvalNetworkNote, approvalSubjects, approvalTitle, mcpServerName } from "../approvalSubject";
 import { mcpServerNetwork } from "../mcpNetwork";
-export { parseVakFence, stripControlScaffolding };
-
-/// The typed-output transport fence: a ` ```vak ``` ` block in a tool
-function stripVakFence(text: string): string {
-  let cleaned = stripControlScaffolding(text);
-  cleaned = cleaned.replace(/```(?:vak|json)?\s*\{[\s\S]*?"semantic_type"[\s\S]*?\}\s*```/gi, "");
-  cleaned = cleaned.replace(/```vak\s*[\s\S]*?(?:```|$)/gi, "");
-  const trimmed = cleaned.trim();
-  if (!trimmed && text.includes('"semantic_type"')) {
-    return "Structured output rendered in the presentation timeline.";
-  }
-  return trimmed || text;
-}
-
-
+export { stripControlScaffolding };
 
 /**
  * A new task's chat pane before anything has happened, and an existing
@@ -184,66 +169,12 @@ function TranscriptSkeleton() {
   );
 }
 
-function visibleItems(list: Item[], liveTurn = false): Item[] {
-  // Filter out any control scaffolding messages (e.g. <conversation_thread>,
-  // <context_summary>, <intent>, <work_contract>) so they never leak into the chat canvas.
-  const cleanList = list.filter((it) => {
-    // Child agents and orchestration steps belong to the selected agent's
-    // internal workspace. The user-facing chat shows outcomes, not machinery.
-    if (it.kind === "worker") return false;
-    if (it.kind === "user") {
-      return stripControlScaffolding(it.text).length > 0;
-    }
-    if (it.kind === "assistant") {
-      // Model text in the active turn can be a draft that is replaced by a
-      // tool-backed result. Keep the conversation calm until the turn settles.
-      if (liveTurn || it.streaming) return false;
-      const scrubbed = cleanAssistantText(it.text);
-      if (!scrubbed.trim()) {
-        return false;
-      }
-      return true;
-    }
-    return true;
+function visibleItems(list: Item[]): Item[] {
+  return list.filter(item => {
+    if (item.kind === "user") return Boolean(item.text.trim() || item.files?.length || item.artifacts?.length);
+    if (item.kind === "system") return Boolean(item.text.trim());
+    return (item.kind === "approval" || item.kind === "question") && !item.resolved;
   });
-
-  // The conversation stays outcome-first. Detailed activity remains available
-  // through the task-scoped Details surface instead of changing the transcript.
-  const d = "outcome";
-  if (d === "outcome") {
-    // The working indicator is the live state; only settled answer content
-    // appears in the everyday conversation.
-    return cleanList.filter((it, i) => {
-      if (it.kind === "user") {
-        return Boolean(stripControlScaffolding(it.text).trim());
-      }
-      // Runtime bookkeeping (retries, route fallback, context compaction,
-      // stop-hook continuations) never reaches the client at all now — the
-      // server-side projection (vak-server/src/client_events.rs) drops it
-      // before it becomes a `ClientEvent`, so every "system" item here is
-      // already something meant for the reader.
-      if (it.kind === "system") return true;
-      if ((it.kind === "approval" || it.kind === "question") && !it.resolved) return true;
-      if (it.kind === "assistant") {
-        const scrubbed = cleanAssistantText(it.text);
-        if (!scrubbed.trim()) return false;
-        // Before the durable projection arrives, show at most the latest
-        // answer from this turn. Earlier assistant messages are drafts.
-        for (let j = i + 1; j < cleanList.length; j++) {
-          const next = cleanList[j];
-          if (next.kind === "user") break;
-          if (next.kind === "assistant" && Boolean(cleanAssistantText(next.text).trim())) {
-            return false;
-          }
-        }
-        return true;
-      }
-      // With technical details off, intermediate tool executions remain in Workbench
-      // and task details rather than cluttering the chat canvas.
-      return false;
-    });
-  }
-  return cleanList;
 }
 
 
@@ -307,7 +238,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   const result = () => {
     const value = props.item.preview?.trim();
     if (value) {
-      const shown = stripVakFence(value);
+      const shown = stripControlScaffolding(value);
       return shown.slice(0, technicalDetails() ? 4000 : 800);
     }
     return props.item.done ? "No output returned." : "Waiting for a result…";
@@ -588,24 +519,6 @@ function attachedFileItem(file: api.InboxFile, sessionId?: string | null): Outpu
   } as OutputItem;
 }
 
-/** A file a run just produced, before the run's settled result arrives with
- * its status; the first one of a run offers Review changes, as the settled
- * card does. */
-function deliverableItem(art: { name: string; path: string; execId?: string }, first: boolean, sessionId?: string | null): OutputItem {
-  return {
-    id: `deliverable:${art.execId ?? ""}:${art.path}`,
-    turn_id: "",
-    timestamp: "",
-    role: "tool",
-    kind: "artifact",
-    status: "succeeded",
-    content: { type: "artifact", artifact: { name: art.name, path: art.path } },
-    provenance: { session_id: sessionId ?? undefined, tool_call_id: art.execId },
-    actions: first && art.execId ? [{ id: `review-${art.execId}`, label: "Review changes", verb: "review_draft", data: { execution_id: art.execId } }] : [],
-    fallback_text: art.path,
-  } as OutputItem;
-}
-
 function itemBody(item: Item, sessionId?: string | null): JSX.Element {
   if (item.kind === "user") {
     const text = stripControlScaffolding(item.text);
@@ -653,7 +566,7 @@ function itemBody(item: Item, sessionId?: string | null): JSX.Element {
       </div>
     );
   }
-  if (item.kind === "assistant") return <AssistantItem item={item} sessionId={sessionId} />;
+  if (item.kind === "assistant") return null;
   if (item.kind === "thinking") {
     return (
       <details class="thinking">
@@ -694,106 +607,6 @@ function itemBody(item: Item, sessionId?: string | null): JSX.Element {
     );
   }
   return <div class="sysnote">{item.text}</div>;
-}
-
-function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sessionId?: string | null }) {
-    const [content, setContent] = createStore<{ parts: ReturnType<typeof assistantParts> }>({ parts: [] });
-    createEffect(() => setContent("parts", reconcile(assistantParts(props.item.text, props.item.streaming), { key: null })));
-    const parts = () => content.parts;
-    const groups = createMemo(() => groupAssistantParts(parts()));
-    const displayText = () => parts().filter((part) => part.type === "text").map((part) => part.text).join("\n\n");
-
-    const turnDeliverables = createMemo(() => {
-      if (props.item.streaming) return [];
-      const sid = props.sessionId ?? activeId();
-      const allItems = sid ? itemsOf(sid) : [];
-      const myIdx = allItems.findIndex((it) => it.kind === "assistant" && (it as any).key === props.item.key);
-
-      // Gather all tool IDs belonging to this turn (from previous user turn to this assistant turn)
-      const turnToolIds = new Set<string>();
-      if (myIdx > 0) {
-        for (let i = myIdx - 1; i >= 0; i--) {
-          const prev = allItems[i];
-          if (prev.kind === "user") break;
-          if (prev.kind === "tool" && prev.id) {
-            turnToolIds.add(prev.id);
-          }
-        }
-      }
-
-      const results: Array<{ name: string; path: string; execId?: string }> = [];
-      const seenPaths = new Set<string>();
-      const executions = workbenchExecutions();
-
-      // Only attach artifacts through the brokered tool-call/execution id.
-      // Prose and basename inference used to make a mentioned file look like
-      // a produced result, and the session-wide fallback could attach an old
-      // execution to every later answer.
-      for (const exec of executions) {
-        if (turnToolIds.has(exec.id)) {
-          for (const art of exec.artifacts) {
-            if (isPreviewableArtifact(art.path) && !seenPaths.has(art.path)) {
-              seenPaths.add(art.path);
-              results.push({
-                name: art.path.split("/").pop() || art.path,
-                path: art.path,
-                execId: exec.id,
-              });
-            }
-          }
-        }
-      }
-
-      return results;
-    });
-
-    return (
-      <div class="msg assistant">
-        <div class="assistant-turn-head">
-          <AgentMark character={agentForSession(props.sessionId ?? activeId()).character} motion={agentForSession(props.sessionId ?? activeId()).animation} size={26} state={props.item.streaming ? "working" : "idle"} class="assistant-avatar-mark" />
-          <span class="assistant-name">{agentForSession(props.sessionId ?? activeId()).name}</span>
-          <Show when={props.item.streaming}>
-            <span class="assistant-live-pulse" title="Generating">
-              <span class="dot run" />
-            </span>
-          </Show>
-        </div>
-        <div class="assistant-turn-body">
-          <For each={groups()}>
-            {(group) =>
-              group.type === "text" ? (
-                <Markdown text={group.text} streaming={props.item.streaming} />
-              ) : group.cards.length === 1 ? (
-                <StructuredView output={group.cards[0].output} fallback={group.cards[0].source} sessionId={props.sessionId ?? undefined} />
-              ) : (
-                <div class="card-group" style={{ "--card-group-count": group.cards.length }}>
-                  <For each={group.cards}>
-                    {(card) => (
-                      <div class="card-group-item">
-                        <StructuredView output={card.output} fallback={card.source} sessionId={props.sessionId ?? undefined} />
-                      </div>
-                    )}
-                  </For>
-                </div>
-              )
-            }
-          </For>
-          <Show when={!props.item.streaming && turnDeliverables().length > 0}>
-            <div class="primary-result-files">
-              <For each={turnDeliverables()}>
-                {(art, index) => <ResultCard item={deliverableItem(art, index() === 0, props.sessionId ?? activeId())} sessionId={props.sessionId ?? activeId() ?? ""} />}
-              </For>
-            </div>
-          </Show>
-          <Show when={props.item.streaming && !displayText()}>
-            <span class="caret" />
-          </Show>
-          <Show when={!props.item.streaming && displayText()}>
-            <MessageActions text={displayText()} role="assistant" />
-          </Show>
-        </div>
-      </div>
-    );
 }
 
 // View state only: changing agents or opening a canvas must not discard the
@@ -1170,12 +983,12 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     if (!timeline) return null;
     const serverTurn = serverTurnFor(turns()[index]?.find((item) => item.kind === "user")?.entryId, timeline.items);
     if (!serverTurn) return null;
-    const items = timeline.items.filter((item) => item.turn_id === serverTurn && item.content.type !== "work_progress");
+    const items = timeline.items.filter((item) => item.turn_id === serverTurn
+      && item.provenance?.source !== "live_event" && item.content.type !== "work_progress");
     // A failed or capped run can still have a real file or card, plus its
     // failure receipt, without a final assistant message. Preserve that
     // partial work in conversation after the run settles.
     if (!hasSettledProjection(items)) return null;
-    if (index === turns().length - 1 && isRunning(sid())) return null;
     return { ...timeline, items };
   };
   const [fileOver, setFileOver] = createSignal(false);
@@ -1299,13 +1112,14 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                     <span class="dot run assistant-working-dot" aria-label="Working" />
                   </div>
                 </Show>
-                <Show when={projectedTurn(entry().index)} fallback={<><Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<ItemView item={it()} sessionId={sid()} />}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>
-                  <Show when={entry().index === turns().length - 1}><LiveAnswer sessionId={sid()!} /></Show></>}>
+                <Show when={projectedTurn(entry().index)} fallback={<><Index each={visibleItems(entry().turn).filter((item) => item.kind !== "user")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
+                  </>}>
                   {(timeline) => <>
                     <div class="turn-result"><PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} hideUser /></div>
                     <Index each={entry().turn.filter((item) => item.kind === "system")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
                   </>}
                 </Show>
+                <Show when={entry().index === turns().length - 1}><LiveAnswer sessionId={sid()!} /></Show>
                 </div>
                 </Show>
               </div>; }}</Index>

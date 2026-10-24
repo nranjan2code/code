@@ -9,7 +9,7 @@
 # When a change makes a finding wrong, fixes it, or adds one, edit it here and
 # set `prose_reviewed` to the version and date, in the same commit.
 
-prose_reviewed = "8.31.0 · 2026-10-23"
+prose_reviewed = "8.31.2 · 2026-10-24"
 
 summary = """
 Vakyartha (`vak`) is a local-first agent harness for one owner: agents that \
@@ -142,10 +142,17 @@ and selects eligible Slack native charts before fallback. The rich-answer
 corpus reaches actual delivery, terminal, hydration and page consumers; target
 dispositions retain original item ids. Complete native-client, all-form,
 state/action and mounted-access lifecycle qualification remains open.
+The 24 October correction carries recorded request identity and renders live
+and saved prose/cards/files through one typed renderer. Inline-card and retired
+whole-answer compatibility paths are removed; the worker protocol rejects the
+removed registry field. Frozen-image natural turns and an actual SSE check
+preserve accepted values and previous items. An unsupported semantic qualifier
+remains explicit, and final expanded browser/native lifecycle acceptance is
+unverified because the maintainer chose non-browser checks.
 """
 matters = "Deterministic source-order and verdict preservation does not establish native appearance, useful model-authored interaction or every access-revocation/cache combination. Those exits need explicit evidence before claiming complete rich-response support."
 fix = "Complete doc 104's native/state/action and natural-request acceptance matrix over the shared accepted answer, keep target limits and fallback dispositions qualified, and retain one answer authority. Existing action/effect/grant services remain the authority."
-sources = "[Initial source audit](../docs/audits/response-projection-across-surfaces-2026-10-23.md); [current research](../docs/research/rich-responses-2026-10-23.md); [contract](../docs/design/104-rich-response-contract.md); `crates/vak-delivery/src/answer.rs`, `crates/vak-delivery/src/channel/mod.rs`, `crates/vak-server/src/projection.rs`, `crates/vak-terminal/src/app.rs`."
+sources = "[Clean answer path acceptance](../docs/audits/answer-contract-clean-2026-10-24.md); [Initial source audit](../docs/audits/response-projection-across-surfaces-2026-10-23.md); [current research](../docs/research/rich-responses-2026-10-23.md); [contract](../docs/design/104-rich-response-contract.md); `crates/vak-delivery/src/answer.rs`, `crates/vak-delivery/src/channel/mod.rs`, `crates/vak-server/src/projection.rs`, `crates/vak-terminal/src/app.rs`."
 
 [[keep]]
 name = "vak-permission"

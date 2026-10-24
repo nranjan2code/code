@@ -268,7 +268,7 @@ async fn a_long_answer_keeps_its_answer_on_the_card() {
 }
 
 #[tokio::test]
-async fn fence_presentation_is_written_once() {
+async fn code_example_cannot_write_a_presentation() {
     let dir = tempdir().unwrap();
     let fence = "Here's a fresh chart.\n\n```vak\n{\"semantic_type\":\"chart\",\"title\":\"Fresh\",\"points\":[{\"series\":\"s\",\"x\":\"1\",\"y\":1}]}\n```";
     let mut agent = build_agent(&dir, "fence-write", vec![text_msg(fence)], vec![], true);
@@ -284,20 +284,14 @@ async fn fence_presentation_is_written_once() {
 
     let session = agent.session.lock().await;
     let presentations = session.presentations();
-    assert_eq!(
-        presentations.len(),
-        1,
-        "the fence must write one presentation"
+    assert!(
+        presentations.is_empty(),
+        "code is not presentation authority"
     );
-    assert!(matches!(
-        presentations[0].1.source,
-        PresentationSource::Fence { .. }
-    ));
-    assert_eq!(presentations[0].1.title, "Fresh");
 }
 
 #[tokio::test]
-async fn fence_presentation_deduped_against_tool_emitted_card() {
+async fn code_example_cannot_duplicate_an_accepted_card() {
     let dir = tempdir().unwrap();
     // The reply repeats the card it showed as a `vak` fence with the
     // IDENTICAL payload: the card is recorded once.

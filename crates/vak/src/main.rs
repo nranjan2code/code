@@ -1649,7 +1649,7 @@ async fn run_exec(
 
     while let Some(ev) = rx.recv().await {
         match ev {
-            AgentEvent::TurnStart { turn } => {
+            AgentEvent::TurnStart { turn, .. } => {
                 if turn > 0 {
                     writeln!(out).ok();
                 }

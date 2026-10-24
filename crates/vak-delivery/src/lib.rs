@@ -36,10 +36,8 @@ pub use presentation::{
 };
 pub use skills::{
     FORMS, PRESENTATION_SKILL_API, PresentationSkillManifest, SkillError, SkillRegistry,
-    StructuredOutput, built_in_semantic_types, built_in_skill_registry, is_form, parse_fragment,
-    parse_fragment_with, project_structured_fences, project_structured_fences_with,
-    structured_markdown, structured_output, structured_outputs_from_text,
-    structured_outputs_from_text_with, validate_form,
+    StructuredOutput, built_in_semantic_types, built_in_skill_registry, is_form,
+    structured_markdown, structured_output, validate_form,
 };
 pub use vak_presentation as adaptive_presentation;
 
@@ -443,14 +441,9 @@ impl TemplateSpec {
         validate_nodes(&self.nodes, 0)
     }
 
-    fn render(
-        &self,
-        answer: &AnswerDraft,
-        project_structured: bool,
-        skills: &SkillRegistry,
-    ) -> Result<String, DeliveryError> {
+    fn render(&self, answer: &AnswerDraft) -> Result<String, DeliveryError> {
         self.validate()?;
-        render_nodes(&self.nodes, answer, 0, project_structured, skills)
+        render_nodes(&self.nodes, answer, 0)
     }
 }
 
@@ -485,8 +478,6 @@ fn render_nodes(
     nodes: &[TemplateNode],
     answer: &AnswerDraft,
     depth: usize,
-    project_structured: bool,
-    skills: &SkillRegistry,
 ) -> Result<String, DeliveryError> {
     if depth > 8 {
         return Err(DeliveryError::InvalidTemplate(
@@ -497,38 +488,25 @@ fn render_nodes(
     for node in nodes {
         match node {
             TemplateNode::Literal { text } => out.push_str(text),
-            TemplateNode::Slot { slot } => {
-                out.push_str(&slot_value(slot, answer, project_structured, skills))
-            }
+            TemplateNode::Slot { slot } => out.push_str(&slot_value(slot, answer)),
             TemplateNode::IfPresent {
                 slot,
                 then_nodes,
                 else_nodes,
             } => {
-                let selected = if slot_value(slot, answer, project_structured, skills).is_empty() {
+                let selected = if slot_value(slot, answer).is_empty() {
                     else_nodes
                 } else {
                     then_nodes
                 };
-                out.push_str(&render_nodes(
-                    selected,
-                    answer,
-                    depth + 1,
-                    project_structured,
-                    skills,
-                )?);
+                out.push_str(&render_nodes(selected, answer, depth + 1)?);
             }
         }
     }
     Ok(out)
 }
 
-fn slot_value(
-    slot: &TemplateSlot,
-    answer: &AnswerDraft,
-    project_structured: bool,
-    skills: &SkillRegistry,
-) -> String {
+fn slot_value(slot: &TemplateSlot, answer: &AnswerDraft) -> String {
     match slot {
         TemplateSlot::Title => answer
             .blocks
@@ -539,7 +517,7 @@ fn slot_value(
             })
             .or_else(|| answer.metadata.get("title").cloned())
             .unwrap_or_default(),
-        TemplateSlot::Body => render_plain(answer, project_structured, skills),
+        TemplateSlot::Body => render_plain(answer),
         TemplateSlot::SourceMarkdown => answer.source_markdown.clone(),
         TemplateSlot::BlockCount => answer.blocks.len().to_string(),
         TemplateSlot::Metadata { key } => answer.metadata.get(key).cloned().unwrap_or_default(),
@@ -547,19 +525,13 @@ fn slot_value(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeliveryJob {
     pub job_id: String,
     pub target: String,
     pub kind: DeliveryKind,
     pub content: DeliveryContent,
     pub profile: DeliveryProfile,
-    /// Plugin-merged skill registry for structured-fence validation. When
-    /// `None`, the worker falls back to `built_in_skill_registry()`. The Core
-    /// populates this from its capability snapshot so that plugin-declared
-    /// semantic types are recognized during rendering without the worker
-    /// having filesystem or network access.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skill_registry: Option<SkillRegistry>,
     /// The run this job was written under, and who acted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<vak_session::trace::TraceKey>,
@@ -874,45 +846,18 @@ fn metadata_outcome(
     })
 }
 
-/// Whether the markup type cannot render semantic AST blocks natively and
-/// therefore needs ```vak fences projected to readable text before markup
-/// conversion. Native surfaces (desktop, tui, admin) and JSON payloads handle
-/// structured blocks through the semantic path; all chat and plain-text
-/// surfaces need projection.
-fn needs_structured_projection(markup: Markup) -> bool {
-    !matches!(markup, Markup::Json)
-}
-
 fn render_content(
     job: &DeliveryJob,
 ) -> Result<(String, String, Vec<DeliveryAction>, Vec<Coverage>), DeliveryError> {
-    let project_structured = needs_structured_projection(job.profile.markup);
-    let skills = job
-        .skill_registry
-        .as_ref()
-        .map(std::borrow::Cow::Borrowed)
-        .unwrap_or_else(|| std::borrow::Cow::Owned(built_in_skill_registry()));
-    let skills_ref = &*skills;
     match &job.content {
         DeliveryContent::Answer(answer) => {
             let projected_answer = answer.channel_projection();
             let rendered = match job.profile.template.as_ref() {
                 Some(template) => {
-                    let text =
-                        template.render(&projected_answer, project_structured, skills_ref)?;
-                    let text = if project_structured {
-                        project_structured_fences_with(&text, skills_ref)
-                    } else {
-                        text
-                    };
+                    let text = template.render(&projected_answer)?;
                     render_text(&text, job.profile.markup)
                 }
-                None => render_answer(
-                    &projected_answer,
-                    job.profile.markup,
-                    project_structured,
-                    skills_ref,
-                ),
+                None => render_answer(&projected_answer, job.profile.markup),
             };
             let coverage = projected_answer
                 .blocks
@@ -942,24 +887,17 @@ fn render_content(
             Vec::new(),
         )),
         DeliveryContent::ToolResult(result) => Ok((
-            render_tool_result(result, job.profile.markup, project_structured, skills_ref),
+            render_tool_result(result, job.profile.markup),
             result.output.clone(),
             Vec::new(),
             Vec::new(),
         )),
-        DeliveryContent::Text { markdown } => {
-            let projected = if project_structured {
-                project_structured_fences_with(markdown, skills_ref)
-            } else {
-                markdown.clone()
-            };
-            Ok((
-                render_text(&projected, job.profile.markup),
-                markdown.clone(),
-                Vec::new(),
-                Vec::new(),
-            ))
-        }
+        DeliveryContent::Text { markdown } => Ok((
+            render_text(markdown, job.profile.markup),
+            markdown.clone(),
+            Vec::new(),
+            Vec::new(),
+        )),
     }
 }
 
@@ -994,12 +932,7 @@ fn format_kind(kind: DeliveryKind) -> &'static str {
     }
 }
 
-fn render_answer(
-    answer: &AnswerDraft,
-    markup: Markup,
-    project_structured: bool,
-    skills: &SkillRegistry,
-) -> String {
+fn render_answer(answer: &AnswerDraft, markup: Markup) -> String {
     let metadata_notice = (metadata_status(&answer.metadata) != OutputStatus::Succeeded).then(||
         "⚠️ Outcome incomplete or unverified — review the evidence before relying on this result.\n\n".into()
     );
@@ -1014,20 +947,11 @@ fn render_answer(
         ))
     });
     let notice = result_notice.or(metadata_notice);
-    let raw_source = if project_structured {
-        project_structured_fences_with(&answer.source_markdown, skills)
-    } else {
-        answer.source_markdown.clone()
-    };
     // Runtime authorship/control records are filtered before AnswerDraft.
     // Literal marker examples and lifecycle words remain authored content.
-    let source = raw_source.trim();
+    let source = answer.source_markdown.trim();
     match markup {
-        Markup::Plain => format!(
-            "{}{}",
-            notice.unwrap_or_default(),
-            render_plain(answer, project_structured, skills)
-        ),
+        Markup::Plain => format!("{}{}", notice.unwrap_or_default(), render_plain(answer)),
         Markup::Markdown => format!("{}{}", notice.unwrap_or_default(), source),
         Markup::TelegramHtml => {
             telegram::markdown_to_html(&format!("{}{}", notice.unwrap_or_default(), source))
@@ -1042,9 +966,7 @@ fn render_answer(
     }
 }
 
-/// Markup conversion only — does NOT project structured fences. Callers must
-/// project first via `project_structured_fences` when the surface doesn't
-/// support structured blocks natively.
+/// Convert document markup without interpreting code as presentation data.
 fn render_text(markdown: &str, markup: Markup) -> String {
     match markup {
         Markup::TelegramHtml => telegram::markdown_to_html(markdown),
@@ -1063,23 +985,13 @@ fn render_progress(progress: &ProgressPayload, markup: Markup) -> String {
     }
 }
 
-fn render_tool_result(
-    result: &ToolResultPayload,
-    markup: Markup,
-    project_structured: bool,
-    skills: &SkillRegistry,
-) -> String {
+fn render_tool_result(result: &ToolResultPayload, markup: Markup) -> String {
     let prefix = if result.is_error {
         "Tool error"
     } else {
         "Tool result"
     };
-    let formatted = format!("{prefix} ({}\n\n{}", result.tool, result.output);
-    let text = if project_structured {
-        project_structured_fences_with(&formatted, skills)
-    } else {
-        formatted
-    };
+    let text = format!("{prefix} ({}\n\n{}", result.tool, result.output);
     if matches!(markup, Markup::TelegramHtml) {
         escape_html(&text)
     } else {
@@ -1249,7 +1161,7 @@ fn list_item(line: &str) -> Option<(bool, &str)> {
     None
 }
 
-fn render_plain(answer: &AnswerDraft, project_structured: bool, skills: &SkillRegistry) -> String {
+fn render_plain(answer: &AnswerDraft) -> String {
     answer
         .blocks
         .iter()
@@ -1269,13 +1181,6 @@ fn render_plain(answer: &AnswerDraft, project_structured: bool, skills: &SkillRe
                 .collect::<Vec<_>>()
                 .join("\n"),
             Block::Quote { text, .. } => format!("> {text}"),
-            Block::Code {
-                content, language, ..
-            } if project_structured && language.as_deref() == Some("vak") => {
-                parse_fragment_with(content, skills)
-                    .map(|output| structured_markdown(&output))
-                    .unwrap_or_else(|_| content.clone())
-            }
             Block::Code { content, .. }
             | Block::RawMarkdown {
                 markdown: content, ..
@@ -1417,7 +1322,7 @@ pub mod worker {
     use serde::{Deserialize, Serialize};
     use std::io::{self, BufRead, Write};
 
-    pub const WORKER_PROTOCOL_VERSION: u16 = 1;
+    pub const WORKER_PROTOCOL_VERSION: u16 = 2;
     pub const WORKER_SUBCOMMAND: &str = "__delivery_worker";
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -1548,7 +1453,6 @@ mod tests {
                 supports_actions: false,
                 template: None,
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         }
@@ -1634,7 +1538,6 @@ mod tests {
                     supports_actions: false,
                     template: None,
                 },
-                skill_registry: None,
                 trace: None,
                 actor: None,
             };
@@ -1956,7 +1859,6 @@ mod tests {
                 max_chars: Some(4),
                 ..DeliveryProfile::plain("test")
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2036,7 +1938,6 @@ mod tests {
                 markdown: "system instruction".into(),
             },
             profile: DeliveryProfile::plain("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2064,7 +1965,6 @@ mod tests {
                 actions: vec![action],
             }),
             profile: DeliveryProfile::plain("test"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2084,6 +1984,45 @@ mod tests {
         assert!(response.contains("invalid delivery worker request"));
     }
 
+    #[test]
+    fn worker_rejects_retired_protocol_and_inline_registry_field() {
+        let job = DeliveryJob {
+            job_id: "strict-contract".into(),
+            target: "local".into(),
+            kind: DeliveryKind::Assistant,
+            content: DeliveryContent::Text {
+                markdown: "Hello".into(),
+            },
+            profile: DeliveryProfile::plain("local"),
+            trace: None,
+            actor: None,
+        };
+        let request = serde_json::json!({"protocol_version": 1, "job": job});
+        let response: worker::WorkerResponse =
+            serde_json::from_str(&worker::process_line(&request.to_string()))
+                .expect("worker response JSON");
+        assert!(response.packet.is_none());
+        assert!(
+            response
+                .error
+                .expect("explicit refusal")
+                .contains("unsupported worker protocol")
+        );
+        let mut request =
+            serde_json::json!({"protocol_version": worker::WORKER_PROTOCOL_VERSION, "job": job});
+        request["job"]["skill_registry"] = serde_json::json!({"skills": {}});
+        let response: worker::WorkerResponse =
+            serde_json::from_str(&worker::process_line(&request.to_string()))
+                .expect("worker response JSON");
+        assert!(response.packet.is_none());
+        assert!(
+            response
+                .error
+                .expect("explicit refusal")
+                .contains("unknown field")
+        );
+    }
+
     fn fallback_text(packet: &DeliveryPacket) -> String {
         match &packet.payload {
             DeliveryPayload::Text(text) => text.clone(),
@@ -2100,7 +2039,7 @@ mod tests {
     }
 
     #[test]
-    fn structured_fence_projected_on_telegram_html() {
+    fn card_shaped_code_is_literal_telegram_code() {
         let source = "# Result\n\n```vak\n{\"semantic_type\":\"stats\",\"payload\":{\"readings\":[{\"label\":\"tokens\",\"value\":128}]}}\n```\n\nSummary text here.\n";
         let input = DeliveryJob {
             job_id: "struct-1".into(),
@@ -2117,7 +2056,6 @@ mod tests {
                 supports_actions: false,
                 template: None,
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2137,12 +2075,12 @@ mod tests {
         );
         assert!(
             !text.contains("```vak"),
-            "raw vak fence must be projected, not shown verbatim"
+            "Telegram replaces Markdown code delimiters with HTML"
         );
     }
 
     #[test]
-    fn structured_fence_projected_on_slack_mrkdwn() {
+    fn card_shaped_code_is_literal_slack_code() {
         let source = "Done.\n\n```vak\n{\"semantic_type\":\"link.preview\",\"payload\":{\"url\":\"https://example.com\",\"title\":\"Example\"}}\n```\n";
         let input = DeliveryJob {
             job_id: "struct-2".into(),
@@ -2159,7 +2097,6 @@ mod tests {
                 supports_actions: false,
                 template: None,
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2170,11 +2107,14 @@ mod tests {
             text.contains("https://example.com"),
             "link URL should appear"
         );
-        assert!(!text.contains("```vak"), "raw fence must be projected");
+        assert!(
+            !text.contains("```vak"),
+            "Slack replaces Markdown code delimiters"
+        );
     }
 
     #[test]
-    fn structured_fence_projected_on_discord_markdown() {
+    fn card_shaped_code_remains_literal_on_discord() {
         let source = "Done.\n\n```vak\n{\"semantic_type\":\"stats\",\"payload\":{\"readings\":[{\"label\":\"latency\",\"value\":42}]}}\n```\n";
         let input = DeliveryJob {
             job_id: "struct-3".into(),
@@ -2191,7 +2131,6 @@ mod tests {
                 supports_actions: false,
                 template: None,
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2199,11 +2138,16 @@ mod tests {
         let text = fallback_text(&packet);
         assert!(text.contains("latency"), "metric label should appear");
         assert!(text.contains("42"), "metric value should appear");
-        assert!(!text.contains("```vak"), "raw fence must be projected");
+        assert!(text.contains("```vak"), "code delimiters remain literal");
+        assert!(
+            text.contains("semantic_type"),
+            "code is never interpreted as an answer item"
+        );
+        assert!(compile_markdown(source).blocks.iter().any(|block| matches!(block, DocumentBlock::Code { language, .. } if language.as_deref() == Some("vak"))));
     }
 
     #[test]
-    fn structured_fence_passed_through_as_json_for_native_surface() {
+    fn card_shaped_code_is_literal_in_native_document() {
         let source = "Done.\n\n```vak\n{\"semantic_type\":\"stats\",\"payload\":{\"readings\":[{\"label\":\"tokens\",\"value\":128}]}}\n```\n";
         let input = DeliveryJob {
             job_id: "struct-4".into(),
@@ -2220,7 +2164,6 @@ mod tests {
                 supports_actions: true,
                 template: None,
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2257,7 +2200,6 @@ mod tests {
                 supports_actions: false,
                 template: None,
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2289,7 +2231,6 @@ mod tests {
                 supports_actions: false,
                 template: None,
             },
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -2319,10 +2260,13 @@ mod tests {
         assert!(registry.get("custom_metric").is_some());
         // The plugin skill should be used when parsing its semantic type:
         // skill_id is resolved from the registry, not hardcoded to "core".
-        let fence =
-            r#"{"semantic_type":"custom.metric","payload":{"label":"throughput","value":42}}"#;
-        let output = parse_fragment_with(fence, &registry)
-            .expect("plugin skill should parse with correct skill_id");
+        let output = structured_output(
+            "custom.metric",
+            None,
+            serde_json::json!({"label": "throughput", "value": 42}),
+            &registry,
+        )
+        .expect("plugin kind validates through its registered schema");
         assert_eq!(output.skill_id, "custom_metric");
         assert_eq!(output.skill_version, "1.0.0");
         assert_eq!(output.semantic_type, "custom.metric");

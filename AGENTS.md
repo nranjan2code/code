@@ -1273,9 +1273,10 @@ commit (invariant 30).
   answering or stopping, as after any call. Nothing decides a card by words or counts:
   no signals read from text, no title word lists, no row thresholds. The
   contributor guide is `docs/design/67-presentation-renderer-guide.md`.
-  Only chart, stats, map, calendar and controls are offered card tools;
-  every other builder remains for history, inline fences and runtime cards.
-  Markdown supplies interactive tables, lists, quotes, Mermaid and diff code.
+  Existing summary, steps, list, details, table, comparison, stats, chart,
+  callout, calendar, map and controls are offered card tools. Sources and file
+  changes remain runtime-derived. Markdown supplies explanatory prose and
+  code; code fences never create presentation records.
   Offered tools are a subset of drawable forms, never their registry.
   Optional `progress` appears in the top semicircle and right Details panel,
   never the chat body. It is separate from cards: never require a call,
@@ -1297,11 +1298,10 @@ commit (invariant 30).
   `PresentationSource::ToolCall` presentation. One
   argument name is one shape on every block
   (`one_argument_name_is_one_shape_on_every_block`). A table
-  card whose rows are one cell each is refused as a list. `PresentationSource::Answer` is recorded
-  history only; nothing writes it. A card that fails is refused with
-  what to fix, and goes through the repair stages like any tool. The fence path, an inline
-  ` ```vak ` fence, is the fallback when no card tool is admitted, and a
-  fence carries the same arguments the block takes. A card block's
+  card whose rows are one cell each is refused as a list. A card that fails
+  is refused with what to fix and goes through the repair stages like any tool.
+  Removed whole-answer and inline-fence protocols have no compatibility reader.
+  A card block's
   arguments are flat beside `semantic_type`, use only the schema keywords
   every provider carries, put no data in keys, hold no list of records
   inside a record in a list, require `semantic_type` first and ask for no
@@ -1347,10 +1347,9 @@ commit (invariant 30).
   After validation, the call and its result are ledgered and a
   `PresentationRecord` is appended, built from the block the call was made
   to (`presentation_info`; a stray `semantic_type` in a call's arguments
-  never sends it to another block, and only a fence resolves its block
-  from `semantic_type`); a card the host cannot record is a tool fault,
+  never sends it to another block); a card the host cannot record is a tool fault,
   never acknowledged as shown; `vak-server` projects that record by
-  `tool_use_id` (and an answer's by its block), and the client resolves `semantic_type` through the single
+  `tool_use_id`, and the client resolves the recorded `block` through the single
   renderer registry. Diagnose a missing or wrong card at each boundary in
   that order; a successful tool acknowledgement proves ledger admission, not
   UI projection. Keep this path and turn state consistent with
@@ -1380,9 +1379,11 @@ commit (invariant 30).
   narration must inspect cards in the latest turn only; an older card must not
   suppress a current prose answer.
   **Presentation schema access is independent of request vocabulary.** All
-  five admitted card tools are loaded from the first step on every provider.
-  Other shapes have builders for history, inline fences and runtime cards,
-  but no offered tool. Markdown is the normal answer contract. Runtime source
+  admitted card tools are loaded from the first step on every provider.
+  Structured answers use the existing summary, steps, list, details, table,
+  comparison, stats, chart, callout, calendar, map and controls forms; prose
+  explains them or answers a short direct question. Remaining shapes retain
+  their history and runtime builders. Runtime source
   cards report retrieval receipts, not invented findings; diff cards use the
   captured file changes. No plan, forced card call or Topics placement hold
   remains; Topics placement is the model's own call. Nothing holds a finished

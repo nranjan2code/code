@@ -46,11 +46,9 @@ pub fn text(item: &OutputItem) -> String {
         | OutputContent::Outcome {
             document: Some(document),
             ..
-        } => crate::project_structured_fences(&document.source_markdown),
+        } => document.source_markdown.clone(),
         OutputContent::Structured { output } => crate::structured_markdown(output),
-        OutputContent::Adaptive { fallback_text, .. } => {
-            crate::project_structured_fences(fallback_text)
-        }
+        OutputContent::Adaptive { fallback_text, .. } => fallback_text.clone(),
         OutputContent::Artifact { artifact } => {
             let mut text = artifact.name.clone();
             if let Some(description) = &artifact.description {
@@ -352,7 +350,6 @@ mod tests {
                     },
                     trace: None,
                     actor: None,
-                    skill_registry: None,
                 })
                 .unwrap()
             })
@@ -415,7 +412,6 @@ mod tests {
                 kind: crate::DeliveryKind::Assistant,
                 content: crate::DeliveryContent::Answer(crate::AnswerDraft::from_items(items)),
                 profile,
-                skill_registry: None,
                 trace: None,
                 actor: None,
             })

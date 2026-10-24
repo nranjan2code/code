@@ -17,16 +17,16 @@ The lower layers (storage, permission, the pure deciders, the document engines) 
 | | |
 |---|---|
 | Crates | 35 Rust, 2 TypeScript |
-| Rust source / tests | 348,839 / 87,763 lines |
-| TypeScript source | 64,995 lines |
+| Rust source / tests | 348,287 / 87,547 lines |
+| TypeScript source | 64,557 lines |
 | HTTP routes | 404 |
-| Subsystems / connections / flows | 64 / 846 / 11 |
-| Built-in tools / card tools / card forms | 26 / 5 / 20 |
+| Subsystems / connections / flows | 64 / 845 / 11 |
+| Built-in tools / card tools / card forms | 26 / 12 / 20 |
 | Worker task kinds | 14 |
 | Registered durable paths | 81 |
 | Crates in Cargo.lock | 764 |
 | Commits | 2,500 in 64 days (peak 174 in a day) |
-| Design docs / AGENTS.md | 100 / 20,573 words |
+| Design docs / AGENTS.md | 100 / 20,551 words |
 
 ## Needs attention
 
@@ -50,11 +50,19 @@ Only findings with a cost today; the evidence for each is under [Findings](#find
 | doc paths | ok |
 | versions | ok |
 | advisories | 0 known vulnerabilities not excepted, 10 warnings (measured at `95f3da2bc`) |
-| record drift | 260 cited code names missing in 47 living documents (`run.py names`) |
+| record drift | 267 cited code names missing in 47 living documents (`run.py names`) |
 
-### Open work (125 items)
+### Open work (128 items)
 
 From [docs/plans/open-items.md](../docs/plans/open-items.md), the one tracker.
+
+<details><summary><b>Live answer regression and rich authorship — 2026-10-24</b>: 3 open</summary>
+
+- Resolve the unsupported “air temperature” qualifier in the final strict supplied-facts sample.
+- Complete the expanded final browser/native lifecycle fixture after the maintainer enables browser testing.
+- Qualify the corrected rich-answer → new live request → settlement → reload sequence in the installed native app before claiming an installed fix.
+
+</details>
 
 <details><summary><b>Response projection across surfaces — 2026-10-23</b>: 2 open</summary>
 
@@ -384,11 +392,14 @@ Most recent:
 
 Not yet released ([CHANGELOG.md](../CHANGELOG.md)):
 
-- Nothing.
+- Render live and saved answer items through the same typed timeline, preserving prose/card order and actual request identity.
+- A card acceptance receipt now states that the card is answer content and that completion needs no repeated prose.
+- Keep new live steps and discarded drafts out of earlier saved answers;
+- Offer the existing summary, details, steps, list, table, comparison and callout forms alongside the interactive forms.
 
 Designs in progress:
 
-- [104 — Rich response contract](../docs/design/104-rich-response-contract.md): (23 October 2026) — implementation authorized by the maintainer, including clean replacement without legacy compatibility
+- [104 — Rich response contract](../docs/design/104-rich-response-contract.md): (24 October 2026)
 - [49 — Live voice: full-duplex spoken conversation](../docs/design/49-live-voice.md): the foundation is shipped (redesigned 2026-09-23)
 - [54 — Universal task environments, review, and controlled acceptance](../docs/design/54-task-environments-and-promotion.md): slices 1 to 3 have code in the tree (drafts in the execution root, readiness and setup, candidates with promotion and undo, copy environments for a folder that is not a git repository)
 - [57 — Adaptive presentation runtime and reusable experience packs](../docs/design/57-adaptive-presentation-runtime.md): P1/P4 library, durable-store, session-audit, mode-toggle, bounded-revision, plugin-pack, pack-lifecycle, plugin-lifecycle-revocation, server-control, client-control, activation-control, revision-control, lifecycle-test, visible-management, delivery-integration, generic feedback-audit, visible-feedback, primitive-introspection, scoped-precedence, pack-portability, pack-management, result-scoped-proposal, original-fallback, declarative-seed-pack, everyday-theme-pack, semantic-selection, reset, cross-surface audit, generic constrained-surface lowering, live projection library-awareness, native adaptive output-contract, selected-tree emission, domain-neutral shape-inference, canonical renderer-envelope, cross-surface packet-validation, bounded proposal-chain, light-theme chrome polish, and fail-closed fallback regression slices landed
@@ -441,7 +452,7 @@ Design docs and plans by status ([docs/design/INDEX.md](../docs/design/INDEX.md)
 |---|---|---|
 | [100 — Workers: work handed over, kept running](../docs/design/100-workers.md) | proposal | implementation deferred by the maintainer on 2026-10-18 |
 | [103 — Kept work: create, change, run and use](../docs/design/103-kept-work-lifecycle.md) | proposal | design revision requested by the maintainer on 2026-10-22 |
-| [104 — Rich response contract](../docs/design/104-rich-response-contract.md) | in progress | (23 October 2026) — implementation authorized by the maintainer, including clean replacement without legacy compatibility |
+| [104 — Rich response contract](../docs/design/104-rich-response-contract.md) | in progress | (24 October 2026) |
 | [49 — Live voice: full-duplex spoken conversation](../docs/design/49-live-voice.md) | in progress | the foundation is shipped (redesigned 2026-09-23) |
 | [54 — Universal task environments, review, and controlled acceptance](../docs/design/54-task-environments-and-promotion.md) | in progress | slices 1 to 3 have code in the tree (drafts in the execution root, readiness and setup, candidates with promotion and undo, copy environments for a folder that is not a git repository) |
 | [57 — Adaptive presentation runtime and reusable experience packs](../docs/design/57-adaptive-presentation-runtime.md) | in progress | P1/P4 library, durable-store, session-audit, mode-toggle, bounded-revision, plugin-pack, pack-lifecycle, plugin-lifecycle-revocation, server-control, client-control, activation-control, revision-control, lifecycle-test, visible-management, delivery-integration, generic feedback-audit, visible-feedback, primitive-introspection, scoped-precedence, pack-portability, pack-management, result-scoped-proposal, original-fallback, declarative-seed-pack, everyday-theme-pack, semantic-selection, reset, cross-surface audit, generic constrained-surface lowering, live projection library-awareness, native adaptive output-contract, selected-tree emission, domain-neutral shape-inference, canonical renderer-envelope, cross-surface packet-validation, bounded proposal-chain, light-theme chrome polish, and fail-closed fallback regression slices landed |
@@ -479,25 +490,25 @@ Design docs and plans by status ([docs/design/INDEX.md](../docs/design/INDEX.md)
 
 | Layer | Lines | Crates (largest first) |
 |---|---|---|
-| L7 Surfaces | 86,952 | vak-client-ui, vak-admin-ui, vak, vak-terminal, vak-desktop |
-| L6 Service | 81,304 | vak-server, vak-ops, vak-bus |
-| L5 Orchestration facade | 67,734 | vak-core, vak-eval, vak-flow |
-| L4 Agent runtime | 55,114 | vak-tools, vak-agent, vak-llm, vak-plugin, vak-context, vak-mcp, vak-hooks |
-| L3 Decision and policy | 20,720 | vak-intent, vak-sandbox, vak-commit, vak-control, vak-judge, vak-permission |
-| L2 Domain engines | 61,374 | vak-mail-calendar, vak-ooxml, vak-delivery, vak-pdf, vak-presentation, vak-intake, vak-voice |
-| L1 Data substrate | 40,636 | vak-session, vak-config, vak-storage, vak-catalog, vak-telemetry, vak-lifecycle |
+| L7 Surfaces | 86,514 | vak-client-ui, vak-admin-ui, vak, vak-terminal, vak-desktop |
+| L6 Service | 81,162 | vak-server, vak-ops, vak-bus |
+| L5 Orchestration facade | 67,763 | vak-core, vak-eval, vak-flow |
+| L4 Agent runtime | 54,918 | vak-tools, vak-agent, vak-llm, vak-plugin, vak-context, vak-mcp, vak-hooks |
+| L3 Decision and policy | 20,703 | vak-intent, vak-sandbox, vak-commit, vak-control, vak-judge, vak-permission |
+| L2 Domain engines | 61,174 | vak-mail-calendar, vak-ooxml, vak-delivery, vak-pdf, vak-presentation, vak-intake, vak-voice |
+| L1 Data substrate | 40,610 | vak-session, vak-config, vak-storage, vak-catalog, vak-telemetry, vak-lifecycle |
 
 Dependencies that point up a layer: `vak-catalog` uses `vak-llm`; `vak-config` uses `vak-control`, `vak-llm`; `vak-delivery` uses `vak-intent`; `vak-session` uses `vak-control`, `vak-intent`, `vak-llm`.
 
 ## Subsystems
 
-What the system does, cut across crates: 64 subsystems. Every one of 744 units (each source file under `crates/*/src`, the public site, each plugin package, each entry of `scripts/`, and `docker/`) belongs to exactly one, as do all 404 HTTP routes and 36 `vak` subcommands; the harness reports anything left out ([harness/subsystems.py](harness/subsystems.py)).
+What the system does, cut across crates: 64 subsystems. Every one of 743 units (each source file under `crates/*/src`, the public site, each plugin package, each entry of `scripts/`, and `docker/`) belongs to exactly one, as do all 404 HTTP routes and 36 `vak` subcommands; the harness reports anything left out ([harness/subsystems.py](harness/subsystems.py)).
 
 ### Surfaces
 
 | Subsystem | Lives in | Modules | Lines | Routes | Commits (recent) | Links out / in | `vak` | Design docs | What it does |
 |---|---|---|---|---|---|---|---|---|---|
-| **Workspace client** | `vak-client-ui` | 70 | 19,165 | 15 | 524 (97) | 68 / 27 | — | [48](../docs/design/48-web-client.md), [63](../docs/design/63-agent-first-conversations.md), [70](../docs/design/70-calm-agent-experience-implementation.md), [75](../docs/design/75-visual-refresh.md), [71](../docs/design/71-agent-character-system.md) | The SolidJS app shared by the desktop shell and /app: chat, sidebar, settings, the host seam |
+| **Workspace client** | `vak-client-ui` | 70 | 18,982 | 15 | 524 (97) | 68 / 27 | — | [48](../docs/design/48-web-client.md), [63](../docs/design/63-agent-first-conversations.md), [70](../docs/design/70-calm-agent-experience-implementation.md), [75](../docs/design/75-visual-refresh.md), [71](../docs/design/71-agent-character-system.md) | The SolidJS app shared by the desktop shell and /app: chat, sidebar, settings, the host seam |
 | **Desktop shell** | `vak-desktop`, `vak-client-ui` | 3 | 1,964 | 1 | 61 (2) | 13 / 1 | — | — | Tauri window, tray, single instance, PTY panes, native dialogs |
 | **Rich terminal** | `vak-terminal` | 16 | 5,105 | 0 | 12 (2) | 17 / 1 | term | [55](../docs/design/55-rich-terminal-surface.md) | `vak term`, a ratatui client of a running server |
 | **Admin console** | `vak-admin-ui`, `vak-server` | 21 | 23,266 | 2 | 282 (43) | 68 / 17 | open | [33](../docs/design/33-admin-console.md), [58](../docs/design/58-admin-ia-and-ui-goal.md) | The /admin SPA and its data plane: sessions, capabilities, security, prompts, projects |
@@ -509,13 +520,13 @@ What the system does, cut across crates: 64 subsystems. Every one of 744 units (
 | Subsystem | Lives in | Modules | Lines | Routes | Commits (recent) | Links out / in | `vak` | Design docs | What it does |
 |---|---|---|---|---|---|---|---|---|---|
 | **Turn admission** | `vak-core` | 7 | 14,478 | 10 | 395 (97) | 35 / 43 | — | [13](../docs/design/13-server.md), [52](../docs/design/52-outcome-directed-runtime.md), [85](../docs/design/85-turn-graph.md), [99](../docs/design/99-turns-that-do-not-poison.md) | Admitting a request: Agent and lifecycle checks, the live route, trace keys, the turn's knobs |
-| **Agent loop** | `vak-agent` | 5 | 12,636 | 0 | 310 (93) | 17 / 16 | — | [03](../docs/design/03-agent-loop.md), [15](../docs/design/15-reliability.md) | Steps, retries, the breaker, tool waves, stop policy, spend gate, steering |
+| **Agent loop** | `vak-agent` | 5 | 12,544 | 0 | 310 (93) | 17 / 16 | — | [03](../docs/design/03-agent-loop.md), [15](../docs/design/15-reliability.md) | Steps, retries, the breaker, tool waves, stop policy, spend gate, steering |
 | **Workers and delegation** | `vak-agent`, `vak-client-ui` | 5 | 3,402 | 9 | 90 (29) | 17 / 9 | — | [84](../docs/design/84-worker-questions-and-control.md), [62](../docs/design/62-universal-delegation-experience.md) | The task tool, child runs, worker questions, the workers tool, write leases |
 | **Goals and managed work** | `vak-agent`, `vak-client-ui` | 3 | 478 | 8 | 22 (3) | 4 / 2 | — | [42](../docs/design/42-managed-work-contracts.md) | Goal mode, audited completion, work contracts and their review |
 | **Context engine** | `vak-context`, `vak-core` | 5 | 3,007 | 2 | 43 (15) | 7 / 10 | — | [68](../docs/design/68-context-engine.md) | Capacity profiles, the working-set planner, prompt assembly, compaction |
-| **Prompt layers** | `vak-core`, `vak` | 2 | 1,736 | 4 | 36 (12) | 6 / 8 | prompts | [07](../docs/design/07-prompt.md), [45](../docs/design/45-prompt-layers.md), [83](../docs/design/83-prompt-system.md) | The seed prompt and its layered, per-turn resolution |
-| **Intent kernel** | `vak-intent`, `vak-core`, `vak` | 14 | 11,336 | 3 | 99 (27) | 10 / 19 | intent | [47](../docs/design/47-commitment-kernel.md) | Signals, strands, engagements and the narrowing Limits lattice |
-| **Control plane and judges** | `vak-judge`, `vak-control`, `vak-intent`, `vak-tools` | 9 | 3,270 | 3 | 53 (53) | 3 / 18 | — | [88](../docs/design/88-control-plane.md), [86](../docs/design/86-model-plans-runtime-checks.md) | Decision points, the correction ladder, receipts to verdicts |
+| **Prompt layers** | `vak-core`, `vak` | 2 | 1,739 | 4 | 36 (12) | 6 / 8 | prompts | [07](../docs/design/07-prompt.md), [45](../docs/design/45-prompt-layers.md), [83](../docs/design/83-prompt-system.md) | The seed prompt and its layered, per-turn resolution |
+| **Intent kernel** | `vak-intent`, `vak-core`, `vak` | 14 | 11,330 | 3 | 99 (27) | 10 / 19 | intent | [47](../docs/design/47-commitment-kernel.md) | Signals, strands, engagements and the narrowing Limits lattice |
+| **Control plane and judges** | `vak-judge`, `vak-control`, `vak-intent`, `vak-tools` | 9 | 3,259 | 3 | 53 (53) | 3 / 18 | — | [88](../docs/design/88-control-plane.md), [86](../docs/design/86-model-plans-runtime-checks.md) | Decision points, the correction ladder, receipts to verdicts |
 | **Commitments** | `vak-core`, `vak-commit`, `vak-client-ui` | 8 | 4,104 | 3 | 30 (7) | 8 / 6 | commit | — | Durable commitments, the satisfaction lattice and the portfolio scheduler |
 
 ### Models and tools
@@ -528,7 +539,7 @@ What the system does, cut across crates: 64 subsystems. Every one of 744 units (
 | **Capability registry** | `vak-core` | 12 | 4,384 | 3 | 79 (25) | 15 / 12 | skills | [41](../docs/design/41-capability-registry.md), [95](../docs/design/95-one-capability-index.md) | The level-triggered registry, epochs, the tool surface, skills, custom commands |
 | **Self-evolving abilities** | `vak-core`, `vak-tools`, `vak-client-ui` | 5 | 3,844 | 5 | 20 (20) | 16 / 13 | — | [93](../docs/design/93-self-evolving-capabilities.md), [43](../docs/design/43-governed-self-evolution.md) | Skill programs an Agent writes, tests and admits, and their review |
 | **MCP integrations** | `vak-mcp`, `vak-client-ui` | 6 | 1,607 | 4 | 38 (9) | 5 / 7 | — | [09](../docs/design/09-extensibility.md) | The lazy MCP client pool behind one meta-tool, each server behind its egress proxy |
-| **Plugins and packages** | `vak-plugin`, `vak`, `packages` | 3 + 8 parts | 3,623 | 16 | 42 (13) | 4 / 9 | plugins | [39](../docs/design/39-plugin-ecosystem.md) | Plugin packages, stores, catalog signatures, and the shipped packages |
+| **Plugins and packages** | `vak-plugin`, `vak`, `packages` | 3 + 8 parts | 3,623 | 16 | 42 (13) | 4 / 8 | plugins | [39](../docs/design/39-plugin-ecosystem.md) | Plugin packages, stores, catalog signatures, and the shipped packages |
 | **Hooks** | `vak-hooks` | 1 | 307 | 2 | 9 (2) | 1 / 6 | — | — | Lifecycle hooks around tool use, stop and session start |
 | **Flows and planner** | `vak-flow` | 7 | 2,095 | 2 | 60 (10) | 12 / 3 | flow, plan | [10](../docs/design/10-flows.md), [11](../docs/design/11-planner.md) | Static flow DAGs and the dynamic planner |
 
@@ -546,7 +557,7 @@ What the system does, cut across crates: 64 subsystems. Every one of 744 units (
 
 | Subsystem | Lives in | Modules | Lines | Routes | Commits (recent) | Links out / in | `vak` | Design docs | What it does |
 |---|---|---|---|---|---|---|---|---|---|
-| **Ledgers and records** | `vak-session`, `vak-server` | 18 | 13,713 | 3 | 206 (64) | 17 / 53 | sessions, export | [02](../docs/design/02-sessions.md), [73](../docs/design/73-data-architecture-and-lifecycle.md) | Sealed append-only ledgers, record chains, objects, fencing, documents, turns |
+| **Ledgers and records** | `vak-session`, `vak-server` | 18 | 13,687 | 3 | 206 (64) | 17 / 53 | sessions, export | [02](../docs/design/02-sessions.md), [73](../docs/design/73-data-architecture-and-lifecycle.md) | Sealed append-only ledgers, record chains, objects, fencing, documents, turns |
 | **Storage substrate** | `vak-storage`, `vak-core` | 12 | 5,454 | 3 | 29 (13) | 4 / 8 | — | — | Keys, refs, encrypted objects, records and segments |
 | **Runs, effects and cursors** | `vak-session`, `vak-admin-ui`, `vak`, `vak-server` | 9 | 4,534 | 6 | 27 (16) | 12 / 22 | runs, effects | — | Run records, at-most-once outbound effects, stream cursors |
 | **Catalog and search** | `vak-catalog`, `vak-admin-ui`, `vak-client-ui`, `vak-server`, `vak-core` | 9 | 5,728 | 6 | 44 (25) | 15 / 18 | — | — | The SQLite catalog: nodes, lineage, full-text search |
@@ -562,8 +573,8 @@ What the system does, cut across crates: 64 subsystems. Every one of 744 units (
 
 | Subsystem | Lives in | Modules | Lines | Routes | Commits (recent) | Links out / in | `vak` | Design docs | What it does |
 |---|---|---|---|---|---|---|---|---|---|
-| **Cards and presentation** | `vak-server`, `vak-core`, `vak-client-ui`, `vak-presentation`, `vak-session`, `vak-agent` | 25 | 18,348 | 21 | 319 (102) | 22 / 17 | — | [30](../docs/design/30-render-architecture.md), [57](../docs/design/57-adaptive-presentation-runtime.md), [67](../docs/design/67-presentation-renderer-guide.md), [87](../docs/design/87-composed-answers.md), [91](../docs/design/91-presentation-capabilities.md), [92](../docs/design/92-card-forms.md), [97](../docs/design/97-cards-end-the-answer.md), [98](../docs/design/98-answers-beyond-one-card.md), [96](../docs/design/96-answer-projection-gaps.md), [10](../docs/design/104-rich-response-contract.md) | Card forms and tools, packs, the closed primitives, projection to clients |
-| **Delivery** | `vak-delivery`, `vak-server` | 23 | 12,545 | 0 | 137 (28) | 9 / 13 | — | [30](../docs/design/30-output-engineering.md), [10](../docs/design/102-channel-cards.md) | The semantic output contract, Markdown fallback and channel markup |
+| **Cards and presentation** | `vak-server`, `vak-core`, `vak-client-ui`, `vak-presentation`, `vak-session`, `vak-agent` | 24 | 17,914 | 21 | 319 (102) | 22 / 17 | — | [30](../docs/design/30-render-architecture.md), [57](../docs/design/57-adaptive-presentation-runtime.md), [67](../docs/design/67-presentation-renderer-guide.md), [87](../docs/design/87-composed-answers.md), [91](../docs/design/91-presentation-capabilities.md), [92](../docs/design/92-card-forms.md), [97](../docs/design/97-cards-end-the-answer.md), [98](../docs/design/98-answers-beyond-one-card.md), [96](../docs/design/96-answer-projection-gaps.md), [10](../docs/design/104-rich-response-contract.md) | Card forms and tools, packs, the closed primitives, projection to clients |
+| **Delivery** | `vak-delivery`, `vak-server` | 23 | 12,315 | 0 | 137 (28) | 8 / 13 | — | [30](../docs/design/30-output-engineering.md), [10](../docs/design/102-channel-cards.md) | The semantic output contract, Markdown fallback and channel markup |
 | **Canvas and previews** | `vak-client-ui`, `vak-server`, `vak-session`, `vak-plugin`, `vak-core` | 53 | 6,952 | 14 | 73 (22) | 15 / 10 | — | [66](../docs/design/66-immersive-artifact-canvas.md) | The artifact canvas, its viewers, live previews and the preview origin |
 | **Library and file state** | `vak-core`, `vak-server`, `vak-client-ui`, `vak-tools` | 13 | 8,021 | 24 | 55 (35) | 21 / 15 | — | [82](../docs/design/82-library.md), [90](../docs/design/90-file-state.md) | Versioned artifacts, review, sharing, and what a file is now |
 
@@ -586,8 +597,8 @@ What the system does, cut across crates: 64 subsystems. Every one of 744 units (
 
 | Subsystem | Lives in | Modules | Lines | Routes | Commits (recent) | Links out / in | `vak` | Design docs | What it does |
 |---|---|---|---|---|---|---|---|---|---|
-| **HTTP service** | `vak-server`, `vak-session` | 8 | 32,737 | 16 | 563 (94) | 50 / 28 | serve | [13](../docs/design/13-server.md) | The router, auth layers, the event bus, session handles and the Core pool |
-| **Gateway and channels** | `vak-server` | 6 | 9,142 | 15 | 141 (18) | 21 / 9 | telegram, discord, slack | [22](../docs/design/22-gateway.md), [34](../docs/design/34-channel-onboarding.md) | Chat surfaces, bots, the allowlist, bindings, forwarded approvals, heartbeat |
+| **HTTP service** | `vak-server`, `vak-session` | 8 | 32,729 | 16 | 563 (94) | 50 / 28 | serve | [13](../docs/design/13-server.md) | The router, auth layers, the event bus, session handles and the Core pool |
+| **Gateway and channels** | `vak-server` | 6 | 9,139 | 15 | 141 (18) | 21 / 9 | telegram, discord, slack | [22](../docs/design/22-gateway.md), [34](../docs/design/34-channel-onboarding.md) | Chat surfaces, bots, the allowlist, bindings, forwarded approvals, heartbeat |
 | **Distributed bus** | `vak-bus`, `vak-server` | 7 | 2,091 | 1 | 7 (0) | 5 / 3 | — | [53](../docs/design/53-distributed-bus.md) | NATS JetStream fabric with causal lineage and encrypted envelopes |
 | **Operations** | `vak-ops`, `vak-admin-ui`, `vak-server`, `vak-client-ui` | 6 | 3,963 | 7 | 76 (5) | 10 / 10 | — | [28](../docs/design/28-operations.md) | Service control, the Operations Center, incidents and action receipts |
 | **Doctor and health** | `vak-core`, `vak`, `vak-admin-ui` | 3 | 2,217 | 2 | 47 (5) | 15 / 9 | doctor | — | The health report: `vak doctor`, `--repair`, /health, /doctor, diagnostics screens |
@@ -601,7 +612,7 @@ Design docs no subsystem cites: `00-roadmap.md`, `100-workers.md`, `103-kept-wor
 
 ## How it connects
 
-846 connections between subsystems, measured from the code: a module naming another (a Rust path or item, a method defined once, a TypeScript import) or a client naming a route ([harness/connections.py](harness/connections.py)). The flows below are written by hand, and each step must ride a measured connection or the harness reports it. [blueprint.html](blueprint.html) draws them as an animated plant diagram.
+845 connections between subsystems, measured from the code: a module naming another (a Rust path or item, a method defined once, a TypeScript import) or a client naming a route ([harness/connections.py](harness/connections.py)). The flows below are written by hand, and each step must ride a measured connection or the harness reports it. [blueprint.html](blueprint.html) draws them as an animated plant diagram.
 
 **A message becomes an answer**
 
@@ -717,7 +728,7 @@ Outside the repository (declared in `subsystems.EXTERNAL`): You ← Workspace cl
 | **Command line** | Flows and planner 6, Gateway and channels 5, Configuration and secrets 4, Evaluation 4, Model providers and routing 3, Self-evolving abilities 2, Agents 2, Checkpoints and worktrees 2, Delivery 2, Agent loop 2, Permissions and provenance 2, Runs, effects and cursors 2, Sandbox and execution 2, Built-in tools and the worker 2, Turn admission 2, Workers and delegation 2, Admin console 1 http, Capability registry 1, Workspace client 1 http, Cost and budgets 1, Intent kernel 1, Ledgers and records 1, Lifecycle and erasure 1, Memory and learning 1, Operations 1, HTTP service 1, Telemetry and logs 1, Rich terminal 1 |
 | **Lifecycle and erasure** | Ledgers and records 16, Configuration and secrets 8, Workspace client 6, Admin console 3, Library and file state 3, Grants and sharing 2, Runs, effects and cursors 2, State registry and baseline 2, Turn admission 2, Agents 1, Automations and triggers 1, Catalog and search 1, Checkpoints and worktrees 1, Intake and feeds 1, Mail and calendar 1, Memory and learning 1, Prompt layers 1, Storage substrate 1, Telemetry and logs 1 |
 | **Automations and triggers** | Ledgers and records 16, Workspace client 13, Configuration and secrets 9, Agents 5, Runs, effects and cursors 5, Mail and calendar 4, Permissions and provenance 4, Turn admission 4, Admin console 3, Library and file state 3, Sandbox and execution 3, Built-in tools and the worker 3, Self-evolving abilities 1, Cards and presentation 1, Checkpoints and worktrees 1, Command line 1, Context engine 1, Delivery 1, Gateway and channels 1, Inbox and digest 1, Intake and feeds 1, Model providers and routing 1, Agent loop 1, HTTP service 1, Telemetry and logs 1 |
-| **Cards and presentation** | Workspace client 37, Ledgers and records 13, Delivery 9, Canvas and previews 7, Built-in tools and the worker 5, Sandbox and execution 4, Catalog and search 2, Configuration and secrets 2, Intent kernel 2, Agent loop 2, Office and PDF documents 2, HTTP service 2, Agents 1, Automations and triggers 1, Control plane and judges 1, Inbox and digest 1, Library and file state 1, Model providers and routing 1, Mail and calendar 1, MCP integrations 1, Permissions and provenance 1, Telemetry and logs 1 |
+| **Cards and presentation** | Workspace client 36, Ledgers and records 12, Delivery 9, Canvas and previews 7, Built-in tools and the worker 5, Sandbox and execution 4, Catalog and search 2, Configuration and secrets 2, Intent kernel 2, Agent loop 2, Office and PDF documents 2, HTTP service 2, Agents 1, Automations and triggers 1, Control plane and judges 1, Inbox and digest 1, Library and file state 1, Model providers and routing 1, Mail and calendar 1, MCP integrations 1, Permissions and provenance 1, Telemetry and logs 1 |
 | **Agents** | Ledgers and records 22, Workspace client 20, Configuration and secrets 10, Turn admission 8, Model providers and routing 6, Permissions and provenance 6, Catalog and search 5, Lifecycle and erasure 5, Built-in tools and the worker 4, Runs, effects and cursors 3, HTTP service 3, Automations and triggers 2, Command line 2, Context engine 2, Cost and budgets 2, Telemetry and logs 2, Voice 2, Cards and presentation 1, Sync 1 |
 | **Library and file state** | Workspace client 22, Ledgers and records 14, Built-in tools and the worker 4, Cards and presentation 3, Configuration and secrets 3, Lifecycle and erasure 3, Sandbox and execution 3, Self-evolving abilities 2, Delivery 2, Grants and sharing 2 http, Office and PDF documents 2, Telemetry and logs 2, Automations and triggers 1, Canvas and previews 1, Capability registry 1, Shared conversations 1, Grants and sharing 1, Intent kernel 1, HTTP service 1, Sync 1, Turn admission 1 |
 | **Permissions and provenance** | Configuration and secrets 5, Self-evolving abilities 1, Built-in tools and the worker 1 |
@@ -736,11 +747,11 @@ Outside the repository (declared in `subsystems.EXTERNAL`): You ← Workspace cl
 | **Doctor and health** | Configuration and secrets 5, Catalog and search 4, Ledgers and records 4, Admin console 3, Install and update 2, Lifecycle and erasure 2, Turn admission 2, Voice 2, Agents 1, Command line 1, Control plane and judges 1, Model providers and routing 1, Setup and onboarding 1, State registry and baseline 1, Built-in tools and the worker 1 |
 | **State registry and baseline** | Ledgers and records 7, Configuration and secrets 5, Lifecycle and erasure 5, Admin console 2, Catalog and search 2, Turn admission 2, Command line 1, Delivery 1, Sandbox and execution 1, HTTP service 1, Storage substrate 1 |
 | **Inbox and digest** | Workspace client 8, Ledgers and records 7, Admin console 5, Configuration and secrets 3, Office and PDF documents 2, Turn admission 2, Command line 1, Cost and budgets 1, Lifecycle and erasure 1, Memory and learning 1, Built-in tools and the worker 1 |
-| **Delivery** | Ledgers and records 8, Cards and presentation 4, Intent kernel 3, Configuration and secrets 2, Turn admission 2, Control plane and judges 1, Plugins and packages 1, Runs, effects and cursors 1, Telemetry and logs 1 |
 | **Office and PDF documents** | Built-in tools and the worker 8, Sandbox and execution 6, Workspace client 5, Permissions and provenance 4, Configuration and secrets 3, Ledgers and records 3, Library and file state 2, Command line 1, HTTP service 1, Turn admission 1 |
 | **Mail and calendar** | Workspace client 12, Configuration and secrets 7, Ledgers and records 5, Canvas and previews 4, Runs, effects and cursors 4, Built-in tools and the worker 4, Agents 3, Permissions and provenance 2, HTTP service 2, Automations and triggers 1, Security events 1, Turn admission 1 |
 | **Intake and feeds** | Ledgers and records 10, Configuration and secrets 5, Runs, effects and cursors 3, Automations and triggers 2, Office and PDF documents 2, Built-in tools and the worker 2, Catalog and search 1, Workspace client 1, Gateway and channels 1, Inbox and digest 1, HTTP service 1, Social connectors 1, Telemetry and logs 1, Turn admission 1 |
 | **Control plane and judges** | Built-in tools and the worker 3, Intent kernel 2, Permissions and provenance 1 |
+| **Delivery** | Ledgers and records 7, Cards and presentation 4, Intent kernel 3, Configuration and secrets 2, Turn admission 2, Control plane and judges 1, Runs, effects and cursors 1, Telemetry and logs 1 |
 | **Cost and budgets** | Ledgers and records 14, Configuration and secrets 7, Workspace client 4, Turn admission 3, Model providers and routing 2, Agent loop 1, Runs, effects and cursors 1, HTTP service 1, Telemetry and logs 1 |
 | **Operations** | Configuration and secrets 7, Workspace client 5, Admin console 4, Ledgers and records 3, Automations and triggers 1, Gateway and channels 1, Owner identity and sign-in 1, Runs, effects and cursors 1, Telemetry and logs 1, Turn admission 1 |
 | **Voice** | Workspace client 6, Model providers and routing 6, Configuration and secrets 2, Turn admission 2, Agents 1, Cards and presentation 1, Cost and budgets 1, Gateway and channels 1, Ledgers and records 1, HTTP service 1 |
@@ -755,8 +766,8 @@ Outside the repository (declared in `subsystems.EXTERNAL`): You ← Workspace cl
 | **Prompt layers** | Configuration and secrets 3, Turn admission 2, Command line 1, Ledgers and records 1, Telemetry and logs 1, Built-in tools and the worker 1 |
 | **Commitments** | Intent kernel 15, Ledgers and records 12, Workspace client 4, Configuration and secrets 3, Built-in tools and the worker 2, Agent loop 1, Permissions and provenance 1, Telemetry and logs 1 |
 | **Evaluation** | Model providers and routing 10, Intent kernel 8, Ledgers and records 7, Admin console 4, Turn admission 4, Context engine 3, Built-in tools and the worker 3, Permissions and provenance 2, Agents 1, Control plane and judges 1, Agent loop 1 |
-| **Plugins and packages** | Cards and presentation 1, Command line 1, Built-in tools and the worker 1, Turn admission 1 |
 | **MCP integrations** | Built-in tools and the worker 5, Permissions and provenance 2, Sandbox and execution 2, Workspace client 1, Configuration and secrets 1 |
+| **Plugins and packages** | Cards and presentation 1, Command line 1, Built-in tools and the worker 1, Turn admission 1 |
 | **Storage substrate** | Ledgers and records 4, Configuration and secrets 2, Lifecycle and erasure 1, Turn admission 1 |
 | **Backup and restore** | Admin console 4, Configuration and secrets 3, Ledgers and records 3, Catalog and search 2, Lifecycle and erasure 2, State registry and baseline 2, Turn admission 2, Command line 1 |
 | **Shared conversations** | Workspace client 8, Ledgers and records 2, Office and PDF documents 2, Agents 1, Grants and sharing 1, Library and file state 1, Sandbox and execution 1 http, HTTP service 1, Sync 1, Turn admission 1 |
@@ -778,38 +789,38 @@ Outside the repository (declared in `subsystems.EXTERNAL`): You ← Workspace cl
 
 | Crate | Layer | Src | Tests | Commits | Deps | Used by | Subsystems | Role |
 |---|---|---|---|---|---|---|---|---|
-| `vak-client-ui` | L7 | 40,032 | 324 | 662 | — | 0 | 26 | SolidJS workspace client: the desktop bundle and the /app web bundle |
+| `vak-client-ui` | L7 | 39,594 | 324 | 662 | — | 0 | 26 | SolidJS workspace client: the desktop bundle and the /app web bundle |
 | `vak-admin-ui` | L7 | 24,963 | 0 | 265 | — | 0 | 13 | SolidJS admin console at /admin |
 | `vak` | L7 | 15,059 | 1,528 | 217 | 24 | 0 | 17 | The CLI binary and every subcommand |
 | `vak-terminal` | L7 | 5,105 | 750 | 12 | 1 | 1 | 1 | ratatui client of a running server (vak term) |
 | `vak-desktop` | L7 | 1,793 | 0 | 131 | 8 | 0 | 1 | Tauri 2 shell around an embedded server router |
-| `vak-server` | L6 | 77,135 | 24,950 | 861 | 25 | 2 | 28 | HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes |
+| `vak-server` | L6 | 76,993 | 24,962 | 861 | 25 | 2 | 28 | HTTP+SSE, gateway, bots, admin API, projection, Library, Canvas, preview origin, voice and mail routes |
 | `vak-ops` | L6 | 2,716 | 0 | 39 | 2 | 3 | 1 | launchd/systemd control and service logs |
 | `vak-bus` | L6 | 1,453 | 591 | 5 | 0 | 1 | 1 | NATS JetStream fabric, causal lineage, encrypted envelopes |
-| `vak-core` | L5 | 63,174 | 10,920 | 670 | 25 | 4 | 36 | SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure |
+| `vak-core` | L5 | 63,203 | 10,920 | 670 | 25 | 4 | 36 | SDK facade: admission, routing, prompts, capabilities, memory, triggers, sync, backup, erasure |
 | `vak-eval` | L5 | 2,465 | 225 | 59 | 9 | 1 | 1 | Deterministic suite, live mode, context and banned-token gates |
 | `vak-flow` | L5 | 2,095 | 1,386 | 68 | 9 | 3 | 1 | Static flow DAGs and the dynamic planner |
 | `vak-tools` | L4 | 16,622 | 1,260 | 219 | 11 | 9 | 9 | Built-in tools, argument reader, broker worker protocol, egress proxy |
-| `vak-agent` | L4 | 16,530 | 18,960 | 368 | 12 | 5 | 5 | The agent loop: steps, retries, breaker, tool waves, cards, workers |
+| `vak-agent` | L4 | 16,334 | 18,763 | 368 | 12 | 5 | 5 | The agent loop: steps, retries, breaker, tool waves, cards, workers |
 | `vak-llm` | L4 | 14,271 | 1,886 | 102 | 1 | 11 | 1 | Provider wires, SSE, model discovery, route ladder, receipts |
 | `vak-plugin` | L4 | 3,590 | 0 | 19 | 2 | 3 | 2 | Plugin manifests, stores, catalog signatures |
 | `vak-context` | L4 | 2,202 | 0 | 33 | 3 | 3 | 1 | Capacity profiles, working-set planner, prompt assembly |
 | `vak-mcp` | L4 | 1,592 | 503 | 41 | 3 | 1 | 1 | Lazy MCP client pool behind one meta-tool |
 | `vak-hooks` | L4 | 307 | 261 | 9 | 1 | 3 | 1 | Lifecycle hooks |
-| `vak-intent` | L3 | 9,928 | 3,694 | 92 | 0 | 11 | 2 | Behavioural axes, the signal resolver, strands, the Limits lattice |
+| `vak-intent` | L3 | 9,922 | 3,694 | 92 | 0 | 11 | 2 | Behavioural axes, the signal resolver, strands, the Limits lattice |
 | `vak-sandbox` | L3 | 4,515 | 0 | 50 | 4 | 4 | 1 | Seatbelt, Landlock, seccomp, Docker; candidate promotion |
 | `vak-commit` | L3 | 1,784 | 796 | 14 | 3 | 3 | 1 | Durable commitments and the satisfaction lattice |
-| `vak-control` | L3 | 1,730 | 0 | 46 | 0 | 11 | 2 | Decision points, step contracts, verdicts, the correction ladder |
+| `vak-control` | L3 | 1,719 | 0 | 46 | 0 | 11 | 2 | Decision points, step contracts, verdicts, the correction ladder |
 | `vak-judge` | L3 | 1,597 | 159 | 18 | 2 | 3 | 1 | Receipts to verdicts: call, outcome |
 | `vak-permission` | L3 | 1,166 | 972 | 38 | 0 | 9 | 1 | Modes x rules over declared reach |
 | `vak-mail-calendar` | L2 | 18,914 | 117 | 97 | 2 | 2 | 1 | Mail and calendar accounts, OAuth, IMAP, vault, effects |
 | `vak-ooxml` | L2 | 16,986 | 4,916 | 35 | 0 | 6 | 1 | Open XML engine: read, edit, blank packages |
-| `vak-delivery` | L2 | 10,946 | 4,407 | 117 | 3 | 6 | 1 | Semantic output contract, Markdown fallback, channel markup |
+| `vak-delivery` | L2 | 10,746 | 4,376 | 117 | 3 | 6 | 1 | Semantic output contract, Markdown fallback, channel markup |
 | `vak-pdf` | L2 | 9,581 | 749 | 6 | 0 | 4 | 1 | PDF engine from ISO 32000-2 |
 | `vak-presentation` | L2 | 2,153 | 2,115 | 40 | 0 | 5 | 1 | Closed primitive vocabulary, packs, compiler |
 | `vak-intake` | L2 | 1,738 | 0 | 3 | 1 | 2 | 1 | Feed connectors, bounded parsers, HTML reader |
 | `vak-voice` | L2 | 1,056 | 0 | 13 | 0 | 2 | 1 | Voice provider vocabulary and session protocol |
-| `vak-session` | L1 | 19,099 | 5,149 | 222 | 6 | 13 | 8 | Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns |
+| `vak-session` | L1 | 19,073 | 5,149 | 222 | 6 | 13 | 8 | Sealed append-only ledgers, objects, fencing, runs, effects, cursors, turns |
 | `vak-config` | L1 | 9,841 | 867 | 218 | 2 | 15 | 1 | Layered TOML, credentials, paths, scopes |
 | `vak-storage` | L1 | 5,253 | 242 | 29 | 0 | 2 | 1 | Keys, refs, encrypted objects, records, segments |
 | `vak-catalog` | L1 | 5,203 | 0 | 39 | 4 | 3 | 1 | SQLite catalog: nodes, lineage, FTS5 |
@@ -836,17 +847,17 @@ Outside the repository (declared in `subsystems.EXTERNAL`): You ← Workspace cl
 | Longest functions | Where | Lines |
 |---|---|---|
 | `run_turn_recorded` | `crates/vak-core/src/lib.rs:6672` | 1,718 |
-| `run_message_inner` | `crates/vak-agent/src/lib.rs:1862` | 1,713 |
-| `snapshot_inner` | `crates/vak-server/src/projection.rs:736` | 962 |
+| `run_message_inner` | `crates/vak-agent/src/lib.rs:1862` | 1,690 |
+| `snapshot_inner` | `crates/vak-server/src/projection.rs:718` | 829 |
 | `run_data` | `crates/vak/src/data.rs:31` | 758 |
 | `router_with_state` | `crates/vak-server/src/lib.rs:910` | 738 |
 | `gateway_inbound` | `crates/vak-server/src/gateway.rs:2680` | 728 |
 | `execute` | `crates/vak-core/src/mail_calendar.rs:730` | 686 |
 | `load_with_trust` | `crates/vak-config/src/lib.rs:3021` | 649 |
-| `complete_with_reliability` | `crates/vak-agent/src/lib.rs:5513` | 564 |
+| `complete_with_reliability` | `crates/vak-agent/src/lib.rs:5422` | 564 |
 | `edit` | `crates/vak-pdf/src/edit.rs:893` | 538 |
 | `execute_inner` | `crates/vak-agent/src/task.rs:685` | 505 |
-| `patch_config_scope` | `crates/vak-server/src/lib.rs:17931` | 483 |
+| `patch_config_scope` | `crates/vak-server/src/lib.rs:17923` | 483 |
 
 ## Findings
 
@@ -854,7 +865,7 @@ Outside the repository (declared in `subsystems.EXTERNAL`): You ← Workspace cl
 
 *Structure · Caused defects*
 
-**Evidence.** Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 181 (rank 1 of 4,561 library functions) and `Core::run_turn_recorded` at 124 (rank 3); the median is 3 and the 99th percentile 24. 161 commits changed the first (6% of all) and 218 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.4 and `vak-agent/src/lib.rs` at 8.9 per thousand lines, against a median of 4.0 over 420 files; file size alone does not predict the rate (ρ = -0.11).
+**Evidence.** Clippy's `cognitive_complexity` scores `Agent::run_message_inner` at 181 (rank 1 of 4,561 library functions) and `Core::run_turn_recorded` at 124 (rank 3); the median is 3 and the 99th percentile 24. 160 commits changed the first (6% of all) and 218 the second (9%). Fix commits land in `vak-core/src/lib.rs` at 10.4 and `vak-agent/src/lib.rs` at 9.0 per thousand lines, against a median of 4.0 over 419 files; file size alone does not predict the rate (ρ = -0.11).
 
 **Why it matters.** The loop keeps the turn's decisions in mutable locals that every step and every call result updates. `948ece43d` fixed two bugs of exactly that kind: `receipts.unresolved_error` was cleared by a later success in the same batch even when an earlier call had failed, and `verification_stale` came out stale or not depending on which parallel result returned first. Both were fixed by moving the decision into a pure function over the whole batch, tested on its own. The 2026-10-22 answer investigation found another lossy decision input: plan receipts retained a deliverable name but discarded the actual form. That checker was corrected, then retired by the maintainer's later Markdown/runtime-composition decision the same day. The current contract does not use model-authored plans. Broader state consolidation remains open.
 
@@ -911,12 +922,19 @@ and selects eligible Slack native charts before fallback. The rich-answer
 corpus reaches actual delivery, terminal, hydration and page consumers; target
 dispositions retain original item ids. Complete native-client, all-form,
 state/action and mounted-access lifecycle qualification remains open.
+The 24 October correction carries recorded request identity and renders live
+and saved prose/cards/files through one typed renderer. Inline-card and retired
+whole-answer compatibility paths are removed; the worker protocol rejects the
+removed registry field. Frozen-image natural turns and an actual SSE check
+preserve accepted values and previous items. An unsupported semantic qualifier
+remains explicit, and final expanded browser/native lifecycle acceptance is
+unverified because the maintainer chose non-browser checks.
 
 **Why it matters.** Deterministic source-order and verdict preservation does not establish native appearance, useful model-authored interaction or every access-revocation/cache combination. Those exits need explicit evidence before claiming complete rich-response support.
 
 **Fix.** Complete doc 104's native/state/action and natural-request acceptance matrix over the shared accepted answer, keep target limits and fallback dispositions qualified, and retain one answer authority. Existing action/effect/grant services remain the authority.
 
-Sources: [Initial source audit](../docs/audits/response-projection-across-surfaces-2026-10-23.md); [current research](../docs/research/rich-responses-2026-10-23.md); [contract](../docs/design/104-rich-response-contract.md); `crates/vak-delivery/src/answer.rs`, `crates/vak-delivery/src/channel/mod.rs`, `crates/vak-server/src/projection.rs`, `crates/vak-terminal/src/app.rs`.
+Sources: [Clean answer path acceptance](../docs/audits/answer-contract-clean-2026-10-24.md); [Initial source audit](../docs/audits/response-projection-across-surfaces-2026-10-23.md); [current research](../docs/research/rich-responses-2026-10-23.md); [contract](../docs/design/104-rich-response-contract.md); `crates/vak-delivery/src/answer.rs`, `crates/vak-delivery/src/channel/mod.rs`, `crates/vak-server/src/projection.rs`, `crates/vak-terminal/src/app.rs`.
 
 ## What to keep
 

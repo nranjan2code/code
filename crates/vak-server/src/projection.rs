@@ -12,8 +12,7 @@ use vak_agent::AgentEvent;
 use vak_delivery::{
     ArtifactRef, ArtifactStatus, DeliveryAction, OutputContent, OutputItem, OutputKind,
     OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline,
-    PresentationDocument, ResultOutcome, SkillRegistry, compile_markdown, structured_markdown,
-    structured_outputs_from_text_with,
+    PresentationDocument, ResultOutcome, compile_markdown, structured_markdown,
 };
 
 fn status_for_completion(completion: Option<&str>) -> OutputStatus {
@@ -321,33 +320,16 @@ pub(crate) fn result_of_execution(
 }
 
 pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline {
-    snapshot_inner(
-        session_id,
-        session,
-        &vak_delivery::built_in_skill_registry(),
-        None,
-    )
+    snapshot_inner(session_id, session, None)
 }
 
-/// [`snapshot`] with the plugin-merged skill registry, so a plugin's kinds
-/// in ```vak fences are read.
-pub(crate) fn snapshot_with_skills(
+/// Render accepted records using the effective library's active packs.
+pub(crate) fn snapshot_with_library(
     session_id: &str,
     session: &SessionLog,
-    skills: &SkillRegistry,
-) -> OutputTimeline {
-    snapshot_inner(session_id, session, skills, None)
-}
-
-/// [`snapshot_with_skills`] with the effective presentation library, whose
-/// active packs draw the kinds they accept.
-pub(crate) fn snapshot_with_skills_and_library(
-    session_id: &str,
-    session: &SessionLog,
-    skills: &SkillRegistry,
     library: &vak_presentation::PresentationLibrary,
 ) -> OutputTimeline {
-    snapshot_inner(session_id, session, skills, Some(library))
+    snapshot_inner(session_id, session, Some(library))
 }
 
 /// Rehydrates sandbox-created artifacts into historical presentation views.
@@ -736,7 +718,6 @@ fn has_user_request_content(content: &[ContentBlock]) -> bool {
 fn snapshot_inner(
     session_id: &str,
     session: &SessionLog,
-    skills: &SkillRegistry,
     adaptive_library: Option<&vak_presentation::PresentationLibrary>,
 ) -> OutputTimeline {
     let chain = session.chain_to_root();
@@ -759,9 +740,7 @@ fn snapshot_inner(
                 Some((tool_use_id.clone(), (entry_id, record)))
             }
             vak_session::types::PresentationSource::Derived { .. }
-            | vak_session::types::PresentationSource::Fence { .. }
             | vak_session::types::PresentationSource::Delegated { .. }
-            | vak_session::types::PresentationSource::Answer { .. }
             | vak_session::types::PresentationSource::Scheduled { .. } => None,
         })
         .collect();
@@ -788,23 +767,9 @@ fn snapshot_inner(
         String,
         Vec<(String, &vak_session::types::PresentationRecord)>,
     > = HashMap::new();
-    // An `answer` is the turn's whole document: the latest one a turn gave
-    // replaces any earlier one.
-    let mut latest_answer: HashMap<String, String> = HashMap::new();
-    for (_, record) in session.presentations() {
-        if let vak_session::types::PresentationSource::Answer { tool_use_id, .. } = &record.source {
-            latest_answer.insert(record.turn_id.clone(), tool_use_id.clone());
-        }
-    }
     for (entry_id, record) in session.presentations() {
-        if let vak_session::types::PresentationSource::Answer { tool_use_id, .. } = &record.source
-            && latest_answer.get(&record.turn_id) != Some(tool_use_id)
-        {
-            continue;
-        }
-        // An `answer` call carries its blocks the same way, in block order.
-        if let vak_session::types::PresentationSource::Delegated { tool_use_id, .. }
-        | vak_session::types::PresentationSource::Answer { tool_use_id, .. } = &record.source
+        if let vak_session::types::PresentationSource::Delegated { tool_use_id, .. } =
+            &record.source
         {
             delegated_by_tool_use_id
                 .entry(tool_use_id.clone())
@@ -1069,39 +1034,10 @@ fn snapshot_inner(
                                 continue;
                             }
                             let text = &cleaned_text_storage;
-                            let candidates = if assistant {
-                                structured_outputs_from_text_with(text, skills)
-                            } else {
-                                Vec::new()
-                            };
                             let assistant_tool_call_id = assistant_tool_context
                                 .get(&entry.id)
                                 .map(|(id, ..)| id.clone());
                             let projected_outcome = turn_outcomes.get(&current_turn).cloned();
-                            // An activation is the user's standing choice for this
-                            // scope. Use it automatically for the first compatible
-                            // typed result; explicit session selection still wins.
-                            let selected_for_output = selected_presentation.clone().or_else(|| {
-                                adaptive_library.and_then(|library| {
-                                    let workspace_owner = session
-                                        .header()
-                                        .map(|header| {
-                                            header.contract_cwd().to_string_lossy().into_owned()
-                                        })
-                                        .unwrap_or_else(|| "workspace".into());
-                                    candidates.iter().find_map(|candidate| {
-                                        library
-                                            .select_preferred(
-                                                &candidate.semantic_type,
-                                                "user",
-                                                &workspace_owner,
-                                            )
-                                            .map(|stored| {
-                                                (stored.spec.id.clone(), stored.spec.revision)
-                                            })
-                                    })
-                                })
-                            });
                             let output_status = status_for_completion(
                                 turn_evaluations
                                     .get(&current_turn)
@@ -1127,36 +1063,6 @@ fn snapshot_inner(
                                 content: OutputContent::Document {
                                     document: {
                                         let mut document = compile_markdown(text.clone());
-                                        if let Some(library) = adaptive_library {
-                                            let available = candidates
-                                                .iter()
-                                                .filter(|candidate| {
-                                                    library.definitions().any(|stored| {
-                                                        stored.spec.accepts.iter().any(|kind| {
-                                                            kind == &candidate.semantic_type
-                                                        })
-                                                    })
-                                                })
-                                                .count();
-                                            if available > 0 {
-                                                document.metadata.insert(
-                                                    "adaptive_definitions_available".into(),
-                                                    available.to_string(),
-                                                );
-                                            }
-                                            if let Some((spec_id, revision)) =
-                                                selected_for_output.as_ref()
-                                                && library.definitions().any(|stored| {
-                                                    stored.spec.id == *spec_id
-                                                        && stored.spec.revision == *revision
-                                                })
-                                            {
-                                                document.metadata.insert(
-                                                    "adaptive_selected_spec".into(),
-                                                    format!("{spec_id}@{revision}"),
-                                                );
-                                            }
-                                        }
                                         if let Some(scheduled) = record
                                             .meta
                                             .as_ref()
@@ -1267,52 +1173,6 @@ fn snapshot_inner(
                                 actions: Vec::new(),
                                 fallback_text: text.clone(),
                             });
-                            if let (Some(library), Some((spec_id, revision))) =
-                                (adaptive_library, selected_for_output.as_ref())
-                                && let Some(stored) = library.definitions().find(|stored| {
-                                    stored.spec.id == *spec_id && stored.spec.revision == *revision
-                                })
-                                && let Some(candidate) = candidates.iter().find(|candidate| {
-                                    stored
-                                        .spec
-                                        .accepts
-                                        .iter()
-                                        .any(|kind| kind == &candidate.semantic_type)
-                                })
-                                && let Some(content) = OutputContent::from_compiled_adaptive(
-                                    vak_presentation::compile(
-                                        &stored.spec,
-                                        &vak_presentation::CompileInput {
-                                            semantic_type: candidate.semantic_type.clone(),
-                                            payload: candidate.payload.clone(),
-                                            fallback_text: text.clone(),
-                                        },
-                                    ),
-                                    text.clone(),
-                                )
-                            {
-                                timeline.items.push(OutputItem {
-                                    placement: Default::default(),
-                                    card_state: None,
-                                    id: format!("{}-adaptive", entry.id),
-                                    timestamp: entry.ts.to_rfc3339(),
-                                    turn_id: turn_id.clone(),
-                                    role: OutputRole::Assistant,
-                                    kind: OutputKind::Outcome,
-                                    status: output_status,
-                                    outcome: None,
-                                    content,
-                                    provenance: Some(OutputProvenance {
-                                        session_id: Some(session_id.into()),
-                                        entry_id: Some(entry.id.clone()),
-                                        tool_call_id: None,
-                                        source: Some("adaptive_library".into()),
-                                        presentation_id: None,
-                                    }),
-                                    actions: Vec::new(),
-                                    fallback_text: text.clone(),
-                                });
-                            }
                         }
                         ContentBlock::ToolUse { id, name, .. } => {
                             let result = tool_results.get(id);
@@ -1368,17 +1228,6 @@ fn snapshot_inner(
                                     .clone()
                                     .unwrap_or_else(|| format!("{name} completed")),
                             });
-                            // A tool renders richly one of two ways, neither of
-                            // which names the tool: it self-declares a
-                            // `semantic_type` in its own result (fenced or bare —
-                            // `structured_outputs_from_text`), or — since most
-                            // tools are third-party and cannot be asked to adopt
-                            // our envelope — a registered `ResultAdapter`
-                            // recognizes its specific, known response shape
-                            // (`built_in_adapters`). Either way the candidate
-                            // still has to pass `SkillRegistry::validate` before
-                            // anything renders from it, and the tool's own
-                            // stored result is read, never rewritten.
                             if !failed {
                                 // A card call's card is read from its own
                                 // `Presentation` ledger entry
@@ -2194,13 +2043,15 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 progress,
             ),
         }),
-        AgentEvent::TurnStart { turn } => Some(OutputStreamEvent::ItemStarted {
+        AgentEvent::TurnStart {
+            turn, directive_id, ..
+        } => Some(OutputStreamEvent::ItemStarted {
             item: OutputItem {
                 placement: Default::default(),
                 card_state: None,
                 id: "live-assistant".into(),
                 timestamp: now,
-                turn_id: format!("turn-{turn}"),
+                turn_id: directive_id.unwrap_or_else(|| format!("live-turn-{turn}")),
                 role: OutputRole::Assistant,
                 kind: OutputKind::Outcome,
                 status: OutputStatus::Running,
@@ -2292,7 +2143,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                 card_state: None,
                 id: format!("artifact-{execution_id}-{path}"),
                 timestamp: now,
-                turn_id: format!("sandbox-{execution_id}"),
+                turn_id: "live".into(),
                 role: OutputRole::Tool,
                 kind: OutputKind::Artifact,
                 status: OutputStatus::Succeeded,
@@ -2315,7 +2166,7 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                     session_id: Some(session_id.into()),
                     entry_id: None,
                     tool_call_id: Some(execution_id.clone()),
-                    source: Some("sandbox_artifact".into()),
+                    source: Some("live_event".into()),
                     presentation_id: None,
                 }),
                 // A review action is added after settlement only when an
@@ -2508,13 +2359,6 @@ pub(crate) fn project_frame(
         OutputStreamEvent::ItemStarted { item } | OutputStreamEvent::ItemReplaced { item } => {
             if item.id == "live-assistant" {
                 item.id = format!("live-assistant-{sequence}");
-                item.turn_id = timeline
-                    .items
-                    .iter()
-                    .rev()
-                    .find(|item| item.role == OutputRole::User)
-                    .map(|item| item.turn_id.clone())
-                    .unwrap_or_else(|| format!("live-turn-{sequence}"));
             } else if item.turn_id == "live"
                 && let Some((_, turn)) = &active
             {
@@ -2673,12 +2517,102 @@ mod tests {
         let mut timeline = OutputTimeline::empty("session-1");
         let framed = crate::events::SeqEvent {
             seq: 7,
-            event: vak_agent::AgentEvent::TurnStart { turn: 0 },
+            event: vak_agent::AgentEvent::TurnStart {
+                turn: 0,
+                directive_id: Some("directive-1".into()),
+                request_id: None,
+            },
         };
         let frame = super::project_frame(&mut timeline, framed).expect("TurnStart projects");
         assert_eq!(frame.sequence, Some(7));
         assert!(frame.delta.is_some());
         assert!(frame.snapshot.is_none());
+    }
+
+    #[test]
+    fn live_files_belong_to_the_same_typed_answer_as_prose_and_cards() {
+        let mut timeline = OutputTimeline::empty("live-files");
+        super::project_frame(
+            &mut timeline,
+            crate::events::SeqEvent {
+                seq: 1,
+                event: vak_agent::AgentEvent::TurnStart {
+                    turn: 0,
+                    directive_id: Some("actual-directive".into()),
+                    request_id: None,
+                },
+            },
+        );
+        super::project_frame(
+            &mut timeline,
+            crate::events::SeqEvent {
+                seq: 2,
+                event: vak_agent::AgentEvent::Sandbox(vak_tools::SandboxEvent::ArtifactGenerated {
+                    execution_id: "execution-1".into(),
+                    path: "report.html".into(),
+                    mime_type: "text/html".into(),
+                    size_bytes: 42,
+                }),
+            },
+        );
+        let item = timeline
+            .items
+            .iter()
+            .find(|item| item.kind == OutputKind::Artifact)
+            .expect("live file");
+        assert_eq!(item.turn_id, "actual-directive");
+        let provenance = item.provenance.as_ref().expect("provenance");
+        assert_eq!(provenance.source.as_deref(), Some("live_event"));
+        assert_eq!(provenance.tool_call_id.as_deref(), Some("execution-1"));
+        assert!(vak_delivery::answer::is_material(item));
+    }
+
+    #[test]
+    fn new_steps_use_the_recorded_directive_not_the_previous_snapshot_request() {
+        let mut timeline = OutputTimeline::empty("boundary");
+        let mut previous = super::live_item(
+            "boundary",
+            "previous-request".into(),
+            String::new(),
+            OutputRole::User,
+            OutputKind::Message,
+            OutputStatus::Succeeded,
+            OutputContent::Document {
+                document: vak_delivery::compile_markdown("Earlier request"),
+            },
+            "Earlier request".into(),
+        );
+        previous.turn_id = "previous-directive".into();
+        previous.provenance.as_mut().unwrap().source = Some("session_ledger".into());
+        timeline.items.push(previous.clone());
+        for (sequence, directive) in [
+            (1, Some("current-directive")),
+            (2, Some("current-directive")),
+            (3, None),
+        ] {
+            let frame = super::project_frame(
+                &mut timeline,
+                crate::events::SeqEvent {
+                    seq: sequence,
+                    event: vak_agent::AgentEvent::TurnStart {
+                        turn: sequence as usize,
+                        directive_id: directive.map(str::to_owned),
+                        request_id: None,
+                    },
+                },
+            )
+            .unwrap();
+            let Some(vak_delivery::OutputStreamEvent::ItemStarted { item }) = frame.delta else {
+                panic!("step start")
+            };
+            assert_ne!(item.turn_id, previous.turn_id);
+            if let Some(directive) = directive {
+                assert_eq!(item.turn_id, directive);
+            } else {
+                assert!(item.turn_id.starts_with("live-turn-"));
+            }
+        }
+        assert_eq!(timeline.items[0], previous);
     }
 
     #[test]
@@ -2688,7 +2622,11 @@ mod tests {
             &mut timeline,
             crate::events::SeqEvent {
                 seq: 1,
-                event: vak_agent::AgentEvent::TurnStart { turn: 0 },
+                event: vak_agent::AgentEvent::TurnStart {
+                    turn: 0,
+                    directive_id: Some("directive-1".into()),
+                    request_id: None,
+                },
             },
         );
         for (index, (delta, text)) in [("Hello ", "Hello "), ("world", "Hello world")]
@@ -2757,7 +2695,11 @@ mod tests {
             &mut timeline,
             crate::events::SeqEvent {
                 seq: 1,
-                event: vak_agent::AgentEvent::TurnStart { turn: 0 },
+                event: vak_agent::AgentEvent::TurnStart {
+                    turn: 0,
+                    directive_id: Some("directive-1".into()),
+                    request_id: None,
+                },
             },
         );
         text.clear();
@@ -2854,7 +2796,11 @@ mod tests {
             &mut timeline,
             crate::events::SeqEvent {
                 seq: 3,
-                event: vak_agent::AgentEvent::TurnStart { turn: 0 },
+                event: vak_agent::AgentEvent::TurnStart {
+                    turn: 0,
+                    directive_id: Some("directive-1".into()),
+                    request_id: None,
+                },
             },
         );
         let payload = serde_json::json!({
@@ -4955,71 +4901,6 @@ mod tests {
         );
     }
 
-    /// The answer outline (docs/design/87-composed-answers.md §2): the
-    /// plan's deliverables are the sections, a card is in the section its
-    /// `answers` names, a card that names none is in no section, and the
-    /// reply's text is in the one text section.
-    /// A later `answer` in the same turn replaces the earlier one.
-    #[test]
-    fn a_later_answer_in_a_turn_replaces_the_earlier_one() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let mut log = channel_log(&dir, "answer-again");
-        log.append_message(MessageRecord {
-            message: Message::user_text("list what to pack"),
-            meta: None,
-        })
-        .expect("directive");
-        for (id, items) in [("a1", vec!["Charger"]), ("a2", vec!["Charger", "Hat"])] {
-            let blocks = serde_json::json!({"blocks": [{"type": "list", "items": items}]});
-            log.append_message(MessageRecord {
-                message: Message::assistant(vec![ContentBlock::ToolUse {
-                    id: id.into(),
-                    name: "answer".into(),
-                    input: blocks.clone(),
-                }]),
-                meta: None,
-            })
-            .expect("call");
-            log.append_message(MessageRecord {
-                message: Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::ToolResult {
-                        tool_use_id: id.into(),
-                        content: "ok".into(),
-                        is_error: false,
-                    }],
-                },
-                meta: None,
-            })
-            .expect("result");
-            append_presentation(
-                &mut log,
-                "emit_list_card",
-                vak_session::types::PresentationSource::Answer {
-                    tool_use_id: id.into(),
-                    block: 0,
-                },
-                &serde_json::json!({"items": items}),
-            );
-        }
-        let timeline = snapshot("answer-again", &log);
-        let calls: Vec<Option<&str>> = timeline
-            .items
-            .iter()
-            .filter(|item| item.kind == OutputKind::Card)
-            .map(|item| {
-                item.provenance
-                    .as_ref()
-                    .and_then(|provenance| provenance.tool_call_id.as_deref())
-            })
-            .collect();
-        assert_eq!(calls, [Some("a2")]);
-    }
-
-    /// A card sent with `replaces` takes the place of that card in the
-    /// answer (the ledger keeps both), and a card sent with
-    /// `beside_previous` is listed for the client to place beside the one
-    /// before it. Both are the model's own typed choices.
     #[test]
     fn a_card_replaces_the_card_it_names_and_placement_is_the_models() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -5763,8 +5644,8 @@ mod tests {
         .expect("u");
         append_card_call(&mut log, "c1", "FIRST-ATTEMPT");
         log.append_message(MessageRecord::control(
-            vak_intent::control::ControlKind::FenceCheck,
-            "[fence-check]: resend",
+            vak_intent::control::ControlKind::PresentationCheck,
+            "[presentation-check]: resend",
         ))
         .expect("nudge");
         append_card_call(&mut log, "c2", "RETRY");

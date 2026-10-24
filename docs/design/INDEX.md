@@ -23,7 +23,7 @@ Counts: 4 proposal, 19 in progress, 58 implemented, 2 reference, 12 superseded, 
 | [101-topics.md](101-topics.md) | 101 — Topics: Agent-owned organisation for people and the Agent | implemented | The conversation-scoped Topic view, main-model capability, human controls, CLI, Admin and catalog integration are built |
 | [102-channel-cards.md](102-channel-cards.md) | 102 — Native channel cards | implemented | shared form projection, native provider compilers and shared direct/proactive request plans are built and tested locally |
 | [103-kept-work-lifecycle.md](103-kept-work-lifecycle.md) | 103 — Kept work: create, change, run and use | proposal | design revision requested by the maintainer on 2026-10-22 |
-| [104-rich-response-contract.md](104-rich-response-contract.md) | 104 — Rich response contract | in progress | (23 October 2026) — implementation authorized by the maintainer, including clean replacement without legacy compatibility |
+| [104-rich-response-contract.md](104-rich-response-contract.md) | 104 — Rich response contract | in progress | (24 October 2026) |
 | [11-planner.md](11-planner.md) | 11 — Dynamic planner | implemented | in 2.0.0 |
 | [12-evals.md](12-evals.md) | 12 — Eval harness | implemented | in 2.0.0 |
 | [13-server.md](13-server.md) | 13 — Server mode | implemented | in 2.0.0 |
@@ -101,7 +101,7 @@ Counts: 4 proposal, 19 in progress, 58 implemented, 2 reference, 12 superseded, 
 | [89-constrained-tool-arguments.md](89-constrained-tool-arguments.md) | 89 — Constrained tool arguments | in progress | stages 1 to 4 built 2026-10-12 (the capability, strict tools, schema-bound output on every wire, regeneration of unreadable calls, the ladder by fault class) |
 | [90-file-state.md](90-file-state.md) | 90 — What a turn knows about a file | in progress | Decisions taken 2026-10-12 (D1–D4, §4) |
 | [91-presentation-capabilities.md](91-presentation-capabilities.md) | 91 — Presentations are capabilities | implemented | stages 1 to 5 built 2026-10-14 |
-| [92-card-forms.md](92-card-forms.md) | 92 — Card forms | implemented | (2026-10-22): every form remains drawable from its builder, while only chart, stats, map, calendar and controls are offered card tools |
+| [92-card-forms.md](92-card-forms.md) | 92 — Card forms | implemented | The shared registry offers summary, steps, list, details, table, comparison, stats, chart, callout, calendar, map and controls for structured answer content |
 | [93-self-evolving-capabilities.md](93-self-evolving-capabilities.md) | 93-self-evolving-capabilities.md | implemented | E1 to E9 built and checked live (2026-10-14 to 2026-10-15) |
 | [94-scheduled-work-you-can-see.md](94-scheduled-work-you-can-see.md) | 94-scheduled-work-you-can-see.md | implemented | 2026-10-15: S0 to S5 built (the owner's time zone, delivery into the conversation, plain words and the picker, the tool's change, pause, resume and run_now by name, the card in chat, the Automations page) |
 | [95-one-capability-index.md](95-one-capability-index.md) | 95-one-capability-index.md | proposal | (2026-10-16): written from the tool catalogue audit (docs/audits/tool-catalogue-2026-10-16.md, O8) |

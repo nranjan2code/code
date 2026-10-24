@@ -17,32 +17,6 @@ use vak_session::ids::EffectId;
 const WORKER_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CHANNEL_CHARS: usize = 100_000;
 
-/// The built-in forms plus every skill manifest an enabled plugin declares
-/// in `components.presentation`, less the skills the owner revoked.
-pub(crate) fn merged_presentation_skills(core: &Core) -> vak_delivery::SkillRegistry {
-    let mut skills = vak_delivery::built_in_skill_registry();
-    for root in core.capability_roots() {
-        let Ok(plugins) = vak_plugin::PluginStore::new(&root.path).enabled() else {
-            continue;
-        };
-        for plugin in plugins {
-            for relative in &plugin.capabilities.presentation {
-                let Ok(bytes) = std::fs::read(plugin.package_path.join(relative)) else {
-                    continue;
-                };
-                if let Ok(manifest) =
-                    serde_json::from_slice::<vak_delivery::PresentationSkillManifest>(&bytes)
-                    && !core
-                        .capability_revoked(vak_session::types::CapabilityKind::Skill, &manifest.id)
-                {
-                    let _ = skills.register(manifest);
-                }
-            }
-        }
-    }
-    skills
-}
-
 #[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RequestedCapabilities {
@@ -611,7 +585,6 @@ pub(crate) async fn render_response(
             answer
         }),
         profile,
-        skill_registry: Some(merged_presentation_skills(core)),
         trace: core.admitted_trace().cloned(),
         actor: core.admitted_trace().and_then(|trace| trace.actor),
     };
@@ -643,7 +616,6 @@ pub(crate) async fn deliver(
         kind,
         content,
         profile,
-        skill_registry: Some(merged_presentation_skills(core)),
         trace: trace.cloned(),
         actor: trace.and_then(|trace| trace.actor),
     };
@@ -1496,7 +1468,6 @@ mod tests {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(AnswerDraft::from_markdown("hello")),
             profile: built_in_surface_profile("discord"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };
@@ -1566,7 +1537,6 @@ mod tests {
             kind: DeliveryKind::Assistant,
             content: DeliveryContent::Answer(AnswerDraft::from_markdown("hello")),
             profile: DeliveryProfile::plain("log"),
-            skill_registry: None,
             trace: None,
             actor: None,
         };

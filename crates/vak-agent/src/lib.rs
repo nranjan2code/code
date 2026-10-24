@@ -4,8 +4,6 @@
 //! TurnOutcome. Model context is always projected from the session log
 //! (model-visible means logged).
 
-mod fences;
-use fences::{find_malformed_vak_fence, vak_fence_bodies};
 mod cards;
 pub use vak_control::ControlLimits;
 pub mod circuit;
@@ -328,6 +326,8 @@ impl Tool for ManagedFlowTool {
 pub enum AgentEvent {
     TurnStart {
         turn: usize,
+        directive_id: Option<String>,
+        request_id: Option<String>,
     },
     /// A text-only draft answer was sent back for a redo instead of being
     /// accepted as the turn's final answer. Emitted once per discarded
@@ -2187,8 +2187,30 @@ impl Agent {
                 }
             }
 
-            let (response, calls, response_entry_id) = {
-                let _ = events.send(AgentEvent::TurnStart { turn }).await;
+            let (response, calls) = {
+                let (directive_id, request_id) = {
+                    let session = self.session.lock().await;
+                    let directive = session
+                        .chain_to_root()
+                        .into_iter()
+                        .rev()
+                        .find(|entry| entry.is_directive());
+                    let request = directive.and_then(|entry| match &entry.payload {
+                        vak_session::EntryPayload::Message(record) => record
+                            .meta
+                            .as_ref()
+                            .and_then(|meta| meta.request_id.clone()),
+                        _ => None,
+                    });
+                    (directive.map(|entry| entry.id.clone()), request)
+                };
+                let _ = events
+                    .send(AgentEvent::TurnStart {
+                        turn,
+                        directive_id,
+                        request_id,
+                    })
+                    .await;
 
                 // config.model is set by run_turn_inner from effective_model() on
                 // every turn, so it always reflects the current live provider route.
@@ -2874,21 +2896,18 @@ impl Agent {
                 .await;
                 let response_entry_id = self.append_assistant(&response).await;
                 let _ = events.send(AgentEvent::TurnEnd { usage }).await;
-                let response_entry_id = match response_entry_id {
-                    Ok(entry_id) => entry_id,
-                    Err(error) => {
-                        return TurnOutcome::Failed {
-                            error: LlmError::Network(format!(
-                                "assistant message write failed: {error}"
-                            )),
-                        };
-                    }
-                };
+                if let Err(error) = response_entry_id {
+                    return TurnOutcome::Failed {
+                        error: LlmError::Network(format!(
+                            "assistant message write failed: {error}"
+                        )),
+                    };
+                }
 
                 // Identical narration is not proof of serving another directive:
                 // independent questions and explicit repeats can share an answer.
                 // Semantic relevance belongs to the model, not string equality.
-                (response, calls, Some(response_entry_id))
+                (response, calls)
             };
             if calls.is_empty() {
                 // Empty-step enforcement: the response carried neither text
@@ -2940,37 +2959,6 @@ impl Agent {
                     let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                     turn += 1;
                     continue;
-                }
-                // Malformed-fence enforcement: the model emitted an explicit
-                // vak-tagged card fence, but its JSON body doesn't parse
-                // (mismatched brackets, an unquoted key, etc.) — a real,
-                // observed failure mode from small/local models. Rather
-                // than letting a broken card reach the user (where it
-                // degrades to a "could not be rendered" notice at best),
-                // give the model one bounded repair turn naming the exact
-                // parse error, mirroring the grounding-check pattern above.
-                if !self.ladder.told(Cause::Fence) {
-                    let text = response.text_content();
-                    if let Some(parse_error) = find_malformed_vak_fence(&text) {
-                        self.ladder.step(Cause::Fence, false);
-                        if turn + 1 >= self.config.max_turns {
-                            return TurnOutcome::MaxTurnsReached;
-                        }
-                        if let Err(error) = self
-                            .correct(
-                                Finding::Fence {
-                                    error: parse_error.to_string(),
-                                },
-                                Rung::Tell,
-                            )
-                            .await
-                        {
-                            return nudge_write_failed(error);
-                        }
-                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
-                        turn += 1;
-                        continue;
-                    }
                 }
                 if let Some(hooks) = &self.config.hooks {
                     let session_id = self
@@ -3134,17 +3122,6 @@ impl Agent {
                         Ok(false) => return TurnOutcome::MaxTurnsReached,
                         Err(error) => return nudge_write_failed(error),
                     }
-                }
-                // Fence-path presentations (docs/design/68-context-engine.md
-                // §10): only for the answer actually being accepted — every
-                // gate above has already passed, so this text will not be
-                // redone. A repair-nudged draft never reaches here.
-                if let Some(entry_id) = &response_entry_id
-                    && let Err(error) = self
-                        .write_fence_presentations(&response.text_content(), entry_id)
-                        .await
-                {
-                    return nudge_write_failed(error);
                 }
                 return TurnOutcome::Completed { response };
             }
@@ -3794,74 +3771,6 @@ impl Agent {
             }
         }
         imported_parent_ids.into_iter().collect()
-    }
-
-    /// Detects ```` ```vak ```` fences in the accepted final answer and
-    /// writes a `Presentation` entry for each one that validates through
-    /// `AgentConfig::presentation_rebuild` and is not a duplicate of a card
-    /// already recorded for this turn — the inline-fence fallback for
-    /// models without tool calling (docs/design/68-context-engine.md §10).
-    /// `message_entry_id` is the ledger entry id of the assistant message
-    /// that carried the fence text. A fence whose `semantic_type` cannot be
-    /// mapped to a known card, or that fails validation, is silently
-    /// skipped — the malformed-fence repair nudge (above, in the caller)
-    /// already handles the "unparseable JSON" case separately.
-    async fn write_fence_presentations(
-        &self,
-        text: &str,
-        message_entry_id: &str,
-    ) -> Result<(), vak_session::SessionError> {
-        let Some(rebuild) = self.config.presentation_rebuild.clone() else {
-            return Ok(());
-        };
-        for body in vak_fence_bodies(text) {
-            let Ok(fence_json) = serde_json::from_str::<Value>(body.trim()) else {
-                continue;
-            };
-            let Some(semantic_type) = fence_json.get("semantic_type").and_then(Value::as_str)
-            else {
-                continue;
-            };
-            // A fence has no tool name; its `semantic_type` names the block
-            // that owns it, which the host resolves.
-            let Some(info) = rebuild(semantic_type, &fence_json) else {
-                continue;
-            };
-            let digest = vak_session::types::payload_digest(&info.payload);
-            let mut session = self.session.lock().await;
-            let Some(turn_id) = session.latest_directive_entry_id() else {
-                continue;
-            };
-            if session.has_presentation(&turn_id, &digest) {
-                // Duplicate of a card already recorded this turn (by tool
-                // call or an earlier fence) — dropped from the projection.
-                continue;
-            }
-            let derived_from = session.retrieved_evidence_since(&turn_id, |name, input| {
-                self.tool_named(name)
-                    .is_some_and(|tool| tool.retrieves_evidence(input))
-            });
-            let record = vak_session::types::PresentationRecord {
-                placement: Default::default(),
-                turn_id,
-                source: vak_session::types::PresentationSource::Fence {
-                    message_entry_id: message_entry_id.to_string(),
-                },
-                semantic_type: info.semantic_type,
-                skill_id: info.skill_id,
-                skill_version: info.skill_version,
-                schema_version: info.schema_version,
-                payload: info.payload,
-                payload_digest: digest,
-                derived_from,
-                title: info.title,
-                identity_digest: info.identity_digest,
-                block: info.block,
-                data_call_id: info.data_call_id,
-            };
-            session.append_presentation(record)?;
-        }
-        Ok(())
     }
 
     /// Builds and appends this turn's `TurnCard` (docs/design/68-context-
@@ -5272,7 +5181,7 @@ impl Agent {
 
     /// Appends the model's response and returns its ledger entry id, so
     /// callers that need to attribute something back to this exact message
-    /// (a fence-path `Presentation`, docs/design/68-context-engine.md §10)
+    /// (an accepted `Presentation` record, docs/design/68-context-engine.md §10)
     /// don't have to re-derive it. Callers must handle write failures before
     /// any work that depends on this model response.
     async fn append_assistant(
@@ -9252,7 +9161,6 @@ fn kind_of(cause: Cause) -> vak_intent::control::ControlKind {
         | Cause::UnresolvedFailure
         | Cause::WorkersRunning => ControlKind::StopGuard,
         Cause::Grounding => ControlKind::GroundingCheck,
-        Cause::Fence => ControlKind::FenceCheck,
         Cause::DuplicateCard => ControlKind::DuplicateCardCheck,
         Cause::Presentation => ControlKind::PresentationCheck,
         Cause::CardCompletion => ControlKind::CardCompletionCheck,

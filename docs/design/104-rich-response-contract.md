@@ -1,13 +1,12 @@
 # 104 — Rich response contract
 
-Status: in progress (23 October 2026) — implementation authorized by the
-maintainer, including clean replacement without legacy compatibility. Shared
-ordered answer selection, channel handoff, replay draft exclusion, saved-page
-text, terminal, exports, voice companion and shared rendering are implemented
-and released locally; the full repository gate and local browser acceptance
-pass. Slack native charts
-are qualified structurally. R3–R5 state/action and native acceptance exits below
-remain open; no external agent UI implementation is adopted.
+Status: in progress (24 October 2026). The working source uses one typed
+renderer for live and saved answers, carries actual directive identity, and
+removes inline-card and retired whole-answer compatibility protocols. Accepted
+form records remain authoritative across surface projection. Earlier local
+release evidence describes 8.31.2, not these uncommitted corrections. Full native,
+state/action and external-channel qualification remains bounded by the checks
+recorded below and in the acceptance evidence.
 
 Research: [current primary sources](../research/rich-responses-2026-10-23.md).
 Repository evidence: [response projection review](../audits/response-projection-across-surfaces-2026-10-23.md).
@@ -132,28 +131,43 @@ Do not rebuild a mandatory plan, whole-answer JSON argument, union card tool
 or second per-turn presentation model call. Preserve precise flat schemas,
 wire-enforced structure where supported, and the common repair contract.
 
-**Decisive implementation default:** retain the currently offered chart,
-stats, map, calendar and controls tools during projection consolidation.
-All retained forms remain first-class drawable content, including history,
-explicit existing fences and runtime records. This is a starting authoring
-policy, not a five-form ceiling on the answer or the architecture.
-
-Do not reopen every model-facing form at once. A form becomes an additional
-authoring capability when a production-shaped case requires semantics or
-interaction that the document AST, admitted tools and runtime records cannot
-carry. A comparison with recorded choices is a plausible candidate; a new
-shell for a paragraph is not enough evidence. The same natural-request corpus
-must establish completeness, absence of unnecessary repetition, reliable
-selection, context/schema cost and surface fidelity before that admission
-change is approved. Discovery/loading changes are explicit capability work;
-the current code always loads presentation schemas, so on-demand card
-schemas must not be described as already available.
+**Authoring correction, 24 October:** the maintainer reported that the
+Markdown-first policy did not deliver the expected rich answers. Offer the
+existing summary, steps, list, details, table, comparison and callout tools
+alongside chart, stats, map, calendar and controls. Select by information
+shape through the model's existing authoring decision, without topic rules,
+forced calls, counts or a second planner. Prose supplies explanation and short
+direct answers. Sources and file changes remain runtime-derived receipts.
+Natural-request and turn-transition verification is recorded separately from
+installed binary qualification.
 
 Tool adapters may declare typed presentation data from their actual results.
 No generic key-sniffing turns arbitrary provider JSON into a supposed form.
 Runtime records own actual retrieval receipts, changed-file hunks, tests,
 commands and artifact attachments. Model-authored explanations and citations
 cannot fabricate successful execution or evidence.
+
+### Single runtime path, 24 October
+
+`AgentEvent::TurnStart` carries the actual ledger directive ID and original
+submission key. The stream projector never finds a request by the last user
+item in a cached projection. The client binds optimistic requests by submission
+key, not content or position. The accepted typed presentation event stream feeds
+`PresentationTimelineView` both during a run and after durable hydration.
+Transcript state remains for request navigation, runtime activity and voice; it
+cannot independently invent cards or attach result files to assistant prose.
+
+An empty running document has no finished-result notice. Draft removal operates
+on the whole indexed item list. A settled snapshot replaces in-flight items;
+reconnect uses the same reducer. Record statuses remain explicit. Actions that
+require a settled result are unavailable on in-flight material.
+
+Cards enter as validated typed tool calls or declared runtime records. Removed
+`PresentationSource::Fence` and `PresentationSource::Answer` variants have no
+reader or migration path. Code tagged `vak`, JSON mentioning `semantic_type`,
+and malformed code stay ordinary document code on every surface. The worker
+protocol is 2 and its job refuses removed fields. No alternate inline format,
+text classifier or layout planner substitutes for typed admission.
 
 ## 5. One form definition, several renderers
 

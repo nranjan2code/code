@@ -313,7 +313,7 @@ export type RunOutcome = "Completed" | "Stopped" | "MaxTurns" | "Failed";
  */
 export type ClientEvent =
   | "StreamOpened"
-  | { TurnStart: { turn: number } }
+  | { TurnStart: { turn: number; directive_id: string | null; request_id: string | null } }
   | { TextDelta: { delta: string } }
   | { ThinkingDelta: { delta: string } }
   | { ToolCallStart: { id: string; name: string; args_json: string } }

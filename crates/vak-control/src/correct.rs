@@ -30,8 +30,6 @@ pub enum Finding {
         /// A call already succeeded this turn: its result stands.
         done: bool,
     },
-    /// A card fence in the answer does not parse.
-    Fence { error: String },
     /// A stop hook the operator configured asked for more work.
     StopHook { reason: String },
     /// A completion gate with its own reason (goal mode, managed work).
@@ -69,7 +67,6 @@ impl Finding {
         match self {
             Self::ToolCallFormat { .. } => Cause::ToolCallRepair,
             Self::EmptyStep { .. } => Cause::EmptyStep,
-            Self::Fence { .. } => Cause::Fence,
             Self::StopHook { .. } => Cause::StopHook,
             Self::StopGuard { .. } => Cause::StopGuard,
             Self::Truncated { .. } => Cause::Truncated,
@@ -351,12 +348,6 @@ pub fn render(finding: &Finding, marker: &str) -> String {
                  request."
             )
         }
-        Finding::Fence { error } => format!(
-            "{marker}: The ```vak card block in your last answer has invalid JSON and failed to parse \
-             ({error}). Resend the same answer with a syntactically valid JSON body this time — \
-             double-check every object/array is closed and every key is quoted. If you can't produce \
-             valid JSON for it, drop the fence and answer in plain prose instead."
-        ),
         Finding::StopHook { reason } => format!(
             "{marker}: a stop hook asked for more work: {}. Do it now, or say plainly why you cannot.",
             reason.trim().trim_end_matches('.')
@@ -475,8 +466,8 @@ mod tests {
     #[test]
     fn a_check_is_told_once_then_reframed_or_left_to_stand() {
         let mut ladder = Ladder::default();
-        assert_eq!(ladder.step(Cause::Fence, false), Rung::Tell);
-        assert_eq!(ladder.step(Cause::Fence, false), Rung::End);
+        assert_eq!(ladder.step(Cause::Presentation, false), Rung::Tell);
+        assert_eq!(ladder.step(Cause::Presentation, false), Rung::End);
         assert_eq!(ladder.step(Cause::Repair, true), Rung::Tell);
         assert_eq!(ladder.step(Cause::Repair, true), Rung::Reframe);
         assert!(ladder.reframed(Cause::Repair));
@@ -484,8 +475,8 @@ mod tests {
         assert!(!ladder.reframed(Cause::Repair));
         assert_eq!(ladder.step(Cause::Grounding, false), Rung::Tell);
         assert!(ladder.told(Cause::Grounding) && !ladder.told(Cause::EmptyStep));
-        ladder.passed(Cause::Fence);
-        assert_eq!(ladder.step(Cause::Fence, false), Rung::Tell);
+        ladder.passed(Cause::Presentation);
+        assert_eq!(ladder.step(Cause::Presentation, false), Rung::Tell);
     }
 
     /// The thinking a thinking-only step wrote is quoted back whole, and
@@ -526,7 +517,6 @@ mod tests {
                 thinking: String::new(),
                 done: false,
             },
-            Finding::Fence { error: "x".into() },
             Finding::StopHook {
                 reason: "x.".into(),
             },

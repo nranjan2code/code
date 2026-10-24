@@ -7,7 +7,7 @@ export function mergeTurnSnapshot(current: OutputTimeline | null, incoming: Outp
   if (incoming.cursor?.startsWith("live:")) return mergePresentationSnapshot(current, incoming);
   const turns = new Set(incoming.items.map(item => item.turn_id));
   const retained = current.items.filter(item => !turns.has(item.turn_id)
-    && !item.turn_id.startsWith("live") && item.provenance?.source !== "live_event");
+    && item.provenance?.source !== "live_event");
   return { ...incoming, items: [...retained, ...incoming.items] };
 }
 
@@ -31,7 +31,7 @@ export function mergePresentationSnapshot(
   const currentIds = new Set(current.items.map((item) => item.id));
   const items = current.items.flatMap((item) => {
     const replacement = incomingById.get(item.id);
-    const isLive = item.turn_id.startsWith("live") || item.provenance?.source === "live_event";
+    const isLive = item.provenance?.source === "live_event";
     // A live frame can update its own in-flight item, but it is not an
     // authoritative re-render of an already-settled turn. That authority
     // belongs to the next durable snapshot at the run boundary.

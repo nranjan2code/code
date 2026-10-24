@@ -59,9 +59,22 @@ fn the_card_kinds_are_exactly_the_types_the_client_draws() {
     assert!(tools.is_subset(&delivery));
     assert_eq!(
         tools,
-        ["chart", "stats", "map", "calendar", "controls"]
-            .map(str::to_string)
-            .into()
+        [
+            "summary",
+            "steps",
+            "list",
+            "details",
+            "table",
+            "comparison",
+            "stats",
+            "chart",
+            "callout",
+            "calendar",
+            "map",
+            "controls"
+        ]
+        .map(str::to_string)
+        .into()
     );
     assert_eq!(primitives, delivery, "host primitives and forms differ");
     assert_eq!(

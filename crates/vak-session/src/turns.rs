@@ -915,10 +915,8 @@ impl Turn {
         self.presentation_records
             .iter()
             .filter_map(|record| match &record.source {
-                PresentationSource::ToolCall { tool_use_id }
-                | PresentationSource::Answer { tool_use_id, .. } => Some(tool_use_id.as_str()),
+                PresentationSource::ToolCall { tool_use_id } => Some(tool_use_id.as_str()),
                 PresentationSource::Derived { .. }
-                | PresentationSource::Fence { .. }
                 | PresentationSource::Delegated { .. }
                 | PresentationSource::Scheduled { .. } => None,
             })
@@ -990,8 +988,7 @@ impl Turn {
                     return None;
                 }
                 let represented = match &presentation.source {
-                    PresentationSource::ToolCall { tool_use_id }
-                    | PresentationSource::Answer { tool_use_id, .. } => {
+                    PresentationSource::ToolCall { tool_use_id } => {
                         calls.contains(tool_use_id.as_str())
                             && results.contains(tool_use_id.as_str())
                     }
@@ -1037,12 +1034,10 @@ impl Turn {
             .iter()
             .zip(self.presentation_records.iter())
             .filter_map(|(id, record)| match &record.source {
-                PresentationSource::ToolCall { tool_use_id }
-                | PresentationSource::Answer { tool_use_id, .. } => {
+                PresentationSource::ToolCall { tool_use_id } => {
                     Some((tool_use_id.as_str(), id.as_str()))
                 }
                 PresentationSource::Derived { .. }
-                | PresentationSource::Fence { .. }
                 | PresentationSource::Delegated { .. }
                 | PresentationSource::Scheduled { .. } => None,
             })
@@ -2176,14 +2171,11 @@ mod tests {
     }
 
     #[test]
-    fn dialogue_preserves_fence_and_forwarded_presentations_from_canonical_records() {
+    fn dialogue_preserves_forwarded_presentations_from_canonical_records() {
         let dir = tempfile::tempdir().unwrap();
         let (log, _, id, _) = two_closed_one_open(dir.path());
         let index = TurnIndex::from_log(&log);
         for source in [
-            PresentationSource::Fence {
-                message_entry_id: "fence-message".into(),
-            },
             PresentationSource::Delegated {
                 tool_use_id: "card-1".into(),
                 worker_session_id: "worker".into(),
@@ -2193,9 +2185,6 @@ mod tests {
             },
         ] {
             let mut turn = index.turn_by_id(&id).unwrap().clone();
-            if matches!(&source, PresentationSource::Fence { .. }) {
-                turn.steps.clear();
-            }
             turn.presentation_records[0].source = source;
             turn.final_answer = Some(M::assistant(vec![CB::text(
                 "```vak\n{\"semantic_type\":\"research.synthesis\",\"value\":\"obsolete fence text\"}\n```",
@@ -2250,31 +2239,23 @@ mod tests {
         // The source still names an actual call, but Full drops it once its
         // matching result is missing. Its accepted presentation must survive.
         turn.steps.last_mut().unwrap().results.clear();
-        for source in [
-            PresentationSource::ToolCall {
-                tool_use_id: "card-1".into(),
-            },
-            PresentationSource::Answer {
-                tool_use_id: "card-1".into(),
-                block: 0,
-            },
-        ] {
-            turn.presentation_records[0].source = source;
-            let dialogue = turn.dialogue_record();
-            assert!(
-                !dialogue
-                    .iter()
-                    .flat_map(|message| &message.content)
-                    .any(|block| matches!(block, CB::ToolUse { id, .. } if id == "card-1"))
-            );
-            assert!(
-                dialogue
-                    .last()
-                    .unwrap()
-                    .text_content()
-                    .contains("Rust 2.0 shipped")
-            );
-        }
+        turn.presentation_records[0].source = PresentationSource::ToolCall {
+            tool_use_id: "card-1".into(),
+        };
+        let dialogue = turn.dialogue_record();
+        assert!(
+            !dialogue
+                .iter()
+                .flat_map(|message| &message.content)
+                .any(|block| matches!(block, CB::ToolUse { id, .. } if id == "card-1"))
+        );
+        assert!(
+            dialogue
+                .last()
+                .unwrap()
+                .text_content()
+                .contains("Rust 2.0 shipped")
+        );
     }
 
     #[test]

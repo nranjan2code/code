@@ -859,19 +859,6 @@ fn nodes_to_blocks(
                 blocks: nodes_to_blocks(children, ids, diagnostics),
             }),
             Node::CodeBlock(language, content) => {
-                if language.as_deref() == Some("vak") {
-                    if let Ok(output) = crate::skills::parse_fragment(&content) {
-                        let fallback_markdown = crate::skills::structured_markdown(&output);
-                        blocks.push(DocumentBlock::Structured {
-                            id: ids.next(),
-                            output,
-                            fallback_markdown,
-                        });
-                        continue;
-                    }
-                    diagnostics.push("Structured block parsing suppressed".into());
-                    continue;
-                }
                 if language.as_deref() == Some("mermaid") {
                     blocks.push(DocumentBlock::Diagram {
                         id: ids.next(),
